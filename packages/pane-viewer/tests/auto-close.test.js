@@ -50,12 +50,31 @@ describe('Auto-Close Timeout Feature', () => {
         }))
       }));
 
-      // Mock fs.promises
+      // Mock fs.promises and sync methods
       jest.mock('fs', () => ({
         promises: {
           mkdir: jest.fn().mockResolvedValue(undefined),
           readFile: jest.fn().mockRejectedValue(new Error('ENOENT')),
-          writeFile: jest.fn().mockResolvedValue(undefined)
+          writeFile: jest.fn().mockResolvedValue(undefined),
+          unlink: jest.fn().mockResolvedValue(undefined)
+        },
+        // Sync methods used by acquireLock and debug logging
+        openSync: jest.fn().mockReturnValue(3),
+        writeSync: jest.fn(),
+        closeSync: jest.fn(),
+        statSync: jest.fn().mockReturnValue({ mtimeMs: Date.now() }),
+        unlinkSync: jest.fn(),
+        existsSync: jest.fn().mockReturnValue(false),
+        mkdirSync: jest.fn(),
+        readFileSync: jest.fn(),
+        writeFileSync: jest.fn(),
+        rmSync: jest.fn(),
+        appendFileSync: jest.fn(), // For debug logging
+        // Constants used by acquireLock
+        constants: {
+          O_CREAT: 64,
+          O_EXCL: 128,
+          O_WRONLY: 1
         }
       }));
 

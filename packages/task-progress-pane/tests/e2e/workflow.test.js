@@ -119,7 +119,7 @@ describe('E2E Workflow', () => {
       parsed = parseTodos(allComplete);
       expect(parsed.progress.completed).toBe(2);
       expect(parsed.progress.failed).toBe(1);
-      expect(parsed.progress.percentage).toBe(66); // 2/3 = 66%
+      expect(parsed.progress.percentage).toBe(67); // Math.round(2/3 * 100) = 67%
     });
 
     it('should track task state changes correctly', async () => {

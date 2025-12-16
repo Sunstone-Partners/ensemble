@@ -10,12 +10,27 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 
-// Mock fs/promises
+// Mock fs/promises and sync methods
 jest.mock('fs', () => ({
   promises: {
     mkdir: jest.fn(),
     readFile: jest.fn(),
-    writeFile: jest.fn()
+    writeFile: jest.fn(),
+    unlink: jest.fn()
+  },
+  // Sync methods used by acquireLock and debug logging
+  openSync: jest.fn().mockReturnValue(3),
+  writeSync: jest.fn(),
+  closeSync: jest.fn(),
+  statSync: jest.fn().mockReturnValue({ mtimeMs: Date.now() }),
+  unlinkSync: jest.fn(),
+  existsSync: jest.fn().mockReturnValue(false),
+  appendFileSync: jest.fn(), // For debug logging
+  // Constants used by acquireLock
+  constants: {
+    O_CREAT: 64,
+    O_EXCL: 128,
+    O_WRONLY: 1
   }
 }));
 
@@ -231,7 +246,8 @@ describe('PaneManager', () => {
         multiplexer: 'wezterm',
         agentType: 'code-reviewer',
         description: 'Reviewing security issues',
-        createdAt: expect.any(String)
+        createdAt: expect.any(String),
+        transcriptDir: expect.any(String)
       });
       expect(savedState.lastUpdated).toBeDefined();
     });

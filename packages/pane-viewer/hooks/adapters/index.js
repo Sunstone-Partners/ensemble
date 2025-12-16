@@ -1,18 +1,13 @@
 /**
  * Terminal multiplexer adapters
- * Re-exports from @fortium/ensemble-multiplexer-adapters shared package
- *
- * This file maintains backward compatibility for existing code that imports
- * from './adapters'. New code should import from '@fortium/ensemble-multiplexer-adapters'.
+ * Inlined implementations for standalone plugin use
  */
 
-const {
-  BaseMultiplexerAdapter,
-  WeztermAdapter,
-  ZellijAdapter,
-  TmuxAdapter,
-  MultiplexerDetector
-} = require('@fortium/ensemble-multiplexer-adapters');
+const { BaseMultiplexerAdapter } = require('./base-adapter');
+const { WeztermAdapter } = require('./wezterm-adapter');
+const { ZellijAdapter } = require('./zellij-adapter');
+const { TmuxAdapter } = require('./tmux-adapter');
+const { MultiplexerDetector } = require('./multiplexer-detector');
 
 module.exports = {
   BaseMultiplexerAdapter,

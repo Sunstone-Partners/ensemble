@@ -7,6 +7,17 @@
 
 const path = require('path');
 
+// Import core components
+const { PaneManager } = require('../hooks/pane-manager');
+const ConfigLoader = require('./config-loader');
+const {
+  MultiplexerDetector,
+  WeztermAdapter,
+  ZellijAdapter,
+  TmuxAdapter,
+  BaseMultiplexerAdapter
+} = require('../hooks/adapters');
+
 const skill = {
   name: 'Ensemble Pane Viewer',
   version: '0.2.0',
@@ -62,9 +73,47 @@ function getSupportedTerminals() {
   return skill.supportedTerminals;
 }
 
+/**
+ * Create a viewer instance
+ * Factory function for programmatic use of the pane viewer
+ * @returns {Promise<Object>} Viewer instance with manager, config, spawn, update, close
+ */
+async function createViewer() {
+  const manager = new PaneManager();
+  await manager.init();
+  const config = ConfigLoader.loadConfig();
+
+  return {
+    manager,
+    config,
+    async spawn(agentType, description) {
+      throw new Error('spawn() not yet implemented - use hooks for now');
+    },
+    async update(data) {
+      throw new Error('update() not yet implemented - use hooks for now');
+    },
+    async close() {
+      throw new Error('close() not yet implemented - use hooks for now');
+    }
+  };
+}
+
 module.exports = {
+  // Skill metadata
   skill,
   loadSkill,
   getHooks,
-  getSupportedTerminals
+  getSupportedTerminals,
+
+  // Core components
+  createViewer,
+  PaneManager,
+  ConfigLoader,
+
+  // Multiplexer adapters
+  MultiplexerDetector,
+  WeztermAdapter,
+  ZellijAdapter,
+  TmuxAdapter,
+  BaseMultiplexerAdapter
 };
