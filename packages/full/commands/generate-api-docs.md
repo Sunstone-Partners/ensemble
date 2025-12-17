@@ -5,6 +5,12 @@ description: Generate API documentation from codebase
 
 Generate comprehensive API documentation from the codebase.
 
+## IMPORTANT: Documentation Generation Only
+
+**DO NOT modify, refactor, or change any code in the codebase.**
+
+This command ONLY generates documentation from existing code. It reads and documents APIs but does not alter them. If documentation reveals issues, document them but do not fix them without explicit user approval.
+
 ## Mission
 
 Analyze code and generate API documentation including:

@@ -7,6 +7,12 @@ metadata:
   output_path: ensemble/create-prd.md
   source: fortium
 
+constraints:
+  - DO NOT implement, build, or execute any work described in the product description
+  - This command creates ONLY a PRD document
+  - The arguments describe what should be documented, not what should be built
+  - After creating the PRD, stop and wait for user approval before any implementation
+
 mission:
   summary: |
     Create a comprehensive Product Requirements Document (PRD) from a product description

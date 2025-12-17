@@ -30,6 +30,31 @@ const CONFIG_DIR = path.join(os.homedir(), '.ensemble/plugins/task-progress-pane
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 /**
+ * Validate autoclose environment variable value
+ * @param {string} value - Environment variable value
+ * @returns {Object} Validation result with valid flag and parsed value or reason
+ */
+function validateAutocloseEnvVar(value) {
+  if (value === undefined) return { valid: false, reason: 'not set' };
+
+  const parsed = parseInt(value, 10);
+
+  if (isNaN(parsed)) {
+    return { valid: false, reason: 'must be a number' };
+  }
+
+  if (parsed < 0) {
+    return { valid: false, reason: 'must be >= 0' };
+  }
+
+  if (parsed > 3600) {
+    return { valid: false, reason: 'must be <= 3600' };
+  }
+
+  return { valid: true, value: parsed };
+}
+
+/**
  * Ensure the configuration directory exists
  * @returns {void}
  */
@@ -41,21 +66,38 @@ function ensureConfigDir() {
 
 /**
  * Load configuration from disk
- * @returns {Object} Merged configuration (defaults + user overrides)
+ * @returns {Object} Merged configuration (defaults + user overrides + env overrides)
  */
 function loadConfig() {
   ensureConfigDir();
+  let config = { ...DEFAULT_CONFIG };
 
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      const userConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-      return { ...DEFAULT_CONFIG, ...userConfig };
+      const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+      try {
+        const userConfig = JSON.parse(content);
+        config = { ...config, ...userConfig };
+      } catch (parseError) {
+        console.error(`[config] Failed to parse config.json: ${parseError.message}`);
+      }
     }
   } catch (error) {
-    console.error('[config] Failed to load config:', error.message);
+    console.error('[config] Failed to read config:', error.message);
   }
 
-  return { ...DEFAULT_CONFIG };
+  // Environment variable overrides (highest priority)
+  const envValue = process.env.ENSEMBLE_TASK_PANE_AUTOCLOSE;
+  if (envValue !== undefined) {
+    const validation = validateAutocloseEnvVar(envValue);
+    if (validation.valid) {
+      config.autoCloseTimeout = validation.value;
+    } else {
+      console.error(`[config] Invalid ENSEMBLE_TASK_PANE_AUTOCLOSE: ${validation.reason}`);
+    }
+  }
+
+  return config;
 }
 
 /**

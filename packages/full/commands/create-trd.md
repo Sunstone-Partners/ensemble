@@ -5,6 +5,12 @@ description: Create Technical Requirements Document from PRD or feature specific
 
 Create a comprehensive Technical Requirements Document (TRD) from a PRD or feature specification.
 
+## IMPORTANT: Document Creation Only
+
+**DO NOT implement, build, or execute any technical work described in the requirements.**
+
+This command creates ONLY a TRD document. The arguments describe what should be documented, not what should be built. After creating the TRD, stop and wait for user approval before any implementation begins.
+
 ## Mission
 
 Transform product requirements into technical specifications with:

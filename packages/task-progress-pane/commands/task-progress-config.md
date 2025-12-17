@@ -1,28 +1,105 @@
-Configure the task-progress-pane plugin settings.
+---
+name: task-progress-config
+description: Configure ensemble-task-progress-pane settings
+---
 
-## Available Actions
+# Task Progress Pane Configuration
 
-1. **View current configuration** - Show all current settings
-2. **Change pane direction** - Switch between right/bottom split
-3. **Adjust pane size** - Set percentage width (10-90%)
-4. **Toggle auto-spawn** - Enable/disable automatic pane creation
-5. **Toggle auto-hide** - Enable/disable hiding when no tasks
-6. **Set collapse threshold** - Auto-collapse completed tasks after N items
-7. **Change multiplexer** - Override auto-detection (wezterm/zellij/tmux)
-8. **Reset to defaults** - Restore all settings to defaults
+Configure the terminal pane for task progress monitoring.
 
 ## Usage
 
-Run this command to interactively configure the task-progress-pane plugin.
+Show current configuration, or set specific options.
 
-The configuration is stored at `~/.ensemble/plugins/task-progress-pane/config.json`.
+```bash
+/task-progress-config                        # Show current settings
+/task-progress-config multiplexer wezterm    # Set multiplexer
+/task-progress-config direction bottom       # Set split direction
+/task-progress-config percent 30             # Set pane size
+/task-progress-config autoclose 30           # Auto-close after 30 seconds
+```
 
----
+## Options
 
-Please select an action and I will help you configure the task-progress-pane:
-- To view settings: "show current config"
-- To change direction: "set direction to bottom" or "set direction to right"
-- To change size: "set pane size to 30%"
-- To toggle features: "enable/disable auto-spawn" or "enable/disable auto-hide"
-- To set threshold: "set collapse threshold to 10"
-- To reset: "reset to defaults"
+### multiplexer
+Set the terminal multiplexer to use. Options:
+- `auto` (default) - Auto-detect available multiplexer
+- `wezterm` - Force WezTerm usage
+- `zellij` - Force Zellij usage
+- `tmux` - Force tmux usage
+
+### direction
+Set the direction to split panes. Options:
+- `right` (default) - Split to the right
+- `bottom` - Split at bottom
+
+### percent
+Set the percentage of space for the viewer pane.
+- Range: 10-90
+- Default: 25
+
+### auto-spawn
+Enable or disable automatic pane creation when tasks exist.
+- Options: `true`, `false`
+- Default: `true`
+
+### auto-hide
+Enable or disable hiding the pane when no tasks are active.
+- Options: `true`, `false`
+- Default: `true`
+
+### collapse-threshold
+Set the number of completed tasks before auto-collapsing.
+- Range: 1-100
+- Default: 5
+
+### autoclose
+Automatically close the pane after work completes.
+- Range: 0-3600 (seconds, 0 = disabled)
+- Default: 0
+
+### enabled
+Enable or disable the pane viewer entirely.
+- Options: `true`, `false`
+- Default: `true`
+
+## Examples
+
+**View current configuration:**
+```
+/task-progress-config
+```
+
+**Use WezTerm with bottom split at 30%:**
+```
+/task-progress-config multiplexer wezterm
+/task-progress-config direction bottom
+/task-progress-config percent 30
+```
+
+**Enable auto-close after 60 seconds:**
+```
+/task-progress-config autoclose 60
+```
+
+**Disable auto-hide when empty:**
+```
+/task-progress-config auto-hide false
+```
+
+**Reset to defaults:**
+```
+/task-progress-config reset
+```
+
+## Configuration File
+
+Settings are saved to `~/.ensemble/plugins/task-progress-pane/config.json`
+
+## Environment Variables
+
+You can also configure via environment variables:
+- `ENSEMBLE_PANE_MULTIPLEXER` - Set multiplexer
+- `ENSEMBLE_PANE_DIRECTION` - Set direction
+- `ENSEMBLE_PANE_PERCENT` - Set percent
+- `ENSEMBLE_TASK_PANE_AUTOCLOSE` - Auto-close delay in seconds (0 = disabled)

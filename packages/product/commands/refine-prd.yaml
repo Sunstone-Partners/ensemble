@@ -7,6 +7,12 @@ metadata:
   output_path: ensemble/refine-prd.md
   source: fortium
 
+constraints:
+  - DO NOT implement, build, or execute any work described in the PRD
+  - This command ONLY refines the PRD document itself
+  - The arguments describe what should be improved in the document, not what should be built
+  - After refining the PRD, stop and wait for user approval before any implementation
+
 mission:
   summary: |
     Refine and enhance an existing Product Requirements Document based on stakeholder
@@ -24,7 +30,16 @@ workflow:
 
         - order: 2
           title: Interview users
-          description: Interview users, clarify any ambiguity or missing detail
+          description: |
+            REQUIRED: Conduct user interview BEFORE making any changes.
+            Present identified gaps and ask clarifying questions:
+            - Are there any requirements that are unclear or need more detail?
+            - Are there missing user scenarios we should address?
+            - Are the acceptance criteria complete and testable?
+            - Is the scope correctly defined (in-scope vs out-of-scope)?
+            - Are there any technical constraints or dependencies not captured?
+            - What is the priority order of the features/requirements?
+            - Are there any open questions or decisions that need resolution?
 
         - order: 3
           title: Feedback Integration

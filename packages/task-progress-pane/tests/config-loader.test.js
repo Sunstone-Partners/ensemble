@@ -103,4 +103,62 @@ describe('config-loader', () => {
       setConfigValue('percent', originalValue);
     });
   });
+
+  describe('Environment variable overrides', () => {
+    beforeEach(async () => {
+      // Clean up any env var set by previous tests
+      delete process.env.ENSEMBLE_TASK_PANE_AUTOCLOSE;
+      vi.resetModules();
+      const configLoader = await import('../lib/config-loader.js');
+      loadConfig = configLoader.loadConfig;
+    });
+
+    afterEach(() => {
+      // Clean up env var after each test
+      delete process.env.ENSEMBLE_TASK_PANE_AUTOCLOSE;
+    });
+
+    it('should override autoCloseTimeout from environment variable', async () => {
+      // Arrange
+      process.env.ENSEMBLE_TASK_PANE_AUTOCLOSE = '30';
+      vi.resetModules();
+      const { loadConfig: freshLoadConfig } = await import('../lib/config-loader.js');
+
+      // Act
+      const config = freshLoadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(30);
+    });
+
+    it('should accept zero value (disabled)', async () => {
+      // Arrange
+      process.env.ENSEMBLE_TASK_PANE_AUTOCLOSE = '0';
+      vi.resetModules();
+      const { loadConfig: freshLoadConfig } = await import('../lib/config-loader.js');
+
+      // Act
+      const config = freshLoadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(0);
+    });
+
+    it('should accept maximum valid value 3600', async () => {
+      // Arrange
+      process.env.ENSEMBLE_TASK_PANE_AUTOCLOSE = '3600';
+      vi.resetModules();
+      const { loadConfig: freshLoadConfig } = await import('../lib/config-loader.js');
+
+      // Act
+      const config = freshLoadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(3600);
+    });
+
+    it('should have autoCloseTimeout in DEFAULT_CONFIG', () => {
+      expect(DEFAULT_CONFIG).toHaveProperty('autoCloseTimeout', 0);
+    });
+  });
 });

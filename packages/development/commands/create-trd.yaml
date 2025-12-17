@@ -8,6 +8,12 @@ metadata:
   output_path: ensemble/create-trd.md
   source: fortium
 
+constraints:
+  - DO NOT implement, build, or execute any technical work described in the requirements
+  - This command creates ONLY a TRD document
+  - The arguments describe what should be documented, not what should be built
+  - After creating the TRD, stop and wait for user approval before any implementation
+
 mission:
   summary: |
     This command takes a comprehensive Product Requirements Document (PRD) $ARGUMENTS and delegates to

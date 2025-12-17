@@ -7,6 +7,12 @@ metadata:
   output_path: ensemble/generate-api-docs.md
   source: fortium
 
+constraints:
+  - DO NOT modify, refactor, or change any code in the codebase
+  - This command ONLY generates documentation from existing code
+  - It reads and documents APIs but does not alter them
+  - If documentation reveals issues, document them but do not fix them without explicit user approval
+
 mission:
   summary: |
     Generate comprehensive API documentation from codebase analysis, including OpenAPI/Swagger

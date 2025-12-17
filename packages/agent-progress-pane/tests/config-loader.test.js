@@ -121,8 +121,7 @@ describe('config-loader', () => {
       // Assert
       expect(config).toEqual(DEFAULT_CONFIG);
       expect(console.error).toHaveBeenCalledWith(
-        '[config] Failed to load config:',
-        expect.any(String)
+        expect.stringContaining('[config] Failed to parse config.json:'),
       );
     });
 
@@ -139,7 +138,7 @@ describe('config-loader', () => {
       // Assert
       expect(config).toEqual(DEFAULT_CONFIG);
       expect(console.error).toHaveBeenCalledWith(
-        '[config] Failed to load config:',
+        '[config] Failed to read config:',
         'Permission denied'
       );
     });
@@ -176,7 +175,8 @@ describe('config-loader', () => {
       // Assert
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         mockConfigPath,
-        expect.stringContaining('"enabled": false')
+        expect.stringContaining('"enabled": false'),
+        { mode: 0o600 }
       );
       expect(result).toEqual({
         ...DEFAULT_CONFIG,
@@ -304,7 +304,8 @@ describe('config-loader', () => {
       expect(result).toEqual(DEFAULT_CONFIG);
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         mockConfigPath,
-        expect.stringContaining('"enabled": true')
+        expect.stringContaining('"enabled": true'),
+        { mode: 0o600 }
       );
     });
 
@@ -379,6 +380,112 @@ describe('config-loader', () => {
     it('should be exported as a constant', () => {
       expect(DEFAULT_CONFIG).toBeDefined();
       expect(typeof DEFAULT_CONFIG).toBe('object');
+    });
+  });
+
+  describe('Environment variable overrides', () => {
+    beforeEach(() => {
+      // Clean up any env var set by previous tests
+      delete process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE;
+    });
+
+    afterEach(() => {
+      // Clean up env var after each test
+      delete process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE;
+    });
+
+    it('should override autoCloseTimeout from environment variable', () => {
+      // Arrange
+      fs.existsSync.mockReturnValue(false); // No config file
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = '30';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(30);
+    });
+
+    it('should override config file value with environment variable', () => {
+      // Arrange
+      fs.existsSync.mockReturnValueOnce(true);
+      fs.readFileSync.mockReturnValue(JSON.stringify({ autoCloseTimeout: 10 }));
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = '60';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(60);
+    });
+
+    it('should ignore invalid non-numeric environment variable', () => {
+      // Arrange
+      fs.existsSync.mockReturnValue(false);
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = 'invalid';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(DEFAULT_CONFIG.autoCloseTimeout);
+      expect(console.error).toHaveBeenCalledWith(
+        '[config] Invalid ENSEMBLE_AGENT_PANE_AUTOCLOSE: must be a number'
+      );
+    });
+
+    it('should reject negative values', () => {
+      // Arrange
+      fs.existsSync.mockReturnValue(false);
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = '-5';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(DEFAULT_CONFIG.autoCloseTimeout);
+      expect(console.error).toHaveBeenCalledWith(
+        '[config] Invalid ENSEMBLE_AGENT_PANE_AUTOCLOSE: must be >= 0'
+      );
+    });
+
+    it('should reject values over 3600', () => {
+      // Arrange
+      fs.existsSync.mockReturnValue(false);
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = '3601';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(DEFAULT_CONFIG.autoCloseTimeout);
+      expect(console.error).toHaveBeenCalledWith(
+        '[config] Invalid ENSEMBLE_AGENT_PANE_AUTOCLOSE: must be <= 3600'
+      );
+    });
+
+    it('should accept zero value (disabled)', () => {
+      // Arrange
+      fs.existsSync.mockReturnValue(false);
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = '0';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(0);
+    });
+
+    it('should accept maximum valid value 3600', () => {
+      // Arrange
+      fs.existsSync.mockReturnValue(false);
+      process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE = '3600';
+
+      // Act
+      const config = loadConfig();
+
+      // Assert
+      expect(config.autoCloseTimeout).toBe(3600);
     });
   });
 

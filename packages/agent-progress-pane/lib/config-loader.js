@@ -27,36 +27,84 @@ function ensureConfigDir() {
   }
 }
 
+/**
+ * Validate autoclose environment variable value
+ * @param {string} value - Environment variable value
+ * @returns {Object} Validation result with valid flag and parsed value or reason
+ */
+function validateAutocloseEnvVar(value) {
+  if (value === undefined) return { valid: false, reason: 'not set' };
+
+  const parsed = parseInt(value, 10);
+
+  if (isNaN(parsed)) {
+    return { valid: false, reason: 'must be a number' };
+  }
+
+  if (parsed < 0) {
+    return { valid: false, reason: 'must be >= 0' };
+  }
+
+  if (parsed > 3600) {
+    return { valid: false, reason: 'must be <= 3600' };
+  }
+
+  return { valid: true, value: parsed };
+}
+
 function loadConfig() {
+  let config = { ...DEFAULT_CONFIG };
+
   try {
     // Try new path first
     if (fs.existsSync(CONFIG_PATH)) {
-      const userConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-      return { ...DEFAULT_CONFIG, ...userConfig };
+      const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+      try {
+        const userConfig = JSON.parse(content);
+        config = { ...config, ...userConfig };
+      } catch (parseError) {
+        console.error(`[config] Failed to parse config.json: ${parseError.message}`);
+      }
     }
     // Backward compatibility: check old path
-    if (fs.existsSync(OLD_CONFIG_PATH)) {
-      const userConfig = JSON.parse(fs.readFileSync(OLD_CONFIG_PATH, 'utf-8'));
-      return { ...DEFAULT_CONFIG, ...userConfig };
+    else if (fs.existsSync(OLD_CONFIG_PATH)) {
+      const content = fs.readFileSync(OLD_CONFIG_PATH, 'utf-8');
+      try {
+        const userConfig = JSON.parse(content);
+        config = { ...config, ...userConfig };
+      } catch (parseError) {
+        console.error(`[config] Failed to parse config.json: ${parseError.message}`);
+      }
     }
   } catch (error) {
-    console.error('[config] Failed to load config:', error.message);
+    console.error('[config] Failed to read config:', error.message);
   }
 
-  return { ...DEFAULT_CONFIG };
+  // Environment variable overrides (highest priority)
+  const envValue = process.env.ENSEMBLE_AGENT_PANE_AUTOCLOSE;
+  if (envValue !== undefined) {
+    const validation = validateAutocloseEnvVar(envValue);
+    if (validation.valid) {
+      config.autoCloseTimeout = validation.value;
+    } else {
+      console.error(`[config] Invalid ENSEMBLE_AGENT_PANE_AUTOCLOSE: ${validation.reason}`);
+    }
+  }
+
+  return config;
 }
 
 function saveConfig(config) {
   ensureConfigDir();
 
   const merged = { ...DEFAULT_CONFIG, ...config };
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), { mode: 0o600 });
   return merged;
 }
 
 function resetConfig() {
   ensureConfigDir();
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2));
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), { mode: 0o600 });
   return { ...DEFAULT_CONFIG };
 }
 
