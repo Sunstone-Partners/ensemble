@@ -18,3 +18,4 @@ __pycache__/
 .runtime/
 .claude/commands/
 .logs/
+.beads/
