@@ -1,14 +1,11 @@
 {
   "name": "@fortium/ensemble-full",
-  "version": "5.8.0",
+  "version": "5.9.0",
   "description": "Complete ensemble ecosystem (meta-package with all plugins)",
-  "main": "lib/index.js",
   "scripts": {
     "test": "jest --passWithNoTests",
     "test:coverage": "jest --coverage",
-    "lint": "eslint .",
-    "sync-hooks": "node scripts/sync-hooks.js",
-    "prepare": "npm run sync-hooks"
+    "lint": "eslint ."
   },
   "keywords": [
     "full",
@@ -36,8 +33,6 @@
     "@fortium/ensemble-git": "^4.0.0",
     "@fortium/ensemble-e2e-testing": "^4.0.0",
     "@fortium/ensemble-metrics": "^4.0.0",
-    "@fortium/ensemble-agent-progress-pane": "^5.1.0",
-    "@fortium/ensemble-task-progress-pane": "^5.0.0",
     "@fortium/ensemble-react": "^4.0.0",
     "@fortium/ensemble-nestjs": "^4.0.0",
     "@fortium/ensemble-rails": "^4.0.0",

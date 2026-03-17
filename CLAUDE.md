@@ -1,6 +1,6 @@
 # Ensemble Plugins - Claude Code Configuration
 
-> Modular plugin ecosystem for Claude Code (v5.1.0) | 25 packages | 28 agents | 4-tier architecture
+> Modular plugin ecosystem for Claude Code (v5.1.0) | 23 packages | 28 agents | 4-tier architecture
 
 ## Quick Reference
 
@@ -29,7 +29,7 @@ npm run test:coverage       # Coverage reports
 ```
 
 ### Key Paths
-- **Plugins**: `packages/*/` (26 packages)
+- **Plugins**: `packages/*/` (24 packages)
 - **Agents**: `packages/*/agents/*.yaml` (28 agents)
 - **Commands**: `packages/*/commands/`
 - **Skills**: `packages/*/skills/`
@@ -41,13 +41,6 @@ Ensemble plugins can be translated for use with the OpenCode runtime via `npm ru
 This generates OpenCode-compatible skills, commands, and config in `dist/opencode/`. Supports
 `--dry-run`, `--verbose`, `--validate`, and `--force` flags. See `packages/opencode/` for the
 translation layer implementation.
-
-### Package Sync (ensemble-full)
-When modifying pane viewer packages, sync to ensemble-full:
-```bash
-npm run sync-hooks --workspace=packages/full  # Syncs 24 files
-# Syncs: agent-progress-pane + task-progress-pane hooks, lib, and adapters
-```
 
 ## Architecture Overview
 
@@ -75,7 +68,6 @@ New Capabilities (v5.1.0):
 ├── router (agent routing and delegation)
 └── permitter (permission management with allowlists)
 
-Utilities: agent-progress-pane (v5.1.0), task-progress-pane (v5.1.0)
 Shared: multiplexer-adapters (WezTerm, Zellij, tmux)
 Runtime: opencode (OpenCode translation layer, v5.3.0)
 Meta: ensemble-full (complete bundle)
@@ -229,18 +221,19 @@ npm run test:coverage --workspace=packages/<name>
 ```json
 {
   "hooks": {
-    "PreToolUse": [{
-      "matcher": "Task",
+    "UserPromptSubmit": [{
       "hooks": [{
         "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pane-spawner.js"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/router.py",
+        "timeout": 3
       }]
     }],
-    "PostToolUse": [{
-      "matcher": "Task",
+    "PermissionRequest": [{
+      "matcher": "Bash",
       "hooks": [{
         "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pane-completion.js"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/permitter.js",
+        "timeout": 100
       }]
     }]
   }
@@ -251,9 +244,8 @@ npm run test:coverage --workspace=packages/<name>
 
 | Plugin | Hook | Trigger | Purpose |
 |--------|------|---------|---------|
-| agent-progress-pane | PreToolUse | Task | Spawn progress pane |
-| agent-progress-pane | PostToolUse | Task | Update completion status |
-| task-progress-pane | PreToolUse | TodoWrite | Display task progress |
+| router | UserPromptSubmit | (all prompts) | Route prompts to appropriate agents |
+| permitter | PermissionRequest | Bash | Expand allowed commands via allowlist |
 
 ### Hook Environment Variables
 - `CLAUDE_PLUGIN_ROOT` - Plugin installation directory
@@ -283,7 +275,7 @@ Pre-approved commands:
 - `git push`, `git add`, `git commit`
 - `gh run list`
 - `claude plugin install`, `claude plugin marketplace update`
-- `grep`, `node hooks/task-spawner.js`
+- `grep`
 
 ## Validation & CI
 
@@ -311,7 +303,7 @@ Use conventional commits:
 - `chore(<scope>)`: Maintenance
 - `refactor(<scope>)`: Code restructure
 
-Example: `fix(agent-progress-pane): inline multiplexer-adapters for standalone use`
+Example: `fix(router): update agent routing rules for new skill patterns`
 
 ## Common Tasks
 
@@ -344,7 +336,6 @@ npm run publish:changed
 
 ### Module Not Found in Cached Plugin
 - Inline dependencies instead of using npm packages
-- Example: agent-progress-pane inlines multiplexer-adapters
 - Check `node_modules` exists in plugin directory
 
 ### Tests Failing

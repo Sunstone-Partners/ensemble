@@ -1,6 +1,6 @@
 {
   "name": "ensemble",
-  "version": "5.8.0",
+  "version": "5.8.1",
   "description": "Official Fortium Ensemble plugin marketplace - AI-augmented development workflows",
   "owner": {
     "name": "Fortium Partners",
@@ -326,40 +326,6 @@
       }
     },
     {
-      "name": "ensemble-agent-progress-pane",
-      "version": "5.2.2",
-      "source": "./packages/agent-progress-pane",
-      "description": "Real-time agent progress visualization in terminal panes",
-      "category": "utilities",
-      "tags": [
-        "agent",
-        "progress",
-        "monitoring",
-        "terminal",
-        "panes"
-      ],
-      "author": {
-        "name": "Fortium Partners",
-        "url": "https://github.com/FortiumPartners"
-      }
-    },
-    {
-      "name": "ensemble-task-progress-pane",
-      "version": "5.2.2",
-      "source": "./packages/task-progress-pane",
-      "description": "Real-time task progress visualization for TodoWrite operations",
-      "category": "utilities",
-      "tags": [
-        "progress",
-        "todowrite",
-        "terminal"
-      ],
-      "author": {
-        "name": "Fortium Partners",
-        "url": "https://github.com/FortiumPartners"
-      }
-    },
-    {
       "name": "ensemble-ai",
       "version": "5.2.1",
       "source": "./packages/ai",
@@ -398,7 +364,7 @@
     },
     {
       "name": "ensemble-full",
-      "version": "5.8.0",
+      "version": "5.9.0",
       "source": "./packages/full",
       "description": "Complete Ensemble suite - all plugins in one package",
       "category": "core",

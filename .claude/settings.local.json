@@ -34,10 +34,9 @@
       "Bash(mulch learn:*)",
       "Bash(mulch record:*)",
       "Bash(npm run:*)",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "Bash(git switch:*)"
     ]
   },
-  "enabledPlugins": {
-    "ensemble-full@ensemble": true
-  }
+  "enabledPlugins": {}
 }
