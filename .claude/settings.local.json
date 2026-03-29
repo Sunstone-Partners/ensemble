@@ -35,7 +35,14 @@
       "Bash(mulch record:*)",
       "Bash(npm run:*)",
       "Bash(gh pr:*)",
-      "Bash(git switch:*)"
+      "Bash(git switch:*)",
+      "Bash(curl:*)",
+      "Bash(gh api:*)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Description: {d.get\\(\"\"description\"\"\\)}\\\\nLanguage: {d.get\\(\"\"language\"\"\\)}\\\\nStars: {d.get\\(\"\"stargazers_count\"\"\\)}\\\\nForks: {d.get\\(\"\"forks_count\"\"\\)}\\\\nTopics: {d.get\\(\"\"topics\"\"\\)}\\\\nDefault branch: {d.get\\(\"\"default_branch\"\"\\)}\\\\nCreated: {d.get\\(\"\"created_at\"\"\\)}\\\\nUpdated: {d.get\\(\"\"updated_at\"\"\\)}''''\\)\")",
+      "Bash(gh repo:*)",
+      "Bash(python3 -c \"import sys,json; [print\\(f[''''type''''].ljust\\(6\\), f[''''name'''']\\) for f in json.load\\(sys.stdin\\)]\")",
+      "Bash(python3 -c \"import json,sys; tree=json.load\\(sys.stdin\\); [print\\(x[''''path'''']\\) for x in tree.get\\(''''tree'''',[]\\)]\")",
+      "Bash(python3 -c \":*)"
     ]
   },
   "enabledPlugins": {}
