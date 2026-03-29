@@ -104,7 +104,9 @@ function extractDescription(body: string, skillDirName: string): string {
  * @returns            Normalised content string.
  */
 export function normalizeSkillMd(content: string, skillDirName: string): string {
-  const parsed = matter(content);
+  // Normalize CRLF → LF so output is consistent across macOS and Linux
+  const normalized = content.replace(/\r\n/g, '\n');
+  const parsed = matter(normalized);
 
   // Override / set required fields
   parsed.data['name'] = skillDirName;
@@ -309,11 +311,11 @@ export async function copySkills(
       continue;
     }
 
-    // Normalise SKILL.md frontmatter for Pi compatibility; REFERENCE.md is copied as-is
+    // Normalise SKILL.md frontmatter for Pi compatibility; normalize CRLF for all files
     const content =
       entry.fileName === 'SKILL.md'
         ? normalizeSkillMd(rawContent, entry.skillDirName)
-        : rawContent;
+        : rawContent.replace(/\r\n/g, '\n');
 
     const result: TransformResult = {
       sourcePath: entry.srcPath,
