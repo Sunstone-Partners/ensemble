@@ -20,7 +20,7 @@ describe('Fix-Issue Command', () => {
       expect(commandYaml.metadata).toBeDefined();
       expect(commandYaml.metadata.name).toBe('ensemble:fix-issue');
       expect(commandYaml.metadata.description).toBe('Lightweight workflow for bug fixes and small issues');
-      expect(commandYaml.metadata.version).toBe('1.0.0');
+      expect(commandYaml.metadata.version).toBe('1.1.0');
       expect(commandYaml.metadata.category).toBe('implementation');
       expect(commandYaml.metadata.model).toBe('sonnet');
       expect(commandYaml.metadata.source).toBe('fortium');
