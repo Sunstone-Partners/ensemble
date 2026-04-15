@@ -14,6 +14,7 @@
     "ensemble:create-prd": "opus",
     "ensemble:refine-prd": "opus",
     "ensemble:create-trd": "opus",
+    "ensemble:create-trd-foreman": "opus",
     "ensemble:refine-trd": "opus"
   },
   "costTracking": {

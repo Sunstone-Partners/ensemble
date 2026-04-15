@@ -10,6 +10,7 @@ All ensemble commands use the `/ensemble:` namespace:
 /ensemble:fold-prompt          # Optimize Claude environment
 /ensemble:create-prd           # Create Product Requirements Document
 /ensemble:create-trd           # Create Technical Requirements Document
+/ensemble:create-trd-foreman   # Create Foreman-native structured Technical Requirements Document
 /ensemble:implement-trd        # Implement TRD with git-town workflow
 /ensemble:fix-issue            # Lightweight bug fix workflow (analysis → PR)
 /ensemble:release              # Orchestrate release workflow
