@@ -1,0 +1,69 @@
+name: Publish Codex Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional version to sync before publish'
+        required: false
+  push:
+    tags:
+      - 'codex-v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Sync version (workflow_dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' }}
+        run: npm run version:codex -- ${{ github.event.inputs.version }}
+
+      - name: Validate tag matches package version
+        if: startsWith(github.ref, 'refs/tags/codex-v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#codex-v}"
+          PACKAGE_VERSION=$(node -p "require('./packages/codex/package.json').version")
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match packages/codex/package.json ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
+      - name: Generate Codex artifacts
+        run: npm run generate:codex
+
+      - name: Run Codex tests
+        run: npm test --workspace=packages/codex
+
+      - name: Verify package contents
+        run: npm pack --dry-run ./packages/codex
+
+      - name: Generate release notes
+        run: npm run release-notes:codex -- --output .github/codex-release-notes.md
+
+      - name: Publish @fortium/ensemble-codex
+        run: npm publish --workspace=packages/codex --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: .github/codex-release-notes.md
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

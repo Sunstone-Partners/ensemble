@@ -1,0 +1,39 @@
+name: Codex Generate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate Codex artifacts
+        run: npm run generate:codex
+
+      - name: Check for stale generated output
+        run: |
+          git diff --exit-code packages/codex/AGENTS.md packages/codex/.codex || {
+            echo "ERROR: Generated Codex artifacts are stale. Run 'npm run generate:codex' and commit the results."
+            echo ""
+            echo "Changed files:"
+            git diff --name-only packages/codex/AGENTS.md packages/codex/.codex
+            exit 1
+          }
+          echo "Codex generated output is up to date."
+
+      - name: npm pack smoke test
+        run: npm pack --dry-run ./packages/codex

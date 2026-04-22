@@ -1,0 +1,55 @@
+{
+  "name": "@fortium/ensemble-codex",
+  "version": "5.3.0",
+  "description": "Codex CLI runtime support — translates Ensemble artifacts into Codex-compatible agents and skills",
+  "files": [
+    ".codex/",
+    "AGENTS.md",
+    "bin/",
+    ".claude-plugin/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "generate": "node ../../scripts/generate-codex/index.js",
+    "install:project": "node ./bin/install.js",
+    "test": "jest --passWithNoTests",
+    "validate:version": "node -e \"const p=require('./package.json');const c=require('./.claude-plugin/plugin.json');if(p.version!==c.version){console.error('Version mismatch: package.json='+p.version+' plugin.json='+c.version);process.exit(1)}console.log('Version sync OK:',p.version)\"",
+    "sync:version": "node ../../scripts/sync-codex-version.js",
+    "release-notes": "node ../../scripts/generate-codex-release-notes.js",
+    "prepublishOnly": "npm run generate && npm run test && npm run validate:version && npm pack --dry-run"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "ensemble",
+    "ai-agents",
+    "translation"
+  ],
+  "author": {
+    "name": "Fortium Partners",
+    "email": "support@fortiumpartners.com"
+  },
+  "license": "MIT",
+  "bin": {
+    "ensemble-codex-install": "./bin/install.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FortiumPartners/ensemble.git",
+    "directory": "packages/codex"
+  },
+  "homepage": "https://github.com/FortiumPartners/ensemble/tree/main/packages/codex",
+  "bugs": {
+    "url": "https://github.com/FortiumPartners/ensemble/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
