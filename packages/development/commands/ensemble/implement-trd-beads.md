@@ -400,39 +400,37 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
    -   Print BLOCKERS TO CLEAR from TRIAGE_OUTPUT blockers_to_clear section
    - If BV_AVAILABLE == false: print 'BV analysis unavailable. Using br-only execution order.'
 
-**9. Foreman Wheel Instructions Output**
-   Print Foreman-based execution instructions for multi-agent parallel implementation. AC: FR-WI-1, FR-WI-2, FR-WI-3, FR-WI-4, AC-WI-1, AC-WI-2
+**9. Wheel Instructions Output**
+   Print execution instructions for multi-agent parallel implementation. AC: FR-WI-1, FR-WI-2, FR-WI-3, FR-WI-4, AC-WI-1, AC-WI-2
 
-   - Print the following Foreman execution instructions:
+   - Print the following execution instructions:
    -   ================================================================
-   -   FOREMAN EXECUTION INSTRUCTIONS
+   -   EXECUTION INSTRUCTIONS
    -   ================================================================
-   -   Foreman orchestrates parallel agents across isolated git worktrees.
+   -   Use /ensemble:implement-trd-beads --execute or bv --robot-next to drive parallel implementation.
    -   Each bead runs through: Explorer → Developer → QA → Reviewer → Finalize
    -   ----------------------------------------------------------------
    -   PREREQUISITES (run once):
-   -     foreman doctor                    # Verify br, API key, dependencies
-   -     foreman init --name '<TRD_SLUG>'  # Initialize Foreman (if not done)
+   -     br list --status=open              # Sanity check that br works
    -   ----------------------------------------------------------------
    -   RUN (dispatches agents to all ready beads):
-   -     foreman run --max-agents <max_parallel>
-   -     # Foreman reads br ready, assigns beads to agents, runs pipeline,
+   -     /ensemble:implement-trd-beads --execute
+   -     # Or drive manually: bv --robot-next (repeat until epic is complete)
+   -     # Reads br ready beads, assigns to agents, runs pipeline,
    -     # merges completed branches, and closes beads automatically.
    -   ----------------------------------------------------------------
    -   MONITOR:
-   -     foreman status --watch            # Live agent + bead status
-   -     foreman inbox --all --watch        # Live inter-agent messages
+   -     br list --status=in_progress       # Live bead status
    -   ----------------------------------------------------------------
    -   DEBUG:
-   -     foreman debug <bead-id>           # AI analysis of failing bead
-   -     foreman inbox --bead <bead-id>    # Full message timeline for bead
+   -     br get <bead-id>                   # Inspect a specific bead
    -   ----------------------------------------------------------------
-   -   MERGE (runs automatically in foreman run loop):
-   -     foreman merge --target-branch feature/<TRD_SLUG>
+   -   MERGE:
+   -     git town propose                   # Propose PR for feature branch
    -   ================================================================
-   - If BV_AVAILABLE == true: also print the BV analysis from Scaffold Step 7 (parallel tracks and triage recommendations) above the Foreman instructions as planning context.
-   - If PLAN_ONLY=true: print 'Plan complete. Bead hierarchy created. Run /ensemble:implement-trd-beads --execute (or foreman run) to begin implementation.' and EXIT. Do not enter Execute phase.
-   - TIP: You can also run /ensemble:beads-plan <ROOT_EPIC_ID> at any time to regenerate bv analysis and Foreman instructions without re-running TRD scaffold.
+   - If BV_AVAILABLE == true: also print the BV analysis from Scaffold Step 7 (parallel tracks and triage recommendations) above the execution instructions as planning context.
+   - If PLAN_ONLY=true: print 'Plan complete. Bead hierarchy created. Run /ensemble:implement-trd-beads --execute to begin implementation.' and EXIT. Do not enter Execute phase.
+   - TIP: You can also run /ensemble:beads-plan <ROOT_EPIC_ID> at any time to regenerate bv analysis and execution instructions without re-running TRD scaffold.
 
 ### Phase 3: Execute
 
