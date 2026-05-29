@@ -6,6 +6,7 @@ category: implementation
 last-updated: 2026-05-27
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Task
 argument-hint: [trd-path] [--plan] [--execute] [--status] [--reset-task TRD-XXX] [max parallel N]
+model: medium
 ---
 <!-- DO NOT EDIT - Generated from implement-trd-beads.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->
@@ -56,7 +57,7 @@ Key behaviors:
    -        'Tasks completed: <M> / <Total>'
    -        '================================='
    -   5. EXIT
-   - If $ARGUMENTS contains '--status' AND TEAM_MODE=false: derive TRD_SLUG, run br list --status=open --json, filter JSON for entries with title matching [trd:<TRD_SLUG>] to find epic, then if BV_AVAILABLE run bv --robot-triage --format toon else run br list --status=open --json filtered by TRD slug, EXIT
+   - If $ARGUMENTS contains '--status' AND TEAM_MODE=false: derive TRD_SLUG, then call trd_progress() (Execute phase order 10) to print the TRD-scoped progress summary, EXIT
    - If $ARGUMENTS contains '--reset-task' AND TEAM_MODE=true: (TRD-030, AC: FR-IT-9, AC-BC-3)
    -   1. Extract TASK_ID from argument
    -   2. Find bead: br list --status=open --json OR br list --status=in_progress --json
@@ -104,8 +105,8 @@ Key behaviors:
    - If EXECUTE_ONLY=true: skip scaffold phase entirely. Run resume detection to find ROOT_EPIC_ID. If no existing scaffold found: print 'ERROR: --execute requires an existing bead scaffold. Run /ensemble:implement-trd-beads --plan first.' and EXIT.
    - Run: br list --status=open --json
    - Parse JSON output, search for entry where title matches pattern [trd:<TRD_SLUG>] with type epic
-   - If found AND EXECUTE_ONLY=false: set ROOT_EPIC_ID from JSON .id field, run br sync --flush-only, then if BV_AVAILABLE run bv --robot-triage --format toon else run br list --status=open --json filtered by TRD slug, skip Scaffold phase, proceed to Execute
-   - If found AND EXECUTE_ONLY=true: set ROOT_EPIC_ID from JSON .id field, run br sync --flush-only, then run bv --robot-triage --format toon (bv is guaranteed available — checked in Preflight Step 2), skip Scaffold phase, proceed to Execute
+   - If found AND EXECUTE_ONLY=false: set ROOT_EPIC_ID from JSON .id field, run br sync --flush-only, then call trd_progress() (Execute phase order 10) to show resumed TRD-scoped progress, skip Scaffold phase, proceed to Execute
+   - If found AND EXECUTE_ONLY=true: set ROOT_EPIC_ID from JSON .id field, run br sync --flush-only, then call trd_progress() (Execute phase order 10) to show resumed TRD-scoped progress, skip Scaffold phase, proceed to Execute
    - If not found: proceed to Feature Branch Creation then Scaffold
    - 
    - TRD-028 — Cross-Session Resume with Team Sub-State (AC: FR-IT-7, NFR-R-1, AC-RS-1, AC-RS-2, AC-RS-3, AC-RS-4):
@@ -623,7 +624,7 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
    - Else if EXECUTE_ONLY=true: use bv --robot-plan --format toon for parallel tracks; take up to max_parallel candidates; run file conflict detection; execute conflict-free group in parallel
    - Else if EXECUTE_ONLY=false AND BV_AVAILABLE: use bv --robot-plan --format toon for parallel tracks; take up to max_parallel candidates; run file conflict detection; execute conflict-free group in parallel
    - Else if EXECUTE_ONLY=false AND not BV_AVAILABLE: run br ready, filter by TRD slug, take up to max_parallel candidates; run file conflict detection; execute conflict-free group in parallel
-   - After each task (or parallel group): br sync --flush-only, then if EXECUTE_ONLY=true or BV_AVAILABLE run bv --robot-triage --format toon for progress check else run br list --status=open filtered by TRD slug
+   - After each task (or parallel group): br sync --flush-only, then call trd_progress() (order 10) for a TRD-scoped progress check
 
 **2. Task Claim and Specialist Selection**
    Claim task in beads before delegating to specialist agent
@@ -1023,6 +1024,25 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
    -   e. If target_state == 'in_progress' AND current_state was 'in_review' or 'in_qa' (i.e., a rejection path):
    -      Run: br update <bead_id> --status=open  (reset native br status so lead can re-assign)
 
+**10. Utility: TRD Progress Snapshot (trd_progress)**
+   Inline utility for accurate per-TRD progress reporting, referenced by the --status display (Preflight), resume detection, the per-task progress check, and the final summary. Computes task counts scoped to the current TRD only. Does NOT use bv --robot-triage/--robot-next: those operate on the entire beads project and cannot be scoped to a single TRD, so they report whole-repo numbers rather than this TRD's progress.
+
+   - Function signature: trd_progress() -> prints a TRD-scoped progress summary; returns (TOTAL, CLOSED, IN_PROGRESS, OPEN, PCT)
+   - Step 1: Run: br list --all --limit 0 --title-contains '[trd:<TRD_SLUG>:task:' --json  — capture as TASKS_JSON
+   -   Flag rationale (all three are required for an accurate count):
+   -     --all          : include closed tasks (br excludes closed by default — without it CLOSED is always 0)
+   -     --limit 0      : disable br's default 50-row cap (without it, TRDs with >50 tasks are silently truncated)
+   -     --title-contains: scope to this TRD's task beads only (the bracketed prefix is matched as a literal substring)
+   - Step 2: From TASKS_JSON compute: TOTAL = entry count; CLOSED = entries with .status=='closed'; IN_PROGRESS = .status=='in_progress'; OPEN = .status=='open'
+   - Step 3: PCT = round(100 * CLOSED / TOTAL) if TOTAL > 0 else 0
+   - Step 4: Print:
+   -   '=== TRD PROGRESS: <TRD_SLUG> ==='
+   -   'Tasks: <CLOSED>/<TOTAL> complete (<PCT>%)'
+   -   'In progress: <IN_PROGRESS> | Open: <OPEN>'
+   -   '================================'
+   - Step 5 (TEAM_MODE=true only): enrich the in_progress count with pipeline sub-state — for each in_progress bead call get_sub_state(bead_id) and tally building/in_review/in_qa, then append: 'Building: <b> | In review: <r> | In QA: <q>'
+   - Note: bv --robot-triage may still be run separately for project-wide graph insight, but its counts are GLOBAL across all epics/TRDs and must never be presented as this TRD's progress.
+
 ### Phase 4: Quality Gate
 
 **1. Phase Completion Detection**
@@ -1179,8 +1199,7 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
    -     Note: SATISFIED(code-review) = verified via TEAM_MODE=false code-reviewer approval; SATISFIED(qa-verified) = verified via TEAM_MODE=true QA agent
    -     ========================================
    - Run: br sync --flush-only
-   - If BV_AVAILABLE: run bv --robot-triage --format toon for final progress summary
-   - If not BV_AVAILABLE: run br list --status=open --json filtered by TRD slug (expect empty)
+   - Call trd_progress() (Execute phase order 10) for the final TRD-scoped progress summary (expect <TOTAL>/<TOTAL> complete, 100%)
    - Print stacked PR summary: '=== STACKED PR SUMMARY ===' followed by one line per phase: 'Phase <N>: <PHASE_PR_MAP[N]> (branch: <PHASE_BRANCH_MAP[N]> -> parent)'; end with '========================'
    - Remind user: PRs were created per-phase via git town propose. Merge Phase 1 PR first (it targets main). After each phase merges, git-town automatically retargets the next phase's PR against main.
    - Remind user: after all PRs merge, run: mv <trd_file> docs/TRD/completed/
@@ -1198,8 +1217,7 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
 - **TRD Checkboxes**: TRD Master Task List updated with completed checkboxes synced to bead closure state
 - **Wheel Instructions**: Printed agentic coding flywheel instructions with NTM spawn commands, agent self-selection loop, mail coordination, and progress monitoring commands
 - **BV Analysis**: Captured bv --robot-plan parallel execution tracks and bv --robot-triage scored recommendations (when bv available)
-- **Stacked Sprint PRs**: One git-town PR per phase (created via `git town propose` after each phase quality gate), each targeting the previous phase's branch
-- **Completion Report**: Summary with epic ID, coverage metrics, and stacked PR map
+- **Completion Report**: Summary with epic ID, coverage metrics, and PR creation reminder
 - **Requirement Satisfaction Report**: Table of PRD REQ-NNN requirements with SATISFIED/NOT VERIFIED status, test task references, and proven AC sub-IDs (generated from root epic req-verified comments)
 
 ## Usage
