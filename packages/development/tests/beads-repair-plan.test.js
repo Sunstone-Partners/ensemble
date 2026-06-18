@@ -20,6 +20,12 @@ describe('beads-repair-plan', () => {
     expect(plan.fixes[0].options).toContain('leave unchanged');
   });
 
+  test('shell-quotes orphan dependency commands', () => {
+    const plan = buildRepairPlan([{ id: 'finding-001', type: 'orphan', beadIds: ["child one", "parent'one"], recommendation: 'Relink' }]);
+    expect(plan.fixes[0].commands[0]).toBe(`br dep add 'child one' 'parent'"'"'one' --type parent-child`);
+    expect(plan.fixes[0].inverseCommands[0]).toBe(`br dep remove 'child one' 'parent'"'"'one'`);
+  });
+
   test('renders changed dependency edges in summary', () => {
     const summary = renderSummary({ applied: [{ verify: { kind: 'dependency_exists', source: 'a', target: 'b' } }], findings: [{}] });
     expect(summary.changedDependencyEdges).toEqual(['a -> b']);

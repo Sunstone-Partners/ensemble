@@ -19,6 +19,15 @@ describe('beads-scope', () => {
     expect(scope.root.id).toBe('e1');
   });
 
+  test('excludes closed root candidates case-insensitively', () => {
+    const scope = resolveScope([
+      { id: 'e1', title: '[trd:closed-demo] Epic', issue_type: 'epic', status: 'CLOSED' },
+      { id: 'e2', title: '[trd:open-demo] Epic', issue_type: 'epic', status: 'open' },
+    ], 'demo');
+    expect(scope.ok).toBe(true);
+    expect(scope.root.id).toBe('e2');
+  });
+
   test('reports ambiguous scope', () => {
     const scope = resolveScope([...issues, { id: 'e2', title: '[trd:demo-two] Epic', issue_type: 'epic', status: 'open' }], 'demo');
     expect(scope.ok).toBe(false);

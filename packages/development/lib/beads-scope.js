@@ -133,7 +133,8 @@ function resolveScope(input, query, opts = {}) {
   const roots = graph.beads.filter((b) => {
     const type = String(b.type || '').toLowerCase();
     const prefix = String(b.titlePrefix || '').toLowerCase();
-    return b.status !== 'closed' && (type === 'epic' || prefix.includes('release-train'));
+    const status = String(b.status || '').toLowerCase();
+    return status !== 'closed' && (type === 'epic' || prefix.includes('release-train'));
   });
   if (!q) return { ok: false, error: 'No scope supplied', candidates: roots };
   const matches = roots.filter((b) => b.id === q || slugify(b.title).includes(slugify(q)) || b.title.toLowerCase().includes(q.toLowerCase()));

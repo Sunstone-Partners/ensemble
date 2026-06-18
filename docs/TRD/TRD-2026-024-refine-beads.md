@@ -300,7 +300,7 @@ User input: /ensemble:refine-beads [EPIC_OR_RELEASE_TRAIN_OR_SLUG] [--scope proj
 
 - [x] **TRD-009-TEST**: Test findings summary output contract (1h) [verifies TRD-009] [satisfies REQ-012] [satisfies REQ-019] [depends: TRD-009]
   - Validates PRD ACs: AC-012-1, AC-012-2, AC-019-1, AC-019-2
-  - Target File: `packages/development/tests/refine-beads-output.test.js`
+  - Target File: `packages/development/tests/beads-refine-cli.test.js`
   - Test AC:
     - Given mixed findings, when rendered, then counts by type/severity are present.
     - Given no findings, when rendered, then next-step handoff text is present.
@@ -409,7 +409,7 @@ User input: /ensemble:refine-beads [EPIC_OR_RELEASE_TRAIN_OR_SLUG] [--scope proj
 
 - [x] **TRD-016-TEST**: Test final summary output shapes (1h) [verifies TRD-016] [satisfies REQ-018] [satisfies REQ-019] [depends: TRD-016]
   - Validates PRD ACs: AC-018-1, AC-018-2, AC-019-1, AC-019-2
-  - Target File: `packages/development/tests/refine-beads-output.test.js`
+  - Target File: `packages/development/tests/beads-refine-cli.test.js`
   - Test AC:
     - Given applied dependency fixes, when summary renders, then source/target edge rows are present.
     - Given skipped/failed fixes, when summary renders, then counts and remaining risks are present.

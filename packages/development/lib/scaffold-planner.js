@@ -307,6 +307,7 @@ function buildScaffoldPlan(parsed, opts) {
       priority,
       description,
       isTest: !!task.isTest,
+      dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn.slice() : [],
     });
   }
 

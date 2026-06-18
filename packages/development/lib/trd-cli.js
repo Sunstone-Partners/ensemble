@@ -311,7 +311,7 @@ function runWorkstreamPlan(argv, env) {
   const stackedPrs = flags.stacked === true ? true : useStackedPrs(env || {});
   const plan = buildWorkstreamPlan(items, { stackedPrs });
   const crossTrd = resolveCrossTrdDeps(plan.scaffoldPlans);
-  return Object.assign({ ok: plan.ok && crossTrd.ok, crossTrd }, plan);
+  return { ...plan, ok: plan.ok && crossTrd.ok, crossTrd };
 }
 
 /** `workstream-status [--workstream slug] [--issues-json path]` -> combined status summary. */

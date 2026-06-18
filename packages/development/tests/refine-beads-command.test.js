@@ -30,6 +30,13 @@ describe('refine-beads command', () => {
     expect(text).not.toMatch(/run bv(?! --robot|-)/i);
   });
 
+  test('generates repair plan before approval prompt', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('beads-refine-cli.js plan');
+    expect(text).toContain('capture REPAIR_PLAN');
+    expect(text).toContain('proposed br command(s) from REPAIR_PLAN');
+  });
+
   test('requires approval and dependency confirmation before mutation', () => {
     const text = fs.readFileSync(yamlPath, 'utf8');
     expect(text).toContain('Apply only explicitly approved fixes');

@@ -13,6 +13,14 @@ describe('beads-findings', () => {
     expect(findings.some((f) => f.type === 'traceability')).toBe(true);
   });
 
+  test('handles missing metadata arrays without throwing', () => {
+    const graph = normalizeGraph([{ id: 't1', title: '[trd:x:task:TRD-001] Task', issue_type: 'task', status: 'open' }]);
+    graph.beads[0].metadata.sourceReqs = undefined;
+    graph.beads[0].metadata.sourceAcs = undefined;
+    expect(() => detectFindings(graph)).not.toThrow();
+    expect(detectFindings(graph).some((f) => f.type === 'traceability')).toBe(true);
+  });
+
   test('detects PR boundary direction mismatch', () => {
     const graph = normalizeGraph([
       { id: 'p', title: '[trd:x:pr:1] PR 1', issue_type: 'feature' },

@@ -66,17 +66,24 @@ builders, reviewers, branches, commits, or PR creation.
 **3. Finding Detection**
    Detect graph, hierarchy, PR-boundary, traceability, duplicate, and order issues
 
-   - Run: node packages/development/lib/beads-refine-cli.js analyze --issues-json <ISSUE_JSON_FILE> [--bv-json <BV_JSON_FILE>] [--query <SCOPE_QUERY>|--scope project]
+   - Run: node packages/development/lib/beads-refine-cli.js analyze --issues-json <ISSUE_JSON_FILE> [--bv-json <BV_JSON_FILE>] [--query <SCOPE_QUERY>|--scope project] and capture FINDINGS_JSON.
    - Findings MUST include affected bead IDs, severity, issue type, recommendation, and source (br, bv, or derived).
    - Detect cycles, stale blockers, missing blockers, contradictory priority/order recommendations, orphaned tasks, missing parent/child links, PR-boundary mismatches, missing PR metadata, missing requirement/AC traceability, missing requirement detail, duplicate or near-duplicate tasks.
    - No br update, br dep add, br dep remove, br close, branch, test, builder, reviewer, or implementation command may run in this phase.
+
+**4. Generate Repair Plan**
+   Convert findings into approval-gated br repair commands
+
+   - Run: node packages/development/lib/beads-refine-cli.js plan --findings <FINDINGS_JSON_FILE> and capture REPAIR_PLAN.
+   - Each repair plan entry must include finding ID, proposed br command(s), expected graph effect, verification spec, risk, and inverse commands when available.
+   - If a finding requires user resolution, the repair plan entry must be marked skipped/manual and must not include executable br commands.
 
 ### Phase 3: Approval and Repair Planning
 
 **1. Present Findings and Proposed Fixes**
    Show consolidated findings before any mutation
 
-   - Group findings by issue type. For each finding print finding ID, severity, affected bead IDs, recommendation, proposed br command(s), and expected graph effect.
+   - Group findings by issue type. For each finding print finding ID, severity, affected bead IDs, recommendation, proposed br command(s) from REPAIR_PLAN, and expected graph effect.
    - If no findings are detected: print "Graph is refinement-ready" and suggest /ensemble:beads-plan or /ensemble:beads-build; then run br sync --flush-only and exit.
 
 **2. User Approval**

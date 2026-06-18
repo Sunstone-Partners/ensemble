@@ -93,10 +93,12 @@ function detectTraceability(graph, scopeIds) {
   const findings = [];
   for (const bead of graph.beads.filter((b) => scopeIds.has(b.id))) {
     if (!/task/i.test(bead.type)) continue;
-    if (!bead.metadata.sourceReqs.length && !/INFRA|ARCH/.test(bead.description)) {
+    const sourceReqs = Array.isArray(bead.metadata.sourceReqs) ? bead.metadata.sourceReqs : [];
+    const sourceAcs = Array.isArray(bead.metadata.sourceAcs) ? bead.metadata.sourceAcs : [];
+    if (!sourceReqs.length && !/INFRA|ARCH/.test(bead.description)) {
       findings.push(makeFinding('traceability', 'medium', [bead.id], 'Task lacks requirement traceability metadata.', 'Add requirement/AC context as a bead comment or regenerate scaffold metadata.'));
     }
-    if (!bead.metadata.sourceAcs.length && !/INFRA|ARCH/.test(bead.description)) {
+    if (!sourceAcs.length && !/INFRA|ARCH/.test(bead.description)) {
       findings.push(makeFinding('traceability', 'low', [bead.id], 'Task lacks acceptance criteria metadata.', 'Add AC references or proof-of-requirement context.'));
     }
   }

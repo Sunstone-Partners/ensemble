@@ -36,7 +36,7 @@ function planFixForFinding(finding, index) {
   if (finding.type === 'orphan' && beadIds.length >= 2) {
     const child = beadIds[0];
     const parent = beadIds[1];
-    return fix(id, finding, [`br dep add ${child} ${parent} --type parent-child`], { kind: 'dependency_exists', source: child, target: parent }, { risk: 'medium', inverseCommands: [`br dep remove ${child} ${parent}`] });
+    return fix(id, finding, [`br dep add ${shellQuote(child)} ${shellQuote(parent)} --type parent-child`], { kind: 'dependency_exists', source: child, target: parent }, { risk: 'medium', inverseCommands: [`br dep remove ${shellQuote(child)} ${shellQuote(parent)}`] });
   }
   if (finding.type === 'duplicate') {
     return fix(id, finding, [], { kind: 'manual_review_required' }, {
