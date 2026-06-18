@@ -1,11 +1,12 @@
 ---
 document_id: TRD-2026-023
 prd_reference: docs/PRD/PRD-2026-023-multi-trd-beads-workstream.md
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: 2026-06-17
 design_readiness_score: 4.75
 architecture_option: C - Balanced brownfield extraction
+prd_version: 1.0.1
 ---
 
 # TRD-2026-023: Multi-TRD Beads Workstream
@@ -575,6 +576,14 @@ No circular dependencies identified.
 | `packages/development/tests/fixtures/workstream-*.md` | New: multi-TRD fixtures |
 | `packages/development/README.md` | Modify: document usage |
 | `packages/development/CHANGELOG.md` | Modify: record feature |
+
+## Changelog
+
+### 1.0.1 — 2026-06-17
+
+- Confirmed Option C — Balanced brownfield extraction as selected architecture.
+- Synced TRD metadata to PRD version 1.0.1.
+- Preserved existing task plan: 5 PR boundaries, 15 implementation tasks, 15 paired test tasks.
 
 ## Next Steps
 
