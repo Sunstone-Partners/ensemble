@@ -22,6 +22,7 @@ Part of the ensemble plugin ecosystem for Claude Code. This plugin provides deve
 |---------|-------------|
 | `/ensemble:implement-trd` | Complete TRD implementation using git-town workflow with TDD methodology |
 | `/ensemble:implement-trd-beads` | TRD implementation with persistent beads project management — epic/story/task hierarchy, `bd ready` execution loop, cross-session resumability |
+| `/ensemble:refine-beads` | Approval-gated Beads graph refinement before execution — detects dependency, hierarchy, PR-boundary, traceability, and duplicate-task gaps; applies approved `br` repairs and revalidates with `bv --robot-*` |
 | `/ensemble:create-trd` | Create a Technical Requirements Document from a PRD |
 | `/ensemble:create-trd-foreman` | Create a Foreman-native structured TRD that `foreman sling prd` can consume |
 | `/ensemble:refine-trd` | Refine and improve an existing TRD |
@@ -60,6 +61,30 @@ Combined workstream mode:
 - reports release train progress plus per-TRD ready/blocked/in-progress counts.
 
 If stacked PR support is enabled with `ENSEMBLE_USE_STACKED_PRS=true`, combined mode prints `Combined workstream mode: stacked PRs enabled`; otherwise it offers scaffold-only or alternate execution paths.
+
+### Refine Beads Graphs
+
+Use `/ensemble:refine-beads` before execution when a Beads scaffold needs graph cleanup:
+
+```bash
+/ensemble:refine-beads ensemble-abc1
+/ensemble:refine-beads trd-2026-024-refine-beads
+/ensemble:refine-beads --scope project
+```
+
+The command:
+
+- runs read-only analysis before any mutation;
+- uses `br` for all approved updates;
+- uses only `bv --robot-*` graph analysis, never bare interactive `bv`;
+- reports cycles, orphan tasks, stale/missing blockers, PR-boundary gaps, missing requirement/AC traceability, duplicates, and priority/order mismatches;
+- requires explicit user approval before applying fixes;
+- requires separate confirmation for dependency updates;
+- verifies each `br` command before continuing;
+- stops on failure and offers retry, skip, inverse commands, cancel remaining, or abort;
+- never starts builders, tests, branches, commits, PRs, or implementation loops.
+
+After refinement, continue with `/ensemble:beads-plan` or `/ensemble:beads-build`.
 
 ## Documentation
 

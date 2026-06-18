@@ -140,6 +140,7 @@ Commands are provided by specific plugins:
 - `/create-trd` - Technical requirements (ensemble-core)
 - `/implement-trd` - TRD implementation (ensemble-development)
 - `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation
+- `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*`
 - `/fold-prompt` - Project optimization (ensemble-core)
 - `/dashboard` - Metrics dashboard (ensemble-metrics)
 

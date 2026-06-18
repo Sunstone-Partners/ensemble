@@ -1,0 +1,159 @@
+metadata:
+  name: ensemble:refine-beads
+  description: Approval-gated Beads graph refinement before execution
+  version: 1.0.0
+  lastUpdated: "2026-06-18"
+  category: implementation
+  output_path: ensemble/refine-beads.md
+  source: fortium
+  model: medium
+  argument_hint: "[epic-id|release-train-id|slug] [--scope project]"
+  allowed_tools:
+    - Bash
+    - Read
+
+mission:
+  summary: |
+    Refine a Beads dependency graph before execution. The command analyzes a selected
+    epic/release-train subtree by default, or the whole project when --scope project is
+    explicitly supplied. It detects hierarchy gaps, dependency issues, PR-boundary
+    mismatches, missing requirement/AC traceability, duplicate tasks, and priority/order
+    contradictions. Analysis is read-only until the user approves selected fixes.
+
+    All Beads updates use br. Graph analysis uses only bv --robot-* flags; never run
+    bare interactive bv. This command never executes implementation work, tests,
+    builders, reviewers, branches, commits, or PR creation.
+
+workflow:
+  phases:
+    - name: Preflight
+      order: 1
+      steps:
+        - order: 1
+          title: Argument Parsing
+          description: Parse scope and mode from arguments
+          actions:
+            - 'Parse $ARGUMENTS. If --scope project is present, set SCOPE_MODE=project and warn: "Project scope may affect unrelated epics."'
+            - 'Otherwise extract first token as SCOPE_QUERY. It may be an epic ID, release train ID, or slug pattern.'
+            - 'If no SCOPE_QUERY and SCOPE_MODE is not project, prepare to list candidate open epics/release trains and ask the user to select one.'
+
+        - order: 2
+          title: Tool Availability Check
+          description: Verify br and detect bv without launching interactive tools
+          actions:
+            - 'Run: which br || { echo "ERROR: br (beads_rust) not installed."; exit 1; }'
+            - 'Run: br list --status=open > /dev/null 2>&1 || { echo "ERROR: br not functional — check beads store."; exit 1; }'
+            - 'Run: which bv && BV_AVAILABLE=true || { echo "WARNING: bv unavailable; br-only analysis will run."; BV_AVAILABLE=false; }'
+
+        - order: 3
+          title: Scope Resolution
+          description: Resolve exactly one subtree scope or explicit project scope
+          actions:
+            - 'Run: br list --json and capture ISSUE_JSON. This is read-only.'
+            - 'If SCOPE_MODE=project: continue with all issues and include affected epic/release-train context in every finding where possible.'
+            - 'If SCOPE_QUERY is empty: list open epic/release-train candidates from ISSUE_JSON and ask the user to select one; store selected bead ID as SCOPE_QUERY.'
+            - 'Run: node packages/development/lib/beads-refine-cli.js analyze --issues-json <ISSUE_JSON_FILE> --query <SCOPE_QUERY> only for scope validation; if zero or multiple matches, print candidates and HALT.'
+
+    - name: Read-Only Graph Analysis
+      order: 2
+      steps:
+        - order: 1
+          title: Sync Before Graph Analysis
+          description: Flush Beads state before bv reads it
+          actions:
+            - 'Run: br sync --flush-only'
+
+        - order: 2
+          title: Robot Graph Analysis
+          description: Collect bv robot outputs without running bare bv
+          actions:
+            - 'If BV_AVAILABLE=true: run bv --robot-insights and capture JSON/text output. Do not run bare bv.'
+            - 'If BV_AVAILABLE=true: run bv --robot-plan and capture JSON/text output. Do not run bare bv.'
+            - 'If BV_AVAILABLE=true and supported: run bv --robot-alerts or bv --robot-suggest. Do not run bare bv.'
+            - 'If any bv --robot-* call fails, warn and continue with br-derived findings.'
+
+        - order: 3
+          title: Finding Detection
+          description: Detect graph, hierarchy, PR-boundary, traceability, duplicate, and order issues
+          actions:
+            - 'Run: node packages/development/lib/beads-refine-cli.js analyze --issues-json <ISSUE_JSON_FILE> [--bv-json <BV_JSON_FILE>] [--query <SCOPE_QUERY>|--scope project]'
+            - 'Findings MUST include affected bead IDs, severity, issue type, recommendation, and source (br, bv, or derived).'
+            - 'Detect cycles, stale blockers, missing blockers, contradictory priority/order recommendations, orphaned tasks, missing parent/child links, PR-boundary mismatches, missing PR metadata, missing requirement/AC traceability, missing requirement detail, duplicate or near-duplicate tasks.'
+            - 'No br update, br dep add, br dep remove, br close, branch, test, builder, reviewer, or implementation command may run in this phase.'
+
+    - name: Approval and Repair Planning
+      order: 3
+      steps:
+        - order: 1
+          title: Present Findings and Proposed Fixes
+          description: Show consolidated findings before any mutation
+          actions:
+            - 'Group findings by issue type. For each finding print finding ID, severity, affected bead IDs, recommendation, proposed br command(s), and expected graph effect.'
+            - 'If no findings are detected: print "Graph is refinement-ready" and suggest /ensemble:beads-plan or /ensemble:beads-build; then run br sync --flush-only and exit.'
+
+        - order: 2
+          title: User Approval
+          description: Apply only explicitly approved fixes
+          actions:
+            - 'Ask user to approve none, selected fix IDs, or all non-dependency fixes.'
+            - 'If the user selects all and any fix contains br dep add or br dep remove, ask a separate explicit confirmation before dependency commands run.'
+            - 'For cycles or contradictory dependency recommendations, ask the user how to resolve: retry with chosen edge, skip, reverse selected edge, or abort.'
+            - 'If the user does not choose a cycle/contradiction resolution, skip or block the affected fix. Never guess.'
+
+    - name: Apply Approved Repairs
+      order: 4
+      steps:
+        - order: 1
+          title: Ordered br Repair Plan
+          description: Execute approved br commands one at a time
+          actions:
+            - 'Run: br sync --flush-only before applying fixes.'
+            - 'Print the ordered repair plan.'
+            - 'For each approved fix, run exactly one br command at a time. Supported mutations include br comments add, br update, br dep add, and br dep remove as generated by the repair plan.'
+            - 'After each successful br command, run node packages/development/lib/beads-refine-cli.js verify with the verification spec for that fix. Continue only if verification passes.'
+
+        - order: 2
+          title: Failure Recovery
+          description: Stop on failure and ask user how to proceed
+          actions:
+            - 'If a br command fails, stop applying further fixes immediately.'
+            - 'Report failed command, stdout/stderr summary, fix ID, and progress count.'
+            - 'Offer recovery choices: retry failed command, skip failed fix, print/run inverse commands when possible, cancel remaining fixes, or abort.'
+            - 'Do not run remaining fixes before the user chooses a recovery option.'
+
+    - name: Post-Repair Validation and Handoff
+      order: 5
+      steps:
+        - order: 1
+          title: Sync and Revalidate
+          description: Persist successful changes and rerun graph validation
+          actions:
+            - 'If at least one fix succeeded, run br sync --flush-only.'
+            - 'If BV_AVAILABLE=true, rerun bv --robot-insights and bv --robot-plan. Do not run bare bv.'
+            - 'Summarize remaining cycles, blockers, hierarchy gaps, and risks.'
+
+        - order: 2
+          title: Final Refinement Summary
+          description: Print concise summary and next steps
+          actions:
+            - 'Print counts: findings found, fixes approved, fixes applied, fixes skipped, failed fixes, and remaining graph issues.'
+            - 'If dependency updates were applied, list each changed dependency edge with source and target bead IDs.'
+            - 'Print next steps: /ensemble:beads-plan <scope> or /ensemble:beads-build <scope>.'
+            - 'Run: br sync --flush-only before exit.'
+
+expectedInput:
+  format: Beads scope reference
+  sections:
+    - name: Scope
+      required: false
+      description: Epic ID, release train ID, slug pattern, or --scope project
+
+expectedOutput:
+  format: Findings, approval prompts, applied repair report, and graph revalidation summary
+  structure:
+    - name: Findings
+      description: Grouped issue findings with affected bead IDs and recommendations
+    - name: Proposed Fixes
+      description: br repair commands with expected graph effect and verification plan
+    - name: Final Summary
+      description: Counts for findings, approved/applied/skipped/failed fixes, remaining risks, and next steps

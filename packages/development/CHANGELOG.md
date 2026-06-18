@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supports source-qualified cross-TRD dependencies: `<trd-slug>#TRD-NNN` and `<trd-slug>#PR-N`.
   - Adds `validate-workstream`, `workstream-plan`, and `workstream-status` TRD CLI helpers.
   - Uses `bv --robot-*` validation for graph checks and prompts on ambiguous/cyclic dependency changes.
+- `refine-beads` command for approval-gated Beads graph refinement before execution.
+  - Detects dependency graph, hierarchy, PR-boundary, traceability, duplicate-task, and priority/order issues.
+  - Proposes ordered `br` repair plans and verifies each approved mutation.
+  - Requires explicit dependency confirmation and user resolution for cycles/contradictions.
+  - Revalidates with `bv --robot-*` and never starts implementation work.
 
 - Plugin extraction and population (in progress)
 
