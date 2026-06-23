@@ -20,9 +20,10 @@ that preserves source PRD/TRD/REQ/AC provenance and can be passed as the
 single input to /ensemble:implement-trd-beads.
 
 Source TRDs remain canonical. The generated workstream TRD is an execution
-artifact that normalizes the Master Task List and decomposes every referenced
-PRD acceptance criterion into AC-level implementation, executable-test, and
-validation tasks with Definition of Done evidence requirements. Generated workstream files
+artifact that normalizes the graph-critical Master Task List while preserving
+source task markdown verbatim. It decomposes every referenced PRD acceptance
+criterion into AC-level implementation, executable-test, and validation tasks
+with Definition of Done evidence requirements. Generated workstream files
 use micro UUID document IDs (TRD-YYYY-<8hex>-workstream-<slug>.md), not
 sequence numbers, to avoid collisions across large teams.
 
@@ -42,7 +43,7 @@ sequence numbers, to avoid collisions across large teams.
 
    - Run: node "$TRD_CLI" create-workstream-trd <TRD_PATHS...> plus --out <path> if provided.
    - Parse JSON stdout. If ok is false, process exits non-zero, or JSON malformed: print every error and HALT.
-   - The generated file MUST contain a Source TRD Manifest, normalized Master Task List, source provenance, AC-level implementation tasks, AC-level executable test tasks, AC validation tasks, and Definition of Done evidence requirements. Default output path format is docs/TRD/workstreams/TRD-YYYY-<micro_uuid>-workstream-<slug>.md.
+   - The generated file MUST contain a Source TRD Manifest, normalized Master Task List, source provenance, verbatim source task markdown payloads, AC-level implementation tasks, AC-level executable test tasks, AC validation tasks, and Definition of Done evidence requirements. Default output path format is docs/TRD/workstreams/TRD-YYYY-<micro_uuid>-workstream-<slug>.md.
 
 **3. Report**
    Tell the user how to execute the generated workstream

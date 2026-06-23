@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.9.2] - 2026-06-23
+
+### Fixed
+
+- Preserve verbatim source TRD task markdown in generated workstream tasks so deterministic parsing does not discard semantic detail.
+
 ## [6.9.1] - 2026-06-23
 
 ### Fixed

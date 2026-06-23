@@ -29,11 +29,19 @@ function uniq(items) {
   return [...new Set((items || []).filter(Boolean))];
 }
 
+function renderQuotedMarkdownBlock(lines, markdown) {
+  lines.push('  - Source Task Markdown (verbatim):');
+  String(markdown || '')
+    .split('\n')
+    .forEach((line) => lines.push(`    > ${line}`));
+}
+
 function renderTaskBody(task, item, sourceIndex, idMap) {
   const lines = [];
   lines.push(`  - Source TRD: ${item.trdPath}`);
   if (item.parsed.prdReference) lines.push(`  - Source PRD: ${item.parsed.prdReference}`);
   lines.push(`  - Source Task: ${task.id}`);
+  if (task.rawMarkdown) renderQuotedMarkdownBlock(lines, task.rawMarkdown);
   if (task.satisfies && task.satisfies.length) lines.push(`  - [satisfies ${task.satisfies[0]}]`);
   if (task.validatesAcs && task.validatesAcs.length) lines.push(`  - Validates PRD ACs: ${task.validatesAcs.join(', ')}`);
   if (task.targetFiles && task.targetFiles.length) lines.push(`  - Target Files: ${task.targetFiles.join(', ')}`);
@@ -149,6 +157,9 @@ function generateWorkstreamTrd(items, opts = {}) {
       if (item.parsed.prdReference) lines.push(`  - Source PRD: ${item.parsed.prdReference}`);
       lines.push(`  - Source AC: ${ac}`);
       lines.push(`  - Source Tasks: ${sourceTaskText}`);
+      sourceTasks.forEach((sourceTask) => {
+        if (sourceTask.rawMarkdown) renderQuotedMarkdownBlock(lines, sourceTask.rawMarkdown);
+      });
       lines.push(`  - Validates PRD ACs: ${ac}`);
       if (targetFiles.length) lines.push(`  - Target Files: ${targetFiles.join(', ')}`);
       lines.push('  - Actions:');
@@ -170,6 +181,9 @@ function generateWorkstreamTrd(items, opts = {}) {
       if (item.parsed.prdReference) lines.push(`  - Source PRD: ${item.parsed.prdReference}`);
       lines.push(`  - Source AC: ${ac}`);
       lines.push(`  - Source Tasks: ${sourceTaskText}`);
+      sourceTasks.forEach((sourceTask) => {
+        if (sourceTask.rawMarkdown) renderQuotedMarkdownBlock(lines, sourceTask.rawMarkdown);
+      });
       lines.push(`  - Validates PRD ACs: ${ac}`);
       if (targetFiles.length) lines.push(`  - Target Files: ${targetFiles.join(', ')}`);
       lines.push('  - Test AC:');
@@ -184,6 +198,9 @@ function generateWorkstreamTrd(items, opts = {}) {
       if (item.parsed.prdReference) lines.push(`  - Source PRD: ${item.parsed.prdReference}`);
       lines.push(`  - Source AC: ${ac}`);
       lines.push(`  - Source Tasks: ${sourceTaskText}`);
+      sourceTasks.forEach((sourceTask) => {
+        if (sourceTask.rawMarkdown) renderQuotedMarkdownBlock(lines, sourceTask.rawMarkdown);
+      });
       lines.push(`  - Validates PRD ACs: ${ac}`);
       lines.push('  - Test AC:');
       lines.push(`    - [ ] Executable tests prove ${ac}`);

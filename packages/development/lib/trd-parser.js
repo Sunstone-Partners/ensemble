@@ -509,7 +509,8 @@ function isTestSubitem(text) {
  * Build a Task object from its line index range within `scopeLines`.
  */
 function buildTask(id, taskLineText, bodyLines, phaseN) {
-  const bodyText = [taskLineText, ...bodyLines].join('\n');
+  const rawMarkdown = [taskLineText, ...bodyLines].join('\n');
+  const bodyText = rawMarkdown;
   const fullText = bodyText;
 
   // Description = the task-line remainder, but stripped of trailing
@@ -580,6 +581,7 @@ function buildTask(id, taskLineText, bodyLines, phaseN) {
     nestedSubitems,
     testSubitems,
     proofOfRequirement,
+    rawMarkdown,
   };
 }
 

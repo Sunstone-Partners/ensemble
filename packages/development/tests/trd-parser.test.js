@@ -774,6 +774,7 @@ describe('parseTRD — ParsedTRD contract shape', () => {
         'nestedSubitems',
         'phaseN',
         'proofOfRequirement',
+        'rawMarkdown',
         'satisfies',
         'targetFiles',
         'testAc',

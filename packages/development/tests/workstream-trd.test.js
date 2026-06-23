@@ -5,9 +5,10 @@ const os = require('os');
 const path = require('path');
 const { runCreateWorkstreamTrd } = require('../lib/trd-cli');
 const { nextWorkstreamPath } = require('../lib/workstream-trd');
+const { parseTRD } = require('../lib/trd-parser');
 
 function trd(title, n, ac) {
-  return `---\ndesign_readiness_score: 4.5\nstatus: Draft\n---\n# ${title}\n\nSummary.\n\nBased on PRD: docs/PRD/PRD-2026-00${n}.md\n\n## Master Task List\n\n### PR 1: Feature\n\n**Shippable State:** Done.\n\n- [ ] **TRD-001**: Implement thing [satisfies REQ-001]\n  - Validates PRD ACs: ${ac}\n  - Actions:\n    1. Build it\n`;
+  return `---\ndesign_readiness_score: 4.5\nstatus: Draft\n---\n# ${title}\n\nSummary.\n\nBased on PRD: docs/PRD/PRD-2026-00${n}.md\n\n## Master Task List\n\n### PR 1: Feature\n\n**Shippable State:** Done.\n\n- [ ] **TRD-001**: Implement thing [satisfies REQ-001]\n  - Validates PRD ACs: ${ac}\n  - Actions:\n    1. Build it\n    2. Preserve nuanced source detail\n  - Implementation Notes:\n    - Use the existing service boundary\n    - Do not flatten this note away\n`;
 }
 
 describe('create-workstream-trd', () => {
@@ -34,7 +35,19 @@ describe('create-workstream-trd', () => {
     expect(md).toContain('Validate AC-001-1 implementation and tests');
     expect(md).toContain('Validation AC:');
     expect(md).toContain('ac-validation:AC-001-1');
+    expect(md).toContain('Source Task Markdown (verbatim):');
+    expect(md).toContain('>     2. Preserve nuanced source detail');
+    expect(md).toContain('>     - Do not flatten this note away');
     expect(md).toContain('/ensemble:implement-trd-beads');
+
+    const parsed = parseTRD(md);
+    expect(Object.keys(parsed.tasksById)).toEqual(expect.arrayContaining([
+      'TRD-S01-001',
+      'TRD-S01-AC-001-1-IMPL',
+      'TRD-S01-AC-001-1-TEST',
+      'TRD-S01-AC-001-1',
+    ]));
+    expect(parsed.warnings).not.toContain('Duplicate task id: TRD-001');
   });
 
   test('default workstream path uses micro UUID instead of sequence number', () => {
