@@ -23,6 +23,7 @@
  *   next-task    <trd-path> --ready a,b [--closed a,b] [--max N]
  *   pr-plan      <trd-path> [--stacked]
  *   validate-workstream <trd-path...>
+ *   create-workstream-trd <trd-path...> [--out path]
  *   workstream-plan <trd-path...> [--stacked]
  *   workstream-status [--workstream slug] [--issues-json path]
  */
@@ -41,6 +42,7 @@ const { buildScaffoldPlan } = require('./scaffold-planner');
 const { buildWorkstreamPlan, validateWorkstream } = require('./workstream-planner');
 const { resolveCrossTrdDeps } = require('./cross-trd-deps');
 const { summarizeWorkstream } = require('./workstream-status');
+const { generateWorkstreamTrd, nextWorkstreamPath } = require('./workstream-trd');
 const { useStackedPrs, branchName, planPrActions } = require('./pr-strategy');
 
 // ---------------------------------------------------------------------------
@@ -301,6 +303,21 @@ function runValidateWorkstream(argv) {
   return validateWorkstream(items);
 }
 
+/** `create-workstream-trd <trd-path...> [--out path]` -> write normalized executable TRD. */
+function runCreateWorkstreamTrd(argv) {
+  const { positionals, flags } = parseArgs(argv, new Set(['out']));
+  if (positionals.length < 2) {
+    throw new Error('create-workstream-trd requires two or more TRD paths');
+  }
+  const items = loadWorkstreamItems(positionals);
+  const generated = generateWorkstreamTrd(items, { allowInvalid: flags['allow-invalid'] === true });
+  if (!generated.ok) return generated;
+  const outPath = flags.out || nextWorkstreamPath('docs/TRD/workstreams', new Date().getFullYear(), generated.workstreamSlug);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, generated.markdown);
+  return { ok: true, path: outPath, workstreamSlug: generated.workstreamSlug, sourceTrds: positionals, errors: generated.errors || [] };
+}
+
 /** `workstream-plan <trd-path...> [--stacked]` -> release train + per-TRD scaffold plans. */
 function runWorkstreamPlan(argv, env) {
   const { positionals, flags } = parseArgs(argv);
@@ -336,6 +353,7 @@ const HANDLERS = {
   'next-task': (argv) => runNextTask(argv),
   'pr-plan': (argv) => runPrPlan(argv, process.env),
   'validate-workstream': (argv) => runValidateWorkstream(argv),
+  'create-workstream-trd': (argv) => runCreateWorkstreamTrd(argv),
   'workstream-plan': (argv) => runWorkstreamPlan(argv, process.env),
   'workstream-status': (argv) => runWorkstreamStatus(argv),
 };
@@ -357,7 +375,7 @@ function main(argv) {
     process.stdout.write(
       JSON.stringify({
         error:
-          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|validate-workstream|workstream-plan|workstream-status> <trd-path> [...]',
+          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|validate-workstream|create-workstream-trd|workstream-plan|workstream-status> <trd-path> [...]',
       }) + '\n'
     );
     return 1;
@@ -394,6 +412,7 @@ module.exports = {
   runNextTask,
   runPrPlan,
   runValidateWorkstream,
+  runCreateWorkstreamTrd,
   runWorkstreamPlan,
   runWorkstreamStatus,
   main,

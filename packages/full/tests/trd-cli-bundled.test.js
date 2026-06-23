@@ -13,6 +13,7 @@ describe('ensemble-full bundled development CLIs', () => {
       'workstream-planner.js',
       'cross-trd-deps.js',
       'workstream-status.js',
+      'workstream-trd.js',
       'beads-refine-cli.js',
       'beads-scope.js',
       'beads-findings.js',

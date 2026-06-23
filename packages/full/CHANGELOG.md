@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.7.0] - 2026-06-20
+
+### Added
+
+- Add `/ensemble:create-workstream-trd` to generate a single executable workstream TRD from multiple source TRDs while preserving provenance.
+- Deprecate direct multi-TRD `/ensemble:implement-trd-beads` execution; require generated workstream TRDs by default.
+
 ## [6.6.5] - 2026-06-20
 
 ### Fixed

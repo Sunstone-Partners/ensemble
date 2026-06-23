@@ -42,3 +42,15 @@ describe('implement-trd-beads RCA quality gates', () => {
     expect(text).toContain('Only close when verdict:proven');
   });
 });
+
+
+describe('implement-trd-beads direct multi-TRD deprecation', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+  test('errors on direct multiple TRDs and points to create-workstream-trd', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('Multiple TRDs passed directly');
+    expect(text).toContain('/ensemble:create-workstream-trd');
+    expect(text).toContain('--legacy-multi');
+    expect(text).toContain('DEPRECATED: direct multi-TRD mode');
+  });
+});
