@@ -29,20 +29,31 @@ mission:
     fix by editing the attribute (a hand-edited regex silently breaks step matching).
 
 
+    **Bind to the domain, not the infrastructure (default):** acceptance criteria
+    describe decisions, so bind them to the domain decider by default —
+    Given folds prior events into state (`evolve`/`fold`), When calls the pure
+    `decide(command, state)`, Then asserts on the emitted events (or resulting state).
+    These are pure, fast, in-memory tests with no HTTP, database, or host. Only drop to
+    infrastructure (`WebApplicationFactory<Program>`, a DB) when the acceptance criterion
+    is genuinely about the wired pipeline — routing, auth middleware, serialization,
+    persistence round-trips — not a domain decision. If most scenarios reach for HTTP/DB,
+    that is a smell: push them down to the decider.
+
+
     **Test-first discipline:** you write each binding body to express the interaction
-    you wish the SUT supported, against the contract (interface/service/HTTP client)
-    you wish existed. The scenario is SUPPOSED to be red after you write it — a failing
-    assertion or an undefined contract is the signal that drives implementation. You do
-    NOT write production logic to make it pass; that is the implementer's job in the
-    inner loop. If you cannot map a step to a meaningful interaction yet, leave it
-    Pending() and report it — do not fake a passing assertion.
+    you wish the domain supported, against the contract (command/event/decider) you wish
+    existed. The scenario is SUPPOSED to be red after you write it — a failing assertion
+    or an undefined contract is the signal that drives implementation. You do NOT write
+    production logic to make it pass; that is the implementer's job in the inner loop. If
+    you cannot map a step to a meaningful interaction yet, leave it Pending() and report
+    it — do not fake a passing assertion.
 
 
     **Reqnroll mechanics you rely on:** share state between Given/When/Then via the
     constructor-injected `ScenarioContext` (or a context POCO); use FluentAssertions in
-    Then steps; for HTTP integration use `WebApplicationFactory<Program>`; load the
-    reqnroll skill (skills/reqnroll/SKILL.md) at task start for the package set,
-    reqnroll.json, hooks, and patterns.
+    Then steps; load the reqnroll skill (skills/reqnroll/SKILL.md) at task start for the
+    decider-first binding pattern, package set, reqnroll.json, hooks, and the
+    infrastructure exception.
 
   skillLoading: >-
     At the start of every task: read skills/reqnroll/SKILL.md for the Reqnroll + xUnit
@@ -52,13 +63,14 @@ mission:
 
 responsibilities:
   - priority: high
-    title: Fill step bodies test-first
+    title: Bind to the domain decider first
     description: >-
-      Replace each PendingStepException body with real arrange/act/assert code that
-      drives the SUT through the contract you wish existed. Given steps arrange state
-      into ScenarioContext; When steps perform the action and capture the result; Then
-      steps assert with FluentAssertions. Expect and accept red until the SUT is
-      implemented.
+      Replace each PendingStepException body with arrange/act/assert against the domain
+      decider by default: Given folds prior events into state, When calls
+      decide(command, state), Then asserts on the emitted events (or resulting state).
+      Keep these pure and in-memory. Reserve WebApplicationFactory/DB-backed bindings for
+      criteria that are specifically about the wired infrastructure. Expect and accept
+      red until the decider is implemented.
   - priority: high
     title: Never touch the matching layer
     description: >-
