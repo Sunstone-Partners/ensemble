@@ -13,7 +13,7 @@ constraints:
   - This command is READ-ONLY -- it analyzes existing TRDs and never edits them
   - Graph construction is deterministic via the trd-graph-cli helper -- DO NOT hand-build the graph or eyeball dependencies
   - Nodes are keyed by the filename-derived slug (unique); document_id is shown as a correlation attribute and duplicate document_ids are reported as warnings, never silently merged
-  - Cross-TRD edges come only from existing [depends: <trd-slug>#TRD-NNN] / #PR-N annotations; bare TRD-NNN deps are intra-TRD and excluded
+  - "Cross-TRD edges come only from existing [depends: <trd-slug>#TRD-NNN] / #PR-N annotations; bare TRD-NNN deps are intra-TRD and excluded"
 
 mission:
   summary: |
