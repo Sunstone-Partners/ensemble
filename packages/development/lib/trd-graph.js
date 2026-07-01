@@ -91,6 +91,7 @@ function buildRegistry(entries) {
       documentId,
       label: parsed.label || deriveLabel(documentId || slug, parsed.title),
       kind: parsed.kind || 'trd',
+      capabilities: parsed.capabilities || [],
       title: parsed.title || '',
       prd: parsed.prdReference || null,
       path: entry.path,
@@ -231,6 +232,40 @@ function findOverlaps(registry) {
 }
 
 // ---------------------------------------------------------------------------
+// Capability providers (dedup-by-reference input for create-trd)
+// ---------------------------------------------------------------------------
+
+/**
+ * Index the capabilities declared across TRDs to their providing docs. This is
+ * the deterministic input create-trd consults to reference existing work instead
+ * of duplicating it. Providers are sorted foundational-first (the intended
+ * reuse target), then by slug.
+ *
+ * @returns {Array<{capability:string, providers:Array<{slug,id,label,kind}>}>}
+ */
+function findCapabilityProviders(registry) {
+  const byCapability = new Map();
+  for (const node of registry.nodes) {
+    for (const cap of node.capabilities || []) {
+      if (!byCapability.has(cap)) byCapability.set(cap, []);
+      byCapability.get(cap).push({
+        slug: node.slug,
+        id: node.documentId || node.slug,
+        label: node.label,
+        kind: node.kind,
+      });
+    }
+  }
+  const rank = (p) => (p.kind === 'foundational' ? 0 : 1);
+  return [...byCapability.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([capability, providers]) => ({
+      capability,
+      providers: providers.sort((x, y) => rank(x) - rank(y) || x.slug.localeCompare(y.slug)),
+    }));
+}
+
+// ---------------------------------------------------------------------------
 // Emitters
 // ---------------------------------------------------------------------------
 
@@ -275,6 +310,7 @@ module.exports = {
   buildGraph,
   detectCycles,
   findOverlaps,
+  findCapabilityProviders,
   emitJson,
   emitMermaid,
   emitDot,

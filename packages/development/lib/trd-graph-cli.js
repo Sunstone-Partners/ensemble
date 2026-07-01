@@ -9,8 +9,9 @@
  * hand-parsed.
  *
  * Subcommands:
- *   graph   <dir|paths...> [--format json|mermaid|dot]   (default json)
- *   overlap <dir|paths...> [--json]
+ *   graph        <dir|paths...> [--format json|mermaid|dot]   (default json)
+ *   overlap      <dir|paths...> [--json]
+ *   capabilities <dir|paths...> [--json]   (foundational-TRD capability index)
  *
  * Exit codes:
  *   0  success (graph emitted / no overlaps)
@@ -26,6 +27,7 @@ const {
   buildRegistry,
   buildGraph,
   findOverlaps,
+  findCapabilityProviders,
   emitJson,
   emitMermaid,
   emitDot,
@@ -91,6 +93,19 @@ function runGraph(argv) {
   return { output: out, cycles: graph.cycles, warnings: graph.warnings };
 }
 
+function runCapabilities(argv) {
+  const { positionals, flags } = parseArgs(argv, new Set());
+  const entries = collectEntries(positionals);
+  const caps = findCapabilityProviders(buildRegistry(entries));
+  if (flags.json) return { output: JSON.stringify({ capabilities: caps }, null, 2) + '\n', caps };
+  const lines = caps.length
+    ? caps.map(
+        (c) => `${c.capability}: ${c.providers.map((p) => `${p.label} (${p.kind})`).join(', ')}`
+      )
+    : ['No capabilities declared across TRDs.'];
+  return { output: lines.join('\n') + '\n', caps };
+}
+
 function runOverlap(argv) {
   const { positionals, flags } = parseArgs(argv, new Set());
   const entries = collectEntries(positionals);
@@ -119,7 +134,12 @@ function main(argv) {
       process.stdout.write(r.output);
       return r.overlaps.length ? 2 : 0;
     }
-    process.stderr.write('Usage: trd-graph-cli <graph|overlap> <dir|paths...> [--format json|mermaid|dot] [--json]\n');
+    if (cmd === 'capabilities') {
+      const r = runCapabilities(rest);
+      process.stdout.write(r.output);
+      return 0;
+    }
+    process.stderr.write('Usage: trd-graph-cli <graph|overlap|capabilities> <dir|paths...> [--format json|mermaid|dot] [--json]\n');
     return 1;
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
@@ -131,4 +151,4 @@ if (require.main === module) {
   process.exit(main(process.argv.slice(2)));
 }
 
-module.exports = { main, collectEntries, runGraph, runOverlap };
+module.exports = { main, collectEntries, runGraph, runOverlap, runCapabilities };

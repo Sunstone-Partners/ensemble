@@ -5,6 +5,7 @@ const {
   buildGraph,
   detectCycles,
   findOverlaps,
+  findCapabilityProviders,
   emitJson,
   emitMermaid,
   emitDot,
@@ -15,12 +16,13 @@ const {
 // beta:  depends on alpha (cross-TRD ref) and shares a target file with gamma.
 // gamma: depends on alpha; overlaps beta on src/Order.cs.
 
-function trd({ id, label, kind, prd, tasks }) {
+function trd({ id, label, kind, prd, tasks, capabilities }) {
   const lines = [
     '---',
     `document_id: ${id}`,
     label ? `label: ${label}` : '',
     kind ? `kind: ${kind}` : '',
+    capabilities ? `capabilities: ${capabilities.join(', ')}` : '',
     `prd_reference: ${prd}`,
     '---',
     `# ${id}: ${label || id}`,
@@ -39,6 +41,7 @@ const ALPHA = trd({
   id: 'TRD-2026-aaaaaaaa',
   label: 'trd-order-domain',
   kind: 'foundational',
+  capabilities: ['order-domain', 'money-value-object'],
   prd: 'docs/PRD/PRD-2026-aaaaaaaa-order.md',
   tasks: [
     '- [ ] **TRD-001**: Create Order domain object (3h) [satisfies REQ-001]',
@@ -149,6 +152,25 @@ describe('findOverlaps', () => {
     );
     expect(pair).toBeTruthy();
     expect(pair.sharedFiles).toContain('src/Order.cs');
+  });
+});
+
+describe('findCapabilityProviders', () => {
+  const providers = findCapabilityProviders(buildRegistry(ENTRIES));
+
+  test('lists each capability with its providing foundational TRD', () => {
+    const order = providers.find((p) => p.capability === 'order-domain');
+    expect(order).toBeTruthy();
+    expect(order.providers[0].slug).toBe('trd-2026-aaaaaaaa-order');
+    expect(order.providers[0].kind).toBe('foundational');
+    expect(providers.map((p) => p.capability)).toContain('money-value-object');
+  });
+
+  test('is empty when no TRD declares capabilities', () => {
+    const none = findCapabilityProviders(
+      buildRegistry([{ path: 'docs/TRD/TRD-2026-zzzzzzzz-x.md', markdown: trd({ id: 'TRD-2026-zzzzzzzz', label: 'trd-x', prd: 'p.md', tasks: ['- [ ] **TRD-001**: t'] }) }])
+    );
+    expect(none).toEqual([]);
   });
 });
 

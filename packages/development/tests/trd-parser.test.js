@@ -746,6 +746,7 @@ describe('parseTRD — ParsedTRD contract shape', () => {
     const result = parseTRD(BODY_FIELDS_TRD);
     expect(Object.keys(result).sort()).toEqual(
       [
+        'capabilities',
         'designReadinessScore',
         'documentId',
         'kind',
@@ -863,5 +864,25 @@ describe('parseTRD — document identity (documentId/label/kind)', () => {
     expect(r.documentId).toBeNull();
     expect(r.label).toBeNull();
     expect(r.kind).toBe('trd');
+    expect(r.capabilities).toEqual([]);
+  });
+
+  test('reads a capabilities YAML list from frontmatter', () => {
+    const md = [
+      '---',
+      'document_id: TRD-2026-a1b2c3d4',
+      'kind: foundational',
+      'capabilities:',
+      '  - order-domain',
+      '  - money-value-object',
+      '---',
+      '# TRD-2026-a1b2c3d4: Order Domain',
+    ].join('\n');
+    expect(parseTRD(md).capabilities).toEqual(['order-domain', 'money-value-object']);
+  });
+
+  test('accepts a comma-separated capabilities string', () => {
+    const md = '---\ndocument_id: TRD-2026-x\ncapabilities: order-domain, money-vo\n---\n# x\n';
+    expect(parseTRD(md).capabilities).toEqual(['order-domain', 'money-vo']);
   });
 });

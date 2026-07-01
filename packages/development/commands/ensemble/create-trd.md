@@ -4,7 +4,7 @@ description: Create Technical Requirements Document from PRD with architecture d
 version: 3.1.0
 category: planning
 last-updated: 2026-05-30
-argument-hint: [prd-path] [--team]
+argument-hint: [prd-path] [--team] [--foundational]
 model: opus
 ---
 <!-- DO NOT EDIT - Generated from create-trd.yaml -->
@@ -25,6 +25,7 @@ output with traceability matrices. Team configuration is handled separately by
    Parse and analyze existing PRD document from $ARGUMENTS path
 
    - Read PRD file from specified path
+   - If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), and skip PRD-structure validation for this run
    - Validate document structure (required sections present)
    - Extract key requirements with REQ-NNN IDs
    - Build requirements registry for traceability tracking
@@ -65,7 +66,16 @@ output with traceability matrices. Team configuration is handled separately by
    - Determine if project is greenfield or brownfield (check for existing codebase)
    - Summarize domain coverage and gaps
 
-**2. Architecture Alternatives**
+**2. Capability Reuse Check**
+   Reuse existing foundational work instead of duplicating it (dedup-by-reference)
+
+   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js capabilities docs/TRD --json to list capabilities already provided by foundational TRDs
+   - For each technical capability this PRD needs (from Domain Analysis), check the registry: an EXPLICIT match is one of the listed capability tokens; otherwise judge an IMPLICIT match by comparing the needed work to existing foundational TRD labels/titles and their target files (also consult: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js overlap docs/TRD)
+   - If a foundational TRD already provides the capability: DO NOT generate duplicate tasks for it. Instead add a cross-TRD dependency [depends: <foundational-slug>#TRD-NNN] (or #PR-N) on the task that needs it, and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
+   - If a needed capability is clearly reusable across PRDs but no foundational TRD exists yet, recommend extracting it: suggest running /ensemble:create-trd <prd> --foundational to create a shared TRD, rather than embedding the work here
+   - Reference foundational work by slug / document id only -- never by label (labels are display-only and may change)
+
+**3. Architecture Alternatives**
    Present 2-3 architecture approaches with tradeoffs for user selection
 
    - Design Option A: simplest approach -- minimal components, fastest to build, may not scale
@@ -74,7 +84,7 @@ output with traceability matrices. Team configuration is handled separately by
    - Present each option with pros, cons, estimated complexity impact, and risk profile
    - Ask user to choose one option or combine elements before proceeding
 
-**3. System Architecture Design**
+**4. System Architecture Design**
    Design detailed system architecture based on chosen approach
 
    - Define component boundaries and responsibilities
@@ -214,7 +224,8 @@ output with traceability matrices. Team configuration is handled separately by
    Generate comprehensive TRD document with frontmatter and structured sections
 
    - Derive the TRD document micro UUID from the source PRD, so PRD/TRD artifacts share the same 8-hex correlation id. Parse the PRD filename or frontmatter Document ID for PRD-YYYY-<micro_uuid> where micro_uuid is 8 lowercase hex chars. If found, set TRD_MICRO_UUID to that value. Only if the PRD has a legacy sequence id or no parseable id, generate a new 8-hex micro UUID from a UUID/random source. Do NOT scan for highest TRD sequence number or increment NNN.
-   - Include frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), PRD reference, version 1.0.0, status Draft, date, Design Readiness Score
+   - Include frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), PRD reference, version 1.0.0, status Draft, date, Design Readiness Score, and kind (default `trd`)
+   - If --foundational: this is a shared/reusable TRD not tied 1:1 to a PRD. Set frontmatter `kind: foundational`; the PRD reference is optional (treat the input as a capability brief if no full PRD exists); and add a `capabilities:` frontmatter list of the machine-matchable capability tokens this TRD provides (e.g. order-domain, money-value-object) so other TRDs' Capability Reuse Check can find and reference it
    - Generate Architecture Decision section documenting the chosen approach and alternatives considered
    - Generate Master Task List with all TRD-NNN tasks and TRD-NNN-TEST tasks, organized under ### PR N: headings (not ### Phase N: or ### Sprint N:). Each ### PR N: heading must be immediately followed by a **Shippable State:** line before the first task entry. This is the machine-parsed section used by implement-trd-beads to create stacked PRs.
    - Generate a ## Sprint Planning section (H2 heading) as a separate human-readable grouping for time-boxing PRs into calendar sprints. Use ## Sprint N: sub-headings (H2) within this section. This section is informational only — implement-trd-beads does not parse it.
@@ -263,5 +274,5 @@ output with traceability matrices. Team configuration is handled separately by
 ## Usage
 
 ```
-/ensemble:create-trd [prd-path] [--team]
+/ensemble:create-trd [prd-path] [--team] [--foundational]
 ```
