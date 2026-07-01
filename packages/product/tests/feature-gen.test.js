@@ -46,6 +46,16 @@ describe('renderFeature', () => {
     expect(text).toContain('Feature: User Authentication');
   });
 
+  test('shows the human label (authored) as a comment, id still the key', () => {
+    expect(text).toContain('# Label: prd-sample-feature');
+  });
+
+  test('falls back to a derived label when none is authored', () => {
+    const noLabel = { ...prd, label: null, documentId: 'PRD-2026-zz', title: 'Login Flow' };
+    const t = renderFeature(noLabel, noLabel.reqs[0]);
+    expect(t).toContain('# Label: prd-login-flow');
+  });
+
   test('emits a tagged, hashed Scenario per AC with Given/When/Then steps', () => {
     expect(text).toContain('@AC-001-1');
     expect(text).toMatch(/@hash:[0-9a-f]{12}/);
@@ -70,6 +80,7 @@ describe('buildArtifacts + manifest', () => {
     const names = artifacts.files.map((f) => f.relPath).sort();
     expect(names).toEqual(['REQ-001.feature', 'REQ-002.feature']);
     expect(artifacts.manifest.prd.document_id).toBe('PRD-2026-a1b2c3d4');
+    expect(artifacts.manifest.prd.label).toBe('prd-sample-feature');
   });
 
   test('manifest maps every AC to req, hash, file and clarification flag', () => {

@@ -19,6 +19,13 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+const { deriveLabel } = require('./prd-parser');
+
+/** Effective display label: the authored one, else a derived fallback. */
+function labelFor(prd) {
+  return prd.label || deriveLabel(prd.documentId, prd.title);
+}
+
 // ---------------------------------------------------------------------------
 // Hashing — the drift fingerprint
 // ---------------------------------------------------------------------------
@@ -87,6 +94,9 @@ function renderFeature(prd, req) {
   const out = [];
   out.push(`${docIdTag(prd.documentId)} @${req.id}`);
   out.push(`Feature: ${req.title}`);
+  // Human-readable label for reference in conversation/reports (display only;
+  // the traceability manifest keys on document_id, never the label).
+  out.push(`  # Label: ${labelFor(prd)}`);
   if (req.moscow || req.complexity) {
     const meta = [
       req.moscow ? `Priority: ${req.moscow}` : null,
@@ -131,6 +141,7 @@ function buildArtifacts(prd, slug, opts = {}) {
   const manifest = {
     prd: {
       document_id: prd.documentId || null,
+      label: labelFor(prd),
       version: prd.version || null,
       path: opts.prdPath || null,
     },

@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parsePRD } = require('../lib/prd-parser');
+const { parsePRD, deriveLabel } = require('../lib/prd-parser');
 
 const SAMPLE = fs.readFileSync(
   path.join(__dirname, 'fixtures/PRD-sample.md'),
@@ -74,5 +74,36 @@ describe('parsePRD', () => {
   test('parses sequence-style document ids too', () => {
     const seq = parsePRD('---\ndocument_id: PRD-2026-023\nversion: 1.0.0\n---\n# x\n');
     expect(seq.documentId).toBe('PRD-2026-023');
+  });
+
+  test('surfaces the human-readable label from frontmatter', () => {
+    expect(prd.label).toBe('prd-sample-feature');
+  });
+
+  test('label is null when absent (legacy docs)', () => {
+    const legacy = parsePRD('---\ndocument_id: PRD-2026-023\n---\n# x\n');
+    expect(legacy.label).toBeNull();
+  });
+});
+
+describe('deriveLabel (display fallback for docs without an authored label)', () => {
+  test('prefixes with prd/trd from the document id and kebabs the title', () => {
+    expect(deriveLabel('PRD-2026-a1b2c3d4', 'Multi TRD Beads Workstream')).toBe(
+      'prd-multi-trd-beads-workstream'
+    );
+    expect(deriveLabel('TRD-2026-a1b2c3d4', 'Multi TRD Beads Workstream')).toBe(
+      'trd-multi-trd-beads-workstream'
+    );
+  });
+
+  test('falls back to a generic doc- prefix for unknown id shapes', () => {
+    expect(deriveLabel('XYZ-1', 'Some Thing')).toBe('doc-some-thing');
+  });
+
+  test('strips a leading doc-id token from the title (legacy H1 embeds the id)', () => {
+    // Legacy titles look like "# PRD-2026-023: Multi-TRD Beads Workstream"
+    expect(deriveLabel('PRD-2026-023', 'PRD-2026-023: Multi-TRD Beads Workstream')).toBe(
+      'prd-multi-trd-beads-workstream'
+    );
   });
 });
