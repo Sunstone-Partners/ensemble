@@ -1,5 +1,6 @@
 ---
 document_id: PRD-2026-a1b2c3d4
+label: prd-sample-feature
 version: 1.2.0
 status: Draft
 date: 2026-06-29

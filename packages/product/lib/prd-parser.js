@@ -243,6 +243,7 @@ function parsePRD(markdown) {
 
   return {
     documentId: fm.document_id || null,
+    label: fm.label || null,
     version: fm.version != null ? String(fm.version) : null,
     status: fm.status || null,
     date: fm.date != null ? String(fm.date) : null,
@@ -252,4 +253,34 @@ function parsePRD(markdown) {
   };
 }
 
-module.exports = { parsePRD, splitClauses, parseAcLine };
+// ---------------------------------------------------------------------------
+// Label derivation (display fallback)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive a human-readable display label for a document that has no authored
+ * `label` in its frontmatter (e.g. legacy docs). Shape: `<type>-<kebab-title>`,
+ * where type comes from the document id prefix (PRD-/TRD-). This is DISPLAY ONLY
+ * — the label is never a reference key; cross-document references always use the
+ * immutable document_id.
+ *
+ * @param {string|null} documentId
+ * @param {string} title
+ * @returns {string}
+ */
+function deriveLabel(documentId, title) {
+  const id = String(documentId || '');
+  let type = 'doc';
+  if (/^PRD-/i.test(id)) type = 'prd';
+  else if (/^TRD-/i.test(id)) type = 'trd';
+  const stem = String(title || '')
+    // Legacy H1 titles embed the id, e.g. "PRD-2026-023: Real Title" — drop it so
+    // the derived label doesn't double-prefix (prd-prd-2026-023-...).
+    .replace(/^\s*(?:PRD|TRD|DOC)-\S+:\s*/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return stem ? `${type}-${stem}` : type;
+}
+
+module.exports = { parsePRD, splitClauses, parseAcLine, deriveLabel };
