@@ -895,9 +895,18 @@ function parseTRD(markdownString) {
     taskIds: p.taskIds,
   }));
 
+  const documentId =
+    frontmatter && frontmatter.document_id != null ? String(frontmatter.document_id) : null;
+  const label = frontmatter && frontmatter.label != null ? String(frontmatter.label) : null;
+  const kind =
+    frontmatter && frontmatter.kind != null ? String(frontmatter.kind).toLowerCase() : 'trd';
+
   return {
     title,
     summary,
+    documentId,
+    label,
+    kind,
     prdReference,
     designReadinessScore,
     status,
