@@ -173,6 +173,7 @@ alternatives, and a structured task breakdown with deterministic markdown tables
    - Generate Sprint Planning section with dependency-ordered phases
    - Preserve parser-compatible sprint/story/table structure exactly; do not replace tables with prose checklists
    - Derive the TRD document micro UUID from the source PRD, so PRD/TRD artifacts share the same 8-hex correlation id. Parse the PRD filename or frontmatter Document ID for PRD-YYYY-<micro_uuid> where micro_uuid is 8 lowercase hex chars. If found, set TRD_MICRO_UUID to that value. Only if the PRD has a legacy sequence id or no parseable id, generate a new 8-hex micro UUID from a UUID/random source. Do NOT scan for highest TRD sequence number or increment NNN.
+   - Derive the TRD Label from the source PRD's label: take the PRD's `label: prd-<stem>` (or derive prd-<stem> from the PRD title) and set TRD_LABEL = trd-<stem> (swap prefix, keep stem). Include it in frontmatter as `label: trd-<stem>`. Display-only, never a reference key — cross-references use TRD_MICRO_UUID.
    - File naming must be docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md — same slug as beads path, NO `-foreman` suffix, correlation id from source PRD when available
    - Write exactly one primary parser-compatible TRD markdown file; any auxiliary summaries must not replace or redefine the task tables
    - **CRITICAL**: Validate that all task Status cells in ALL tables are `[ ]` — no `[x]`, `done`, or other markers permitted
