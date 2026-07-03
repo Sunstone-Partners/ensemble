@@ -69,7 +69,18 @@ Analyze requirements for technical domains and architectural scope
 4. Determine if project is greenfield or brownfield (check for existing codebase)
 5. Summarize domain coverage and gaps
 
-### Step 2: Architecture Alternatives
+### Step 2: Capability Reuse Check
+
+Reuse existing foundational work instead of duplicating it (dedup-by-reference)
+
+**Actions:**
+1. Run: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js capabilities docs/TRD --json to list capabilities already provided by foundational TRDs
+2. For each technical capability this PRD needs, check the registry: EXPLICIT match = a listed capability token; otherwise IMPLICIT match by comparing needed work to foundational TRD labels/titles and target files (also: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js overlap docs/TRD)
+3. If a foundational TRD already provides the capability: DO NOT emit duplicate task rows for it. Reference it via a Dependencies-column entry <foundational-slug>#TRD-NNN (or #PR-N) and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
+4. If a needed capability is clearly reusable but no foundational TRD exists, recommend extracting it via /ensemble:create-trd <prd> --foundational instead of embedding it here
+5. Reference foundational work by slug / document id only -- never by label
+
+### Step 3: Architecture Alternatives
 
 Present 2-3 architecture approaches with tradeoffs for user selection
 
@@ -80,7 +91,7 @@ Present 2-3 architecture approaches with tradeoffs for user selection
 4. Present each option briefly with pros, cons, estimated complexity impact, and risk profile
 5. Choose the best balanced option automatically unless the caller explicitly requested an interactive architecture review
 
-### Step 3: System Architecture Design
+### Step 4: System Architecture Design
 
 Design detailed system architecture based on chosen approach
 
@@ -167,8 +178,9 @@ Generate a Foreman-native TRD document with parser-compatible sections
 5. Preserve parser-compatible sprint/story/table structure exactly; do not replace tables with prose checklists
 6. Derive the TRD document micro UUID from the source PRD, so PRD/TRD artifacts share the same 8-hex correlation id. Parse the PRD filename or frontmatter Document ID for PRD-YYYY-<micro_uuid> where micro_uuid is 8 lowercase hex chars. If found, set TRD_MICRO_UUID to that value. Only if the PRD has a legacy sequence id or no parseable id, generate a new 8-hex micro UUID from a UUID/random source. Do NOT scan for highest TRD sequence number or increment NNN.
 7. File naming must be docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md — same slug as beads path, NO `-foreman` suffix, correlation id from source PRD when available
-8. Write exactly one primary parser-compatible TRD markdown file; any auxiliary summaries must not replace or redefine the task tables
-9. **CRITICAL**: Validate that all task Status cells in ALL tables are `[ ]` — no `[x]`, `done`, or other markers permitted
+8. Include `kind` in frontmatter (default `trd`). If --foundational: set `kind: foundational`, treat the PRD reference as optional (a capability brief is acceptable), and add a `capabilities:` frontmatter list of machine-matchable capability tokens this shared TRD provides so other TRDs' Capability Reuse Check can reference it by slug/document id
+9. Write exactly one primary parser-compatible TRD markdown file; any auxiliary summaries must not replace or redefine the task tables
+10. **CRITICAL**: Validate that all task Status cells in ALL tables are `[ ]` — no `[x]`, `done`, or other markers permitted
 
 ### Step 2: Acceptance Criteria Traceability
 
