@@ -69,6 +69,8 @@ function buildRegistry(entries) {
     const slug = deriveSlug(entry.path);
     const documentId = parsed.documentId || null;
     const tasks = Object.values(parsed.tasksById || {});
+    const taskIds = new Set(Object.keys(parsed.tasksById || {}));
+    const prNumbers = new Set((parsed.phases || []).map((p) => p.n).filter((n) => Number.isInteger(n)));
 
     if (bySlug.has(slug)) {
       warnings.push(`Duplicate TRD slug '${slug}' — later file overwrites earlier (${entry.path})`);
@@ -96,6 +98,8 @@ function buildRegistry(entries) {
       prd: parsed.prdReference || null,
       path: entry.path,
       deps,
+      taskIds,
+      prNumbers,
       targetFiles: [...targetFiles].filter(Boolean),
     };
     nodes.push(node);
@@ -118,6 +122,18 @@ function buildRegistry(entries) {
 // Graph
 // ---------------------------------------------------------------------------
 
+function targetHasRef(target, parsedRef) {
+  if (parsedRef.kind === 'task') return target.taskIds.has(parsedRef.id);
+  if (parsedRef.kind === 'pr') return target.prNumbers.has(parsedRef.n);
+  return false;
+}
+
+function missingRefReason(parsedRef) {
+  if (parsedRef.kind === 'task') return `unknown task '${parsedRef.id}' in ${parsedRef.trdSlug}`;
+  if (parsedRef.kind === 'pr') return `unknown PR '${parsedRef.id}' in ${parsedRef.trdSlug}`;
+  return parsedRef.reason || 'unknown reference';
+}
+
 /**
  * @param {{nodes,byId,bySlug}} registry
  * @returns {{ nodes, edges, cycles, warnings }}
@@ -136,7 +152,13 @@ function buildGraph(registry) {
         warnings.push(`Unresolved cross-TRD dependency '${ref}' (from ${node.slug}#${taskId})`);
         continue;
       }
-      if (target.id === node.id) continue; // ignore self-reference
+      if (!targetHasRef(target, parsed)) {
+        warnings.push(
+          `Unresolved cross-TRD dependency '${ref}' (from ${node.slug}#${taskId}): ${missingRefReason(parsed)}`
+        );
+        continue;
+      }
+      if (target.id === node.id) continue; // ignore validated self-reference
       const key = `${node.id}->${target.id}`;
       const existing = seen.has(key) ? edges.find((e) => `${e.from}->${e.to}` === key) : null;
       if (existing) {

@@ -66,6 +66,7 @@ function collectEntries(positionals) {
     try {
       stat = fs.statSync(t);
     } catch (err) {
+      if (err && err.code === 'ENOENT' && t === 'docs/TRD') continue;
       throw new Error(`Cannot access '${t}': ${err.message}`);
     }
     if (stat.isDirectory()) {

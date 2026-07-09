@@ -1,4 +1,8 @@
 'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 
 const {
   buildRegistry,
@@ -10,6 +14,8 @@ const {
   emitMermaid,
   emitDot,
 } = require('../lib/trd-graph');
+const { main: runTrdGraphCli } = require('../lib/trd-graph-cli');
+
 
 // --- Fixture TRDs (in-memory) -------------------------------------------------
 // alpha: foundational domain work, no deps.
@@ -36,6 +42,43 @@ function trd({ id, label, kind, prd, tasks, capabilities }) {
   ];
   return lines.filter((l) => l !== '').join('\n') + '\n';
 }
+function runCli(argv) {
+  const stdout = [];
+  const stderr = [];
+  const origStdout = process.stdout.write;
+  const origStderr = process.stderr.write;
+  process.stdout.write = (chunk) => {
+    stdout.push(String(chunk));
+    return true;
+  };
+  process.stderr.write = (chunk) => {
+    stderr.push(String(chunk));
+    return true;
+  };
+  try {
+    return {
+      code: runTrdGraphCli(argv),
+      stdout: stdout.join(''),
+      stderr: stderr.join(''),
+    };
+  } finally {
+    process.stdout.write = origStdout;
+    process.stderr.write = origStderr;
+  }
+}
+
+function inTempCwd(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trd-graph-cli-'));
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(dir);
+    return fn(dir);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 
 const ALPHA = trd({
   id: 'TRD-2026-aaaaaaaa',
@@ -125,6 +168,32 @@ describe('buildGraph', () => {
     expect(g.warnings.join(' ')).toMatch(/ghost-slug#TRD-001/);
   });
 
+  test('warns and skips cross-TRD task refs whose target slug exists but task id is absent', () => {
+    const g = buildGraph(
+      buildRegistry([
+        { path: 'docs/TRD/TRD-2026-aaaaaaaa-target.md', markdown: trd({ id: 'TRD-2026-aaaaaaaa', label: 'trd-target', prd: 'p.md', tasks: ['- [ ] **TRD-001**: target task'] }) },
+        { path: 'docs/TRD/TRD-2026-bbbbbbbb-source.md', markdown: trd({ id: 'TRD-2026-bbbbbbbb', label: 'trd-source', prd: 'p.md', tasks: ['- [ ] **TRD-001**: source task [depends: trd-2026-aaaaaaaa-target#TRD-999]'] }) },
+      ])
+    );
+
+    expect(g.edges).toEqual([]);
+    expect(g.warnings.join('\n')).toMatch(/trd-2026-aaaaaaaa-target#TRD-999/);
+    expect(g.warnings.join('\n')).toMatch(/unknown task 'TRD-999'/);
+  });
+
+  test('warns and skips cross-TRD PR refs whose target slug exists but PR number is absent', () => {
+    const g = buildGraph(
+      buildRegistry([
+        { path: 'docs/TRD/TRD-2026-aaaaaaaa-target.md', markdown: trd({ id: 'TRD-2026-aaaaaaaa', label: 'trd-target', prd: 'p.md', tasks: ['- [ ] **TRD-001**: target task'] }) },
+        { path: 'docs/TRD/TRD-2026-bbbbbbbb-source.md', markdown: trd({ id: 'TRD-2026-bbbbbbbb', label: 'trd-source', prd: 'p.md', tasks: ['- [ ] **TRD-001**: source task [depends: trd-2026-aaaaaaaa-target#PR-2]'] }) },
+      ])
+    );
+
+    expect(g.edges).toEqual([]);
+    expect(g.warnings.join('\n')).toMatch(/trd-2026-aaaaaaaa-target#PR-2/);
+    expect(g.warnings.join('\n')).toMatch(/unknown PR 'PR-2'/);
+  });
+
   test('no cycles in the fixture graph', () => {
     expect(graph.cycles).toEqual([]);
   });
@@ -194,5 +263,31 @@ describe('emitters', () => {
     const d = emitDot(graph);
     expect(d).toMatch(/^digraph/m);
     expect(d).toContain('->');
+  });
+});
+
+describe('trd-graph-cli empty registry discovery', () => {
+  test('empty cwd returns empty graph, capabilities, and overlap results without errors', () => {
+    inTempCwd(() => {
+      const graph = runCli(['graph']);
+      expect(graph.code).toBe(0);
+      expect(graph.stderr).toBe('');
+      expect(JSON.parse(graph.stdout)).toMatchObject({
+        nodes: [],
+        edges: [],
+        cycles: [],
+        warnings: [],
+      });
+
+      const capabilities = runCli(['capabilities', '--json']);
+      expect(capabilities.code).toBe(0);
+      expect(capabilities.stderr).toBe('');
+      expect(JSON.parse(capabilities.stdout)).toEqual({ capabilities: [] });
+
+      const overlap = runCli(['overlap', '--json']);
+      expect(overlap.code).toBe(0);
+      expect(overlap.stderr).toBe('');
+      expect(JSON.parse(overlap.stdout)).toEqual({ overlaps: [] });
+    });
   });
 });

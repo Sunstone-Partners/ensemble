@@ -26,7 +26,8 @@ Determine which TRDs to graph
 Invoke the deterministic CLI to build and emit the dependency graph
 
 **Actions:**
-1. Run: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js graph <dir|paths> --format <json|mermaid|dot>
+1. Resolve TRD_GRAPH_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js, packages/development/lib/trd-graph-cli.js. If missing, print error and HALT.
+   - Run: node "$TRD_GRAPH_CLI" graph <dir|paths> --format <json|mermaid|dot>
 2. Default to --format mermaid for a human-facing answer (renders in GitHub); use json when the caller needs machine output, dot for Graphviz
 3. Interpret exit code: 0 = acyclic, 2 = a dependency cycle was detected (report the cycle)
 4. Surface every stderr warning -- especially duplicate document_id collisions and unresolved cross-TRD references
@@ -36,6 +37,6 @@ Invoke the deterministic CLI to build and emit the dependency graph
 Run the overlap report to flag probable duplication
 
 **Actions:**
-1. Run: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js overlap <dir|paths>
+1. Run: node "$TRD_GRAPH_CLI" overlap <dir|paths>
 2. For each flagged pair, note the shared target files and suggest extracting the shared work into one foundational TRD that both reference via [depends: <trd-slug>#TRD-NNN]
 3. Present the graph (rendered) plus the cycle and overlap findings; do not modify any TRD

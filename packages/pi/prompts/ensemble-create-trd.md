@@ -20,29 +20,29 @@ Parse and analyze existing PRD document from $ARGUMENTS path
 
 **Actions:**
 1. Read PRD file from specified path
-2. If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), and skip PRD-structure validation for this run
-3. Validate document structure (required sections present)
-4. Extract key requirements with REQ-NNN IDs
-5. Build requirements registry for traceability tracking
+2. If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), skip PRD-structure validation for this run, and build a capability registry from the brief's named capabilities / scope / target files instead of REQ-NNN IDs
+3. If a full PRD is provided: validate document structure (required sections present), extract key requirements with REQ-NNN IDs, and build requirements registry for traceability tracking
 
 ### Step 2: Requirements Validation
 
 Ensure completeness of functional and non-functional requirements
 
 **Actions:**
-1. Validate all required sections present (Product Summary, User Analysis, Goals, Technical Requirements, Acceptance Criteria)
-2. Check acceptance criteria are testable and use Given/When/Then format
-3. Verify REQ-NNN format numbering is consistent and sequential
-4. Verify constraints and non-goals are documented
+1. If --foundational with a short capability brief: skip this PRD-specific validation step
+2. Otherwise validate all required sections present (Product Summary, User Analysis, Goals, Technical Requirements, Acceptance Criteria)
+3. Otherwise check acceptance criteria are testable and use Given/When/Then format
+4. Otherwise verify REQ-NNN format numbering is consistent and sequential
+5. Otherwise verify constraints and non-goals are documented
 
 ### Step 3: Acceptance Criteria Review
 
 Validate testable acceptance criteria from the PRD before TRD generation
 
 **Actions:**
-1. Ensure each requirement has measurable acceptance criteria with Given/When/Then items
-2. Verify AC-NNN-M sub-item format under each REQ-NNN
-3. Check that every Must requirement has at least 2 ACs (happy path + edge case)
+1. If --foundational with a short capability brief: skip this PRD-specific acceptance criteria review
+2. Otherwise ensure each requirement has measurable acceptance criteria with Given/When/Then items
+3. Otherwise verify AC-NNN-M sub-item format under each REQ-NNN
+4. Otherwise check that every Must requirement has at least 2 ACs (happy path + edge case)
 4. Do NOT validate TRD traceability here -- the TRD has not been generated yet
 
 ### Step 4: Implementation Readiness Gate Check
@@ -50,8 +50,9 @@ Validate testable acceptance criteria from the PRD before TRD generation
 Check if the PRD passed its own readiness gate before proceeding
 
 **Actions:**
-1. Read PRD frontmatter for Readiness Score field
-2. If score >= 4.0 (PASS): proceed normally
+1. If --foundational with a short capability brief: skip the PRD readiness score gate
+2. Otherwise read PRD frontmatter for Readiness Score field
+3. If score >= 4.0 (PASS): proceed normally
 3. If score 3.0-3.9 (CONCERNS): warn user about PRD concerns, ask whether to proceed
 4. If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first
 5. If no readiness score in frontmatter, proceed with a note that PRD was not gate-checked
@@ -74,8 +75,9 @@ Analyze requirements for technical domains and architectural scope
 Reuse existing foundational work instead of duplicating it (dedup-by-reference)
 
 **Actions:**
-1. Run: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js capabilities docs/TRD --json to list capabilities already provided by foundational TRDs
-2. For each technical capability this PRD needs (from Domain Analysis), check the registry: an EXPLICIT match is one of the listed capability tokens; otherwise judge an IMPLICIT match by comparing the needed work to existing foundational TRD labels/titles and their target files (also consult: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js overlap docs/TRD)
+1. Resolve TRD_GRAPH_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js, packages/development/lib/trd-graph-cli.js. If missing, print error and HALT.
+   - Run: node "$TRD_GRAPH_CLI" capabilities docs/TRD --json to list capabilities already provided by foundational TRDs; if docs/TRD does not exist yet, treat the registry as empty and continue
+2. For each technical capability this PRD needs (from Domain Analysis), check the registry: an EXPLICIT match is one of the listed capability tokens; otherwise judge an IMPLICIT match by comparing the needed work to existing foundational TRD labels/titles and their target files (also consult: node "$TRD_GRAPH_CLI" overlap docs/TRD)
 3. If a foundational TRD already provides the capability: DO NOT generate duplicate tasks for it. Instead add a cross-TRD dependency [depends: <foundational-slug>#TRD-NNN] (or #PR-N) on the task that needs it, and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
 4. If a needed capability is clearly reusable across PRDs but no foundational TRD exists yet, recommend extracting it: suggest running /ensemble:create-trd <prd> --foundational to create a shared TRD, rather than embedding the work here
 5. Reference foundational work by slug / document id only -- never by label (labels are display-only and may change)
@@ -244,21 +246,23 @@ Generate comprehensive TRD document with frontmatter and structured sections
 Generate traceability matrix linking PRD requirements to TRD tasks
 
 **Actions:**
-1. Generate '## Acceptance Criteria Traceability' matrix table:
-2. | REQ-NNN | Description | Implementation Tasks | Test Tasks |
-3. List each PRD requirement with its implementation TRD-NNN IDs and paired TRD-NNN-TEST IDs
-4. Ensure every Must/Should requirement appears in the matrix
+1. If --foundational with a short capability brief: skip the PRD acceptance criteria traceability matrix
+2. Otherwise generate '## Acceptance Criteria Traceability' matrix table:
+3. | REQ-NNN | Description | Implementation Tasks | Test Tasks |
+4. Otherwise list each PRD requirement with its implementation TRD-NNN IDs and paired TRD-NNN-TEST IDs
+5. Otherwise ensure every Must/Should requirement appears in the matrix
 
 ### Step 3: Traceability Validation
 
 Validate [satisfies] annotations against the PRD
 
 **Actions:**
-1. Scan all TRD tasks for [satisfies REQ-NNN] annotations
-2. Validate that each REQ-NNN referenced in a [satisfies] annotation exists in the PRD
-3. Warn (do NOT halt) if any PRD REQ-NNN has zero TRD task coverage
-4. Warn (do NOT halt) if any [satisfies] annotation references a REQ-NNN not found in the PRD
-5. Print summary: 'Traceability check: N requirements covered, M uncovered, K orphaned annotations'
+1. If --foundational with a short capability brief: skip PRD REQ-NNN traceability validation
+2. Otherwise scan all TRD tasks for [satisfies REQ-NNN] annotations
+3. Otherwise validate that each REQ-NNN referenced in a [satisfies] annotation exists in the PRD
+4. Otherwise warn (do NOT halt) if any PRD REQ-NNN has zero TRD task coverage
+5. Otherwise warn (do NOT halt) if any [satisfies] annotation references a REQ-NNN not found in the PRD
+6. Otherwise print summary: 'Traceability check: N requirements covered, M uncovered, K orphaned annotations'
 
 ### Step 4: File Save and Next Steps
 

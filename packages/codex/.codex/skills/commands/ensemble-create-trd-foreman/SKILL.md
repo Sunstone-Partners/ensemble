@@ -28,30 +28,32 @@ alternatives, and a structured task breakdown with deterministic markdown tables
    Parse and analyze existing PRD document from $ARGUMENTS path
 
    - Read PRD file from specified path
-   - Validate document structure (required sections present)
-   - Extract key requirements with REQ-NNN IDs
-   - Build requirements registry for traceability tracking
+   - If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), skip PRD-structure validation for this run, and build a capability registry from the brief's named capabilities / scope / target files instead of REQ-NNN IDs
+   - If a full PRD is provided: validate document structure (required sections present), extract key requirements with REQ-NNN IDs, and build requirements registry for traceability tracking
 
 **2. Requirements Validation**
    Ensure completeness of functional and non-functional requirements
 
-   - Validate all required sections present (Product Summary, User Analysis, Goals, Technical Requirements, Acceptance Criteria)
-   - Check acceptance criteria are testable and use Given/When/Then format
-   - Verify REQ-NNN format numbering is consistent and sequential
-   - Verify constraints and non-goals are documented
+   - If --foundational with a short capability brief: skip this PRD-specific validation step
+   - Otherwise validate all required sections present (Product Summary, User Analysis, Goals, Technical Requirements, Acceptance Criteria)
+   - Otherwise check acceptance criteria are testable and use Given/When/Then format
+   - Otherwise verify REQ-NNN format numbering is consistent and sequential
+   - Otherwise verify constraints and non-goals are documented
 
 **3. Acceptance Criteria Review**
    Validate testable acceptance criteria from the PRD before TRD generation
 
-   - Ensure each requirement has measurable acceptance criteria with Given/When/Then items
-   - Verify AC-NNN-M sub-item format under each REQ-NNN
-   - Check that every Must requirement has at least 2 ACs (happy path + edge case)
+   - If --foundational with a short capability brief: skip this PRD-specific acceptance criteria review
+   - Otherwise ensure each requirement has measurable acceptance criteria with Given/When/Then items
+   - Otherwise verify AC-NNN-M sub-item format under each REQ-NNN
+   - Otherwise check that every Must requirement has at least 2 ACs (happy path + edge case)
    - Do NOT validate TRD traceability here -- the TRD has not been generated yet
 
 **4. Implementation Readiness Gate Check**
    Check if the PRD passed its own readiness gate before proceeding
 
-   - Read PRD frontmatter for Readiness Score field
+   - If --foundational with a short capability brief: skip the PRD readiness score gate
+   - Otherwise read PRD frontmatter for Readiness Score field
    - If score >= 4.0 (PASS): proceed normally
    - If score 3.0-3.9 (CONCERNS): warn about PRD concerns and proceed automatically for non-interactive callers
    - If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first
@@ -71,9 +73,10 @@ alternatives, and a structured task breakdown with deterministic markdown tables
 **2. Capability Reuse Check**
    Reuse existing foundational work instead of duplicating it (dedup-by-reference)
 
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js capabilities docs/TRD --json to list capabilities already provided by foundational TRDs
-   - For each technical capability this PRD needs, check the registry: EXPLICIT match = a listed capability token; otherwise IMPLICIT match by comparing needed work to foundational TRD labels/titles and target files (also: node ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js overlap docs/TRD)
-   - If a foundational TRD already provides the capability: DO NOT emit duplicate task rows for it. Reference it via a Dependencies-column entry <foundational-slug>#TRD-NNN (or #PR-N) and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
+   - Resolve TRD_GRAPH_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js, packages/development/lib/trd-graph-cli.js. If missing, print error and HALT.
+   - Run: node "$TRD_GRAPH_CLI" capabilities docs/TRD --json to list capabilities already provided by foundational TRDs; if docs/TRD does not exist yet, treat the registry as empty and continue
+   - For each technical capability this PRD needs, check the registry: EXPLICIT match = a listed capability token; otherwise IMPLICIT match by comparing needed work to foundational TRD labels/titles and target files (also: node "$TRD_GRAPH_CLI" overlap docs/TRD)
+   - If a foundational TRD already provides the capability: DO NOT emit duplicate task rows for it. Keep the Foreman Dependencies column local-only; record external reuse under a '## Reused Capabilities' section as capability -> foundational slug/document id/ref (<foundational-slug>#TRD-NNN or #PR-N)
    - If a needed capability is clearly reusable but no foundational TRD exists, recommend extracting it via /ensemble:create-trd <prd> --foundational instead of embedding it here
    - Reference foundational work by slug / document id only -- never by label
 
@@ -189,9 +192,10 @@ alternatives, and a structured task breakdown with deterministic markdown tables
 **2. Acceptance Criteria Traceability**
    Generate traceability information without breaking the parser-friendly TRD layout
 
-   - Generate a ## Acceptance Criteria Traceability section after the task tables
-   - Use a separate traceability matrix that references task IDs already present in the parser-compatible tables
-   - Ensure every Must/Should requirement appears in the matrix
+   - If --foundational with a short capability brief: skip the PRD acceptance criteria traceability matrix
+   - Otherwise generate a ## Acceptance Criteria Traceability section after the task tables
+   - Otherwise use a separate traceability matrix that references task IDs already present in the parser-compatible tables
+   - Otherwise ensure every Must/Should requirement appears in the matrix
 
 **3. Traceability Validation**
    Validate [satisfies] annotations against the PRD
@@ -199,7 +203,7 @@ alternatives, and a structured task breakdown with deterministic markdown tables
    - Validate that every task ID referenced in Dependencies exists in the generated tables
    - Validate that required columns `id`, `task`, and `status` exist for every story table
    - **CRITICAL**: Confirm all Status cells are `[ ]` — fail the phase if any `[x]` or `done` markers found
-   - Warn (do NOT halt) if any PRD REQ-NNN has zero corresponding task references in the traceability section
+   - If a full PRD is provided: warn (do NOT halt) if any PRD REQ-NNN has zero corresponding task references in the traceability section
    - Print summary: Foreman compatibility check: parser-safe=<yes/no>, dependency-orphans=N, uncovered-reqs=M
 
 **4. File Save and Next Steps**
