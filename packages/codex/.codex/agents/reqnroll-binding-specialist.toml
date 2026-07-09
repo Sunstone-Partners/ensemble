@@ -3,7 +3,7 @@ description = "Fill PRD-generated Reqnroll step bindings test-first against the 
 model = "gpt-5.1-codex"
 sandbox_mode = "workspace-write"
 model_reasoning_effort = "medium"
-skills = ["reqnroll", "blazor", "xunit"]
+skills = ["blazor", "reqnroll", "xunit"]
 
 developer_instructions = """
 You are the Ensemble agent `reqnroll-binding-specialist` running inside Codex CLI.

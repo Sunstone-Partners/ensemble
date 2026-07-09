@@ -18,11 +18,27 @@ Keep asynchronous I/O at the boundary. Prefer pure domain/decider bindings unles
 
 ## ScenarioContext and typed context
 
-For small scenarios, `ScenarioContext` is enough. For larger features, inject a typed context object and store scenario state there instead of scattering string keys.
+For small scenarios, `ScenarioContext` is enough:
+
+```csharp
+_ctx["state"] = AccountState.Empty;
+_ctx.Get<AccountState>("state").Should().NotBeNull();
+```
+
+For larger features, inject a typed context object and store scenario state there instead of scattering string keys.
 
 ## Tables and DataTable transforms
 
-Use table arguments only when the Gherkin scenario genuinely contains tabular data. Convert tables at the edge, then pass typed values into the domain.
+Use table arguments only when the Gherkin scenario genuinely contains tabular data. Convert tables at the edge, then pass typed values into the domain:
+
+```csharp
+[Given(@"these accounts exist")]
+public void GivenTheseAccountsExist(DataTable table)
+{
+    var accounts = table.CreateSet<AccountFixture>().ToList();
+    _ctx["accounts"] = accounts;
+}
+```
 
 ## Dependency injection
 

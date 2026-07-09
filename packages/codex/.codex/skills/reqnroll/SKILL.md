@@ -2,6 +2,7 @@
 name: Reqnroll BDD Bindings
 description: Fill Reqnroll + xUnit step definitions test-first against the system under test
 version: 1.0.0
+user-invocable: true
 ---
 
 # Reqnroll BDD Bindings (xUnit)
