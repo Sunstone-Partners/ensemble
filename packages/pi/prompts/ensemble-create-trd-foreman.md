@@ -185,8 +185,6 @@ Generate a Foreman-native TRD document with parser-compatible sections
 9. Include `kind` in frontmatter (default `trd`). If --foundational: set `kind: foundational`, treat the PRD reference as optional (a capability brief is acceptable), and add a `capabilities:` frontmatter list of machine-matchable capability tokens this shared TRD provides so other TRDs' Capability Reuse Check can reference it by slug/document id
 10. Write exactly one primary parser-compatible TRD markdown file; any auxiliary summaries must not replace or redefine the task tables
 11. **CRITICAL**: Validate that all task Status cells in ALL tables are `[ ]` — no `[x]`, `done`, or other markers permitted
-9. Write exactly one primary parser-compatible TRD markdown file; any auxiliary summaries must not replace or redefine the task tables
-10. **CRITICAL**: Validate that all task Status cells in ALL tables are `[ ]` — no `[x]`, `done`, or other markers permitted
 
 ### Step 2: Acceptance Criteria Traceability
 

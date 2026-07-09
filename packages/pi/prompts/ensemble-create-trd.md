@@ -241,10 +241,6 @@ Generate comprehensive TRD document with frontmatter and structured sections
 6. Generate Master Task List with all TRD-NNN tasks and TRD-NNN-TEST tasks, organized under ### PR N: headings (not ### Phase N: or ### Sprint N:). Each ### PR N: heading must be immediately followed by a **Shippable State:** line before the first task entry. This is the machine-parsed section used by implement-trd-beads to create stacked PRs.
 7. Generate a ## Sprint Planning section (H2 heading) as a separate human-readable grouping for time-boxing PRs into calendar sprints. Use ## Sprint N: sub-headings (H2) within this section. This section is informational only — implement-trd-beads does not parse it.
 8. File naming: docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md where TRD_MICRO_UUID is the source PRD micro UUID when available (no sequence number)
-4. Generate Architecture Decision section documenting the chosen approach and alternatives considered
-5. Generate Master Task List with all TRD-NNN tasks and TRD-NNN-TEST tasks, organized under ### PR N: headings (not ### Phase N: or ### Sprint N:). Each ### PR N: heading must be immediately followed by a **Shippable State:** line before the first task entry. This is the machine-parsed section used by implement-trd-beads to create stacked PRs.
-6. Generate a ## Sprint Planning section (H2 heading) as a separate human-readable grouping for time-boxing PRs into calendar sprints. Use ## Sprint N: sub-headings (H2) within this section. This section is informational only — implement-trd-beads does not parse it.
-7. File naming: docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md where TRD_MICRO_UUID is the source PRD micro UUID when available (no sequence number)
 
 ### Step 2: Acceptance Criteria Traceability
 
