@@ -1,6 +1,10 @@
 'use strict';
 
-const { parseTestOutput, isGreen } = require('../lib/reqnroll-run');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const { parseTestOutput, isGreen, runTests } = require('../lib/reqnroll-run');
 
 const TRX_PASS = `<?xml version="1.0" encoding="UTF-8"?>
 <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
@@ -83,5 +87,25 @@ describe('isGreen', () => {
   });
   test('a run with zero tests is NOT green (nothing proven)', () => {
     expect(isGreen({ passed: 0, failed: 0, pending: 0, total: 0, undefinedSteps: [] })).toBe(false);
+  });
+});
+
+describe('runTests', () => {
+  test('removes a stale TRX before a non-zero dotnet run can be parsed as green', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-run-test-'));
+    const trxPath = path.join(dir, 'reqnroll.trx');
+
+    try {
+      fs.writeFileSync(trxPath, TRX_PASS);
+
+      const { result, exitCode } = runTests(dir);
+
+      expect(exitCode).not.toBe(0);
+      expect(isGreen(result)).toBe(false);
+      expect(result).toMatchObject({ passed: 0, failed: 0, total: 0 });
+      expect(fs.existsSync(trxPath)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

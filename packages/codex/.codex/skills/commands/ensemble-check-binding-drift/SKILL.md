@@ -36,7 +36,8 @@ code (0 in-sync, 2 drift) lets the same check gate CI or a pre-commit hook.
 **2. Run the drift check**
    Invoke the deterministic CLI to diff PRD steps against the bindings
 
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js check-binding-drift <prd-path> --json
+   - Resolve REQNROLL_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js, packages/product/lib/reqnroll-cli.js. If missing, print error and HALT.
+   - Run: node "$REQNROLL_CLI" check-binding-drift <prd-path> --json
    - Interpret exit code: 0 = IN_SYNC, 2 = drift detected, 1 = no bindings generated yet
 
 **3. Report and recommend**

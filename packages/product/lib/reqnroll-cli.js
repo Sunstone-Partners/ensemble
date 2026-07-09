@@ -115,7 +115,7 @@ function runRun(argv) {
   const { flags } = parseArgs(argv, new Set(['project', 'filter']));
   const projectDir = flags.project || '.';
   const { result, exitCode, raw } = runTests(projectDir, { filter: flags.filter });
-  return { ok: true, projectDir, result, green: isGreen(result), dotnetExit: exitCode, raw };
+  return { ok: true, projectDir, result, green: exitCode === 0 && isGreen(result), dotnetExit: exitCode, raw };
 }
 
 // ---------------------------------------------------------------------------

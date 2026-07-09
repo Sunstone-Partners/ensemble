@@ -32,7 +32,8 @@ traceability continuous rather than a one-time snapshot, and the CLI exit code
 **2. Run the drift check**
    Invoke the deterministic CLI to diff the PRD against its manifest
 
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/prd-cli.js check-drift <prd-path> --json
+   - Resolve PRD_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/prd-cli.js, packages/product/lib/prd-cli.js. If missing, print error and HALT.
+   - Run: node "$PRD_CLI" check-drift <prd-path> --json
    - Pass through --out <dir> (default: features/) so the correct manifest is located
    - Interpret exit code: 0 = IN_SYNC, 2 = drift detected, 1 = no manifest yet
 

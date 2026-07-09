@@ -101,6 +101,13 @@ function isGreen(r) {
 function runTests(projectDir, opts = {}) {
   const args = ['test', '--logger', 'trx;LogFileName=reqnroll.trx', '--results-directory', '.'];
   if (opts.filter) args.push('--filter', opts.filter);
+  const trxPath = path.join(projectDir, 'reqnroll.trx');
+  try {
+    fs.rmSync(trxPath, { force: true });
+  } catch {
+    /* stale TRX cleanup is best-effort */
+  }
+
 
   let exitCode = 0;
   let raw = '';
@@ -113,7 +120,6 @@ function runTests(projectDir, opts = {}) {
 
   // Prefer the TRX file if present (richer than console output).
   let parseSource = raw;
-  const trxPath = path.join(projectDir, 'reqnroll.trx');
   try {
     if (fs.existsSync(trxPath)) parseSource = fs.readFileSync(trxPath, 'utf8');
   } catch {

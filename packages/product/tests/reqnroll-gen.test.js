@@ -11,6 +11,7 @@ const {
   renderProject,
   buildBindingArtifacts,
   writeBindingArtifacts,
+  diffBindingDrift,
 } = require('../lib/reqnroll-gen');
 
 const SAMPLE = fs.readFileSync(
@@ -60,6 +61,48 @@ describe('collectSteps', () => {
     // AC-002-2 is free-form, AC-002-3 has a clarification marker -> excluded.
     const texts = steps.map((s) => s.text.toLowerCase());
     expect(texts.some((t) => t.includes('complexity rules'))).toBe(false);
+  });
+});
+
+describe('diffBindingDrift', () => {
+  test('reports stale bindings as orphaned when a structured AC needs clarification', () => {
+    const marked = parsePRD(`---
+document_id: PRD-2026-clarify
+label: clarify-marker
+---
+
+# PRD-2026-clarify: Clarification Marker
+
+### REQ-101: Clarify Structured AC [Must] [Low]
+
+- **AC-101-1:** Given a customer has a saved card, when they check out, then payment is captured [NEEDS CLARIFICATION: confirm SCA rules].
+`);
+    const staleBindings = `
+using Reqnroll;
+
+[Binding]
+public partial class REQ101Steps
+{
+    [Given(@"a customer has a saved card")]
+    public void GivenACustomerHasASavedCard() => throw new PendingStepException();
+
+    [When(@"they check out")]
+    public void WhenTheyCheckOut() => throw new PendingStepException();
+
+    [Then(@"payment is captured")]
+    public void ThenPaymentIsCaptured() => throw new PendingStepException();
+}
+`;
+
+    const res = diffBindingDrift(marked, [staleBindings]);
+
+    expect(res.inSync).toBe(false);
+    expect(res.unbound).toEqual([]);
+    expect(res.orphaned.map((s) => s.text).sort()).toEqual([
+      'a customer has a saved card',
+      'payment is captured',
+      'they check out',
+    ]);
   });
 });
 
