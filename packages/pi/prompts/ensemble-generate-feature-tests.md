@@ -28,7 +28,8 @@ Determine which PRD to generate feature files from
 Invoke the deterministic CLI to parse the PRD and write artifacts
 
 **Actions:**
-1. Run: node ${CLAUDE_PLUGIN_ROOT}/lib/prd-cli.js generate-features <prd-path> --json
+1. Resolve PRD_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/prd-cli.js, packages/product/lib/prd-cli.js. If missing, print error and HALT.
+   - Run: node "$PRD_CLI" generate-features <prd-path> --json
 2. Pass through --out <dir> (default: features/) and --dry-run if the user requested a preview
 3. The CLI writes one <REQ-NNN>.feature per requirement plus a .prd-trace.json manifest under <out>/<prd-stem>/
 

@@ -33,8 +33,9 @@ Iterate per scenario / PR slice so bindings and implementation interleave.
    Deterministically scaffold features, step stubs, and the xUnit project
 
    - Resolve the PRD (argument or docs/PRD/) and the SUT project (--sut <csproj>)
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js generate-bindings <prd-path> --out <dir> --sut <csproj> --json
-   - Confirm the project builds with all scenarios Pending (red): node ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js run --project <projectDir> --json (expect green=false)
+   - Resolve REQNROLL_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js, packages/product/lib/reqnroll-cli.js. If missing, print error and HALT.
+   - Run: node "$REQNROLL_CLI" generate-bindings <prd-path> --out <dir> --sut <csproj> --json
+   - Confirm the project builds with all scenarios Pending (red): node "$REQNROLL_CLI" run --project <projectDir> --json (expect green=false)
    - Enumerate scenarios in PR-boundary order (or AC order) to drive the per-slice loop
 
 ### Phase 2: Test-First Loop
@@ -48,7 +49,7 @@ Iterate per scenario / PR slice so bindings and implementation interleave.
 **2. RED gate (mandatory)**
    Prove the scenario fails before writing any implementation
 
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js run --project <projectDir> --filter @<AC-id> --json
+   - Run: node "$REQNROLL_CLI" run --project <projectDir> --filter @<AC-id> --json
    - REQUIRE green=false (failing assertion, Pending, or undefined step). If green=true immediately, REJECT: the assertion is vacuous or the behavior already exists -- send back to the binding-specialist.
 
 **3. Implement to green (inner TDD loop)**
@@ -59,7 +60,7 @@ Iterate per scenario / PR slice so bindings and implementation interleave.
 **4. GREEN gate**
    Confirm the scenario passes and the proof is real
 
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js run --project <projectDir> --filter @<AC-id> --json; REQUIRE green=true with zero Pending
+   - Run: node "$REQNROLL_CLI" run --project <projectDir> --filter @<AC-id> --json; REQUIRE green=true with zero Pending
    - Delegate: Task(subagent_type=code-reviewer, prompt='Confirm scenario <AC-id> Then steps assert the acceptance criterion meaningfully (not a no-op) and no [Given/When/Then] attribute was modified.')
    - Advance to the next scenario / PR slice and repeat from step 1
 
@@ -69,7 +70,7 @@ Iterate per scenario / PR slice so bindings and implementation interleave.
    Report green scenarios, still-pending steps, and drift status
 
    - List scenarios now green, and any steps left Pending with the reported reason
-   - Run: node ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js check-binding-drift <prd-path> --out <dir> to confirm bindings still cover the PRD
+   - Run: node "$REQNROLL_CLI" check-binding-drift <prd-path> --out <dir> to confirm bindings still cover the PRD
    - Recommend committing the test project alongside the implementation and wiring check-binding-drift into CI
 
 ## Expected Output

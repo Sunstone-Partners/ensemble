@@ -73,6 +73,29 @@ describe('renderFeature', () => {
   });
 });
 
+test('renders structured needs-clarification ACs as comments only', () => {
+  const marked = parsePRD(`---
+document_id: PRD-2026-clarify
+label: clarify-marker
+---
+
+# PRD-2026-clarify: Clarification Marker
+
+### REQ-101: Clarify Structured AC [Must] [Low]
+
+- **AC-101-1:** Given a customer has a saved card, when they check out, then payment is captured [NEEDS CLARIFICATION: confirm SCA rules].
+`);
+  const markedText = renderFeature(marked, marked.reqs[0]);
+
+  expect(markedText).toContain('@needs-clarification');
+  expect(markedText).toContain(
+    '# Given a customer has a saved card, when they check out, then payment is captured'
+  );
+  expect(markedText).not.toMatch(/^    Given /m);
+  expect(markedText).not.toMatch(/^    When /m);
+  expect(markedText).not.toMatch(/^    Then /m);
+});
+
 describe('buildArtifacts + manifest', () => {
   const artifacts = buildArtifacts(prd, 'PRD-sample');
 

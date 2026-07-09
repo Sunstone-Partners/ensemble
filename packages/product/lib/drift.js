@@ -44,8 +44,11 @@ function diffDrift(prd, manifest) {
   const prdMismatch =
     !!manifestDocId && !!prd.documentId && manifestDocId !== prd.documentId;
 
+  const inSync =
+    !prdMismatch && added.length === 0 && removed.length === 0 && changed.length === 0;
+
   return {
-    inSync: added.length === 0 && removed.length === 0 && changed.length === 0,
+    inSync,
     added,
     removed,
     changed,

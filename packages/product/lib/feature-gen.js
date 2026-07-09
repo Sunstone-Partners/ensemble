@@ -71,15 +71,15 @@ function renderScenario(ac) {
   lines.push('  ' + tags.join(' '));
   lines.push(`  Scenario: ${ac.id}`);
 
-  if (ac.given !== null && ac.given !== undefined) {
+  if (!ac.needsClarification && ac.given !== null && ac.given !== undefined) {
     lines.push(`    Given ${ac.given}`);
     if (ac.when) lines.push(`    When ${ac.when}`);
     if (ac.then) lines.push(`    Then ${ac.then}`);
     for (const extra of ac.ands || []) lines.push(`    And ${extra}`);
   } else {
-    // Free-form AC: preserve the prose so nothing is silently lost, and flag it
-    // for a human to turn into proper Given/When/Then.
-    lines.push(`    # NEEDS CLARIFICATION: not in Given/When/Then form`);
+    // Free-form or flagged AC: preserve the prose so nothing is silently lost,
+    // and keep it non-executable until a human clarifies the Gherkin contract.
+    lines.push(`    # NEEDS CLARIFICATION: not ready for executable Given/When/Then steps`);
     lines.push(`    # ${ac.raw}`);
   }
   return lines.join('\n');

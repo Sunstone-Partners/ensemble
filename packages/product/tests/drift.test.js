@@ -40,6 +40,26 @@ describe('diffDrift', () => {
     expect(res.changed).toEqual([]);
   });
 
+  test('treats a matching AC set from a different PRD document as drift', () => {
+    const ac1 = { id: 'AC-001-1', given: 'g1', when: 'w1', then: 't1' };
+    const ac2 = { id: 'AC-001-2', given: 'g2', when: 'w2', then: 't2' };
+    const manifest = {
+      prd: { document_id: 'PRD-2026-different' },
+      acs: {
+        'AC-001-1': { req: 'REQ-001', hash: hashAc(ac1), feature_file: 'REQ-001.feature' },
+        'AC-001-2': { req: 'REQ-001', hash: hashAc(ac2), feature_file: 'REQ-001.feature' },
+      },
+    };
+
+    const res = diffDrift(prdWith([ac1, ac2]), manifest);
+
+    expect(res.inSync).toBe(false);
+    expect(res.prdMismatch).toBe(true);
+    expect(res.added).toEqual([]);
+    expect(res.removed).toEqual([]);
+    expect(res.changed).toEqual([]);
+  });
+
   test('detects ADDED ACs (present in PRD, absent from manifest)', () => {
     const ac1 = { id: 'AC-001-1', given: 'g1', when: 'w1', then: 't1' };
     const acNew = { id: 'AC-001-9', given: 'gn', when: 'wn', then: 'tn' };
