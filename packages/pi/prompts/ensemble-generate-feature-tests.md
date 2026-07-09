@@ -29,9 +29,9 @@ Invoke the deterministic CLI to parse the PRD and write artifacts
 
 **Actions:**
 1. Resolve PRD_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/prd-cli.js, packages/product/lib/prd-cli.js. If missing, print error and HALT.
-   - Run: node "$PRD_CLI" generate-features <prd-path> --json
-2. Pass through --out <dir> (default: features/) and --dry-run if the user requested a preview
-3. The CLI writes one <REQ-NNN>.feature per requirement plus a .prd-trace.json manifest under <out>/<prd-stem>/
+2. Run: node "$PRD_CLI" generate-features <prd-path> --json
+3. Pass through --out <dir> (default: features/) and --dry-run if the user requested a preview
+4. The CLI writes one <REQ-NNN>.feature per requirement plus a .prd-trace.json manifest under <out>/<prd-stem>/
 
 ### Step 3: Report results
 

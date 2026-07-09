@@ -29,9 +29,9 @@ Invoke the deterministic CLI to scaffold the project
 
 **Actions:**
 1. Resolve REQNROLL_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js, packages/product/lib/reqnroll-cli.js. If missing, print error and HALT.
-   - Run: node "$REQNROLL_CLI" generate-bindings <prd-path> --json
-2. Pass through --out <dir> (default: tests/), --sut <csproj>, --dry-run, and --force as requested
-3. The CLI writes Features/*.feature, Steps/*.Steps.cs, <Name>.Tests.csproj, reqnroll.json, and .reqnroll-trace.json under <out>/<prd-stem>/
+2. Run: node "$REQNROLL_CLI" generate-bindings <prd-path> --json
+3. Pass through --out <dir> (default: tests/), --sut <csproj>, --dry-run, and --force as requested
+4. The CLI writes Features/*.feature, Steps/*.Steps.cs, <Name>.Tests.csproj, reqnroll.json, and .reqnroll-trace.json under <out>/<prd-stem>/
 
 ### Step 3: Report results
 

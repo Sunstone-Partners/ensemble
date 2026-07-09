@@ -22,9 +22,9 @@ Deterministically scaffold features, step stubs, and the xUnit project
 **Actions:**
 1. Resolve the PRD (argument or docs/PRD/) and the SUT project (--sut <csproj>)
 2. Resolve REQNROLL_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js, packages/product/lib/reqnroll-cli.js. If missing, print error and HALT.
-   - Run: node "$REQNROLL_CLI" generate-bindings <prd-path> --out <dir> --sut <csproj> --json
-3. Confirm the project builds with all scenarios Pending (red): node "$REQNROLL_CLI" run --project <projectDir> --json (expect green=false)
-4. Enumerate scenarios in PR-boundary order (or AC order) to drive the per-slice loop
+3. Run: node "$REQNROLL_CLI" generate-bindings <prd-path> --out <dir> --sut <csproj> --json
+4. Confirm the project builds with all scenarios Pending (red): node "$REQNROLL_CLI" run --project <projectDir> --json (expect green=false)
+5. Enumerate scenarios in PR-boundary order (or AC order) to drive the per-slice loop
 
 ## Phase 2: Test-First Loop
 
