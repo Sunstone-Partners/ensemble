@@ -43,7 +43,7 @@ Validate testable acceptance criteria from the PRD before TRD generation
 2. Otherwise ensure each requirement has measurable acceptance criteria with Given/When/Then items
 3. Otherwise verify AC-NNN-M sub-item format under each REQ-NNN
 4. Otherwise check that every Must requirement has at least 2 ACs (happy path + edge case)
-4. Do NOT validate TRD traceability here -- the TRD has not been generated yet
+5. Do NOT validate TRD traceability here -- the TRD has not been generated yet
 
 ### Step 4: Implementation Readiness Gate Check
 
@@ -53,9 +53,9 @@ Check if the PRD passed its own readiness gate before proceeding
 1. If --foundational with a short capability brief: skip the PRD readiness score gate
 2. Otherwise read PRD frontmatter for Readiness Score field
 3. If score >= 4.0 (PASS): proceed normally
-3. If score 3.0-3.9 (CONCERNS): warn user about PRD concerns, ask whether to proceed
-4. If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first
-5. If no readiness score in frontmatter, proceed with a note that PRD was not gate-checked
+4. If score 3.0-3.9 (CONCERNS): warn user about PRD concerns, ask whether to proceed
+5. If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first
+6. If no readiness score in frontmatter, proceed with a note that PRD was not gate-checked
 
 ## Phase 2: Architecture Design
 
@@ -76,11 +76,11 @@ Reuse existing foundational work instead of duplicating it (dedup-by-reference)
 
 **Actions:**
 1. Resolve TRD_GRAPH_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js, packages/development/lib/trd-graph-cli.js. If missing, print error and HALT.
-   - Run: node "$TRD_GRAPH_CLI" capabilities docs/TRD --json to list capabilities already provided by foundational TRDs; if docs/TRD does not exist yet, treat the registry as empty and continue
-2. For each technical capability this PRD needs (from Domain Analysis), check the registry: an EXPLICIT match is one of the listed capability tokens; otherwise judge an IMPLICIT match by comparing the needed work to existing foundational TRD labels/titles and their target files (also consult: node "$TRD_GRAPH_CLI" overlap docs/TRD)
-3. If a foundational TRD already provides the capability: DO NOT generate duplicate tasks for it. Instead add a cross-TRD dependency [depends: <foundational-slug>#TRD-NNN] (or #PR-N) on the task that needs it, and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
-4. If a needed capability is clearly reusable across PRDs but no foundational TRD exists yet, recommend extracting it: suggest running /ensemble:create-trd <prd> --foundational to create a shared TRD, rather than embedding the work here
-5. Reference foundational work by slug / document id only -- never by label (labels are display-only and may change)
+2. Run: node "$TRD_GRAPH_CLI" capabilities docs/TRD --json to list capabilities already provided by foundational TRDs; if docs/TRD does not exist yet, treat the registry as empty and continue
+3. For each technical capability this PRD needs (from Domain Analysis), check the registry: an EXPLICIT match is one of the listed capability tokens; otherwise judge an IMPLICIT match by comparing the needed work to existing foundational TRD labels/titles and their target files (also consult: node "$TRD_GRAPH_CLI" overlap docs/TRD)
+4. If a foundational TRD already provides the capability: DO NOT generate duplicate tasks for it. Instead add a cross-TRD dependency [depends: <foundational-slug>#TRD-NNN] (or #PR-N) on the task that needs it, and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
+5. If a needed capability is clearly reusable across PRDs but no foundational TRD exists yet, recommend extracting it: suggest running /ensemble:create-trd <prd> --foundational to create a shared TRD, rather than embedding the work here
+6. Reference foundational work by slug / document id only -- never by label (labels are display-only and may change)
 
 ### Step 3: Architecture Alternatives
 

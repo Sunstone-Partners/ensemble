@@ -27,10 +27,10 @@ Invoke the deterministic CLI to build and emit the dependency graph
 
 **Actions:**
 1. Resolve TRD_GRAPH_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js, packages/development/lib/trd-graph-cli.js. If missing, print error and HALT.
-   - Run: node "$TRD_GRAPH_CLI" graph <dir|paths> --format <json|mermaid|dot>
-2. Default to --format mermaid for a human-facing answer (renders in GitHub); use json when the caller needs machine output, dot for Graphviz
-3. Interpret exit code: 0 = acyclic, 2 = a dependency cycle was detected (report the cycle)
-4. Surface every stderr warning -- especially duplicate document_id collisions and unresolved cross-TRD references
+2. Run: node "$TRD_GRAPH_CLI" graph <dir|paths> --format <json|mermaid|dot>
+3. Default to --format mermaid for a human-facing answer (renders in GitHub); use json when the caller needs machine output, dot for Graphviz
+4. Interpret exit code: 0 = acyclic, 2 = a dependency cycle was detected (report the cycle)
+5. Surface every stderr warning -- especially duplicate document_id collisions and unresolved cross-TRD references
 
 ### Step 3: Report duplicate work
 
