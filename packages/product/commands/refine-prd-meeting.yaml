@@ -132,6 +132,7 @@ workflow:
             - If the score dropped compared to previous, warn the user and identify which dimensions declined
             - "Note plainly if a meaningful STILL_OPEN count remains -- the score may legitimately stay below PASS until a live /ensemble:refine-prd closes those out, and that's expected, not a defect in this pass"
             - Update the Readiness Score in the PRD frontmatter
+            - "Status transition rule (explicit, matching create-prd-meeting): regardless of whether the re-score lands on PASS, CONCERNS, or FAIL, this command never changes the PRD's Status field away from whatever it already was (typically Draft). A meeting-sourced refinement pass -- even one that reaches PASS -- doesn't itself graduate a PRD to a reviewed/approved state; that still requires a live human check. Only note the gate result and score, don't act on it by changing Status"
 
     - name: Output Management
       order: 4

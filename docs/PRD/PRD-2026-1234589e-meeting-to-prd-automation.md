@@ -6,7 +6,7 @@ Status: Draft
 Date: 2026-07-14
 Scale Depth: DEEP (inferred from signal richness -- see Notes; requirement count below DEEP's typical range, see Notes)
 Total Requirements: 5
-Readiness Score: 4.0 (PASS, up from 3.3 CONCERNS)
+Readiness Score: 4.0 (PASS, up from 3.25 CONCERNS)
 Branch: feature/create-refine-prd-meeting
 Author: Claude Code (via create-prd-meeting, meeting-sourced; refined via refine-prd-meeting)
 ---
@@ -28,7 +28,7 @@ Author: Claude Code (via create-prd-meeting, meeting-sourced; refined via refine
 
 ## PRD Health Summary
 
-- **Requirements by priority:** Must (3), Should (2), Could (0), Won't (0)
+- **Requirements by priority:** Must (4), Should (1), Could (0), Won't (0)
 - **AC coverage:** 5/5 requirements have acceptance criteria (100%)
 - **Risk flags:** 0 (REQ-003's risk resolved this pass -- see Changelog)
 - **Cross-requirement dependencies:** 2
@@ -71,7 +71,7 @@ produce a PRD. **Success metric:** [NEEDS CLARIFICATION: not stated in the meeti
 - Preserve the existing PRD quality contract (Health Summary, MoSCoW, GWT ACs, Readiness Gate)
 
 **Non-Goals (explicitly out of scope for this PRD):**
-- Automated linkage/creation of Azure DevOps Feature or User Story work items from the resulting PRD -- raised in the meeting as a downstream idea, but is org-specific integration work, not part of the meeting-to-PRD drafting capability itself
+- ~~Automated linkage/creation of Azure DevOps work items~~ -- **moved to REQ-003 as of the 2026-07-14 refinement.** Originally scoped out here as org-specific integration work; the follow-up meeting decided otherwise (User Story type, Product-team ownership, `ado-boards` bridge) and promoted it to a Must. Left struck through rather than deleted so the scope change itself stays visible, not just its result.
 - Evaluating Ensemble's session logs for training/debugging value -- a separate, unrelated discussion thread from the same meeting
 - Resolving the broader "agentic tools vs. SDLC process" balance question, or the general ADO-value-vs-overhead assessment -- both raised as open strategic questions in the meeting, neither specific to this feature
 - Steering committee formation, recurring meeting cadence, and other meeting logistics -- organizational outcomes, not product requirements
@@ -137,7 +137,7 @@ and what still requires a live refinement session.
 
 - REQ-002 (clarification marking) is a cross-cutting behavior applied within REQ-001 (create) and REQ-004 (refine) -- not a standalone deliverable
 - REQ-005 depends on REQ-004 (nothing to report on until refinement runs)
-- REQ-003 (ADO linkage) depends on REQ-001/REQ-004 producing a PRD to link, but per Non-Goals is not part of this PRD's build scope -- tracked here for traceability back to the meeting, not for implementation
+- REQ-003 (ADO linkage) depends on REQ-001/REQ-004 producing a PRD to link. No longer excluded from build scope as of the 2026-07-14 refinement -- see the struck-through Non-Goal above
 
 ## Readiness Scorecard
 
@@ -187,7 +187,10 @@ meeting, 2 still open.**
   identified backlog visibility as the actual adoption blocker
 - REQ-003's `[RISK]` tag removed -- the specific uncertainty it flagged (undecided
   mechanism) is what got resolved
-- Readiness Score: 3.3 (CONCERNS) -> 4.0 (PASS)
+- Non-Goals reconciled: the ADO-linkage exclusion is struck through, not left standing
+  alongside a Must requirement that directly contradicts it -- resolving a finding means
+  updating everywhere it's referenced, not just the requirement itself
+- Readiness Score: 3.25 (CONCERNS) -> 4.0 (PASS)
 - Left untouched, per this command's constraints: the two Product Summary clarifications
   (baseline cost, success metric) -- the follow-up meeting didn't address either, so
   nothing was guessed at
