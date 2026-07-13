@@ -4,11 +4,11 @@
 
 # ensemble:sessionlog
 
-> **Mission:** Capture and persist the current session context as a structured markdown log file. Analyzes the conversation to extract key decisions, commands executed, problems encountered, and resolutions reached. Saves to ./SessionLogs/session-DDMMYY-HH:MM.md relative to the current project directory. Useful for preserving session knowledge across context boundaries, onboarding, and audit trails.
+> **Mission:** Capture and persist the current session context as a structured markdown log file. Analyzes the conversation to extract key decisions, commands executed, problems encountered, and resolutions reached. Saves to ./SessionLogs/session-DDMMYY-HHMM.md relative to the current project directory. Useful for preserving session knowledge across context boundaries, onboarding, and audit trails.
 
 > **Constraints:**
 > - Output directory is always ./SessionLogs/ relative to the current working project
-> - Filename format is session-DDMMYY-HH:MM.md using current date and time
+> - Filename format is session-DDMMYY-HHMM.md using current date and time
 > - Create the SessionLogs directory if it does not exist
 > - Never overwrite an existing session log file
 > - Include all significant decisions, not just code changes
@@ -57,7 +57,7 @@ Resolve the session log file path
 **Actions:**
 1. Determine the current project root directory
 2. Construct the SessionLogs directory path relative to project root
-3. Generate the filename using current date and time in DDMMYY-HH:MM format
+3. Generate the filename using current date and time in DDMMYY-HHMM format
 4. Verify the target file does not already exist
 
 ## Phase 2: Output Generation
