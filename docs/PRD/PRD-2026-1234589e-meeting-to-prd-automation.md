@@ -20,7 +20,7 @@ Author: Claude Code (via create-prd-meeting, meeting-sourced; refined via refine
 
 > Drafted asynchronously via `/ensemble:create-prd-meeting` from the real AI-generated
 > recap of "Claude Code & Ensemble Framework Next Steps" (2026-07-13, organized by
-> Sankalp Pande) -- then refined via `/ensemble:refine-prd-meeting` against a fictional
+> the meeting host) -- then refined via `/ensemble:refine-prd-meeting` against a fictional
 > follow-up meeting summary constructed as a second test fixture (see Changelog and
 > Source). It is itself a PRD for the meeting-to-PRD capability the real meeting
 > discussed -- the clearest single product-shaped ask surfaced in an otherwise
@@ -194,9 +194,9 @@ meeting, 2 still open.**
 
 ## Source
 
-Meeting: "Claude Code & Ensemble Framework Next Steps," 2026-07-13, organized by Sankalp
-Pande. Drafted via `/ensemble:create-prd-meeting` from the AI-generated meeting recap
-(Teams Intelligent Recap / Loop notes), retrieved via `workiq`.
+Meeting: "Claude Code & Ensemble Framework Next Steps," 2026-07-13, organized by the
+meeting host. Drafted via `/ensemble:create-prd-meeting` from the AI-generated meeting
+recap (Teams Intelligent Recap / Loop notes), retrieved via `workiq`.
 
 Refined via `/ensemble:refine-prd-meeting` using a fictional follow-up meeting summary,
 "ADO Linkage Follow-up," 2026-07-14 -- constructed as a test fixture, not a real meeting,
