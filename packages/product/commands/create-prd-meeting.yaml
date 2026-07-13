@@ -182,13 +182,17 @@ workflow:
             [NEEDS CLARIFICATION] marker count -- that reflects reality, not a failure
             of this command.
 
-            PASS (4.0+) or CONCERNS (3.0-3.9): save as normal.
-            FAIL (below 3.0): still save the PRD, with Status set to Draft -- unlike
-            create-prd, which refuses to save on FAIL. This command's entire purpose is
-            producing a starting draft for a human's later refine-prd pass; refusing to
-            save a low-scoring async draft would defeat that purpose. State the
-            FAIL/CONCERNS/PASS result plainly either way, and say clearly that a human
-            refine-prd pass is expected next given the score.
+            PASS (4.0+): save as normal.
+            CONCERNS (3.0-3.9) or FAIL (below 3.0): save the PRD either way, with Status
+            set to Draft -- unlike create-prd, which asks the user to address CONCERNS or
+            proceed, and refuses to save outright on FAIL. Neither of those fits this
+            command: there is no live user to ask, and this command's entire purpose is
+            producing a starting draft for a human's later refine-prd pass, so refusing
+            to save a low-scoring async draft would defeat that purpose. Do NOT invoke
+            AskUserQuestion for this branch. Instead, report the FAIL/CONCERNS/PASS
+            result plainly, list the specific concerns (same categories create-prd would
+            list), and say clearly that a human refine-prd pass is expected next given
+            the score.
           actions: []
 
     - name: Output Management
