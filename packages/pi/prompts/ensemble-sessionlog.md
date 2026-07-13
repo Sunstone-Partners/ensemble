@@ -5,7 +5,7 @@
 # ensemble:sessionlog
 
 > **Mission:** Capture and persist the current session context as a structured markdown log file. Analyzes the conversation to extract key decisions, commands executed, problems encountered, and resolutions reached. Saves to ./SessionLogs/session-DDMMYY-HHMM.md relative to the current project directory. Useful for preserving session knowledge across context boundaries, onboarding, and audit trails.
-
+>
 > **Constraints:**
 > - Output directory is always ./SessionLogs/ relative to the current working project
 > - Filename format is session-DDMMYY-HHMM.md using current date and time
