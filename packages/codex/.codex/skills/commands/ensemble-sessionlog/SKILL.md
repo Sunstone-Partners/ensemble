@@ -15,7 +15,7 @@ Follow the workflow below, adapt to the current repository, and keep outputs str
 
 Capture and persist the current session context as a structured markdown log file.
 Analyzes the conversation to extract key decisions, commands executed, problems
-encountered, and resolutions reached. Saves to ./SessionLogs/session-DDMMYY-HH:MM.md
+encountered, and resolutions reached. Saves to ./SessionLogs/session-DDMMYY-HHMM.md
 relative to the current project directory. Useful for preserving session knowledge
 across context boundaries, onboarding, and audit trails.
 
@@ -53,7 +53,7 @@ across context boundaries, onboarding, and audit trails.
 
    - Determine the current project root directory
    - Construct the SessionLogs directory path relative to project root
-   - Generate the filename using current date and time in DDMMYY-HH:MM format
+   - Generate the filename using current date and time in DDMMYY-HHMM format
    - Verify the target file does not already exist
 
 ### Phase 2: Output Generation
@@ -84,7 +84,7 @@ across context boundaries, onboarding, and audit trails.
 **Format:** Markdown Session Log
 
 **Structure:**
-- **SessionLogs/session-DDMMYY-HH:MM.md**: Structured session transcript with decisions, commands, problems, resolutions, and files changed
+- **SessionLogs/session-DDMMYY-HHMM.md**: Structured session transcript with decisions, commands, problems, resolutions, and files changed
 
 ## Usage
 
