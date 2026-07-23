@@ -1,0 +1,62 @@
+metadata:
+  name: ensemble:generate-playwright-tests
+  description: Scaffold Playwright test-stub specs (one per requirement) from a PRD's acceptance criteria
+  version: 1.0.0
+  lastUpdated: "2026-07-23"
+  category: testing
+  output_path: ensemble/generate-playwright-tests.md
+  source: fortium
+  model: low
+  argument_hint: "[prd-path] [--out <dir>] [--dry-run]"
+
+constraints:
+  - This command ONLY scaffolds test artifacts deterministically -- it does not fill test bodies or implement features
+  - Codegen runs through the playwright-cli helper -- DO NOT hand-author .spec.ts or manifest files
+  - The generated test names and @hash tags are authoritative -- never edit them by hand
+  - Every generated test starts as test.fixme() -- filling bodies in is a separate, test-first step
+  - Regeneration always overwrites the spec file for a requirement (no write-once step layer, unlike Reqnroll bindings)
+
+mission:
+  summary: |
+    Generate a Playwright test-stub suite from a PRD's acceptance criteria. Reuses
+    the same deterministic PRD parse and AC fingerprint (hashAc) that the Reqnroll
+    and Gherkin generators use, so the same PRD edit registers as drift consistently
+    across every generator. Emits one *.spec.ts file per requirement, with one
+    `test.describe` and one tagged, hashed `test()` per acceptance criterion --
+    Given/When/Then rendered as `test.step()` calls -- plus a .playwright-trace.json
+    manifest for drift detection. Every test starts red (test.fixme), which is the
+    correct test-first starting point before bodies are filled in.
+
+workflow:
+  phases:
+    - name: Generate
+      order: 1
+      steps:
+        - order: 1
+          title: Resolve PRD
+          description: Determine the PRD to scaffold tests from
+          actions:
+            - If the user passed a PRD path, use it; otherwise look under docs/PRD/ and ask which to use if ambiguous
+        - order: 2
+          title: Run the generator
+          description: Invoke the deterministic CLI to scaffold the spec files
+          actions:
+            - "Resolve PLAYWRIGHT_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/playwright-cli.js, packages/product/lib/playwright-cli.js. If missing, print error and HALT."
+            - "Run: node \"$PLAYWRIGHT_CLI\" generate <prd-path> --json"
+            - "Pass through --out <dir> (default: e2e/) and --dry-run as requested"
+            - The CLI writes <REQ-NNN>.spec.ts and .playwright-trace.json under <out>/<prd-stem>/
+        - order: 3
+          title: Report results
+          description: Summarize the scaffold and the next move
+          actions:
+            - Report the output directory, spec-file count, and total test count
+            - Echo parser warnings and flag any AC tagged @needs-clarification -- these stay non-executable until the PRD is fixed
+            - "Point the user to fill in the test.fixme() bodies test-first, or /ensemble:check-playwright-drift to audit coverage later"
+
+expectedOutput:
+  format: Playwright test-stub suite
+  structure:
+    - name: "<out>/<prd-stem>/<REQ-NNN>.spec.ts"
+      description: "One test.describe per requirement, one tagged/hashed test.fixme() per acceptance criterion"
+    - name: "<out>/<prd-stem>/.playwright-trace.json"
+      description: AC fingerprint manifest used by check-playwright-drift
