@@ -9,7 +9,7 @@
  * nothing is hand-parsed in prose.
  *
  * Subcommands:
- *   generate     <prd-path> [--out <dir>] [--dry-run]
+ *   generate     <prd-path> [--out <dir>] [--dry-run] [--force]
  *   check-drift  <prd-path> [--out <dir>] [--json]
  *
  * Exit codes:
@@ -52,6 +52,7 @@ function runGenerate(argv) {
   const outRoot = flags.out || DEFAULT_OUT;
   const res = writeArtifacts(parsed, slug, outRoot, {
     dryRun: !!flags['dry-run'],
+    force: !!flags.force,
     prdPath,
   });
   const flagged = Object.values(buildArtifacts(parsed, slug).manifest.acs).filter(
@@ -66,6 +67,7 @@ function runGenerate(argv) {
     testCount: parsed.reqs.reduce((n, r) => n + r.acs.length, 0),
     needsClarification: flagged,
     written: res.written,
+    skipped: res.skipped,
     planned: res.planned,
     warnings: parsed.warnings,
   };
@@ -108,7 +110,12 @@ function reportGenerate(r) {
     lines.push(`⚠ ${r.needsClarification} AC(s) need clarification (tagged @needs-clarification).`);
   }
   for (const w of r.warnings) lines.push(`  warning: ${w}`);
-  if (!r.dryRun) lines.push('  Every test starts as test.fixme() — fill them in test-first.');
+  if (r.skipped && r.skipped.length) {
+    lines.push(
+      `  Preserved ${r.skipped.length} existing spec file(s) (write-once) — pass --force to overwrite.`
+    );
+  }
+  if (!r.dryRun) lines.push('  Every new test starts as test.fixme() — fill them in test-first.');
   return lines.join('\n');
 }
 
@@ -144,7 +151,7 @@ function main(argv) {
       if (r.noManifest) return 1;
       return r.drift.inSync ? 0 : 2;
     }
-    console.error('Usage: playwright-cli <generate|check-drift> <prd-path> [--out dir] [--dry-run] [--json]');
+    console.error('Usage: playwright-cli <generate|check-drift> <prd-path> [--out dir] [--dry-run] [--force] [--json]');
     return 1;
   } catch (err) {
     if (wantsJson) console.log(JSON.stringify({ ok: false, error: err.message }, null, 2));

@@ -15,10 +15,11 @@
  * identical across every generator (Gherkin, Reqnroll, Playwright) -- the same PRD
  * edit registers as drift consistently everywhere, not per-generator.
  *
- * Idempotency: spec files and the manifest are always regenerated (deterministic,
- * no timestamps) -- same convention as feature-gen.js. Unlike reqnroll-gen.js's
- * step files, Playwright specs have no separate "binding" layer to preserve, so
- * there is no write-once concern here; regeneration is always safe to overwrite.
+ * Idempotency: the manifest is always regenerated (deterministic, no timestamps).
+ * Spec files are WRITE-ONCE, same as reqnroll-gen.js's Steps/*.cs -- a test body
+ * filled in by hand is never clobbered by a later regenerate unless --force is
+ * passed, so a PRD edit to one AC can't silently wipe out finished work on its
+ * neighbors in the same requirement file.
  */
 
 const fs = require('fs');
@@ -146,7 +147,9 @@ function writeFileAtomic(filePath, content) {
 
 /**
  * Write spec files + manifest under `<outRoot>/<slug>/`.
- * @returns {{ outDir:string, written:string[], planned:string[] }}
+ * WRITE-ONCE: an existing <REQ-NNN>.spec.ts is never overwritten unless
+ * opts.force -- mirrors reqnroll-gen.js's Steps/*.cs handling.
+ * @returns {{ outDir:string, written:string[], skipped:string[], planned:string[] }}
  */
 function writeArtifacts(prd, slug, outRoot, opts = {}) {
   const artifacts = buildArtifacts(prd, slug, opts);
@@ -157,20 +160,25 @@ function writeArtifacts(prd, slug, outRoot, opts = {}) {
     .concat(path.join(outDir, MANIFEST_NAME));
 
   if (opts.dryRun) {
-    return { outDir, written: [], planned };
+    return { outDir, written: [], skipped: [], planned };
   }
 
   fs.mkdirSync(outDir, { recursive: true });
   const written = [];
+  const skipped = [];
   for (const f of artifacts.files) {
     const dest = path.join(outDir, f.relPath);
+    if (fs.existsSync(dest) && !opts.force) {
+      skipped.push(dest);
+      continue;
+    }
     writeFileAtomic(dest, f.content);
     written.push(dest);
   }
   const manifestPath = path.join(outDir, MANIFEST_NAME);
   writeFileAtomic(manifestPath, manifestText);
   written.push(manifestPath);
-  return { outDir, written, planned };
+  return { outDir, written, skipped, planned };
 }
 
 module.exports = {

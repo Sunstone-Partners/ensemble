@@ -4,7 +4,7 @@ description: Scaffold Playwright test-stub specs (one per requirement) from a PR
 version: 1.0.0
 category: testing
 last-updated: 2026-07-23
-argument-hint: [prd-path] [--out <dir>] [--dry-run]
+argument-hint: [prd-path] [--out <dir>] [--dry-run] [--force]
 model: haiku
 ---
 <!-- DO NOT EDIT - Generated from generate-playwright-tests.yaml -->
@@ -18,7 +18,10 @@ across every generator. Emits one *.spec.ts file per requirement, with one
 `test.describe` and one tagged, hashed `test()` per acceptance criterion --
 Given/When/Then rendered as `test.step()` calls -- plus a .playwright-trace.json
 manifest for drift detection. Every test starts red (test.fixme), which is the
-correct test-first starting point before bodies are filled in.
+correct test-first starting point before bodies are filled in. Spec files are
+write-once: once a requirement's tests are filled in, a later PRD edit to a
+sibling AC won't silently discard that work -- re-run with --force to
+deliberately resync a requirement's file.
 
 ## Workflow
 
@@ -34,13 +37,15 @@ correct test-first starting point before bodies are filled in.
 
    - Resolve PLAYWRIGHT_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/playwright-cli.js, packages/product/lib/playwright-cli.js. If missing, print error and HALT.
    - Run: node "$PLAYWRIGHT_CLI" generate <prd-path> --json
-   - Pass through --out <dir> (default: e2e/) and --dry-run as requested
+   - Pass through --out <dir> (default: e2e/), --dry-run, and --force as requested
    - The CLI writes <REQ-NNN>.spec.ts and .playwright-trace.json under <out>/<prd-stem>/
+   - An existing <REQ-NNN>.spec.ts is preserved (write-once) unless --force is passed -- only pass --force when the user explicitly wants a requirement's tests reset
 
 **3. Report results**
    Summarize the scaffold and the next move
 
    - Report the output directory, spec-file count, and total test count
+   - List any spec files that were preserved (write-once) versus newly created
    - Echo parser warnings and flag any AC tagged @needs-clarification -- these stay non-executable until the PRD is fixed
    - Point the user to fill in the test.fixme() bodies test-first, or /ensemble:check-playwright-drift to audit coverage later
 
@@ -55,5 +60,5 @@ correct test-first starting point before bodies are filled in.
 ## Usage
 
 ```
-/ensemble:generate-playwright-tests [prd-path] [--out <dir>] [--dry-run]
+/ensemble:generate-playwright-tests [prd-path] [--out <dir>] [--dry-run] [--force]
 ```

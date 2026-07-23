@@ -118,6 +118,45 @@ describe('writeArtifacts', () => {
     expect(fs.existsSync(res.outDir)).toBe(false);
     expect(res.planned.length).toBeGreaterThan(0);
   });
+
+  test('write-once: preserves a hand-edited spec file on regenerate', () => {
+    const dir = mkTmp();
+    writeArtifacts(prd, 'PRD-sample', dir);
+    const specPath = path.join(dir, 'PRD-sample', 'REQ-001.spec.ts');
+    fs.writeFileSync(specPath, '// filled in test-first, do not clobber\n');
+
+    const res = writeArtifacts(prd, 'PRD-sample', dir);
+
+    expect(fs.readFileSync(specPath, 'utf8')).toBe('// filled in test-first, do not clobber\n');
+    expect(res.skipped).toContain(specPath);
+    expect(res.written).not.toContain(specPath);
+  });
+
+  test('write-once still refreshes the manifest even when spec files are preserved', () => {
+    const dir = mkTmp();
+    writeArtifacts(prd, 'PRD-sample', dir);
+    const manifestPath = path.join(dir, 'PRD-sample', '.playwright-trace.json');
+    const specPath = path.join(dir, 'PRD-sample', 'REQ-001.spec.ts');
+    fs.writeFileSync(specPath, '// hand-filled\n');
+
+    const res = writeArtifacts(prd, 'PRD-sample', dir);
+
+    expect(res.written).toContain(manifestPath);
+  });
+
+  test('--force overwrites a preserved spec file with fresh generated content', () => {
+    const dir = mkTmp();
+    writeArtifacts(prd, 'PRD-sample', dir);
+    const specPath = path.join(dir, 'PRD-sample', 'REQ-001.spec.ts');
+    const generated = fs.readFileSync(specPath, 'utf8');
+    fs.writeFileSync(specPath, '// hand-filled, should be discarded by --force\n');
+
+    const res = writeArtifacts(prd, 'PRD-sample', dir, { force: true });
+
+    expect(fs.readFileSync(specPath, 'utf8')).toBe(generated);
+    expect(res.written).toContain(specPath);
+    expect(res.skipped).not.toContain(specPath);
+  });
 });
 
 describe('drift.js interop', () => {

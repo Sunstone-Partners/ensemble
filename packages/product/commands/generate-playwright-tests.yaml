@@ -7,14 +7,14 @@ metadata:
   output_path: ensemble/generate-playwright-tests.md
   source: fortium
   model: low
-  argument_hint: "[prd-path] [--out <dir>] [--dry-run]"
+  argument_hint: "[prd-path] [--out <dir>] [--dry-run] [--force]"
 
 constraints:
   - This command ONLY scaffolds test artifacts deterministically -- it does not fill test bodies or implement features
   - Codegen runs through the playwright-cli helper -- DO NOT hand-author .spec.ts or manifest files
   - The generated test names and @hash tags are authoritative -- never edit them by hand
   - Every generated test starts as test.fixme() -- filling bodies in is a separate, test-first step
-  - Regeneration always overwrites the spec file for a requirement (no write-once step layer, unlike Reqnroll bindings)
+  - "Spec files are WRITE-ONCE -- regeneration preserves an existing <REQ-NNN>.spec.ts (and any filled-in test bodies) unless --force is passed, mirroring Reqnroll's Steps/*.cs handling"
 
 mission:
   summary: |
@@ -25,7 +25,10 @@ mission:
     `test.describe` and one tagged, hashed `test()` per acceptance criterion --
     Given/When/Then rendered as `test.step()` calls -- plus a .playwright-trace.json
     manifest for drift detection. Every test starts red (test.fixme), which is the
-    correct test-first starting point before bodies are filled in.
+    correct test-first starting point before bodies are filled in. Spec files are
+    write-once: once a requirement's tests are filled in, a later PRD edit to a
+    sibling AC won't silently discard that work -- re-run with --force to
+    deliberately resync a requirement's file.
 
 workflow:
   phases:
@@ -43,13 +46,15 @@ workflow:
           actions:
             - "Resolve PLAYWRIGHT_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/playwright-cli.js, packages/product/lib/playwright-cli.js. If missing, print error and HALT."
             - "Run: node \"$PLAYWRIGHT_CLI\" generate <prd-path> --json"
-            - "Pass through --out <dir> (default: e2e/) and --dry-run as requested"
+            - "Pass through --out <dir> (default: e2e/), --dry-run, and --force as requested"
             - The CLI writes <REQ-NNN>.spec.ts and .playwright-trace.json under <out>/<prd-stem>/
+            - "An existing <REQ-NNN>.spec.ts is preserved (write-once) unless --force is passed -- only pass --force when the user explicitly wants a requirement's tests reset"
         - order: 3
           title: Report results
           description: Summarize the scaffold and the next move
           actions:
             - Report the output directory, spec-file count, and total test count
+            - List any spec files that were preserved (write-once) versus newly created
             - Echo parser warnings and flag any AC tagged @needs-clarification -- these stay non-executable until the PRD is fixed
             - "Point the user to fill in the test.fixme() bodies test-first, or /ensemble:check-playwright-drift to audit coverage later"
 

@@ -50,7 +50,7 @@ workflow:
             - "If IN_SYNC: confirm the spec files cover the PRD's acceptance criteria"
             - "If ADDED: list the new ACs needing spec files -- re-run /ensemble:generate-playwright-tests to add them"
             - "If REMOVED: list spec files whose acceptance criterion was deleted from the PRD -- remove or repurpose them"
-            - "If CHANGED: list ACs whose wording changed since generation -- re-run /ensemble:generate-playwright-tests to resync (this overwrites the spec's Given/When/Then steps)"
+            - "If CHANGED: list ACs whose wording changed since generation -- re-run /ensemble:generate-playwright-tests --force on that requirement's file to resync (spec files are write-once, so a plain regenerate will NOT touch it)"
             - "If no manifest exists yet: tell the user to run /ensemble:generate-playwright-tests first"
 
 expectedOutput:
