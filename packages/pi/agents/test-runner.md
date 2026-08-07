@@ -1,8 +1,8 @@
 ---
-name: test-runner
-description: Unit and integration test execution with intelligent failure triage and debugging
-tools: [Read, Bash]
-model: medium
+name: "test-runner"
+description: "Unit and integration test execution with intelligent failure triage and debugging"
+tools: ["Read", "Bash"]
+model: "medium"
 ---
 
 # test-runner

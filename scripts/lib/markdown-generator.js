@@ -7,6 +7,7 @@
 
 const { transformCommandToMarkdown } = require('./command-transformer');
 const { transformAgentToMarkdown } = require('./agent-transformer');
+const { checkFrontmatter } = require('./frontmatter-check');
 const { GenerationError } = require('./error-handler');
 
 /**
@@ -19,13 +20,20 @@ const { GenerationError } = require('./error-handler');
  */
 function generateMarkdown(yamlData, type, sourceYamlPath) {
   try {
+    let markdown;
     if (type === 'command') {
-      return transformCommandToMarkdown(yamlData, sourceYamlPath);
+      markdown = transformCommandToMarkdown(yamlData, sourceYamlPath);
     } else if (type === 'agent') {
-      return transformAgentToMarkdown(yamlData, sourceYamlPath);
+      markdown = transformAgentToMarkdown(yamlData, sourceYamlPath);
     } else {
       throw new GenerationError(sourceYamlPath, `Unknown YAML type: ${type}`);
     }
+
+    // Both transformers converge here, so this one call covers every generated
+    // artifact. Fails closed: nothing unparseable reaches writeFileAtomic.
+    checkFrontmatter(markdown, sourceYamlPath);
+
+    return markdown;
   } catch (error) {
     if (error instanceof GenerationError) {
       throw error;

@@ -35,6 +35,12 @@ __pycache__/
 # Beads local issue database — tracked in git when Dolt sync is unavailable
 # (no `dolt` CLI on this machine, no remote configured). The local JSONL
 # export from `br sync --flush-only` is the canonical accessible record.
+# The lock files below are per-process runtime state, never part of that record.
+.beads/*.db-lock-*
+.beads/*.db-wal-lock-*
+
+# Fork-local operating notes, loaded by Claude Code alongside CLAUDE.md
+CLAUDE.local.md
 
 # Pi colon-namespaced command artifacts. OMP derives its slash-command name
 # from the filename, so these must keep the canonical "ensemble:<cmd>" form —
@@ -44,3 +50,7 @@ __pycache__/
 # instead, via packages/pi's prepublishOnly. The Windows-safe
 # ensemble-full-<cmd>.md aliases remain committed.
 packages/pi/commands/ensemble:*.md
+# On NTFS the ':' makes Windows write those artifacts as alternate data streams
+# on a 0-byte stub file named 'ensemble' rather than as separate files. The stub
+# is not matched by the pattern above, so ignore it explicitly.
+packages/pi/commands/ensemble

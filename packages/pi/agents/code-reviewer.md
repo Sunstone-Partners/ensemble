@@ -1,8 +1,8 @@
 ---
-name: code-reviewer
-description: Security-enhanced code review with comprehensive DoD enforcement and quality gates
-tools: [Read, Write, Edit, Bash]
-model: high
+name: "code-reviewer"
+description: "Security-enhanced code review with comprehensive DoD enforcement and quality gates"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "high"
 ---
 
 # code-reviewer

@@ -91,8 +91,24 @@ function filterTools(tools: string[]): string[] {
 }
 
 /**
+ * Emit a value as a quoted, single-line YAML scalar.
+ *
+ * Quoting is unconditional. The previous rule quoted only when the value
+ * *started* with a YAML indicator, which let a mid-string ": " through and
+ * produced an unparseable block — and a parse failure drops the whole agent
+ * silently. JSON string escaping is valid YAML 1.2 double-quoted style, so the
+ * escaping is the standard library's rather than ours.
+ *
+ * Mirrors scripts/lib/yaml-scalar.js; kept local to avoid a build-time
+ * dependency from this package on the repo's generator scripts.
+ */
+function yamlScalar(value: string): string {
+  return JSON.stringify(String(value).replace(/\s+/g, ' ').trim());
+}
+
+/**
  * Render a YAML frontmatter block for a Pi agent file.
- * Tools list is rendered as a flow sequence (inline array).
+ * Tools list is rendered as a flow sequence (inline array) of quoted elements.
  */
 function renderFrontmatter(
   name: string,
@@ -100,12 +116,15 @@ function renderFrontmatter(
   tools: string[],
   model: string | undefined
 ): string {
-  const toolsInline = tools.length > 0 ? `[${tools.join(', ')}]` : '[]';
-  // Quote description if it starts with YAML-special characters ([, {, *, &, !, |, >, ', ", %)
-  const descSafe = /^[[{*&!|>'"%]/.test(description) ? `"${description.replace(/"/g, '\\"')}"` : description;
-  const lines = ['---', `name: ${name}`, `description: ${descSafe}`, `tools: ${toolsInline}`];
+  const toolsInline = tools.length > 0 ? `[${tools.map(yamlScalar).join(', ')}]` : '[]';
+  const lines = [
+    '---',
+    `name: ${yamlScalar(name)}`,
+    `description: ${yamlScalar(description)}`,
+    `tools: ${toolsInline}`
+  ];
   if (model) {
-    lines.push(`model: ${model}`);
+    lines.push(`model: ${yamlScalar(model)}`);
   }
   lines.push('---');
   return lines.join('\n');

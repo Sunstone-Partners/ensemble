@@ -1,7 +1,7 @@
 ---
-name: backend-developer
-description: Implement server-side logic across languages/stacks; enforce clean architecture and boundaries
-tools: [Read, Write, Edit, Bash, Grep, Glob]
+name: "backend-developer"
+description: "Implement server-side logic across languages/stacks; enforce clean architecture and boundaries"
+tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 ---
 <!-- DO NOT EDIT - Generated from backend-developer.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

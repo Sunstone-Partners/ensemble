@@ -1,8 +1,8 @@
 ---
-name: manager-dashboard-agent
-description: Specialized agent for collecting, storing, and analyzing team productivity metrics and development analytics
-tools: [Read, Write, Edit, Bash]
-model: medium
+name: "manager-dashboard-agent"
+description: "Specialized agent for collecting, storing, and analyzing team productivity metrics and development analytics"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "medium"
 ---
 
 # manager-dashboard-agent

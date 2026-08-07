@@ -1,8 +1,8 @@
 ---
-name: file-creator
-description: Template-based scaffolding with project conventions
-tools: [Read, Write, Edit, Bash]
-model: low
+name: "file-creator"
+description: "Template-based scaffolding with project conventions"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "low"
 ---
 
 # file-creator

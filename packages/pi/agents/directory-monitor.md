@@ -1,8 +1,8 @@
 ---
-name: directory-monitor
-description: Proactive directory monitoring specialist for real-time file system surveillance, change detection, and automated workflow triggering based on configurable thresholds.
-tools: [Read, Write, Edit, Bash]
-model: low
+name: "directory-monitor"
+description: "Proactive directory monitoring specialist for real-time file system surveillance, change detection, and automated workflow triggering based on configurable thresholds."
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "low"
 ---
 
 # directory-monitor

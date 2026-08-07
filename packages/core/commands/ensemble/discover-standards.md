@@ -1,11 +1,11 @@
 ---
-name: ensemble:discover-standards
-description: Analyze codebase and extract coding conventions into a standards/ directory with index.yml
-version: 1.0.0
-category: analysis
-last-updated: 2026-03-29
-argument-hint: [path]
-model: sonnet
+name: "ensemble:discover-standards"
+description: "Analyze codebase and extract coding conventions into a standards/ directory with index.yml"
+version: "1.0.0"
+category: "analysis"
+last-updated: "2026-03-29"
+argument-hint: "[path]"
+model: "sonnet"
 ---
 <!-- DO NOT EDIT - Generated from discover-standards.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

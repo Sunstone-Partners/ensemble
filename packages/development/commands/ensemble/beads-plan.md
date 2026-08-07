@@ -1,12 +1,12 @@
 ---
-name: ensemble:beads-plan
-description: Analyze an existing bead hierarchy and produce bv analysis and wheel instructions without executing any implementation
-version: 1.1.0
-category: implementation
-last-updated: 2026-03-29
-allowed-tools: Read, Bash, Grep, Glob
-argument-hint: [epic-id|slug-pattern] [max parallel N]
-model: sonnet
+name: "ensemble:beads-plan"
+description: "Analyze an existing bead hierarchy and produce bv analysis and wheel instructions without executing any implementation"
+version: "1.1.0"
+category: "implementation"
+last-updated: "2026-03-29"
+allowed-tools: "Read, Bash, Grep, Glob"
+argument-hint: "[epic-id|slug-pattern] [max parallel N]"
+model: "sonnet"
 ---
 <!-- DO NOT EDIT - Generated from beads-plan.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

@@ -1,7 +1,7 @@
 ---
-name: deep-debugger
-description: Systematic bug recreation, root cause analysis, and TDD-based resolution with skills-based test framework integration
-tools: [Read, Write, TodoWrite, Edit, Bash, Task, Grep, Glob, Skill]
+name: "deep-debugger"
+description: "Systematic bug recreation, root cause analysis, and TDD-based resolution with skills-based test framework integration"
+tools: ["Read", "Write", "TodoWrite", "Edit", "Bash", "Task", "Grep", "Glob", "Skill"]
 ---
 <!-- DO NOT EDIT - Generated from deep-debugger.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

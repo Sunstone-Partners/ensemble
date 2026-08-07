@@ -1,6 +1,6 @@
 ---
 name: ensemble-claude-changelog
-description: Track Claude updates and new features directly from your development environment. (Codex skill for /ensemble:claude-changelog)
+description: Track Claude updates and new features directly from your development environment. Fetch, parse, and display changelogs with intelligent filtering and caching. (Codex skill for /ensemble:claude-changelog)
 user-invocable: true
 ---
 

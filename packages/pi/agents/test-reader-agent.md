@@ -1,7 +1,7 @@
 ---
-name: test-reader-agent
-description: Test agent - Read files and report on the results
-tools: [Read]
+name: "test-reader-agent"
+description: "Test agent - Read files and report on the results"
+tools: ["Read"]
 ---
 
 # test-reader-agent

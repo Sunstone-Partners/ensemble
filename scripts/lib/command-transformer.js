@@ -5,6 +5,8 @@
 
 'use strict';
 
+const { yamlScalar } = require('./yaml-scalar');
+
 // NOTE: model: tier aliases in source YAML (high/medium/low) are emitted as
 // Claude Code's portable model aliases (opus/sonnet/haiku) in the generated .md.
 // These resolve per-provider at runtime (Anthropic API, Bedrock, Vertex), so
@@ -35,39 +37,43 @@ function generateCommandFrontmatter(data) {
   const meta = data.metadata || {};
   const lines = ['---'];
 
+  // Every value below goes through yamlScalar. Emitting any of them raw risks
+  // an unparseable block, and a parse failure drops the whole command silently.
+
   // Name (required)
   if (meta.name) {
-    lines.push(`name: ${meta.name}`);
+    lines.push(`name: ${yamlScalar(meta.name)}`);
   }
 
   // Description (required)
   if (meta.description) {
-    lines.push(`description: ${meta.description}`);
+    lines.push(`description: ${yamlScalar(meta.description)}`);
   }
 
   // Version (optional)
   if (meta.version) {
-    lines.push(`version: ${meta.version}`);
+    lines.push(`version: ${yamlScalar(meta.version)}`);
   }
 
   // Category (optional)
   if (meta.category) {
-    lines.push(`category: ${meta.category}`);
+    lines.push(`category: ${yamlScalar(meta.category)}`);
   }
 
   // Last updated (optional)
   if (meta.lastUpdated) {
-    lines.push(`last-updated: ${meta.lastUpdated}`);
+    lines.push(`last-updated: ${yamlScalar(meta.lastUpdated)}`);
   }
 
-  // Allowed tools (optional)
+  // Allowed tools (optional). This is a comma-joined STRING, not a sequence --
+  // quote the joined value as a whole. Bracketing it would promote it to a list.
   if (meta.allowed_tools && meta.allowed_tools.length > 0) {
-    lines.push(`allowed-tools: ${meta.allowed_tools.join(', ')}`);
+    lines.push(`allowed-tools: ${yamlScalar(meta.allowed_tools.join(', '))}`);
   }
 
   // Argument hint (optional)
   if (meta.argument_hint) {
-    lines.push(`argument-hint: ${meta.argument_hint}`);
+    lines.push(`argument-hint: ${yamlScalar(meta.argument_hint)}`);
   }
 
   // Map tier aliases (high/medium/low) to Claude Code's portable model aliases
@@ -80,7 +86,7 @@ function generateCommandFrontmatter(data) {
     const emitted = Object.prototype.hasOwnProperty.call(TIER_TO_ALIAS, meta.model)
       ? TIER_TO_ALIAS[meta.model]
       : meta.model;
-    lines.push(`model: ${emitted}`);
+    lines.push(`model: ${yamlScalar(emitted)}`);
   }
 
   lines.push('---');

@@ -1,7 +1,7 @@
 ---
-name: dotnet-backend-expert
-description: .NET backend specialist for ASP.NET Core APIs, Wolverine CQRS, MartenDB event sourcing, and C# patterns
-tools: [Read, Write, Edit, Bash, Grep, Glob, Task]
+name: "dotnet-backend-expert"
+description: ".NET backend specialist for ASP.NET Core APIs, Wolverine CQRS, MartenDB event sourcing, and C# patterns"
+tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task"]
 ---
 <!-- DO NOT EDIT - Generated from dotnet-backend-expert.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

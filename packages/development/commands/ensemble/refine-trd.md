@@ -1,10 +1,10 @@
 ---
-name: ensemble:refine-trd
-description: Refine and enhance existing TRD with stakeholder feedback and additional detail
-version: 2.4.0
-category: planning
-last-updated: 2026-05-30
-model: opus
+name: "ensemble:refine-trd"
+description: "Refine and enhance existing TRD with stakeholder feedback and additional detail"
+version: "2.4.0"
+category: "planning"
+last-updated: "2026-05-30"
+model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from refine-trd.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

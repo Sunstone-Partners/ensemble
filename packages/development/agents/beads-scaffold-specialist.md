@@ -1,7 +1,7 @@
 ---
-name: beads-scaffold-specialist
-description: Design, create, audit, and repair Beads hierarchies from PRD/TRD/workstream artifacts without implementing code
-tools: [Read, Write, Edit, Bash, Grep, Glob]
+name: "beads-scaffold-specialist"
+description: "Design, create, audit, and repair Beads hierarchies from PRD/TRD/workstream artifacts without implementing code"
+tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 ---
 <!-- DO NOT EDIT - Generated from beads-scaffold-specialist.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

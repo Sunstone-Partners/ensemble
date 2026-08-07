@@ -2,8 +2,7 @@
 name: ensemble-requirement-status
 description: On-demand requirement satisfaction report — scans bead comments for req-verified tokens (Codex skill for /ensemble:requirement-status)
 user-invocable: true
-argument-hint:
-  - trd-path-or-slug
+argument-hint: '[trd-path-or-slug]'
 model: gpt-5.1-codex
 ---
 

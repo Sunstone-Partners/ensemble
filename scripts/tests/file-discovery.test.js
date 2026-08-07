@@ -10,13 +10,30 @@ const os = require('os');
 const path = require('path');
 const { toGlobPattern, discoverYamlsInDir } = require('../lib/file-discovery');
 
+// toGlobPattern splits on path.sep, so it converts separators on Windows and is
+// a deliberate no-op on POSIX -- where a backslash is a legal filename character
+// and glob's own escape character, so rewriting it would be wrong.
+const onWindows = path.sep === '\\';
+
 describe('toGlobPattern', () => {
-  test('converts backslash-separated paths to forward slashes', () => {
-    expect(toGlobPattern('packages\\foo\\commands\\*.yaml')).toBe('packages/foo/commands/*.yaml');
+  test('converts path.join output into a forward-slash glob pattern', () => {
+    // The actual contract, and it holds on both platforms: whatever path.join
+    // produces comes back forward-slash separated.
+    const joined = path.join('packages', 'foo', 'commands', '*.yaml');
+    expect(toGlobPattern(joined)).toBe('packages/foo/commands/*.yaml');
   });
 
   test('leaves forward-slash paths unchanged', () => {
     expect(toGlobPattern('packages/foo/commands/*.yaml')).toBe('packages/foo/commands/*.yaml');
+  });
+
+  (onWindows ? test : test.skip)('converts literal backslash separators (Windows only)', () => {
+    expect(toGlobPattern('packages\\foo\\commands\\*.yaml')).toBe('packages/foo/commands/*.yaml');
+  });
+
+  (onWindows ? test.skip : test)('preserves backslashes on POSIX, where they are not separators', () => {
+    // On POSIX 'a\\b' is a single filename containing a backslash, not a path.
+    expect(toGlobPattern('packages/a\\b/*.yaml')).toBe('packages/a\\b/*.yaml');
   });
 });
 

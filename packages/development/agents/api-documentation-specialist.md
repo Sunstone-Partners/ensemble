@@ -1,7 +1,7 @@
 ---
-name: api-documentation-specialist
-description: OpenAPI/Swagger documentation and API design
-tools: [Read, Write, Edit, Grep, Glob, Bash, Task]
+name: "api-documentation-specialist"
+description: "OpenAPI/Swagger documentation and API design"
+tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
 ---
 <!-- DO NOT EDIT - Generated from api-documentation-specialist.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

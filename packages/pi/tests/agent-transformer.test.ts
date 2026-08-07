@@ -96,8 +96,8 @@ describe('transformAgent', () => {
 
     it('frontmatter contains name, description, tools lines', () => {
       const output = transformAgent(TOP_LEVEL_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('name: backend-developer');
-      expect(output).toContain('description: Implements server-side logic');
+      expect(output).toContain('name: "backend-developer"');
+      expect(output).toContain('description: "Implements server-side logic"');
       expect(output).toContain('tools:');
     });
 
@@ -112,12 +112,12 @@ describe('transformAgent', () => {
     it('renders tools as an inline flow sequence', () => {
       const output = transformAgent(TOP_LEVEL_AGENT, SOURCE_PATH, {});
       // After stripping Task/Glob/Agent, only Read and Write remain
-      expect(output).toContain('tools: [Read, Write]');
+      expect(output).toContain('tools: ["Read", "Write"]');
     });
 
     it('includes model in frontmatter when present', () => {
       const output = transformAgent(MODEL_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('model: claude-opus-4');
+      expect(output).toContain('model: "claude-opus-4"');
     });
 
     it('does not include model line when model is absent', () => {
@@ -129,7 +129,7 @@ describe('transformAgent', () => {
   describe('tool filtering — Claude Code-only tools stripped', () => {
     it('strips Task, Glob, Agent and keeps Read, Write', () => {
       const output = transformAgent(TOP_LEVEL_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('[Read, Write]');
+      expect(output).toContain('["Read", "Write"]');
       expect(output).not.toContain('Task');
       expect(output).not.toContain('Glob');
       expect(output).not.toContain('Agent');
@@ -138,7 +138,7 @@ describe('transformAgent', () => {
     it('strips WebSearch from nested metadata tools', () => {
       const output = transformAgent(METADATA_AGENT, SOURCE_PATH, {});
       expect(output).not.toContain('WebSearch');
-      expect(output).toContain('[Read, Write]');
+      expect(output).toContain('["Read", "Write"]');
     });
 
     it('strips all Claude Code-only tools: TodoWrite, NotebookEdit, ExitPlanMode, EnterPlanMode, Grep', () => {
@@ -148,7 +148,7 @@ describe('transformAgent', () => {
         tools: ['Read', 'TodoWrite', 'NotebookEdit', 'ExitPlanMode', 'EnterPlanMode', 'Grep', 'Write'],
       };
       const output = transformAgent(agent, SOURCE_PATH, {});
-      expect(output).toContain('[Read, Write]');
+      expect(output).toContain('["Read", "Write"]');
       expect(output).not.toMatch(/TodoWrite|NotebookEdit|ExitPlanMode|EnterPlanMode|Grep/);
     });
 
@@ -160,7 +160,7 @@ describe('transformAgent', () => {
       };
       const output = transformAgent(agent, SOURCE_PATH, {});
       expect(output).not.toContain('WebFetch');
-      expect(output).toContain('[Read]');
+      expect(output).toContain('["Read"]');
     });
   });
 
@@ -173,7 +173,7 @@ describe('transformAgent', () => {
 
     it('retains Read alongside the mapped ask_user', () => {
       const output = transformAgent(ASK_USER_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('[Read, ask_user]');
+      expect(output).toContain('["Read", "ask_user"]');
     });
   });
 
@@ -192,22 +192,22 @@ describe('transformAgent', () => {
   describe('both YAML layouts', () => {
     it('reads name from top-level key', () => {
       const output = transformAgent(TOP_LEVEL_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('name: backend-developer');
+      expect(output).toContain('name: "backend-developer"');
     });
 
     it('reads name from metadata.name', () => {
       const output = transformAgent(METADATA_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('name: frontend-developer');
+      expect(output).toContain('name: "frontend-developer"');
     });
 
     it('reads description from top-level key', () => {
       const output = transformAgent(TOP_LEVEL_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('description: Implements server-side logic');
+      expect(output).toContain('description: "Implements server-side logic"');
     });
 
     it('reads description from metadata.description', () => {
       const output = transformAgent(METADATA_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('description: Implements UI components');
+      expect(output).toContain('description: "Implements UI components"');
     });
 
     it('prefers top-level tools over metadata.tools when both present', () => {
@@ -221,7 +221,7 @@ describe('transformAgent', () => {
       };
       const output = transformAgent(agent, SOURCE_PATH, {});
       // top-level tools wins: ['Read', 'Edit'] — Glob (metadata) should not appear
-      expect(output).toContain('[Read, Edit]');
+      expect(output).toContain('["Read", "Edit"]');
       expect(output).not.toContain('Glob');
     });
   });
@@ -325,5 +325,76 @@ describe('buildAgentResult', () => {
       buildAgentResult(TOP_LEVEL_AGENT, SOURCE_PATH, OUTPUT_ROOT, { verbose: true })
     ).not.toThrow();
     writeSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Frontmatter YAML safety (TRD-009-TEST)
+//
+// The previous rule quoted a description only when it *started* with a YAML
+// indicator, so a mid-string ": " slipped through and produced an unparseable
+// block. A parse failure is not partial -- the consumer drops the whole agent,
+// silently. Quoting is now unconditional; these are the adversarial inputs.
+// ---------------------------------------------------------------------------
+
+describe('transformAgent › frontmatter is always parseable YAML', () => {
+  const yaml = require('js-yaml') as typeof import('js-yaml');
+
+  /** Parse just the frontmatter block out of a transformed agent. */
+  const frontmatterOf = (output: string): Record<string, unknown> => {
+    const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(output);
+    if (!match) throw new Error('no frontmatter block');
+    return yaml.load(match[1]) as Record<string, unknown>;
+  };
+
+  const hostile: Array<[string, string]> = [
+    ['mid-string colon', 'Helm charts: templating, values, releases'],
+    ['leading bracket', '[experimental] does a thing'],
+    ['bracket group with trailing content', '[a-path] [--flag] extra'],
+    ['embedded newlines', 'First line,\n\nsecond line.\n'],
+    ['embedded double quote', 'He said "hi" then left'],
+    ['embedded backslash', 'a \ backslash'],
+    ['leading YAML indicators', '*anchor #comment | > % & !'],
+    ['non-ASCII', 'emoji ✓ and unicode é']
+  ];
+
+  it.each(hostile)('%s round-trips through the frontmatter', (_label, description) => {
+    const output = transformAgent(
+      { name: 'hostile-agent', description, tools: ['Read'] },
+      SOURCE_PATH,
+      {}
+    );
+    const expected = description.replace(/\s+/g, ' ').trim();
+    expect(frontmatterOf(output).description).toBe(expected);
+  });
+
+  it('a colon in the description no longer breaks the block', () => {
+    // Regression: the old startsWith-based predicate let this through unquoted.
+    const output = transformAgent(
+      { name: 'a', description: 'Does X: then Y', tools: ['Read'] },
+      SOURCE_PATH,
+      {}
+    );
+    expect(() => frontmatterOf(output)).not.toThrow();
+    expect(frontmatterOf(output).description).toBe('Does X: then Y');
+  });
+
+  it('tools stays an array, not a string', () => {
+    const output = transformAgent(
+      { name: 'a', description: 'd', tools: ['Read', 'Write'] },
+      SOURCE_PATH,
+      {}
+    );
+    expect(frontmatterOf(output).tools).toEqual(['Read', 'Write']);
+  });
+
+  it('a multi-line description collapses to a single line', () => {
+    const output = transformAgent(
+      { name: 'a', description: 'one\ntwo', tools: ['Read'] },
+      SOURCE_PATH,
+      {}
+    );
+    const descriptionLines = output.split('\n').filter(l => l.startsWith('description:'));
+    expect(descriptionLines).toHaveLength(1);
   });
 });

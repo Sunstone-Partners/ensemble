@@ -1,8 +1,8 @@
 ---
-name: dotnet-backend-expert
-description: .NET backend specialist for ASP.NET Core APIs, Wolverine CQRS, MartenDB event sourcing, and C# patterns
-tools: [Read, Write, Edit, Bash]
-model: medium
+name: "dotnet-backend-expert"
+description: ".NET backend specialist for ASP.NET Core APIs, Wolverine CQRS, MartenDB event sourcing, and C# patterns"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "medium"
 ---
 
 # dotnet-backend-expert

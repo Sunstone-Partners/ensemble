@@ -1,7 +1,7 @@
 ---
-name: tech-lead-orchestrator
-description: Orchestrate traditional development methodology - plan, architect, task breakdown, develop, code-review, test loop until completion with intelligent delegation and quality loops
-tools: [Read, Write, TodoWrite, Edit, Bash, Task, Grep, Glob, AskUserQuestion]
+name: "tech-lead-orchestrator"
+description: "Orchestrate traditional development methodology - plan, architect, task breakdown, develop, code-review, test loop until completion with intelligent delegation and quality loops"
+tools: ["Read", "Write", "TodoWrite", "Edit", "Bash", "Task", "Grep", "Glob", "AskUserQuestion"]
 ---
 <!-- DO NOT EDIT - Generated from tech-lead-orchestrator.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

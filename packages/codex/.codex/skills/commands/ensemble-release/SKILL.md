@@ -1,6 +1,6 @@
 ---
 name: ensemble-release
-description: Automated release workflow orchestration with quality gates, smoke test integration, (Codex skill for /ensemble:release)
+description: Automated release workflow orchestration with quality gates, smoke test integration, and deployment coordination. Supports standard, hotfix, and rollback release types. (Codex skill for /ensemble:release)
 user-invocable: true
 ---
 

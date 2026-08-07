@@ -1,7 +1,7 @@
 ---
-name: test-runner
-description: Unit and integration test execution with intelligent failure triage and debugging
-tools: [Read, Bash, Grep]
+name: "test-runner"
+description: "Unit and integration test execution with intelligent failure triage and debugging"
+tools: ["Read", "Bash", "Grep"]
 ---
 <!-- DO NOT EDIT - Generated from test-runner.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

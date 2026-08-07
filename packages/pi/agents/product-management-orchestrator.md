@@ -1,8 +1,8 @@
 ---
-name: product-management-orchestrator
-description: Product lifecycle orchestrator managing requirements gathering, stakeholder alignment, feature prioritization, roadmap planning, and user experience coordination
-tools: [Read, Write, Edit, Bash, ask_user]
-model: high
+name: "product-management-orchestrator"
+description: "Product lifecycle orchestrator managing requirements gathering, stakeholder alignment, feature prioritization, roadmap planning, and user experience coordination"
+tools: ["Read", "Write", "Edit", "Bash", "ask_user"]
+model: "high"
 ---
 
 # product-management-orchestrator

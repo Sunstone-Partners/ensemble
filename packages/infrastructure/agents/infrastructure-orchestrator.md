@@ -1,7 +1,7 @@
 ---
-name: infrastructure-orchestrator
-description: Infrastructure orchestrator managing environment provisioning, configuration management, monitoring setup, scalability planning, and cloud resource optimization
-tools: [Read, Write, Edit, Bash]
+name: "infrastructure-orchestrator"
+description: "Infrastructure orchestrator managing environment provisioning, configuration management, monitoring setup, scalability planning, and cloud resource optimization"
+tools: ["Read", "Write", "Edit", "Bash"]
 ---
 <!-- DO NOT EDIT - Generated from infrastructure-orchestrator.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

@@ -6,6 +6,7 @@
 'use strict';
 
 const path = require('path');
+const { yamlScalar } = require('./yaml-scalar');
 
 /**
  * Generate the DO NOT EDIT header
@@ -28,19 +29,24 @@ function generateAgentFrontmatter(data) {
   const meta = data.metadata || {};
   const lines = ['---'];
 
+  // Every value below goes through yamlScalar. Emitting any of them raw risks
+  // an unparseable block, and a parse failure drops the whole agent silently.
+
   // Name (required)
   if (meta.name) {
-    lines.push(`name: ${meta.name}`);
+    lines.push(`name: ${yamlScalar(meta.name)}`);
   }
 
   // Description (required)
   if (meta.description) {
-    lines.push(`description: ${meta.description}`);
+    lines.push(`description: ${yamlScalar(meta.description)}`);
   }
 
-  // Tools (required for agents)
+  // Tools (required for agents). This is a flow SEQUENCE, not a string -- quote
+  // each element and keep the brackets. Quoting the joined value as a whole
+  // would collapse the list into a single string.
   if (meta.tools && meta.tools.length > 0) {
-    lines.push(`tools: [${meta.tools.join(', ')}]`);
+    lines.push(`tools: [${meta.tools.map(yamlScalar).join(', ')}]`);
   }
 
   lines.push('---');

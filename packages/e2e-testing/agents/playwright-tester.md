@@ -1,7 +1,7 @@
 ---
-name: playwright-tester
-description: Use Playwright MCP to write/maintain E2E tests; capture traces and screenshots for regression.
-tools: [Read, Write, Edit, Bash]
+name: "playwright-tester"
+description: "Use Playwright MCP to write/maintain E2E tests; capture traces and screenshots for regression."
+tools: ["Read", "Write", "Edit", "Bash"]
 ---
 <!-- DO NOT EDIT - Generated from playwright-tester.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

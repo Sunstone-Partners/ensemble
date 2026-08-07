@@ -1,11 +1,11 @@
 ---
-name: ensemble:feature
-description: Orchestrate the full idea-to-plan pipeline: create-prd, refine-prd, create-trd, refine-trd, implement-trd-beads --plan
-version: 1.0.0
-category: planning
-last-updated: 2026-03-15
-argument-hint: <description> [--skip-refine]
-model: opus
+name: "ensemble:feature"
+description: "Orchestrate the full idea-to-plan pipeline: create-prd, refine-prd, create-trd, refine-trd, implement-trd-beads --plan"
+version: "1.0.0"
+category: "planning"
+last-updated: "2026-03-15"
+argument-hint: "<description> [--skip-refine]"
+model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from feature.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

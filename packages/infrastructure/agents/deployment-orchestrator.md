@@ -1,7 +1,7 @@
 ---
-name: deployment-orchestrator
-description: Deployment orchestrator managing release automation, environment promotion, rollback procedures, production monitoring, and zero-downtime deployment strategies.
-tools: [Read, Write, Edit, Bash]
+name: "deployment-orchestrator"
+description: "Deployment orchestrator managing release automation, environment promotion, rollback procedures, production monitoring, and zero-downtime deployment strategies."
+tools: ["Read", "Write", "Edit", "Bash"]
 ---
 <!-- DO NOT EDIT - Generated from deployment-orchestrator.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

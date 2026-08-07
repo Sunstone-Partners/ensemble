@@ -1,8 +1,8 @@
 ---
-name: infrastructure-orchestrator
-description: Infrastructure orchestrator managing environment provisioning, configuration management, monitoring setup, scalability planning, and cloud resource optimization
-tools: [Read, Write, Edit, Bash]
-model: high
+name: "infrastructure-orchestrator"
+description: "Infrastructure orchestrator managing environment provisioning, configuration management, monitoring setup, scalability planning, and cloud resource optimization"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "high"
 ---
 
 # infrastructure-orchestrator

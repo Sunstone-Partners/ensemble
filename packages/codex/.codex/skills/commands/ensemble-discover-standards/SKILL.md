@@ -2,8 +2,7 @@
 name: ensemble-discover-standards
 description: Analyze codebase and extract coding conventions into a standards/ directory with index.yml (Codex skill for /ensemble:discover-standards)
 user-invocable: true
-argument-hint:
-  - path
+argument-hint: '[path]'
 model: gpt-5.1-codex
 ---
 

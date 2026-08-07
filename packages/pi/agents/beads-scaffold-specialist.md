@@ -1,8 +1,8 @@
 ---
-name: beads-scaffold-specialist
-description: Design, create, audit, and repair Beads hierarchies from PRD/TRD/workstream artifacts without implementing code
-tools: [Read, Write, Edit, Bash]
-model: medium
+name: "beads-scaffold-specialist"
+description: "Design, create, audit, and repair Beads hierarchies from PRD/TRD/workstream artifacts without implementing code"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "medium"
 ---
 
 # beads-scaffold-specialist

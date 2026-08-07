@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mulch prime"
+            "command": "if command -v mulch >/dev/null 2>&1; then mulch prime; fi"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mulch prime"
+            "command": "if command -v mulch >/dev/null 2>&1; then mulch prime; fi"
           }
         ]
       }

@@ -6,8 +6,45 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { checkFrontmatter } = require('./lib/frontmatter-check');
 
 const PACKAGES_DIR = path.join(__dirname, '..', 'packages');
+
+/**
+ * Walk packages/ for every .md artifact and assert its frontmatter parses.
+ *
+ * Deliberately repo-wide rather than scoped to what scripts/lib emits: the pi
+ * and codex pipelines produce frontmatter too, and scoping the walk would need
+ * an exclusion list to leave them unguarded. A file with no frontmatter passes.
+ *
+ * @returns {string[]} One message per unparseable artifact
+ */
+function validateFrontmatter() {
+  const failures = [];
+  let checked = 0;
+
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue;
+        walk(full);
+      } else if (entry.name.endsWith('.md')) {
+        const relative = path.relative(path.join(__dirname, '..'), full);
+        try {
+          checkFrontmatter(fs.readFileSync(full, 'utf8'), relative);
+          checked++;
+        } catch (error) {
+          failures.push(error.message);
+        }
+      }
+    }
+  };
+
+  walk(PACKAGES_DIR);
+  console.log(`  ✓ ${checked} Markdown artifact(s) have parseable frontmatter`);
+  return failures;
+}
 
 function validatePlugin(pluginDir) {
   const pluginName = path.basename(pluginDir);
@@ -94,6 +131,14 @@ function main() {
       console.error(`✗ ${error.message}`);
       errors++;
     }
+  });
+
+  // Frontmatter parseability across every generated artifact
+  console.log('\nValidating Markdown frontmatter...');
+  const frontmatterFailures = validateFrontmatter();
+  frontmatterFailures.forEach(message => {
+    console.error(`✗ ${message}`);
+    errors++;
   });
 
   if (errors > 0) {

@@ -1,10 +1,10 @@
 ---
-name: ensemble:refine-prd-meeting
-description: Refine an existing PRD using a meeting summary as the feedback source, instead of a live interview
-version: 1.0.0
-category: planning
-last-updated: 2026-07-13
-model: opus
+name: "ensemble:refine-prd-meeting"
+description: "Refine an existing PRD using a meeting summary as the feedback source, instead of a live interview"
+version: "1.0.0"
+category: "planning"
+last-updated: "2026-07-13"
+model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from refine-prd-meeting.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

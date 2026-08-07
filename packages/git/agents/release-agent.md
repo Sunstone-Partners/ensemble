@@ -1,7 +1,7 @@
 ---
-name: release-agent
-description: Automated release orchestration with quality gates, smoke test integration, and deployment coordination
-tools: [Read, Write, Edit, Bash, Task, Skill]
+name: "release-agent"
+description: "Automated release orchestration with quality gates, smoke test integration, and deployment coordination"
+tools: ["Read", "Write", "Edit", "Bash", "Task", "Skill"]
 ---
 <!-- DO NOT EDIT - Generated from release-agent.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

@@ -1,7 +1,7 @@
 ---
-name: file-creator
-description: Template-based scaffolding with project conventions
-tools: [Read, Write, Edit, Bash]
+name: "file-creator"
+description: "Template-based scaffolding with project conventions"
+tools: ["Read", "Write", "Edit", "Bash"]
 ---
 <!-- DO NOT EDIT - Generated from file-creator.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

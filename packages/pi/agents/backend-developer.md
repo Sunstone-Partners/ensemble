@@ -1,8 +1,8 @@
 ---
-name: backend-developer
-description: Implement server-side logic across languages/stacks; enforce clean architecture and boundaries
-tools: [Read, Write, Edit, Bash]
-model: medium
+name: "backend-developer"
+description: "Implement server-side logic across languages/stacks; enforce clean architecture and boundaries"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "medium"
 ---
 
 # backend-developer

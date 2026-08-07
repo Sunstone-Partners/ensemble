@@ -1,11 +1,11 @@
 ---
-name: ensemble:analyze-requirements
-description: Pre-implementation cross-artifact consistency sweep — checks PRD↔TRD↔beads alignment before coding begins
-version: 1.0.0
-category: planning
-last-updated: 2026-03-29
-argument-hint: [prd-path] [trd-path]
-model: sonnet
+name: "ensemble:analyze-requirements"
+description: "Pre-implementation cross-artifact consistency sweep — checks PRD↔TRD↔beads alignment before coding begins"
+version: "1.0.0"
+category: "planning"
+last-updated: "2026-03-29"
+argument-hint: "[prd-path] [trd-path]"
+model: "sonnet"
 ---
 <!-- DO NOT EDIT - Generated from analyze-requirements.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

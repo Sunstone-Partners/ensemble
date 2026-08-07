@@ -1,11 +1,11 @@
 ---
-name: ensemble:create-trd-foreman
-description: Create Foreman-native structured Technical Requirements Document from PRD — omits adversarial review phase, outputs parser-compatible tables
-version: 3.0.1
-category: planning
-last-updated: 2026-05-31
-argument-hint: [prd-path] [--foundational]
-model: opus
+name: "ensemble:create-trd-foreman"
+description: "Create Foreman-native structured Technical Requirements Document from PRD — omits adversarial review phase, outputs parser-compatible tables"
+version: "3.0.1"
+category: "planning"
+last-updated: "2026-05-31"
+argument-hint: "[prd-path] [--foundational]"
+model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from create-trd-foreman.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

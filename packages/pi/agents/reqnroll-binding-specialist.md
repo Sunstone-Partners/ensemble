@@ -1,8 +1,8 @@
 ---
-name: reqnroll-binding-specialist
-description: Fill PRD-generated Reqnroll step bindings test-first against the system under test, without ever editing the generated step-matching attributes
-tools: [Read, Write, Edit, Bash]
-model: medium
+name: "reqnroll-binding-specialist"
+description: "Fill PRD-generated Reqnroll step bindings test-first against the system under test, without ever editing the generated step-matching attributes"
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "medium"
 ---
 
 # reqnroll-binding-specialist

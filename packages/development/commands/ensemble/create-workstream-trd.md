@@ -1,12 +1,12 @@
 ---
-name: ensemble:create-workstream-trd
-description: Generate a normalized executable workstream TRD from multiple source TRDs
-version: 1.0.0
-category: implementation
-last-updated: 2026-06-20
-allowed-tools: Bash, Read, Write
-argument-hint: <trd-path> <trd-path> [more-trd-paths] [--out path]
-model: sonnet
+name: "ensemble:create-workstream-trd"
+description: "Generate a normalized executable workstream TRD from multiple source TRDs"
+version: "1.0.0"
+category: "implementation"
+last-updated: "2026-06-20"
+allowed-tools: "Bash, Read, Write"
+argument-hint: "<trd-path> <trd-path> [more-trd-paths] [--out path]"
+model: "sonnet"
 ---
 <!-- DO NOT EDIT - Generated from create-workstream-trd.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

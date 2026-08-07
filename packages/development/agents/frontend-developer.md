@@ -1,7 +1,7 @@
 ---
-name: frontend-developer
-description: Framework-agnostic front-end implementation (JS/TS, React, Vue, Angular, Svelte) with accessibility and performance optimization
-tools: [Read, Write, Edit, Grep, Glob, Bash, Task]
+name: "frontend-developer"
+description: "Framework-agnostic front-end implementation (JS/TS, React, Vue, Angular, Svelte) with accessibility and performance optimization"
+tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
 ---
 <!-- DO NOT EDIT - Generated from frontend-developer.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

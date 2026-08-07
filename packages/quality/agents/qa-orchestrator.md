@@ -1,7 +1,7 @@
 ---
-name: qa-orchestrator
-description: Quality assurance orchestration and test coordination
-tools: [Read, Write, Edit, Bash]
+name: "qa-orchestrator"
+description: "Quality assurance orchestration and test coordination"
+tools: ["Read", "Write", "Edit", "Bash"]
 ---
 <!-- DO NOT EDIT - Generated from qa-orchestrator.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

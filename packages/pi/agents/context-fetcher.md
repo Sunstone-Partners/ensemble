@@ -1,8 +1,8 @@
 ---
-name: context-fetcher
-description: Pull authoritative references into plans/specs (AgentOS docs; vendor docs via Context7) with version awareness.
-tools: [Read, Write, Edit, Bash]
-model: low
+name: "context-fetcher"
+description: "Pull authoritative references into plans/specs (AgentOS docs; vendor docs via Context7) with version awareness."
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "low"
 ---
 
 # context-fetcher

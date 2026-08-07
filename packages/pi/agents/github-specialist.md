@@ -1,8 +1,8 @@
 ---
-name: github-specialist
-description: GitHub workflow automation specialist for branch management, pull request creation, code review integration, and repository operations using gh CLI.
-tools: [Read, Write, Edit, Bash]
-model: medium
+name: "github-specialist"
+description: "GitHub workflow automation specialist for branch management, pull request creation, code review integration, and repository operations using gh CLI."
+tools: ["Read", "Write", "Edit", "Bash"]
+model: "medium"
 ---
 
 # github-specialist

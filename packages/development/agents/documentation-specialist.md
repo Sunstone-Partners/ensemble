@@ -1,7 +1,7 @@
 ---
-name: documentation-specialist
-description: Technical documentation, API docs, guides, and examples
-tools: [Read, Write, Edit, Bash]
+name: "documentation-specialist"
+description: "Technical documentation, API docs, guides, and examples"
+tools: ["Read", "Write", "Edit", "Bash"]
 ---
 <!-- DO NOT EDIT - Generated from documentation-specialist.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

@@ -1,11 +1,11 @@
 ---
-name: ensemble:generate-reqnroll-bindings
-description: Scaffold a runnable Reqnroll + xUnit test project (features, step stubs, project files) from a PRD
-version: 1.0.0
-category: testing
-last-updated: 2026-06-29
-argument-hint: [prd-path] [--out <dir>] [--sut <csproj>] [--dry-run] [--force]
-model: haiku
+name: "ensemble:generate-reqnroll-bindings"
+description: "Scaffold a runnable Reqnroll + xUnit test project (features, step stubs, project files) from a PRD"
+version: "1.0.0"
+category: "testing"
+last-updated: "2026-06-29"
+argument-hint: "[prd-path] [--out <dir>] [--sut <csproj>] [--dry-run] [--force]"
+model: "haiku"
 ---
 <!-- DO NOT EDIT - Generated from generate-reqnroll-bindings.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

@@ -1,11 +1,11 @@
 ---
-name: ensemble:generate-feature-tests
-description: Generate Gherkin .feature files and a traceability manifest from a PRD's acceptance criteria
-version: 1.0.0
-category: quality
-last-updated: 2026-06-29
-argument-hint: [prd-path] [--out <dir>] [--dry-run]
-model: haiku
+name: "ensemble:generate-feature-tests"
+description: "Generate Gherkin .feature files and a traceability manifest from a PRD's acceptance criteria"
+version: "1.0.0"
+category: "quality"
+last-updated: "2026-06-29"
+argument-hint: "[prd-path] [--out <dir>] [--dry-run]"
+model: "haiku"
 ---
 <!-- DO NOT EDIT - Generated from generate-feature-tests.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

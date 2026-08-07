@@ -1,11 +1,11 @@
 ---
-name: ensemble:create-trd
-description: Create Technical Requirements Document from PRD with architecture design and adversarial review
-version: 3.1.0
-category: planning
-last-updated: 2026-05-30
-argument-hint: [prd-path] [--team] [--foundational]
-model: opus
+name: "ensemble:create-trd"
+description: "Create Technical Requirements Document from PRD with architecture design and adversarial review"
+version: "3.1.0"
+category: "planning"
+last-updated: "2026-05-30"
+argument-hint: "[prd-path] [--team] [--foundational]"
+model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from create-trd.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

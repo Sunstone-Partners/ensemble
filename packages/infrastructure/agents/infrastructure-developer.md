@@ -1,7 +1,7 @@
 ---
-name: infrastructure-developer
-description: Cloud-agnostic infrastructure automation with dynamic skill loading for AWS, GCP, Azure, Helm, Kubernetes, and Fly.io
-tools: [Read, Write, Edit, Grep, Glob, Bash, Task]
+name: "infrastructure-developer"
+description: "Cloud-agnostic infrastructure automation with dynamic skill loading for AWS, GCP, Azure, Helm, Kubernetes, and Fly.io"
+tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
 ---
 <!-- DO NOT EDIT - Generated from infrastructure-developer.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

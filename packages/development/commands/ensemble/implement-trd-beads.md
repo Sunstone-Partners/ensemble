@@ -1,12 +1,12 @@
 ---
-name: ensemble:implement-trd-beads
-description: Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via br/bv, and cross-session resumability
-version: 2.20.1
-category: implementation
-last-updated: 2026-08-04
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Task
-argument-hint: [trd-path] [--plan] [--execute] [--branch=<name>] [--use-current-branch] [--status] [--reset-task TRD-XXX] [max parallel N]
-model: sonnet
+name: "ensemble:implement-trd-beads"
+description: "Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via br/bv, and cross-session resumability"
+version: "2.20.1"
+category: "implementation"
+last-updated: "2026-08-04"
+allowed-tools: "Read, Write, Edit, Bash, Grep, Glob, Task"
+argument-hint: "[trd-path] [--plan] [--execute] [--branch=<name>] [--use-current-branch] [--status] [--reset-task TRD-XXX] [max parallel N]"
+model: "sonnet"
 ---
 <!-- DO NOT EDIT - Generated from implement-trd-beads.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->

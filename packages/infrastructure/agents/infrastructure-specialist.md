@@ -1,7 +1,7 @@
 ---
-name: infrastructure-specialist
-description: Hands-on infrastructure provisioning specialist for Terraform, CloudFormation, Kubernetes, Docker, and cloud resource configuration. Writes IaC, configures cloud resources, and implements infrastructure security at the tactical level.
-tools: [Read, Write, Edit, Bash, Grep, Glob, Task, Skill]
+name: "infrastructure-specialist"
+description: "Hands-on infrastructure provisioning specialist for Terraform, CloudFormation, Kubernetes, Docker, and cloud resource configuration. Writes IaC, configures cloud resources, and implements infrastructure security at the tactical level."
+tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task", "Skill"]
 ---
 <!-- DO NOT EDIT - Generated from infrastructure-specialist.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->
