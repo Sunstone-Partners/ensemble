@@ -8,7 +8,7 @@ description: >-
   and Implementation Readiness Gate scoring.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:refine-prd | Version: 2.4.0 -->
+<!-- Command: ensemble:refine-prd | Version: 2.5.0 -->
 <!-- Description: Refine and enhance existing PRD with stakeholder feedback and additional detail -->
 
 # ensemble:refine-prd
@@ -47,6 +47,7 @@ any edits yet. Scan for the following issues:
 - Missing PRD document ID (PRD-YYYY-NNN) in frontmatter
 - Unclear or ambiguous requirement language
 - Scope gaps (scenarios or edge cases not addressed)
+- Goals and Non-Goals contradicted by a requirement's scope, priority, or existence (a requirement that a stated Non-Goal explicitly excludes, or that works against a stated Goal)
 - Missing technical constraints or dependencies
 - Missing priority ordering of features or requirements
 - Open questions or unresolved decisions

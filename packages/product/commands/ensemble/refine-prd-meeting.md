@@ -1,9 +1,9 @@
 ---
 name: "ensemble:refine-prd-meeting"
 description: "Refine an existing PRD using a meeting summary as the feedback source, instead of a live interview"
-version: "1.0.0"
+version: "1.1.0"
 category: "planning"
-last-updated: "2026-07-13"
+last-updated: "2026-08-10"
 model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from refine-prd-meeting.yaml -->
@@ -47,6 +47,7 @@ as an open finding for a later human-run refine-prd pass, rather than guessing.
 - Missing PRD document ID (PRD-YYYY-NNN) in frontmatter
 - Unclear or ambiguous requirement language
 - Scope gaps (scenarios or edge cases not addressed)
+- Goals and Non-Goals contradicted by a requirement's scope, priority, or existence (a requirement that a stated Non-Goal explicitly excludes, or that works against a stated Goal)
 - Missing technical constraints or dependencies
 - Missing priority ordering of features or requirements
 - Open questions or unresolved decisions

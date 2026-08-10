@@ -1,8 +1,8 @@
 metadata:
   name: ensemble:refine-prd
   description: Refine and enhance existing PRD with stakeholder feedback and additional detail
-  version: 2.4.0
-  lastUpdated: "2026-03-29"
+  version: 2.5.0
+  lastUpdated: "2026-08-10"
   category: planning
   output_path: ensemble/refine-prd.md
   source: sunstone
@@ -51,6 +51,7 @@ workflow:
             - Missing PRD document ID (PRD-YYYY-NNN) in frontmatter
             - Unclear or ambiguous requirement language
             - Scope gaps (scenarios or edge cases not addressed)
+            - Goals and Non-Goals contradicted by a requirement's scope, priority, or existence (a requirement that a stated Non-Goal explicitly excludes, or that works against a stated Goal)
             - Missing technical constraints or dependencies
             - Missing priority ordering of features or requirements
             - Open questions or unresolved decisions

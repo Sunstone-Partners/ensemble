@@ -1,8 +1,8 @@
 metadata:
   name: ensemble:refine-prd-meeting
   description: Refine an existing PRD using a meeting summary as the feedback source, instead of a live interview
-  version: 1.0.0
-  lastUpdated: "2026-07-13"
+  version: 1.1.0
+  lastUpdated: "2026-08-10"
   category: planning
   output_path: ensemble/refine-prd-meeting.md
   source: sunstone
@@ -60,6 +60,7 @@ workflow:
             - Missing PRD document ID (PRD-YYYY-NNN) in frontmatter
             - Unclear or ambiguous requirement language
             - Scope gaps (scenarios or edge cases not addressed)
+            - Goals and Non-Goals contradicted by a requirement's scope, priority, or existence (a requirement that a stated Non-Goal explicitly excludes, or that works against a stated Goal)
             - Missing technical constraints or dependencies
             - Missing priority ordering of features or requirements
             - Open questions or unresolved decisions
