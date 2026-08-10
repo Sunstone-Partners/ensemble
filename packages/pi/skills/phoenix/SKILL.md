@@ -1,9 +1,12 @@
 ---
 name: phoenix
 description: >-
-  Quick reference for Phoenix and Elixir development patterns. For comprehensive
-  documentation, see REFERENCE.md.
+  Quick-reference Phoenix and Elixir patterns for API development, OTP,
+  LiveView, Ecto, and Channels. Use when working in a Phoenix or Elixir
+  codebase.
+version: 1.0.0
 ---
+
 # Phoenix Framework Skill - Quick Reference
 
 **Version**: 1.0.0 | **Last Updated**: 2025-10-22 | **Agent**: backend-developer

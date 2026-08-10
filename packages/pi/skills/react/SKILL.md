@@ -1,7 +1,12 @@
 ---
 name: react
-description: 'This skill is loaded by `frontend-developer` when:'
+description: >-
+  Quick-reference React 18+ patterns for hooks, state management, component
+  structure, and Next.js/Vite projects. Use when working in a codebase with a
+  react dependency or .jsx/.tsx components.
+version: 1.0.0
 ---
+
 # React Framework - Quick Reference
 
 **Version**: 1.0.0

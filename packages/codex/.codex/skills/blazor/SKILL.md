@@ -1,6 +1,7 @@
 ---
-name: blazor
-description: 'Target: .NET 8.0+ with Blazor Server/WebAssembly'
+name: Blazor Framework
+description: Quick-reference Blazor patterns for .NET 8+ Server and WebAssembly hosting models, component lifecycle, and Microsoft Fluent UI Blazor components. Use when working in a Blazor codebase.
+version: 1.0.0
 user-invocable: true
 ---
 
