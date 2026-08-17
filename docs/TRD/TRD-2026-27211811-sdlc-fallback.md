@@ -198,101 +198,101 @@ unconfigured, or pointed at an Azure DevOps remote no longer hard-fails at Prefl
 mid-run on `git town propose` — it falls back automatically, warns once, or prompts for one env var,
 and completes end-to-end. Existing git-town + GitHub users see zero behavior change.
 
-- [ ] **TRD-001** Add `resolveBranchingStrategy()` and `isUnsupportedForgeHost()` to `pr-strategy.js` (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007]`
+- [x] **TRD-001** Add `resolveBranchingStrategy()` and `isUnsupportedForgeHost()` to `pr-strategy.js` (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007]`
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-003-1, AC-003-2, AC-003-3, AC-007-1, AC-007-2
   - Implementation AC: Given the full §1.3 precedence table (7 input combinations: env unset × exit 0/1/2, env=plain-git × any exit, env=git-town × exit 0/1/2), when `resolveBranchingStrategy()` is called with each combination, then it returns the exact `{strategy, source, action, message}` the table specifies — including `action: 'halt'` for both the not-installed AND installed-but-unconfigured cases when `ENSEMBLE_BRANCHING_STRATEGY=git-town` is explicit.
   - Implementation AC: Given a remote URL matching `dev.azure.com` vs. `github.com`/`gitlab.com`/a self-hosted Bitbucket/Gitea host, when `isUnsupportedForgeHost()` is called on each, then only the `dev.azure.com` case returns `true`.
 
-- [ ] **TRD-001-TEST** Unit-test `resolveBranchingStrategy()` and `isUnsupportedForgeHost()` against the full precedence table and host list (1.5h) `[verifies TRD-001] [satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [depends: TRD-001]`
+- [x] **TRD-001-TEST** Unit-test `resolveBranchingStrategy()` and `isUnsupportedForgeHost()` against the full precedence table and host list (1.5h) `[verifies TRD-001] [satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [depends: TRD-001]`
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-003-1, AC-003-2, AC-003-3, AC-007-1, AC-007-2
   - Implementation AC: Given `packages/development/tests/pr-strategy.test.js`, when run, then it contains one test case per row of §1.3's table (7 rows) asserting the exact returned `action` and `strategy`.
   - Implementation AC: Given the same test file, when run, then `isUnsupportedForgeHost()` is asserted `true` for `https://dev.azure.com/org/project/_git/repo` and `false` for `https://github.com/org/repo`, `https://gitlab.com/org/repo`, and a self-hosted Bitbucket URL.
 
-- [ ] **TRD-002** Add `resolvePrBackend()` to `pr-strategy.js` (1.5h) `[satisfies REQ-006] [satisfies REQ-008] [depends: TRD-001]`
+- [x] **TRD-002** Add `resolvePrBackend()` to `pr-strategy.js` (1.5h) `[satisfies REQ-006] [satisfies REQ-008] [depends: TRD-001]`
   - Validates PRD ACs: AC-006-1, AC-006-2, AC-008-1, AC-008-2, AC-008-3
   - Implementation AC: Given `ENSEMBLE_PR_BACKEND` set to `gh`/`ado`/`manual`, when `resolvePrBackend()` runs, then it returns that backend with `source: 'env'` and `needsResolution: false`, regardless of remote URL.
   - Implementation AC: Given `ENSEMBLE_PR_BACKEND` unset, when `resolvePrBackend()` runs against an unsupported-host remote, then it returns `{backend: null, source: 'auto-detect', needsResolution: true}`; against a supported-host remote, `{backend: 'gh', source: 'auto-detect', needsResolution: false}`.
 
-- [ ] **TRD-002-TEST** Unit-test `resolvePrBackend()` (1h) `[verifies TRD-002] [satisfies REQ-006] [satisfies REQ-008] [depends: TRD-002]`
+- [x] **TRD-002-TEST** Unit-test `resolvePrBackend()` (1h) `[verifies TRD-002] [satisfies REQ-006] [satisfies REQ-008] [depends: TRD-002]`
   - Validates PRD ACs: AC-006-1, AC-006-2, AC-008-1, AC-008-2
   - Implementation AC: Given all combinations of `{unset, gh, ado, manual} x {supported-host, unsupported-host}`, when `resolvePrBackend()` is called, then each returns the exact backend/source/needsResolution triple this task's Implementation ACs specify.
 
-- [ ] **TRD-003** Add `buildConsolidatedResolutionMessage()` to `pr-strategy.js` (1.5h) `[satisfies REQ-001] [satisfies REQ-013] [depends: TRD-001, TRD-002]`
+- [x] **TRD-003** Add `buildConsolidatedResolutionMessage()` to `pr-strategy.js` (1.5h) `[satisfies REQ-001] [satisfies REQ-013] [depends: TRD-001, TRD-002]`
   - Validates PRD ACs: AC-013-1, AC-013-2
   - Implementation AC: Given both a `resolveBranchingStrategy()` result and a `resolvePrBackend()` result that are both pure defaults (`source` implies no env override, no fallback, no prompt), when `buildConsolidatedResolutionMessage()` runs, then it returns `null` (no output at all — matches PRD REQ-001's zero-new-output requirement).
   - Implementation AC: Given at least one of the two results is non-default (a fallback fired, an override was set, or a prompt/HALT occurred), when the function runs, then it returns one formatted string naming both resolved values and each one's source — never two separate strings.
 
-- [ ] **TRD-003-TEST** Unit-test `buildConsolidatedResolutionMessage()` (0.75h) `[verifies TRD-003] [satisfies REQ-001] [satisfies REQ-013] [depends: TRD-003]`
+- [x] **TRD-003-TEST** Unit-test `buildConsolidatedResolutionMessage()` (0.75h) `[verifies TRD-003] [satisfies REQ-001] [satisfies REQ-013] [depends: TRD-003]`
   - Validates PRD ACs: AC-013-1, AC-013-2
   - Implementation AC: Given the pure-default case and at least 3 non-default cases (branching fallback only, backend prompt only, both non-default), when each is passed to the function, then the pure-default case returns `null` and every other case returns exactly one non-null string containing both axes' resolved values.
 
-- [ ] **TRD-004** Add `resolve-sdlc` subcommand to `trd-cli.js`'s `HANDLERS` dispatch table (2h) `[satisfies ARCH] [depends: TRD-001, TRD-002, TRD-003]`
+- [x] **TRD-004** Add `resolve-sdlc` subcommand to `trd-cli.js`'s `HANDLERS` dispatch table (2h) `[satisfies ARCH] [depends: TRD-001, TRD-002, TRD-003]`
   - Implementation AC: Given `node trd-cli.js resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>` (using the file's existing `parseArgs()` helper, same as `runPrPlan`), when invoked with `ENSEMBLE_BRANCHING_STRATEGY`/`ENSEMBLE_PR_BACKEND` set in `process.env`, then stdout is exactly one JSON object: `{ ok: true, branchingStrategy: {...}, prBackend: {...}, consolidatedMessage: string|null }`, mirroring `pr-plan`'s existing shape.
   - Implementation AC: Given missing/malformed required flags, when invoked, then it returns `{ ok: false, error: <message> }` and a non-zero exit code, matching every other subcommand's error contract.
 
-- [ ] **TRD-004-TEST** Unit-test the `resolve-sdlc` subcommand end-to-end (1h) `[verifies TRD-004] [satisfies ARCH] [depends: TRD-004]`
+- [x] **TRD-004-TEST** Unit-test the `resolve-sdlc` subcommand end-to-end (1h) `[verifies TRD-004] [satisfies ARCH] [depends: TRD-004]`
   - Implementation AC: Given `packages/development/tests/trd-cli.test.js`, when run, then it asserts `resolve-sdlc`'s JSON output shape for at least one default case and one fallback case, plus the malformed-flags error case.
 
-- [ ] **TRD-005** Fix `validate-git-town.sh`'s exit-code-2 remediation text (0.5h) `[satisfies REQ-005]`
+- [x] **TRD-005** Fix `validate-git-town.sh`'s exit-code-2 remediation text (0.5h) `[satisfies REQ-005]`
   - Validates PRD ACs: AC-005-1
   - Implementation AC: Given the script's exit-code-2 branch, when read, then it no longer prints `git town config setup`; it states `git town init` is the real (interactive, optional — Preflight no longer requires it) setup entry point.
 
-- [ ] **TRD-005-TEST** Assert the dead command reference is gone (0.25h) `[verifies TRD-005] [satisfies REQ-005] [depends: TRD-005]`
+- [x] **TRD-005-TEST** Assert the dead command reference is gone (0.25h) `[verifies TRD-005] [satisfies REQ-005] [depends: TRD-005]`
   - Implementation AC: Given the script's raw text, when scanned, then it contains zero occurrences of the literal string `git town config setup`.
 
-- [ ] **TRD-006** Fix `git-town/SKILL.md`'s Quick Start dead command reference (0.5h) `[satisfies REQ-005]`
+- [x] **TRD-006** Fix `git-town/SKILL.md`'s Quick Start dead command reference (0.5h) `[satisfies REQ-005]`
   - Validates PRD ACs: AC-005-1
   - Implementation AC: Given `SKILL.md`'s Quick Start section, when read, then it no longer cites `git town config set-main-branch main`; it references `git town init` (or the correct current-CLI equivalent, verified against `git-town --help`) instead, and notes this step is now optional.
 
-- [ ] **TRD-006-TEST** Assert the dead command reference is gone (0.25h) `[verifies TRD-006] [satisfies REQ-005] [depends: TRD-006]`
+- [x] **TRD-006-TEST** Assert the dead command reference is gone (0.25h) `[verifies TRD-006] [satisfies REQ-005] [depends: TRD-006]`
   - Implementation AC: Given `SKILL.md`'s raw text, when scanned, then it contains zero occurrences of the literal string `git town config set-main-branch main`.
 
-- [ ] **TRD-007** Add `ENSEMBLE_BRANCHING_STRATEGY` and `ENSEMBLE_PR_BACKEND` rows to `docs/guides/environment-variables.md` (0.5h) `[satisfies INFRA]`
+- [x] **TRD-007** Add `ENSEMBLE_BRANCHING_STRATEGY` and `ENSEMBLE_PR_BACKEND` rows to `docs/guides/environment-variables.md` (0.5h) `[satisfies INFRA]`
   - Implementation AC: Given the User-Facing Variables table, when read, then it contains both new variables with default, purpose, and example columns filled in, matching the existing `ENSEMBLE_USE_STACKED_PRS` row's format.
 
-- [ ] **TRD-007-TEST** Assert the new rows exist (0.25h) `[verifies TRD-007] [satisfies INFRA] [depends: TRD-007]`
+- [x] **TRD-007-TEST** Assert the new rows exist (0.25h) `[verifies TRD-007] [satisfies INFRA] [depends: TRD-007]`
   - Implementation AC: Given the guide's raw text, when scanned, then it contains both `ENSEMBLE_BRANCHING_STRATEGY` and `ENSEMBLE_PR_BACKEND` as table row headers.
 
-- [ ] **TRD-008** Rewire `implement-trd-beads.yaml`'s Preflight "Git-Town and Working Directory Verification" step: never HALT on `validate-git-town.sh` exit 1/2, sniff the origin remote, call `resolve-sdlc`, implement the interactive-prompt/non-interactive-HALT branch for PR backend, print the consolidated message (5h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [satisfies REQ-016] [satisfies REQ-017] [depends: TRD-004]`
+- [x] **TRD-008** Rewire `implement-trd-beads.yaml`'s Preflight "Git-Town and Working Directory Verification" step: never HALT on `validate-git-town.sh` exit 1/2, sniff the origin remote, call `resolve-sdlc`, implement the interactive-prompt/non-interactive-HALT branch for PR backend, print the consolidated message (5h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [satisfies REQ-016] [satisfies REQ-017] [depends: TRD-004]`
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-002-3, AC-003-2, AC-003-3, AC-007-1, AC-007-2, AC-008-1, AC-008-2, AC-008-3, AC-013-1, AC-013-2, AC-016-1, AC-016-2, AC-017-1, AC-017-2
   - Implementation AC: Given the Preflight step's actions, when read, then exit codes 1 and 2 from `validate-git-town.sh` no longer HALT — the step instead runs `git remote get-url origin` and `node "$TRD_CLI" resolve-sdlc --git-town-exit-code <code> --remote-url <url>`, parses the JSON, and branches per §2.2's data flow (HALT only on `branchingStrategy.action=='halt'`, or on the pre-existing exit codes 3/4 which are unaffected).
   - Implementation AC: Given `prBackend.needsResolution==true` and `INTERACTIVE=true` (reusing the existing branch-intent `INTERACTIVE` detection variable — no new detection mechanism), when Preflight runs, then `AskUserQuestion` presents exactly the four options from §1.4; given `INTERACTIVE=false` or uncertain, then it HALTs with the exact env var to set, per AC-017-2.
   - Implementation AC: Given a non-interactive session with git-town unconfigured/absent AND an unsupported-host remote (the exact combination from the source beads), when the run executes, then it reaches Feature Branch Creation with zero HALTs on dead command text and zero attempted `git town propose` calls — this is the single AC that directly reproduces the PRD's stated success metric.
 
-- [ ] **TRD-008-TEST** Test the rewired Preflight step (2h) `[verifies TRD-008] [satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-008] [satisfies REQ-017] [depends: TRD-008]`
+- [x] **TRD-008-TEST** Test the rewired Preflight step (2h) `[verifies TRD-008] [satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-008] [satisfies REQ-017] [depends: TRD-008]`
   - Implementation AC: Given `implement-trd-beads.yaml`'s raw text, when scanned, then the Preflight step no longer contains an unconditional HALT instruction tied to `validate-git-town.sh` exit codes 1 or 2, and does contain the `resolve-sdlc` invocation and the four-option `AskUserQuestion` block.
   - Implementation AC: Given the source beads' exact repro scenario described in the PRD's Testability Note (ADO remote + git-town unconfigured/absent + non-interactive), when simulated via the underlying `resolve-sdlc`/`resolveBranchingStrategy`/`resolvePrBackend` calls this step drives, then the combined result never HALTs on dead command text and never signals a `git town propose` call.
 
-- [ ] **TRD-009** Update `implement-trd-beads.yaml`'s Feature Branch Creation to support the `plain-git` strategy (2.5h) `[satisfies REQ-004] [satisfies REQ-011] [depends: TRD-008]`
+- [x] **TRD-009** Update `implement-trd-beads.yaml`'s Feature Branch Creation to support the `plain-git` strategy (2.5h) `[satisfies REQ-004] [satisfies REQ-011] [depends: TRD-008]`
   - Validates PRD ACs: AC-004-1, AC-004-2, AC-011-2
   - Implementation AC: Given `BRANCHING_STRATEGY=='plain-git'` (resolved in TRD-008), when a new branch is needed (initial creation or a phase-gate `append`-equivalent transition), then the action list uses `git checkout -b`/`git switch -c` targeting the same base branch `git-town` would have used, and issues zero `git town` commands anywhere in the run.
   - Implementation AC: Given `BRANCHING_STRATEGY=='plain-git'` with stacked PRs enabled, when the run completes, then the resulting branch topology matches the shape `git-town` strategy would have produced (same branch count, same parent relationships) — only the underlying commands differ.
 
-- [ ] **TRD-009-TEST** Test plain-git branch creation (1.5h) `[verifies TRD-009] [satisfies REQ-004] [depends: TRD-009]`
+- [x] **TRD-009-TEST** Test plain-git branch creation (1.5h) `[verifies TRD-009] [satisfies REQ-004] [depends: TRD-009]`
   - Implementation AC: Given `implement-trd-beads.yaml`'s raw text, when scanned, then the Feature Branch Creation step contains a `BRANCHING_STRATEGY=='plain-git'` branch using only `git checkout -b`/`git switch -c`/`git push`, with zero `git town` references in that branch.
 
-- [ ] **TRD-010** Update `implement-trd-beads.yaml`'s Quality Gate + Completion PR-creation steps to branch on `PR_BACKEND` (4h) `[satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [satisfies REQ-012] [depends: TRD-008]`
+- [x] **TRD-010** Update `implement-trd-beads.yaml`'s Quality Gate + Completion PR-creation steps to branch on `PR_BACKEND` (4h) `[satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [satisfies REQ-012] [depends: TRD-008]`
   - Validates PRD ACs: AC-009-1, AC-009-2, AC-010-1, AC-010-2, AC-011-1, AC-011-2, AC-012-1
   - Implementation AC: Given `PR_BACKEND=='ado'`, when a phase-gate or Completion PR is due, then the step attempts `repo_create_pull_request` via the `azure-devops` MCP tool if it is present in the current tool list (checked inline, the same "scan available tool names" pattern `create-trd.yaml`'s MCP Enhancement phase already uses), recording the PR URL into `PHASE_PR_MAP`/`SINGLE_PR_URL` exactly as `git town propose`'s output is recorded today; if the tool is absent, it prints exact manual `az repos pr create`/portal steps instead and continues (no HALT, no shell-out attempt).
   - Implementation AC: Given `PR_BACKEND=='manual'`, when a PR is due at ANY phase-gate point (not only Completion) with stacked PRs enabled, then manual instructions print at that point too, not only once at the end.
   - Implementation AC: Given `PR_BACKEND=='gh'` and `BRANCHING_STRATEGY=='plain-git'`, when a PR is due, then `gh pr create` is invoked directly (a standalone call, not routed through any `git town` command); given `BRANCHING_STRATEGY=='git-town'`, behavior is unchanged (`git town propose`).
   - Implementation AC: Given the step descriptions themselves, when read, then they name all three backends and their distinct behavior explicitly, not only the `gh`/git-town path.
 
-- [ ] **TRD-010-TEST** Test the PR-backend branching logic (2h) `[verifies TRD-010] [satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [depends: TRD-010]`
+- [x] **TRD-010-TEST** Test the PR-backend branching logic (2h) `[verifies TRD-010] [satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [depends: TRD-010]`
   - Implementation AC: Given `implement-trd-beads.yaml`'s raw text, when scanned, then Quality Gate step 3 and Completion step 3 each contain distinct branches for `gh`, `ado`, and `manual`, and the `ado` branch names both the MCP-tool-present and MCP-tool-absent sub-cases.
 
-- [ ] **TRD-011** Implement cross-session config-freshness and the reconciliation notice in `implement-trd-beads.yaml`'s resume path (2.5h) `[satisfies REQ-014] [satisfies REQ-015] [depends: TRD-008]`
+- [x] **TRD-011** Implement cross-session config-freshness and the reconciliation notice in `implement-trd-beads.yaml`'s resume path (2.5h) `[satisfies REQ-014] [satisfies REQ-015] [depends: TRD-008]`
   - Validates PRD ACs: AC-014-1, AC-014-2, AC-015-1
   - Implementation AC: Given Preflight's Resume Detection step (existing), when a TRD resumes, then it re-runs the full `resolve-sdlc` resolution exactly as a first invocation would — it never reuses a strategy/backend value cached from the TRD's persisted `choices-read` state.
   - Implementation AC: Given a resumed TRD whose persisted `branch_name`/`use_proposed`/`stacked_prs` choices were made under a different resolution than the current run's, when Preflight completes resolution, then it prints a notice naming both the prior and current resolution and stating explicitly that already-created branches/PRs are unaffected going forward.
 
-- [ ] **TRD-011-TEST** Test resume-path config freshness (1.5h) `[verifies TRD-011] [satisfies REQ-014] [satisfies REQ-015] [depends: TRD-011]`
+- [x] **TRD-011-TEST** Test resume-path config freshness (1.5h) `[verifies TRD-011] [satisfies REQ-014] [satisfies REQ-015] [depends: TRD-011]`
   - Implementation AC: Given `implement-trd-beads.yaml`'s raw text, when scanned, then the Resume Detection / Feature Branch Creation steps contain no code path that skips `resolve-sdlc` on resume, and the reconciliation-notice action exists and references both prior and current resolution values.
 
-- [ ] **TRD-012** Regenerate `packages/development/commands/ensemble/implement-trd-beads.md` via `npm run generate` (0.25h) `[satisfies INFRA] [depends: TRD-008, TRD-009, TRD-010, TRD-011]`
+- [x] **TRD-012** Regenerate `packages/development/commands/ensemble/implement-trd-beads.md` via `npm run generate` (0.25h) `[satisfies INFRA] [depends: TRD-008, TRD-009, TRD-010, TRD-011]`
   - Implementation AC: Given the edited `implement-trd-beads.yaml`, when `npm run generate` runs, then the regenerated markdown reflects every change above verbatim and `npm run validate` exits zero.
 
-- [ ] **TRD-012-TEST** Verify regeneration is clean (0.25h) `[verifies TRD-012] [satisfies INFRA] [depends: TRD-012]`
+- [x] **TRD-012-TEST** Verify regeneration is clean (0.25h) `[verifies TRD-012] [satisfies INFRA] [depends: TRD-012]`
   - Implementation AC: Given the PR head, when `npm run generate` is re-run, then `git status` reports no further changes to `implement-trd-beads.md`.
 
 **PR 1 total: 24 tasks (12 implementation, 12 test), ~31.75h.** No task exceeds 5h; none is an 8h+
@@ -304,31 +304,31 @@ breakdown candidate.
 graceful branching-strategy and PR-backend fallback `implement-trd-beads` now has — no separate
 design, the proven PR 1 pattern reused verbatim against a second consumer.
 
-- [ ] **TRD-013** Rewire `beads-build.yaml`'s Preflight "Git-Town and Working Directory Verification" step, reusing PR 1's exact pattern (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [satisfies REQ-016] [satisfies REQ-017] [depends: TRD-004]`
+- [x] **TRD-013** Rewire `beads-build.yaml`'s Preflight "Git-Town and Working Directory Verification" step, reusing PR 1's exact pattern (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [satisfies REQ-016] [satisfies REQ-017] [depends: TRD-004]`
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-002-3, AC-003-2, AC-003-3, AC-007-1, AC-007-2, AC-008-1, AC-008-2, AC-008-3, AC-013-1, AC-013-2, AC-016-1, AC-017-1
   - Implementation AC: Given `beads-build.yaml`'s Preflight step, when read, then it matches `implement-trd-beads.yaml`'s TRD-008 pattern exactly (same `resolve-sdlc` call, same HALT/prompt/consolidated-message logic) — verified by diffing the two steps' resolution logic for behavioral equivalence.
 
-- [ ] **TRD-013-TEST** Test the rewired Preflight step (1h) `[verifies TRD-013] [satisfies REQ-002] [satisfies REQ-008] [depends: TRD-013]`
+- [x] **TRD-013-TEST** Test the rewired Preflight step (1h) `[verifies TRD-013] [satisfies REQ-002] [satisfies REQ-008] [depends: TRD-013]`
   - Implementation AC: Given `beads-build.yaml`'s raw text, when scanned, then it contains the `resolve-sdlc` invocation and no longer HALTs unconditionally on `validate-git-town.sh` exit 1/2.
 
-- [ ] **TRD-014** Update `beads-build.yaml`'s branch creation for the `plain-git` strategy (1.5h) `[satisfies REQ-004] [depends: TRD-013]`
+- [x] **TRD-014** Update `beads-build.yaml`'s branch creation for the `plain-git` strategy (1.5h) `[satisfies REQ-004] [depends: TRD-013]`
   - Validates PRD ACs: AC-004-1, AC-004-2
   - Implementation AC: Given `BRANCHING_STRATEGY=='plain-git'`, when a branch is needed, then plain `git checkout -b`/`git switch -c` is used, matching TRD-009's pattern.
 
-- [ ] **TRD-014-TEST** Test plain-git branch creation in beads-build (1h) `[verifies TRD-014] [satisfies REQ-004] [depends: TRD-014]`
+- [x] **TRD-014-TEST** Test plain-git branch creation in beads-build (1h) `[verifies TRD-014] [satisfies REQ-004] [depends: TRD-014]`
   - Implementation AC: Given `beads-build.yaml`'s raw text, when scanned, then a `plain-git` branch-creation path exists with zero `git town` references.
 
-- [ ] **TRD-015** Update `beads-build.yaml`'s Completion PR-reminder text to reflect the resolved backend instead of always suggesting `gh pr create` (1.5h) `[satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [satisfies REQ-012] [depends: TRD-013]`
+- [x] **TRD-015** Update `beads-build.yaml`'s Completion PR-reminder text to reflect the resolved backend instead of always suggesting `gh pr create` (1.5h) `[satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [satisfies REQ-012] [depends: TRD-013]`
   - Validates PRD ACs: AC-009-2, AC-010-1, AC-012-1
   - Implementation AC: Given `PR_BACKEND=='ado'`, when Completion prints its PR reminder (`beads-build.yaml` already defers PR creation to the user — "Do NOT auto-create PR"), then the reminder names the `az repos pr create`/portal steps instead of `gh pr create`; given `PR_BACKEND=='manual'` or `'gh'`, the reminder matches REQ-010/REQ-011's respective behavior.
 
-- [ ] **TRD-015-TEST** Test the backend-aware completion reminder (1h) `[verifies TRD-015] [satisfies REQ-009] [satisfies REQ-012] [depends: TRD-015]`
+- [x] **TRD-015-TEST** Test the backend-aware completion reminder (1h) `[verifies TRD-015] [satisfies REQ-009] [satisfies REQ-012] [depends: TRD-015]`
   - Implementation AC: Given `beads-build.yaml`'s raw text, when scanned, then the Completion Report step names all three backends' distinct reminder text, not only `gh pr create`.
 
-- [ ] **TRD-016** Regenerate `packages/development/commands/ensemble/beads-build.md` (0.25h) `[satisfies INFRA] [depends: TRD-013, TRD-014, TRD-015]`
+- [x] **TRD-016** Regenerate `packages/development/commands/ensemble/beads-build.md` (0.25h) `[satisfies INFRA] [depends: TRD-013, TRD-014, TRD-015]`
   - Implementation AC: Given the edited `beads-build.yaml`, when `npm run generate` runs, then the regenerated markdown reflects every change above and `npm run validate` exits zero.
 
-- [ ] **TRD-016-TEST** Verify regeneration is clean (0.25h) `[verifies TRD-016] [satisfies INFRA] [depends: TRD-016]`
+- [x] **TRD-016-TEST** Verify regeneration is clean (0.25h) `[verifies TRD-016] [satisfies INFRA] [depends: TRD-016]`
   - Implementation AC: Given the PR head, when `npm run generate` is re-run, then `git status` reports no further changes to `beads-build.md`.
 
 **PR 2 total: 8 tasks (4 implementation, 4 test), ~7.5h.**
@@ -340,31 +340,31 @@ gets the identical graceful fallback — the third and final consumer of the sha
 the scope gap found during this PRD's adversarial review (neither source bead named this file, but it
 carries the exact same `git town propose`/`hack`/`append` hardcoding at lines 55 and 130-133).
 
-- [ ] **TRD-017** Rewire `implement-trd.yaml`'s Preflight Git-Town Verification step, reusing PR 1's pattern (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [satisfies REQ-016] [satisfies REQ-017] [depends: TRD-004]`
+- [x] **TRD-017** Rewire `implement-trd.yaml`'s Preflight Git-Town Verification step, reusing PR 1's pattern (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [satisfies REQ-016] [satisfies REQ-017] [depends: TRD-004]`
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-002-3, AC-003-2, AC-003-3, AC-007-1, AC-007-2, AC-008-1, AC-008-2, AC-008-3, AC-013-1, AC-013-2, AC-016-1, AC-017-1
   - Implementation AC: Given `implement-trd.yaml`'s Preflight step, when read, then it matches TRD-008's pattern exactly, verified the same way as TRD-013.
 
-- [ ] **TRD-017-TEST** Test the rewired Preflight step (1h) `[verifies TRD-017] [satisfies REQ-002] [satisfies REQ-008] [depends: TRD-017]`
+- [x] **TRD-017-TEST** Test the rewired Preflight step (1h) `[verifies TRD-017] [satisfies REQ-002] [satisfies REQ-008] [depends: TRD-017]`
   - Implementation AC: Given `implement-trd.yaml`'s raw text, when scanned, then it contains the `resolve-sdlc` invocation and no longer HALTs unconditionally on `validate-git-town.sh` exit 1/2.
 
-- [ ] **TRD-018** Update `implement-trd.yaml` line 55's branch creation (`git town hack <CURRENT_BRANCH>`) for the `plain-git` strategy (1.5h) `[satisfies REQ-004] [depends: TRD-017]`
+- [x] **TRD-018** Update `implement-trd.yaml` line 55's branch creation (`git town hack <CURRENT_BRANCH>`) for the `plain-git` strategy (1.5h) `[satisfies REQ-004] [depends: TRD-017]`
   - Validates PRD ACs: AC-004-1, AC-004-2
   - Implementation AC: Given `BRANCHING_STRATEGY=='plain-git'`, when the initial branch is created, then `git switch -c <CURRENT_BRANCH>` is used unconditionally (this line already has a `git-town unavailable -> fallback` clause per `implement-bead.yaml`'s precedent — this task makes that fallback config-driven instead of exit-code-only).
 
-- [ ] **TRD-018-TEST** Test plain-git branch creation in implement-trd (1h) `[verifies TRD-018] [satisfies REQ-004] [depends: TRD-018]`
+- [x] **TRD-018-TEST** Test plain-git branch creation in implement-trd (1h) `[verifies TRD-018] [satisfies REQ-004] [depends: TRD-018]`
   - Implementation AC: Given `implement-trd.yaml`'s raw text, when scanned, then line 55's action honors `BRANCHING_STRATEGY` explicitly, not only a raw git-town exit-code check.
 
-- [ ] **TRD-019** Update `implement-trd.yaml` lines 130-133's PR creation (`git town propose`/`append`) to branch on `PR_BACKEND` (3h) `[satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [satisfies REQ-012] [depends: TRD-017]`
+- [x] **TRD-019** Update `implement-trd.yaml` lines 130-133's PR creation (`git town propose`/`append`) to branch on `PR_BACKEND` (3h) `[satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [satisfies REQ-012] [depends: TRD-017]`
   - Validates PRD ACs: AC-009-1, AC-009-2, AC-010-1, AC-010-2, AC-011-1, AC-011-2, AC-012-1
   - Implementation AC: Given each of `PR_BACKEND` `gh`/`ado`/`manual` combined with each `BRANCHING_STRATEGY`, when a sprint-boundary or final PR is due, then behavior matches TRD-010's equivalent implementation for `implement-trd-beads.yaml` exactly (same MCP-preferred/manual-fallback for `ado`, same standalone `gh pr create` for `gh`+`plain-git`, same every-phase-gate manual printing for `manual`).
 
-- [ ] **TRD-019-TEST** Test the PR-backend branching logic in implement-trd (1.5h) `[verifies TRD-019] [satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [depends: TRD-019]`
+- [x] **TRD-019-TEST** Test the PR-backend branching logic in implement-trd (1.5h) `[verifies TRD-019] [satisfies REQ-009] [satisfies REQ-010] [satisfies REQ-011] [depends: TRD-019]`
   - Implementation AC: Given `implement-trd.yaml`'s raw text, when scanned, then lines 130-133's region contains distinct `gh`/`ado`/`manual` branches, matching TRD-010-TEST's assertion shape.
 
-- [ ] **TRD-020** Regenerate `packages/development/commands/ensemble/implement-trd.md` (0.25h) `[satisfies INFRA] [depends: TRD-017, TRD-018, TRD-019]`
+- [x] **TRD-020** Regenerate `packages/development/commands/ensemble/implement-trd.md` (0.25h) `[satisfies INFRA] [depends: TRD-017, TRD-018, TRD-019]`
   - Implementation AC: Given the edited `implement-trd.yaml`, when `npm run generate` runs, then the regenerated markdown reflects every change above and `npm run validate` exits zero.
 
-- [ ] **TRD-020-TEST** Verify regeneration is clean (0.25h) `[verifies TRD-020] [satisfies INFRA] [depends: TRD-020]`
+- [x] **TRD-020-TEST** Verify regeneration is clean (0.25h) `[verifies TRD-020] [satisfies INFRA] [depends: TRD-020]`
   - Implementation AC: Given the PR head, when `npm run generate` is re-run, then `git status` reports no further changes to `implement-trd.md`.
 
 **PR 3 total: 8 tasks (4 implementation, 4 test), ~10.5h.**
