@@ -284,6 +284,56 @@ describe('implement-trd-beads branch-intent flags', () => {
   });
 });
 
+describe('implement-trd-beads Preflight resolve-sdlc rewiring (TRD-008)', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+
+  test('no unconditional HALT tied to validate-git-town.sh exit codes 1 or 2', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Git-Town and Working Directory Verification');
+    const stepEnd = text.indexOf('title: TRD Selection and Validation');
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const stepBlock = text.slice(stepStart, stepEnd);
+    // Exit codes 1/2 must be explicitly called out as no longer HALTing
+    expect(stepBlock).toMatch(/Exit codes 0 \(ok\), 1 \(not installed\), and 2 \(not configured\) no longer HALT here/);
+    // Only exit codes 3/4 retain the old unconditional HALT behavior
+    expect(stepBlock).toMatch(/Exit codes 3 \(version mismatch\) and 4 \(not a git repo\) are unaffected by this feature — HALT on those exactly as before/);
+  });
+
+  test('resolve-sdlc invocation is present', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('node \\"$TRD_CLI\\" resolve-sdlc --git-town-exit-code');
+    expect(text).toContain('RESOLVE_SDLC_RESULT');
+  });
+
+  test('four-option AskUserQuestion block for PR backend resolution is present', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Git-Town and Working Directory Verification');
+    const stepEnd = text.indexOf('title: TRD Selection and Validation');
+    const stepBlock = text.slice(stepStart, stepEnd);
+    expect(stepBlock).toContain("id='pr_backend'");
+    expect(stepBlock).toContain("label:'ado'");
+    expect(stepBlock).toContain("label:'manual'");
+    expect(stepBlock).toContain("label:'proceed with gh anyway (not recommended)'");
+    expect(stepBlock).toContain("label:'abort'");
+    // Non-interactive / uncertain-interactive path HALTs with the env var to set, never hangs
+    expect(stepBlock).toMatch(/INTERACTIVE=false, or INTERACTIVE detection is itself uncertain[\s\S]*HALT/);
+  });
+
+  test('repro scenario: ADO remote + git-town unconfigured/absent + non-interactive never HALTs on dead command text and never signals git town propose', () => {
+    // Simulates the exact resolve-sdlc call this step drives, per TRD-008-TEST's second AC.
+    const { resolveBranchingStrategy, resolvePrBackend } = require('../lib/pr-strategy.js');
+    for (const exitCode of [1, 2]) {
+      const branching = resolveBranchingStrategy({}, exitCode);
+      expect(branching.action).not.toBe('halt');
+      expect(branching.strategy).toBe('plain-git');
+      const backend = resolvePrBackend({}, 'https://dev.azure.com/org/project/_git/repo');
+      expect(backend.needsResolution).toBe(true);
+      // Non-interactive callers HALT on unresolved backend rather than guessing 'gh' — never a git town propose call.
+    }
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // runChoicesRead / runChoicesWrite — trd-cli.js unit tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,5 +469,147 @@ describe('runChoicesRead / runChoicesWrite', () => {
     } finally {
       fs.unlinkSync(tmp);
     }
+  });
+});
+
+describe('implement-trd-beads plain-git branch creation (TRD-009)', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+
+  test('Feature Branch Creation: plain-git clause uses git checkout -b, zero git town invocations', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const clauseStart = text.indexOf("AND BRANCHING_STRATEGY=='plain-git': resolve BASE_BRANCH");
+    expect(clauseStart).toBeGreaterThan(-1);
+    // Clause runs to the end of that bullet's sentence about zero git town commands.
+    const clauseEnd = text.indexOf("Zero git town commands are issued anywhere in this run when BRANCHING_STRATEGY=='plain-git'.", clauseStart);
+    expect(clauseEnd).toBeGreaterThan(clauseStart);
+    const clause = text.slice(clauseStart, clauseEnd);
+    expect(clause).toContain('git checkout -b <branch_name> <BASE_BRANCH>');
+    // No actual git-town subcommand invocation anywhere in the plain-git clause itself
+    // (comparisons like "the same base branch git town hack would have targeted" are prose, not invocations)
+    expect(clause).not.toMatch(/git town (hack|propose|append)(?! would)/);
+  });
+
+  test('Gate Result Recording: appendNextBranch plain-git next-branch clause uses git checkout -b, zero git town invocations', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const clauseStart = text.indexOf("if BRANCHING_STRATEGY=='plain-git': run git checkout -b <NEXT_BRANCH>");
+    expect(clauseStart).toBeGreaterThan(-1);
+    const clauseEnd = text.indexOf("'Next branch ready:", clauseStart);
+    expect(clauseEnd).toBeGreaterThan(clauseStart);
+    const clause = text.slice(clauseStart, clauseEnd);
+    expect(clause).toContain('git checkout -b <NEXT_BRANCH>');
+    // (comparison like "the same parent-branch topology git town append would have produced" is prose, not an invocation)
+    expect(clause).not.toMatch(/git town (hack|propose|append)(?! would)/);
+  });
+
+  test('the git-town clause (unchanged) still uses git town hack/append, proving the split is config-driven, not a deletion', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain("AND BRANCHING_STRATEGY=='git-town': git town hack <branch_name> [UNCHANGED]");
+    expect(text).toContain("if BRANCHING_STRATEGY=='git-town': run git town append <NEXT_BRANCH> [UNCHANGED]");
+  });
+});
+
+describe('implement-trd-beads PR-backend branching logic (TRD-010)', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+
+  test('Gate Result Recording (Quality Gate) declares three distinct PR_BACKEND branches', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Gate Result Recording');
+    const stepEnd = text.indexOf('title: Epic Closure');
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const stepBlock = text.slice(stepStart, stepEnd);
+    expect(stepBlock).toContain("PR_BACKEND=='gh' AND BRANCHING_STRATEGY=='git-town' [UNCHANGED]: ensure currently checked out on GATE_ACTION.branch");
+    expect(stepBlock).toContain("PR_BACKEND=='gh' AND BRANCHING_STRATEGY=='plain-git': ensure currently checked out on GATE_ACTION.branch");
+    expect(stepBlock).toContain("PR_BACKEND=='ado': ensure currently checked out on GATE_ACTION.branch");
+    expect(stepBlock).toContain("PR_BACKEND=='manual': print 'PR backend is manual");
+    // gh+git-town uses git town propose; gh+plain-git is a standalone gh call, never routed through git town
+    expect(stepBlock).toContain('run git town propose --title');
+    expect(stepBlock).toMatch(/gh pr create --title '<GATE_ACTION\.proposeTitle>'[\s\S]*?\(a standalone gh call, not routed through any git town command\)/);
+    // ado prefers the azure-devops MCP tool, falls back to manual az/portal instructions, never HALTs
+    expect(stepBlock).toContain("scan available tool names for any name starting with 'mcp__azure-devops'");
+    expect(stepBlock).toContain('az repos pr create --source-branch');
+    expect(stepBlock).toMatch(/do NOT HALT, do NOT attempt any other shell-out/);
+  });
+
+  test('Completion Report declares the same three distinct PR_BACKEND branches for the single-PR path', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Completion Report');
+    const stepEnd = text.indexOf('expectedInput:');
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const stepBlock = text.slice(stepStart, stepEnd);
+    expect(stepBlock).toContain("PR_BACKEND=='gh' AND BRANCHING_STRATEGY=='git-town' [UNCHANGED]: run git town propose --title '<COMPLETION_ACTION.proposeTitle>'");
+    expect(stepBlock).toContain("PR_BACKEND=='gh' AND BRANCHING_STRATEGY=='plain-git': run git push -u origin <COMPLETION_ACTION.branch>, then run gh pr create");
+    expect(stepBlock).toContain("PR_BACKEND=='ado': run git push -u origin <COMPLETION_ACTION.branch>; scan available tool names for any name starting with 'mcp__azure-devops'");
+    expect(stepBlock).toContain("PR_BACKEND=='manual': print 'PR backend is manual — create this PR yourself:'");
+  });
+
+  test('ado sub-cases: MCP-present records PR URL, MCP-absent prints manual az/portal steps and continues without HALT', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Gate Result Recording');
+    const stepEnd = text.indexOf('title: Epic Closure');
+    const adoClauseStart = text.indexOf("PR_BACKEND=='ado':", stepStart);
+    expect(adoClauseStart).toBeGreaterThan(stepStart);
+    expect(adoClauseStart).toBeLessThan(stepEnd);
+    const adoClauseEnd = text.indexOf("PR_BACKEND=='manual':", adoClauseStart);
+    const adoClause = text.slice(adoClauseStart, adoClauseEnd);
+    // MCP-present sub-case
+    expect(adoClause).toContain('If found: call its repo_create_pull_request tool');
+    expect(adoClause).toContain('record the returned PR URL as PHASE_PR_MAP[N] exactly as git town propose\'s output is recorded above');
+    // MCP-absent sub-case
+    expect(adoClause).toContain('If NOT found: print \'Azure DevOps MCP tool not connected — create this PR manually:\'');
+    expect(adoClause).toContain('az repos pr create --source-branch <GATE_ACTION.branch> --target-branch <GATE_ACTION.parentBranch or main>');
+    expect(adoClause).toContain('do NOT HALT, do NOT attempt any other shell-out; PHASE_PR_MAP[N] remains unset');
+  });
+});
+
+describe('implement-trd-beads resume-path config freshness (TRD-011)', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+
+  test('Resume Detection step documents that BRANCHING_STRATEGY/PR_BACKEND are always re-resolved fresh, never reused from persisted choices', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Resume Detection');
+    const stepEnd = text.indexOf('title: TRD Staleness Gate');
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const stepBlock = text.slice(stepStart, stepEnd);
+    expect(stepBlock).toMatch(/BRANCHING_STRATEGY\/PR_BACKEND were already re-resolved fresh in Preflight step 4/);
+    expect(stepBlock).toContain('resuming never reuses a strategy/backend value cached from this');
+    expect(stepBlock).toContain('branch_name/use_proposed/stacked_prs are the only');
+    expect(stepBlock).toContain('BRANCHING_STRATEGY and PR_BACKEND are');
+    expect(stepBlock).toContain('never written there and are always live-resolved');
+  });
+
+  test('no code path skips Preflight resolve-sdlc on resume: resume branch runs after step 4, never before it', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const resolveSdlcIdx = text.indexOf('node \\"$TRD_CLI\\" resolve-sdlc --git-town-exit-code');
+    const resumeStepIdx = text.indexOf('title: Resume Detection');
+    expect(resolveSdlcIdx).toBeGreaterThan(-1);
+    expect(resumeStepIdx).toBeGreaterThan(resolveSdlcIdx);
+    // Resume-found branch does not re-invoke resolve-sdlc (it relies on step 4 already having run this invocation)
+    // but neither does it short-circuit past step 4 — step 4 (Git-Town and Working Directory Verification)
+    // is order 4, strictly before Resume Detection at order 7, in every invocation including EXECUTE_ONLY resume.
+    const gitTownStepIdx = text.indexOf('title: Git-Town and Working Directory Verification');
+    const executeOnlyIdx = text.indexOf('If EXECUTE_ONLY=true: skip scaffold phase entirely.');
+    expect(gitTownStepIdx).toBeGreaterThan(-1);
+    expect(executeOnlyIdx).toBeGreaterThan(gitTownStepIdx);
+  });
+
+  test('reconciliation-notice action references both a prior (unnamed, unpersisted) resolution and the current session\'s values', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Resume Detection');
+    const stepEnd = text.indexOf('title: TRD Staleness Gate');
+    const stepBlock = text.slice(stepStart, stepEnd);
+    const noticeIdx = stepBlock.indexOf('Reconciliation notice (REQ-014/REQ-015):');
+    expect(noticeIdx).toBeGreaterThan(-1);
+    const noticeClause = stepBlock.slice(noticeIdx);
+    // Current-session values named explicitly
+    expect(noticeClause).toContain('this session resolved BRANCHING_STRATEGY=<BRANCHING_STRATEGY>, PR_BACKEND=<PR_BACKEND>');
+    // Prior session's resolution acknowledged but explicitly not persisted/nameable
+    expect(noticeClause).toContain("The prior session's resolution is not persisted anywhere, so it cannot be named exactly here");
+    // Only fires when a resume was actually detected AND a consolidated message exists for this invocation
+    expect(noticeClause).toMatch(/if a resume was just detected \(ROOT_EPIC_ID found above\) AND RESOLVE_SDLC_RESULT\.consolidatedMessage[\s\S]*is non-null/);
+    // Deliberate limitation: never rewrites/retargets prior branches or PRs
+    expect(noticeClause).toContain('no branch or PR created in a prior session is rewritten, re-targeted, or otherwise touched');
   });
 });

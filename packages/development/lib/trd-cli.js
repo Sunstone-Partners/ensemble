@@ -26,6 +26,7 @@
  *   create-workstream-trd <trd-path...> [--out path]
  *   workstream-plan <trd-path...> [--stacked]
  *   workstream-status [--workstream slug] [--issues-json path]
+ *   resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>
  */
 
 const fs = require('fs');
@@ -48,7 +49,14 @@ const { buildWorkstreamPlan, validateWorkstream } = require('./workstream-planne
 const { resolveCrossTrdDeps } = require('./cross-trd-deps');
 const { summarizeWorkstream } = require('./workstream-status');
 const { generateWorkstreamTrd, nextWorkstreamPath } = require('./workstream-trd');
-const { useStackedPrs, branchName, planPrActions } = require('./pr-strategy');
+const {
+  useStackedPrs,
+  branchName,
+  planPrActions,
+  resolveBranchingStrategy,
+  resolvePrBackend,
+  buildConsolidatedResolutionMessage,
+} = require('./pr-strategy');
 
 // ---------------------------------------------------------------------------
 // Small utilities
@@ -314,6 +322,44 @@ function runPrPlan(argv, env) {
     branchFirst,
     actions,
   };
+}
+
+// Valid git-town exit codes per validate-git-town.sh (0-4). Anything else is
+// a malformed/unexpected value the CLI should reject rather than pass through.
+const VALID_GIT_TOWN_EXIT_CODES = new Set([0, 1, 2, 3, 4]);
+
+/**
+ * `resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>`
+ *   -> { ok:true, branchingStrategy, prBackend, consolidatedMessage }
+ *
+ * Thin CLI adapter over pr-strategy.js's resolveBranchingStrategy /
+ * resolvePrBackend / buildConsolidatedResolutionMessage (TRD §1.1-1.4).
+ * Reads ENSEMBLE_BRANCHING_STRATEGY / ENSEMBLE_PR_BACKEND from the `env`
+ * param rather than process.env directly, matching runPrPlan/runNextTask's
+ * pattern for testability.
+ */
+function runResolveSdlc(argv, env) {
+  const { flags } = parseArgs(argv, new Set(['git-town-exit-code', 'remote-url']));
+
+  const rawExitCode = flags['git-town-exit-code'];
+  if (rawExitCode == null || rawExitCode === '') {
+    throw new Error('Missing required --git-town-exit-code flag');
+  }
+  const gitTownExitCode = Number(rawExitCode);
+  if (!VALID_GIT_TOWN_EXIT_CODES.has(gitTownExitCode)) {
+    throw new Error(`Invalid --git-town-exit-code '${rawExitCode}': must be an integer 0-4`);
+  }
+
+  const remoteUrl = flags['remote-url'];
+  if (remoteUrl == null || remoteUrl === '') {
+    throw new Error('Missing required --remote-url flag');
+  }
+
+  const branchingStrategy = resolveBranchingStrategy(env || {}, gitTownExitCode);
+  const prBackend = resolvePrBackend(env || {}, remoteUrl);
+  const consolidatedMessage = buildConsolidatedResolutionMessage(branchingStrategy, prBackend);
+
+  return { ok: true, branchingStrategy, prBackend, consolidatedMessage };
 }
 
 /** Load all TRD paths for combined workstream helpers. */
@@ -869,6 +915,7 @@ const HANDLERS = {
   'phase-status': (argv) => runPhaseStatus(argv),
   'next-task': (argv) => runNextTask(argv, process.env),
   'pr-plan': (argv) => runPrPlan(argv, process.env),
+  'resolve-sdlc': (argv) => runResolveSdlc(argv, process.env),
   'validate-workstream': (argv) => runValidateWorkstream(argv),
   'create-workstream-trd': (argv) => runCreateWorkstreamTrd(argv),
   'workstream-plan': (argv) => runWorkstreamPlan(argv, process.env),
@@ -897,7 +944,7 @@ function main(argv) {
     process.stdout.write(
       JSON.stringify({
         error:
-          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|list|status|migrate-frontmatter|choices-read|choices-write> <trd-path> [...]',
+          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|resolve-sdlc|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|list|status|migrate-frontmatter|choices-read|choices-write> <trd-path> [...]',
       }) + '\n'
     );
     return 1;
@@ -933,6 +980,7 @@ module.exports = {
   runPhaseStatus,
   runNextTask,
   runPrPlan,
+  runResolveSdlc,
   runValidateWorkstream,
   runCreateWorkstreamTrd,
   runWorkstreamPlan,

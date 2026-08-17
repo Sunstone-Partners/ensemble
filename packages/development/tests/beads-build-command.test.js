@@ -1,0 +1,165 @@
+const fs = require('fs');
+const path = require('path');
+
+describe('beads-build Preflight resolve-sdlc rewiring (TRD-013)', () => {
+  const yamlPath = path.join(__dirname, '../commands/beads-build.yaml');
+
+  test('no unconditional HALT tied to validate-git-town.sh exit codes 1 or 2', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Git-Town and Working Directory Verification');
+    const stepEnd = text.indexOf('title: Epic Discovery');
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const stepBlock = text.slice(stepStart, stepEnd);
+    expect(stepBlock).toMatch(/Exit codes 0 \(ok\), 1 \(not installed\), and 2 \(not configured\) no longer HALT here/);
+    expect(stepBlock).toMatch(/Exit codes 3 \(version mismatch\) and 4 \(not a git repo\) are unaffected by this feature — HALT on those exactly as before/);
+  });
+
+  test('resolve-sdlc invocation is present', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('node "$TRD_CLI" resolve-sdlc --git-town-exit-code');
+    expect(text).toContain('RESOLVE_SDLC_RESULT');
+  });
+
+  test('four-option AskUserQuestion block for PR backend resolution is present', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const stepStart = text.indexOf('title: Git-Town and Working Directory Verification');
+    const stepEnd = text.indexOf('title: Epic Discovery');
+    const stepBlock = text.slice(stepStart, stepEnd);
+    expect(stepBlock).toContain("id=''pr_backend''");
+    expect(stepBlock).toContain("label:''ado''");
+    expect(stepBlock).toContain("label:''manual''");
+    expect(stepBlock).toContain("label:''proceed with gh anyway (not recommended)''");
+    expect(stepBlock).toContain("label:''abort''");
+    expect(stepBlock).toMatch(/INTERACTIVE=false, or INTERACTIVE detection is itself uncertain[\s\S]*HALT/);
+  });
+
+  test('behavioral equivalence with implement-trd-beads.yaml TRD-008 Preflight pattern', () => {
+    const beadsBuildText = fs.readFileSync(yamlPath, 'utf8');
+    const implPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+    const implText = fs.readFileSync(implPath, 'utf8');
+
+    const extractStep = (text, startMarker, endMarker) => {
+      const s = text.indexOf(startMarker);
+      const e = text.indexOf(endMarker);
+      return text.slice(s, e);
+    };
+
+    // Normalize YAML single-quote escaping (''->') so markers compare equally
+    // regardless of which file's quoting style (single- vs double-quoted scalars) is used.
+    const normalize = (s) => s.replace(/''/g, "'");
+
+    const beadsBuildStep = normalize(extractStep(
+      beadsBuildText,
+      'title: Git-Town and Working Directory Verification',
+      'title: Epic Discovery'
+    ));
+    const implStep = normalize(extractStep(
+      implText,
+      'title: Git-Town and Working Directory Verification',
+      'title: TRD Selection and Validation'
+    ));
+
+    // Same resolution logic markers present in both — same HALT/prompt/consolidated-message shape.
+    for (const marker of [
+      'resolve-sdlc --git-town-exit-code',
+      'RESOLVE_SDLC_RESULT',
+      "branchingStrategy.action == 'halt'",
+      'prBackend.needsResolution == true',
+      'prBackend.needsResolution == false',
+      'consolidatedMessage',
+    ]) {
+      expect(beadsBuildStep).toContain(marker);
+      expect(implStep).toContain(marker);
+    }
+  });
+
+  test('repro scenario: ADO remote + git-town unconfigured/absent + non-interactive never HALTs on dead command text and never signals git town propose', () => {
+    const { resolveBranchingStrategy, resolvePrBackend } = require('../lib/pr-strategy.js');
+    for (const exitCode of [1, 2]) {
+      const branching = resolveBranchingStrategy({}, exitCode);
+      expect(branching.action).not.toBe('halt');
+      expect(branching.strategy).toBe('plain-git');
+      const backend = resolvePrBackend({}, 'https://dev.azure.com/org/project/_git/repo');
+      expect(backend.needsResolution).toBe(true);
+    }
+  });
+});
+
+describe('beads-build has no branch-creation logic of its own (TRD-014)', () => {
+  const yamlPath = path.join(__dirname, '../commands/beads-build.yaml');
+
+  test('explicit REQ-004 note documents the file never issues branch-mutation commands', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const noteIdx = text.indexOf('Plain-git branch creation (TRD-014):');
+    expect(noteIdx).toBeGreaterThan(-1);
+    expect(text).toContain('this command drives an existing bead hierarchy on whatever branch is already checked out');
+    expect(text).toContain('unlike implement-trd-beads.yaml, it never creates or switches branches itself');
+    expect(text).toContain('there is zero `git town` command anywhere in this file to make config-driven');
+    expect(text).toContain('the plain-git contract (REQ-004: zero git town commands issued when BRANCHING_STRATEGY==plain-git) is satisfied automatically');
+    expect(text).toContain('by this file never issuing branch-mutation commands of any kind, git-town or otherwise');
+  });
+
+  test('zero real git-town branch-creation invocations anywhere in the file (git town hack/append/propose)', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    // No actual command invocations anywhere in this file — only prose describing why there are none.
+    expect(text).not.toMatch(/run git town (hack|propose|append)/);
+    expect(text).not.toMatch(/git town (hack|propose|append) <[A-Z_]/);
+    // No git checkout -b / git switch -c either — this file performs zero branch mutation, plain-git or otherwise
+    expect(text).not.toMatch(/git checkout -b/);
+    expect(text).not.toMatch(/git switch -c/);
+  });
+
+  test('BRANCHING_STRATEGY is still resolved (for consistency with the other two consumer commands) even though unused for mutation', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('Set BRANCHING_STRATEGY=RESOLVE_SDLC_RESULT.branchingStrategy.strategy');
+    expect(text).toContain('BRANCHING_STRATEGY is still resolved above for consistency with the other two consumer commands');
+  });
+});
+
+describe('beads-build backend-aware completion reminder (TRD-015)', () => {
+  const yamlPath = path.join(__dirname, '../commands/beads-build.yaml');
+
+  test("Completion Report names all three backends' distinct reminder text", () => {
+    const rawText = fs.readFileSync(yamlPath, 'utf8');
+    // This file uses single-quoted YAML scalars, so literal single quotes are escaped as ''.
+    // Normalize so assertions can use plain, readable quoting regardless of escaping style.
+    const text = rawText.replace(/''/g, "'");
+    const stepStart = text.indexOf('title: Completion Report');
+    const stepEnd = text.indexOf('expectedInput:');
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const stepBlock = text.slice(stepStart, stepEnd);
+
+    // TRD-015 marker + explicit remind-not-automate design note
+    expect(stepBlock).toContain('PR reminder (TRD-015):');
+    expect(stepBlock).toContain('this command never auto-creates a PR regardless of PR_BACKEND');
+    expect(stepBlock).toContain("mirroring TRD-010's three backend behaviors, minus the ado MCP-tool-preferred attempt");
+
+    // gh: distinct reminder text
+    expect(stepBlock).toContain("If PR_BACKEND=='gh': remind user: git diff main...<branch>; gh pr create;");
+    // ado: distinct reminder text (az CLI + portal, no MCP attempt)
+    expect(stepBlock).toContain("If PR_BACKEND=='ado': remind user: git push -u origin <branch>; az repos pr create --source-branch <branch> --target-branch main");
+    expect(stepBlock).toContain('or via the portal: Repos > Pull Requests > New Pull Request');
+    // manual: distinct reminder text
+    expect(stepBlock).toContain("If PR_BACKEND=='manual': remind user: git push -u origin <branch>; then create the PR yourself via gh pr create --base main");
+    expect(stepBlock).toContain('or the ADO CLI/portal equivalent if the remote is Azure DevOps');
+
+    // Never auto-creates, regardless of which backend was resolved
+    expect(stepBlock).toContain('Do NOT auto-create PR — user must create it manually per the PR_BACKEND-specific reminder above');
+  });
+
+  test('all three PR_BACKEND branches are mutually exclusive if/else-style clauses, not a single generic message', () => {
+    const rawText = fs.readFileSync(yamlPath, 'utf8');
+    const text = rawText.replace(/''/g, "'");
+    const stepStart = text.indexOf('title: Completion Report');
+    const stepEnd = text.indexOf('expectedInput:');
+    const stepBlock = text.slice(stepStart, stepEnd);
+    const ghIdx = stepBlock.indexOf("If PR_BACKEND=='gh':");
+    const adoIdx = stepBlock.indexOf("If PR_BACKEND=='ado':");
+    const manualIdx = stepBlock.indexOf("If PR_BACKEND=='manual':");
+    expect(ghIdx).toBeGreaterThan(-1);
+    expect(adoIdx).toBeGreaterThan(ghIdx);
+    expect(manualIdx).toBeGreaterThan(adoIdx);
+  });
+});

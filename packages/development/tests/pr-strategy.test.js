@@ -4,6 +4,10 @@ const {
   useStackedPrs,
   branchName,
   planPrActions,
+  resolveBranchingStrategy,
+  isUnsupportedForgeHost,
+  resolvePrBackend,
+  buildConsolidatedResolutionMessage,
 } = require('../lib/pr-strategy');
 
 describe('useStackedPrs', () => {
@@ -205,5 +209,189 @@ describe('planPrActions — empty phases', () => {
     expect(() =>
       planPrActions({ trdSlug: 'my-trd', prFormat: true, stacked: true })
     ).not.toThrow();
+  });
+});
+
+describe('resolveBranchingStrategy — TRD §1.3 precedence table', () => {
+  test('unset + exit 0 → git-town, auto-detect, proceed', () => {
+    expect(resolveBranchingStrategy({}, 0)).toEqual({
+      strategy: 'git-town',
+      source: 'auto-detect',
+      action: 'proceed',
+      message: null,
+    });
+  });
+
+  test('unset + exit 1 → plain-git, auto-detect, proceed (silent)', () => {
+    expect(resolveBranchingStrategy({}, 1)).toEqual({
+      strategy: 'plain-git',
+      source: 'auto-detect',
+      action: 'proceed',
+      message: null,
+    });
+  });
+
+  test('unset + exit 2 → plain-git, auto-detect, warn once', () => {
+    const result = resolveBranchingStrategy({}, 2);
+    expect(result.strategy).toBe('plain-git');
+    expect(result.source).toBe('auto-detect');
+    expect(result.action).toBe('warn');
+    expect(typeof result.message).toBe('string');
+    expect(result.message.length).toBeGreaterThan(0);
+  });
+
+  test('env=plain-git + exit 0 → plain-git, env, proceed (explicit always honored)', () => {
+    expect(
+      resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'plain-git' }, 0)
+    ).toEqual({ strategy: 'plain-git', source: 'env', action: 'proceed', message: null });
+  });
+
+  test('env=plain-git + exit 1 or 2 → plain-git, env, proceed regardless of git-town state', () => {
+    for (const exitCode of [1, 2]) {
+      expect(
+        resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'plain-git' }, exitCode)
+      ).toEqual({ strategy: 'plain-git', source: 'env', action: 'proceed', message: null });
+    }
+  });
+
+  test('env=git-town + exit 0 → git-town, env, proceed (explicit matches reality)', () => {
+    expect(
+      resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'git-town' }, 0)
+    ).toEqual({ strategy: 'git-town', source: 'env', action: 'proceed', message: null });
+  });
+
+  test('env=git-town + exit 1 → HALT (explicit request cannot be honored)', () => {
+    const result = resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'git-town' }, 1);
+    expect(result.strategy).toBeNull();
+    expect(result.source).toBe('env');
+    expect(result.action).toBe('halt');
+    expect(typeof result.message).toBe('string');
+  });
+
+  test('env=git-town + exit 2 → HALT (explicit request cannot be honored)', () => {
+    const result = resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'git-town' }, 2);
+    expect(result.strategy).toBeNull();
+    expect(result.source).toBe('env');
+    expect(result.action).toBe('halt');
+    expect(typeof result.message).toBe('string');
+  });
+
+  test('exit codes 3/4 are out of scope — halts defensively regardless of env', () => {
+    for (const exitCode of [3, 4]) {
+      expect(resolveBranchingStrategy({}, exitCode).action).toBe('halt');
+      expect(
+        resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'plain-git' }, exitCode).action
+      ).toBe('proceed'); // explicit plain-git still always wins, even here
+    }
+  });
+});
+
+describe('isUnsupportedForgeHost', () => {
+  test('flags dev.azure.com URLs', () => {
+    expect(isUnsupportedForgeHost('https://dev.azure.com/org/project/_git/repo')).toBe(true);
+  });
+
+  test('does not flag github.com, gitlab.com, or a self-hosted Bitbucket URL', () => {
+    expect(isUnsupportedForgeHost('https://github.com/org/repo')).toBe(false);
+    expect(isUnsupportedForgeHost('https://gitlab.com/org/repo')).toBe(false);
+    expect(isUnsupportedForgeHost('https://bitbucket.mycompany.com/scm/org/repo.git')).toBe(false);
+  });
+
+  test('does not throw on unparseable input', () => {
+    expect(isUnsupportedForgeHost('')).toBe(false);
+    expect(isUnsupportedForgeHost(undefined)).toBe(false);
+    expect(isUnsupportedForgeHost('not a url')).toBe(false);
+  });
+});
+
+describe('resolvePrBackend', () => {
+  const supportedHost = 'https://github.com/org/repo';
+  const unsupportedHost = 'https://dev.azure.com/org/project/_git/repo';
+
+  test.each(['gh', 'ado', 'manual'])(
+    'ENSEMBLE_PR_BACKEND=%s honored on a supported host — env, no resolution needed',
+    (backend) => {
+      expect(resolvePrBackend({ ENSEMBLE_PR_BACKEND: backend }, supportedHost)).toEqual({
+        backend,
+        source: 'env',
+        needsResolution: false,
+      });
+    }
+  );
+
+  test.each(['gh', 'ado', 'manual'])(
+    'ENSEMBLE_PR_BACKEND=%s honored on an unsupported host too — explicit request always wins',
+    (backend) => {
+      expect(resolvePrBackend({ ENSEMBLE_PR_BACKEND: backend }, unsupportedHost)).toEqual({
+        backend,
+        source: 'env',
+        needsResolution: false,
+      });
+    }
+  );
+
+  test('unset + supported host → gh, auto-detect, no resolution needed', () => {
+    expect(resolvePrBackend({}, supportedHost)).toEqual({
+      backend: 'gh',
+      source: 'auto-detect',
+      needsResolution: false,
+    });
+  });
+
+  test('unset + unsupported host → null backend, auto-detect, needs resolution', () => {
+    expect(resolvePrBackend({}, unsupportedHost)).toEqual({
+      backend: null,
+      source: 'auto-detect',
+      needsResolution: true,
+    });
+  });
+
+  test('unrecognized ENSEMBLE_PR_BACKEND value is treated as unset (falls through to auto-detect)', () => {
+    expect(resolvePrBackend({ ENSEMBLE_PR_BACKEND: 'bogus' }, supportedHost)).toEqual({
+      backend: 'gh',
+      source: 'auto-detect',
+      needsResolution: false,
+    });
+    expect(resolvePrBackend({ ENSEMBLE_PR_BACKEND: 'bogus' }, unsupportedHost)).toEqual({
+      backend: null,
+      source: 'auto-detect',
+      needsResolution: true,
+    });
+  });
+});
+
+describe('buildConsolidatedResolutionMessage', () => {
+  const defaultBranching = resolveBranchingStrategy({}, 0); // git-town, auto-detect, proceed
+  const defaultBackend = resolvePrBackend({}, 'https://github.com/org/repo'); // gh, auto-detect
+
+  test('pure-default case (both axes auto-detected to today\'s behavior) → null', () => {
+    expect(buildConsolidatedResolutionMessage(defaultBranching, defaultBackend)).toBeNull();
+  });
+
+  test('branching fallback only (plain-git auto-detect) → one string naming both axes', () => {
+    const branching = resolveBranchingStrategy({}, 1); // plain-git, auto-detect, proceed
+    const message = buildConsolidatedResolutionMessage(branching, defaultBackend);
+    expect(typeof message).toBe('string');
+    expect(message).toContain("branching strategy resolved to 'plain-git' (auto-detect)");
+    expect(message).toContain("PR backend resolved to 'gh' (auto-detect)");
+  });
+
+  test('backend prompt-needed only (unsupported host) → one string naming both axes', () => {
+    const backend = resolvePrBackend({}, 'https://dev.azure.com/org/project/_git/repo');
+    const message = buildConsolidatedResolutionMessage(defaultBranching, backend);
+    expect(typeof message).toBe('string');
+    expect(message).toContain("branching strategy resolved to 'git-town' (auto-detect)");
+    expect(message).toContain('PR backend resolution needed');
+  });
+
+  test('both axes non-default (env override + unsupported host) → single consolidated string', () => {
+    const branching = resolveBranchingStrategy({ ENSEMBLE_BRANCHING_STRATEGY: 'plain-git' }, 0);
+    const backend = resolvePrBackend({}, 'https://dev.azure.com/org/project/_git/repo');
+    const message = buildConsolidatedResolutionMessage(branching, backend);
+    expect(typeof message).toBe('string');
+    expect(message).toContain("branching strategy resolved to 'plain-git' (env)");
+    expect(message).toContain('PR backend resolution needed');
+    // exactly one message, not two separate ones
+    expect(message.split('\n')).toHaveLength(1);
   });
 });

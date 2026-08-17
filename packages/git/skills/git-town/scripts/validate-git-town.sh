@@ -229,8 +229,8 @@ validate_git_town() {
     if ! check_git_town_config; then
         print_warning "git-town is not configured for this repository"
         echo ""
-        echo "Configuration instructions:"
-        echo "  git town config setup"
+        echo "Configuration instructions (optional — callers of this script no longer require it):"
+        echo "  git town init"
         echo ""
         echo "This will guide you through:"
         echo "  - Setting the main branch (e.g., main, master)"

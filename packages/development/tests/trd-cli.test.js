@@ -17,6 +17,7 @@ const {
   runPhaseStatus,
   runNextTask,
   runPrPlan,
+  runResolveSdlc,
   main,
   deriveSlug,
 } = require('../lib/trd-cli');
@@ -226,6 +227,67 @@ describe('runPrPlan', () => {
   });
 });
 
+describe('runResolveSdlc', () => {
+  const githubUrl = 'https://github.com/org/repo';
+  const adoUrl = 'https://dev.azure.com/org/project/_git/repo';
+
+  test('happy path (default): ok, git-town, gh, null consolidatedMessage', () => {
+    const out = runResolveSdlc(
+      ['--git-town-exit-code', '0', '--remote-url', githubUrl],
+      {}
+    );
+    expect(out.ok).toBe(true);
+    expect(out.branchingStrategy).toEqual({
+      strategy: 'git-town',
+      source: 'auto-detect',
+      action: 'proceed',
+      message: null,
+    });
+    expect(out.prBackend).toEqual({
+      backend: 'gh',
+      source: 'auto-detect',
+      needsResolution: false,
+    });
+    expect(out.consolidatedMessage).toBeNull();
+    expectJsonSerializable(out);
+  });
+
+  test('wires the three pr-strategy resolvers together on a non-default path', () => {
+    const out = runResolveSdlc(
+      ['--git-town-exit-code', '0', '--remote-url', adoUrl],
+      { ENSEMBLE_BRANCHING_STRATEGY: 'plain-git' }
+    );
+    expect(out.ok).toBe(true);
+    expect(out.branchingStrategy.strategy).toBe('plain-git');
+    expect(out.branchingStrategy.source).toBe('env');
+    expect(out.prBackend.needsResolution).toBe(true);
+    expect(typeof out.consolidatedMessage).toBe('string');
+    expect(out.consolidatedMessage).toContain("branching strategy resolved to 'plain-git'");
+    expect(out.consolidatedMessage).toContain('PR backend resolution needed');
+  });
+
+  test('missing --git-town-exit-code throws', () => {
+    expect(() => runResolveSdlc(['--remote-url', githubUrl], {})).toThrow(
+      /Missing required --git-town-exit-code/
+    );
+  });
+
+  test('out-of-range/non-integer --git-town-exit-code throws', () => {
+    expect(() =>
+      runResolveSdlc(['--git-town-exit-code', '9', '--remote-url', githubUrl], {})
+    ).toThrow(/Invalid --git-town-exit-code/);
+    expect(() =>
+      runResolveSdlc(['--git-town-exit-code', 'abc', '--remote-url', githubUrl], {})
+    ).toThrow(/Invalid --git-town-exit-code/);
+  });
+
+  test('missing --remote-url throws', () => {
+    expect(() => runResolveSdlc(['--git-town-exit-code', '0'], {})).toThrow(
+      /Missing required --remote-url/
+    );
+  });
+});
+
 describe('error handling', () => {
   test('missing path -> handler throws (caught by main)', () => {
     expect(() => runParse([])).toThrow(/Missing required/);
@@ -338,5 +400,39 @@ describe('executable smoke test (child_process)', () => {
     const res = spawnSync('node', [CLI], { encoding: 'utf8' });
     expect(res.status).toBe(1);
     expect(JSON.parse(res.stdout).error).toMatch(/Missing subcommand/);
+  });
+
+  test('node trd-cli.js resolve-sdlc <flags> -> exit 0, stdout is JSON ok:true, stderr empty', () => {
+    const res = spawnSync(
+      'node',
+      [
+        CLI,
+        'resolve-sdlc',
+        '--git-town-exit-code',
+        '0',
+        '--remote-url',
+        'https://github.com/org/repo',
+      ],
+      { encoding: 'utf8' }
+    );
+    expect(res.status).toBe(0);
+    expect(res.stderr).toBe('');
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.branchingStrategy.strategy).toBe('git-town');
+    expect(parsed.prBackend.backend).toBe('gh');
+    expect(parsed.consolidatedMessage).toBeNull();
+  });
+
+  test('resolve-sdlc missing --remote-url -> exit 1 and JSON {error} on stdout (shared failure contract, not {ok:false})', () => {
+    const res = spawnSync(
+      'node',
+      [CLI, 'resolve-sdlc', '--git-town-exit-code', '1'],
+      { encoding: 'utf8' }
+    );
+    expect(res.status).toBe(1);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.error).toMatch(/Missing required --remote-url/);
+    expect(parsed.ok).toBeUndefined();
   });
 });
