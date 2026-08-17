@@ -316,6 +316,8 @@ workflow:
             - "If --foundational with a short capability brief: skip PRD REQ-NNN traceability validation"
             - "Otherwise scan all TRD tasks for [satisfies REQ-NNN] annotations"
             - "Otherwise validate that each REQ-NNN referenced in a [satisfies] annotation exists in the PRD"
+            - "Otherwise warn (do NOT halt) if any PRD REQ-NNN has zero TRD task coverage"
+            - "Otherwise warn (do NOT halt) if any [satisfies] annotation references a REQ-NNN not found in the PRD"
             - "Print summary: 'Traceability check: N requirements covered, M uncovered, K orphaned annotations'"
         - order: 4
           title: File Save and Next Steps
