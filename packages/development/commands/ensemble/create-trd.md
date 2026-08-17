@@ -17,7 +17,18 @@ optional MCP enhancement, adversarial self-review with a Design Readiness Gate, 
 output with traceability matrices. Team configuration is handled separately by
 /ensemble:configure-team. All outputs are saved to docs/TRD/.
 
+> **Foreman Mode (`--foreman`):** When `$ARGUMENTS` contains `--foreman`, the skill sets `FOREMAN_MODE=true`. After saving the TRD file, the skill commits, pushes, and prints `FOREMAN_BRANCH`, `FOREMAN_SHA`, and `FOREMAN_COMPLETE=true` so Foreman can create the PR.
+
 ## Workflow
+
+### Phase 0: Foreman Mode Detection
+
+**1. Detect --foreman Flag**
+   Check if $ARGUMENTS contains the token --foreman and set FOREMAN_MODE variable.
+
+   - Check if `$ARGUMENTS` contains the token `--foreman`.
+   - Set `FOREMAN_MODE=true` if found, otherwise `FOREMAN_MODE=false`.
+   - Print 'FOREMAN_MODE=$FOREMAN_MODE'
 
 ### Phase 1: PRD Ingestion and Validation
 
@@ -262,6 +273,11 @@ output with traceability matrices. Team configuration is handled separately by
    - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'
    - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'
    - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path
+
+**5. Foreman Handoff**
+   Commit, push, and print Foreman handoff variables when FOREMAN_MODE=true
+
+   - If `FOREMAN_MODE=true`: run 'git add -A && git commit -m "docs(TRD): <trd-label>"' (if there are uncommitted changes); run 'git push origin HEAD' (pushes the current branch); print "FOREMAN_BRANCH=$(git branch --show-current)"; print "FOREMAN_SHA=$(git rev-parse HEAD)"; print "FOREMAN_COMPLETE=true"
 
 ## Expected Output
 
