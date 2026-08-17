@@ -15,12 +15,22 @@ disable-model-invocation: true
 
 > **Mission:** Refine and enhance an existing Product Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates PRD while maintaining version history, traceability, and alignment with the create-prd v2.2.0 format including PRD Health summaries, MoSCoW priorities, and Implementation Readiness Gate scoring.
 
+> **Foreman Mode (`--foreman`):** When `$ARGUMENTS` contains `--foreman`, the skill sets `FOREMAN_MODE=true`. After saving the refined PRD file, the skill commits, pushes, and prints `FOREMAN_BRANCH`, `FOREMAN_SHA`, and `FOREMAN_COMPLETE=true` so Foreman can create the PR.
+
 > **Constraints:**
 > - DO NOT implement, build, or execute any work described in the PRD
 > - This command ONLY refines the PRD document itself
 > - The arguments describe what should be improved in the document, not what should be built
 > - After refining the PRD, stop and wait for user approval before any implementation
 > - DO NOT make any edits to the PRD during the Synthesis step — findings are presented first, edits happen only after the user selects items
+
+## Phase 0: Foreman Mode Detection
+
+### Step 1: Detect --foreman Flag
+
+**Actions:**
+1. Check if `$ARGUMENTS` contains the token `--foreman`.
+2. Set `FOREMAN_MODE=true` if found, otherwise `FOREMAN_MODE=false`.
 
 ## Phase 1: Collaborative Review
 
@@ -370,3 +380,10 @@ Save the refined PRD with updated metadata and changelog
 4. Add changelog entry at the bottom of the PRD: date, version, list of changes made during this refinement
 5. Save the updated PRD to the same file path (overwrite the original)
 6. Print summary: number of changes made, new version, updated readiness score and delta (if applicable)
+
+### Step 2: Foreman Handoff
+
+Commit and push the refined PRD, then print Foreman handoff variables.
+
+**Actions:**
+1. If `FOREMAN_MODE=true`: run 'git add -A && git commit -m "docs(refine): <prd-label>"' (if there are uncommitted changes); run 'git push origin HEAD' (pushes the current branch); print "FOREMAN_BRANCH=$(git branch --show-current)"; print "FOREMAN_SHA=$(git rev-parse HEAD)"; print "FOREMAN_COMPLETE=true"

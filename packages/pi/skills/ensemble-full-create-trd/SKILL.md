@@ -16,11 +16,20 @@ disable-model-invocation: true
 
 > **Mission:** Create a Technical Requirements Document (TRD) from a Product Requirements Document (PRD). Performs PRD validation, architecture design with alternatives, task breakdown with traceability, optional MCP enhancement, adversarial self-review with a Design Readiness Gate, and structured output with traceability matrices. Team configuration is handled separately by /ensemble:configure-team. All outputs are saved to docs/TRD/.
 
+> **Foreman Mode (`--foreman`):** When `$ARGUMENTS` contains `--foreman`, the skill sets `FOREMAN_MODE=true`. After saving the TRD file, the skill commits, pushes, and prints `FOREMAN_BRANCH`, `FOREMAN_SHA`, and `FOREMAN_COMPLETE=true` so Foreman can create the PR.
+
 > **Constraints:**
 > - DO NOT implement, build, or execute any technical work described in the requirements
 > - This command creates ONLY a TRD document
 > - The arguments describe what should be documented, not what should be built
 > - After creating the TRD, stop and wait for user approval before any implementation
+## Phase 0: Foreman Mode Detection
+
+### Step 1: Detect --foreman Flag
+
+**Actions:**
+1. Check if `$ARGUMENTS` contains the token `--foreman`.
+2. Set `FOREMAN_MODE=true` if found, otherwise `FOREMAN_MODE=false`.
 
 ## Phase 1: PRD Ingestion and Validation
 
@@ -294,3 +303,10 @@ Save TRD and suggest follow-up commands
 4. Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'
 5. Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'
 6. If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path
+
+### Step 5: Foreman Handoff
+
+Commit and push the TRD, then print Foreman handoff variables.
+
+**Actions:**
+1. If `FOREMAN_MODE=true`: run 'git add -A && git commit -m "docs(TRD): <trd-label>"' (if there are uncommitted changes); run 'git push origin HEAD' (pushes the current branch); print "FOREMAN_BRANCH=$(git branch --show-current)"; print "FOREMAN_SHA=$(git rev-parse HEAD)"; print "FOREMAN_COMPLETE=true"
