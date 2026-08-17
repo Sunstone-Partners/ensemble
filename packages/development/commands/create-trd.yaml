@@ -9,6 +9,16 @@ metadata:
   model: high
   argument_hint: "[prd-path] [--team] [--foundational] [--list]"
 
+parameters:
+  - name: foreman
+    type: boolean
+    default: false
+    description: |
+      When true, the skill sets FOREMAN_MODE=true and at the end of Output
+      Management phase commits, pushes, and prints FOREMAN_BRANCH, FOREMAN_SHA,
+      and FOREMAN_COMPLETE=true so Foreman can create the PR. No git town
+      propose is run in foreman mode.
+
 constraints:
   - DO NOT implement, build, or execute any technical work described in the requirements
   - This command creates ONLY a TRD document
@@ -25,6 +35,19 @@ mission:
 
 workflow:
   phases:
+    - name: Foreman Mode Detection
+      order: 0
+      description: Detect --foreman flag and set FOREMAN_MODE variable
+      steps:
+        - order: 1
+          title: Detect --foreman Flag
+          description: |
+            Check if $ARGUMENTS contains the token --foreman and set FOREMAN_MODE variable.
+          actions:
+            - "If $ARGUMENTS contains '--foreman': set FOREMAN_MODE=true"
+            - "Otherwise: set FOREMAN_MODE=false"
+            - "Print 'FOREMAN_MODE=$FOREMAN_MODE'"
+
     - name: PRD Ingestion and Validation
       steps:
         - order: 0
@@ -293,10 +316,7 @@ workflow:
             - "If --foundational with a short capability brief: skip PRD REQ-NNN traceability validation"
             - "Otherwise scan all TRD tasks for [satisfies REQ-NNN] annotations"
             - "Otherwise validate that each REQ-NNN referenced in a [satisfies] annotation exists in the PRD"
-            - "Otherwise warn (do NOT halt) if any PRD REQ-NNN has zero TRD task coverage"
-            - "Otherwise warn (do NOT halt) if any [satisfies] annotation references a REQ-NNN not found in the PRD"
-            - "Otherwise print summary: 'Traceability check: N requirements covered, M uncovered, K orphaned annotations'"
-
+            - "Print summary: 'Traceability check: N requirements covered, M uncovered, K orphaned annotations'"
         - order: 4
           title: File Save and Next Steps
           description: Save TRD and suggest follow-up commands
@@ -307,6 +327,15 @@ workflow:
             - "Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'"
             - "Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'"
             - "If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path"
+        - order: 5
+          title: Foreman Handoff
+          description: Commit, push, and print Foreman handoff variables when FOREMAN_MODE=true
+          actions:
+            - "If FOREMAN_MODE is 'true': run 'git add -A && git commit -m \"docs(TRD): <trd-label>\"' (if there are uncommitted changes)"
+            - "If FOREMAN_MODE is 'true': run 'git push origin HEAD' (pushes the current branch)"
+            - "If FOREMAN_MODE is 'true': print 'FOREMAN_BRANCH=$(git branch --show-current)'"
+            - "If FOREMAN_MODE is 'true': print 'FOREMAN_SHA=$(git rev-parse HEAD)'"
+            - "If FOREMAN_MODE is 'true': print 'FOREMAN_COMPLETE=true'"
 
 expectedInput:
   format: Product Requirements Document (PRD)

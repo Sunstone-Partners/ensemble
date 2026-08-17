@@ -9,6 +9,14 @@ metadata:
   model: high
 
 parameters:
+  - name: foreman
+    type: boolean
+    default: false
+    description: |
+      When true, the skill sets FOREMAN_MODE=true and at the end of Output
+      Management phase commits, pushes, and prints FOREMAN_BRANCH, FOREMAN_SHA,
+      and FOREMAN_COMPLETE=true so Foreman can create the PR. No git town
+      propose is run in foreman mode.
   - name: collab
     type: boolean
     default: false
@@ -95,6 +103,19 @@ mission:
     scoring.
 workflow:
   phases:
+    - name: Foreman Mode Detection
+      order: 0
+      description: Detect --foreman flag and set FOREMAN_MODE variable
+      steps:
+        - order: 1
+          title: Detect --foreman Flag
+          description: |
+            Check if $ARGUMENTS contains the token --foreman and set FOREMAN_MODE variable.
+          actions:
+            - "If $ARGUMENTS contains '--foreman': set FOREMAN_MODE=true"
+            - "Otherwise: set FOREMAN_MODE=false"
+            - "Print 'FOREMAN_MODE=$FOREMAN_MODE'"
+
     - name: Collaborative Review
       order: 1
       when: $ARGUMENTS contains --collab OR $ARGUMENTS contains --long-lived
@@ -458,9 +479,17 @@ workflow:
             - "Add changelog entry at the bottom of the PRD: date, version, list of changes made during this refinement"
             - Save the updated PRD to the same file path (overwrite the original)
             - "Print summary: number of changes made, new version, updated readiness score and delta (if applicable)"
+        - order: 2
+          title: Foreman Handoff
+          description: Commit, push, and print Foreman handoff variables when FOREMAN_MODE=true
+          actions:
+            - "If FOREMAN_MODE is 'true': run 'git add -A && git commit -m \"docs(refine): <prd-label>\"' (if there are uncommitted changes)"
+            - "If FOREMAN_MODE is 'true': run 'git push origin HEAD' (pushes the current branch)"
+            - "If FOREMAN_MODE is 'true': print 'FOREMAN_BRANCH=$(git branch --show-current)'"
+            - "If FOREMAN_MODE is 'true': print 'FOREMAN_SHA=$(git rev-parse HEAD)'"
+            - "If FOREMAN_MODE is 'true': print 'FOREMAN_COMPLETE=true'"
 
 expectedOutput:
-  format: Refined Product Requirements Document (PRD)
   structure:
     - name: Updated PRD
       description: Enhanced PRD with feedback incorporated and structural improvements
