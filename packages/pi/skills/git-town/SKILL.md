@@ -80,7 +80,7 @@ The skill system automatically handles path resolution, caching, and version com
 Before using git-town commands, ensure the following requirements are met:
 
 - **Git-town installation**: Version 14.0.0 or higher installed and in PATH
-- **Repository configuration**: Main branch configured via `git town config set-main-branch main`
+- **Repository configuration** (optional — Preflight no longer requires it and falls back automatically): main branch configured via the interactive `git town init` wizard
 - **Git repository**: Working directory must be inside a git repository
 
 ### Validation
@@ -98,7 +98,7 @@ bash ${ENSEMBLE_SKILL_ROOT}/scripts/validate-git-town.sh
 **Exit codes:**
 - `0`: All checks passed, ready to use git-town
 - `1`: git-town not installed (install via `brew install git-town` or equivalent)
-- `2`: git-town not configured (run `git town config set-main-branch main`)
+- `2`: git-town not configured — optional, Preflight falls back to `plain-git` (run `git town init` to configure interactively)
 - `3`: git-town version < 14.0.0 (upgrade required)
 - `4`: Not in a git repository (navigate to repository root)
 
@@ -540,13 +540,13 @@ git push --force-with-lease  # Each branch individually, or use sync which pushe
   git-town version  # Should be >= 14.0.0
   ```
 
-- **Exit 2** (git-town not configured):
+- **Exit 2** (git-town not configured — optional, Preflight falls back to `plain-git` automatically):
   ```bash
-  # Configure main branch
-  git town config set-main-branch main
+  # Configure interactively (main branch, perennial branches, contribution branches)
+  git town init
 
   # Verify
-  git town config get-main-branch  # Returns: main
+  git town config  # Shows current configuration
   ```
 
 - **Exit 3** (git-town version too old):
@@ -589,10 +589,9 @@ git push --force-with-lease  # Each branch individually, or use sync which pushe
    git-town hack experiment --prototype
    ```
 
-3. Pre-configure defaults in git config:
+3. Pre-configure defaults via the interactive wizard:
    ```bash
-   git town config set-main-branch main
-   git town config set-perennial-branches "main,develop,staging"
+   git town init
    ```
 
 ### Merge Conflicts During Sync

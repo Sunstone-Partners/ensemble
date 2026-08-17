@@ -29,11 +29,22 @@ Verify br is installed and detect bv availability
 
 ### Step 3: Git-Town and Working Directory Verification
 
-Verify git-town is installed and the working directory is clean
+Verify git-town is installed and the working directory is clean; resolve branching strategy and PR backend via resolve-sdlc
 
 **Actions:**
-1. Run: bash packages/git/skills/git-town/scripts/validate-git-town.sh — handle exit codes 0 (ok), 1 (not installed), 2 (not configured), 3 (version mismatch), 4 (not git repo)
-2. Run: git status --porcelain — HALT if output non-empty (dirty working directory)
+1. Resolve TRD_CLI (reusing implement-trd-beads.yaml Preflight's exact convention): first try the canonical monorepo root via `git rev-parse --show-toplevel 2>/dev/null` + `/packages/development/lib/trd-cli.js`; if that fails, fall back to the legacy CWD-relative `packages/development/lib/trd-cli.js`; finally check `${CLAUDE_PLUGIN_ROOT}/lib/trd-cli.js`. If none exist OR 'which node' fails: print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development plugin is present.' and exit 1.
+2. Run: bash "$(git rev-parse --show-toplevel 2>/dev/null)/packages/git/skills/git-town/scripts/validate-git-town.sh"; capture its exit code as GIT_TOWN_EXIT_CODE (0-4). Exit codes 3 (version mismatch) and 4 (not a git repo) are unaffected by this feature — HALT on those exactly as before. Exit codes 0 (ok), 1 (not installed), and 2 (not configured) no longer HALT here — they are passed to resolve-sdlc below.
+3. Detect ask_user availability: set INTERACTIVE=true if available, INTERACTIVE=false otherwise. (This file has no other existing INTERACTIVE detection to reuse, so this is the minimal equivalent of implement-trd-beads.yaml's mechanism — same technique: is ask_user available.)
+4. Run: REMOTE_URL=$(git remote get-url origin 2>/dev/null); if REMOTE_URL is empty (no origin configured), set REMOTE_URL to the literal string 'none' — resolve-sdlc requires a non-empty --remote-url, and any non-URL string is treated as 'no unsupported host detected'.
+5. Run: node "$TRD_CLI" resolve-sdlc --git-town-exit-code "$GIT_TOWN_EXIT_CODE" --remote-url "$REMOTE_URL"; parse the single JSON object from stdout as RESOLVE_SDLC_RESULT.
+6. If RESOLVE_SDLC_RESULT has an 'error' key (trd-cli.js's shared failure contract — a thrown Error caught by main(), printed as {"error":"<msg>"} with exit 1; NOT {ok:false,error:...}): print the error and HALT. This should not normally happen since GIT_TOWN_EXIT_CODE and REMOTE_URL are always well-formed here, but never swallow it.
+7. If RESOLVE_SDLC_RESULT.branchingStrategy.action == 'halt': print RESOLVE_SDLC_RESULT.branchingStrategy.message and HALT.
+8. If RESOLVE_SDLC_RESULT.prBackend.needsResolution == true: If INTERACTIVE=true, call ask_user with id='pr_backend', question='This repository''s remote is not supported by git-town''s PR automation. How should pull requests be created?', options=[{label:'ado',description:'Use the azure-devops MCP tool to create the PR (falls back to printing manual az repos/portal steps if the MCP tool is not connected)',preview:'ENSEMBLE_PR_BACKEND=ado'},{label:'manual',description:'Always print manual PR-creation steps instead of automating PR creation',preview:'ENSEMBLE_PR_BACKEND=manual'},{label:'proceed with gh anyway (not recommended)',description:'Use the gh CLI even though the remote host is not GitHub — will likely fail',preview:'ENSEMBLE_PR_BACKEND=gh'},{label:'abort',description:'Stop without resolving a PR backend',preview:'Abort'}], multi=false, recommended=0. Parse the answer: 'ado' -> PR_BACKEND=ado; 'manual' -> PR_BACKEND=manual; 'proceed with gh anyway (not recommended)' -> PR_BACKEND=gh; 'abort' -> print 'Aborted — no git side effects.' and HALT. If INTERACTIVE=false, or INTERACTIVE detection is itself uncertain (always default to this branch when in doubt — never risk a hung prompt): print 'PR backend could not be auto-resolved for this repository''s remote. Set one of the following to proceed non-interactively:', then each of 'ENSEMBLE_PR_BACKEND=ado', 'ENSEMBLE_PR_BACKEND=manual', 'ENSEMBLE_PR_BACKEND=gh' on its own line, then the persistence hint '...set this in your shell profile/CI config to skip this prompt on future invocations.', and HALT.
+9. If RESOLVE_SDLC_RESULT.prBackend.needsResolution == false: set PR_BACKEND=RESOLVE_SDLC_RESULT.prBackend.backend (no prompt, no HALT).
+10. Set BRANCHING_STRATEGY=RESOLVE_SDLC_RESULT.branchingStrategy.strategy. Both BRANCHING_STRATEGY and PR_BACKEND are re-resolved fresh on every invocation, including resumed epics, and are read by later Preflight/Execute/Quality-Gate/Completion steps in this file — never cached across sessions.
+11. If RESOLVE_SDLC_RESULT.consolidatedMessage is non-null: print it. If it is null (the pure-default case — git-town configured and remote is GitHub): print nothing new at all, matching today's exact output for existing git-town+GitHub users.
+12. Plain-git branch creation (TRD-014): this command drives an existing bead hierarchy on whatever branch is already checked out — unlike implement-trd-beads.yaml, it never creates or switches branches itself (the caller, e.g. implement-trd-beads.yaml's Feature Branch Creation step, or the user for a standalone invocation, is responsible for that). BRANCHING_STRATEGY is still resolved above for consistency with the other two consumer commands and for any future branch-mutating step added here, but today there is zero `git town` command anywhere in this file to make config-driven — the plain-git contract (REQ-004: zero git town commands issued when BRANCHING_STRATEGY==plain-git) is satisfied automatically, by this file never issuing branch-mutation commands of any kind, git-town or otherwise.
+13. Run: git status --porcelain — HALT if output non-empty (dirty working directory) [UNCHANGED]
 
 ### Step 4: Epic Discovery
 
@@ -210,7 +221,10 @@ Print final summary, requirement satisfaction table (if TRD_MODE), and PR remind
 13. If TRD_MODE=false: print "Requirement Satisfaction: N/A (no TRD — run with --trd <path> to enable traceability tracking)"
 14. Run: br sync --flush-only
 15. If BV_AVAILABLE: run bv --robot-triage --format toon for final progress summary
-16. Remind user: git diff main...<branch>; gh pr create; after merge: move any TRD file to docs/TRD/completed/
-17. Remind user: br sync --flush-only && git add .beads/ && git commit -m "chore: final beads sync"
-18. TIP: The execution engine used here is also available via /ensemble:implement-trd-beads <trd-path> for TRD-driven workflows with full scaffold, traceability validation, and Design Readiness gate.
-19. Do NOT auto-create PR — user must run gh pr create manually
+16. PR reminder (TRD-015): this command never auto-creates a PR regardless of PR_BACKEND — it only ever prints a reminder naming the resolved backend's manual steps (mirroring TRD-010's three backend behaviors, minus the ado MCP-tool-preferred attempt, since this file's whole design is remind-not-automate).
+17. If PR_BACKEND=='gh': remind user: git diff main...<branch>; gh pr create; after merge: move any TRD file to docs/TRD/completed/
+18. If PR_BACKEND=='ado': remind user: git push -u origin <branch>; az repos pr create --source-branch <branch> --target-branch main --title "<title>"; or via the portal: Repos > Pull Requests > New Pull Request, source=<branch>, target=main; after merge: move any TRD file to docs/TRD/completed/
+19. If PR_BACKEND=='manual': remind user: git push -u origin <branch>; then create the PR yourself via gh pr create --base main (or the ADO CLI/portal equivalent if the remote is Azure DevOps); after merge: move any TRD file to docs/TRD/completed/
+20. Remind user: br sync --flush-only && git add .beads/ && git commit -m "chore: final beads sync"
+21. TIP: The execution engine used here is also available via /ensemble:implement-trd-beads <trd-path> for TRD-driven workflows with full scaffold, traceability validation, and Design Readiness gate.
+22. Do NOT auto-create PR — user must create it manually per the PR_BACKEND-specific reminder above

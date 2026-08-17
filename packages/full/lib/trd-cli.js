@@ -26,13 +26,18 @@
  *   create-workstream-trd <trd-path...> [--out path]
  *   workstream-plan <trd-path...> [--stacked]
  *   workstream-status [--workstream slug] [--issues-json path]
+ *   resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>
  */
 
 const fs = require('fs');
 const path = require('path');
 
+let yaml = null;
+try { yaml = require('js-yaml'); } catch { yaml = null; }
+
 const { extractPrdContext } = require('./prd-parser');
-const { parseTRD } = require('./trd-parser');
+
+const { parseTRD, extractDesignReadinessScore } = require('./trd-parser');
 const {
   buildPhaseTaskIds,
   currentPhase,
@@ -44,7 +49,14 @@ const { buildWorkstreamPlan, validateWorkstream } = require('./workstream-planne
 const { resolveCrossTrdDeps } = require('./cross-trd-deps');
 const { summarizeWorkstream } = require('./workstream-status');
 const { generateWorkstreamTrd, nextWorkstreamPath } = require('./workstream-trd');
-const { useStackedPrs, branchName, planPrActions } = require('./pr-strategy');
+const {
+  useStackedPrs,
+  branchName,
+  planPrActions,
+  resolveBranchingStrategy,
+  resolvePrBackend,
+  buildConsolidatedResolutionMessage,
+} = require('./pr-strategy');
 
 // ---------------------------------------------------------------------------
 // Small utilities
@@ -312,6 +324,44 @@ function runPrPlan(argv, env) {
   };
 }
 
+// Valid git-town exit codes per validate-git-town.sh (0-4). Anything else is
+// a malformed/unexpected value the CLI should reject rather than pass through.
+const VALID_GIT_TOWN_EXIT_CODES = new Set([0, 1, 2, 3, 4]);
+
+/**
+ * `resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>`
+ *   -> { ok:true, branchingStrategy, prBackend, consolidatedMessage }
+ *
+ * Thin CLI adapter over pr-strategy.js's resolveBranchingStrategy /
+ * resolvePrBackend / buildConsolidatedResolutionMessage (TRD §1.1-1.4).
+ * Reads ENSEMBLE_BRANCHING_STRATEGY / ENSEMBLE_PR_BACKEND from the `env`
+ * param rather than process.env directly, matching runPrPlan/runNextTask's
+ * pattern for testability.
+ */
+function runResolveSdlc(argv, env) {
+  const { flags } = parseArgs(argv, new Set(['git-town-exit-code', 'remote-url']));
+
+  const rawExitCode = flags['git-town-exit-code'];
+  if (rawExitCode == null || rawExitCode === '') {
+    throw new Error('Missing required --git-town-exit-code flag');
+  }
+  const gitTownExitCode = Number(rawExitCode);
+  if (!VALID_GIT_TOWN_EXIT_CODES.has(gitTownExitCode)) {
+    throw new Error(`Invalid --git-town-exit-code '${rawExitCode}': must be an integer 0-4`);
+  }
+
+  const remoteUrl = flags['remote-url'];
+  if (remoteUrl == null || remoteUrl === '') {
+    throw new Error('Missing required --remote-url flag');
+  }
+
+  const branchingStrategy = resolveBranchingStrategy(env || {}, gitTownExitCode);
+  const prBackend = resolvePrBackend(env || {}, remoteUrl);
+  const consolidatedMessage = buildConsolidatedResolutionMessage(branchingStrategy, prBackend);
+
+  return { ok: true, branchingStrategy, prBackend, consolidatedMessage };
+}
+
 /** Load all TRD paths for combined workstream helpers. */
 function loadWorkstreamItems(trdPaths) {
   const paths = Array.isArray(trdPaths) ? trdPaths : [];
@@ -370,6 +420,363 @@ function runWorkstreamStatus(argv) {
   return summarizeWorkstream(issuesInput, { workstreamSlug: flags.workstream || null });
 }
 // ---------------------------------------------------------------------------
+// Frontmatter scanner — handles H1-then-frontmatter layout used by TRD/PRDs
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a markdown file that may have a title/H1 before the frontmatter block.
+ * Strategy:
+ * 1. Find first `---` on its own line → frontmatter start
+ * 2. Find second `---` on its own line → frontmatter end
+ * 3. If yaml is available, use it; otherwise fall back to parseSimpleFrontmatter
+ * Returns { frontmatter, body, yamlFailed } where yamlFailed=true when the
+ * yaml parser threw (indicating the frontmatter uses non-standard syntax
+ * such as bold-keyed lines).
+ *
+ * @param {string} md
+ * @returns {{frontmatter: Object|null, body: string, yamlFailed: boolean}}
+ */
+function scanFrontmatter(md) {
+  const lines = md.split('\n');
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      if (start === -1) start = i;
+      else if (start !== -1 && end === -1) { end = i; break; }
+    }
+  }
+  if (start === -1 || end === -1) {
+    return { frontmatter: null, body: md, yamlFailed: false };
+  }
+  const raw = lines.slice(start + 1, end).join('\n');
+  let frontmatter = null;
+  let yamlFailed = false;
+  if (yaml) {
+    try {
+      const loaded = yaml.load(raw);
+      if (loaded && typeof loaded === 'object') frontmatter = loaded;
+    } catch {
+      yamlFailed = true;
+    }
+  }
+  if (!frontmatter) { frontmatter = parseSimpleFrontmatter(raw); yamlFailed = true; }
+  const body = lines.slice(end + 1).join('\n');
+  return { frontmatter, body, yamlFailed };
+}
+
+/** Minimal key:value parser used as fallback when yaml is unavailable. */
+function parseSimpleFrontmatter(raw) {
+  const out = {};
+  for (const line of String(raw || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const m = trimmed.match(/^([^:]+):\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].trim();
+    let value = m[2].trim();
+    const commentIndex = value.search(/\s+#/);
+    if (commentIndex !== -1) value = value.slice(0, commentIndex).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    } else if (/^-?\d+(?:\.\d+)?$/.test(value)) {
+      value = Number(value);
+    } else if (/^(true|false)$/i.test(value)) {
+      value = /^true$/i.test(value);
+    }
+    out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// ---------------------------------------------------------------------------
+// Registry subcommands — list, status, migrate-frontmatter
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+
+const VALID_STATUSES = new Set(['Draft', 'In Progress', 'Approved', 'Completed', 'Deprecated']);
+
+/**
+ * Infer status from frontmatter status field + bead state.
+ * If frontmatter status is present and valid, use it.
+ * Otherwise derive from bead state: has open/in_progress beads → "In Progress"
+ * Fallback: "Draft".
+ *
+ * @param {Object|null} frontmatter
+ * @param {string} slug
+ * @param {Object} beadCounts  {total, open, in_progress, closed}
+ */
+function inferStatus(frontmatter, slug, beadCounts) {
+  if (frontmatter && frontmatter.status) {
+    const s = String(frontmatter.status).trim();
+    if (VALID_STATUSES.has(s)) return s;
+  }
+  if (beadCounts && (beadCounts.open > 0 || beadCounts.in_progress > 0)) {
+    return 'In Progress';
+  }
+  return 'Draft';
+}
+
+/**
+ * Run `br list --all --json` and return counts for beads whose title
+ * contains the given slug prefix.
+ * @param {string} slug
+ * @returns {Object} {total, open, in_progress, closed}
+ */
+function getBeadCounts(slug) {
+  try {
+    const { execSync } = require('child_process');
+    const needle = `[trd:${slug}:`;
+    let raw;
+    try {
+      raw = execSync('br list --all --json', { cwd: process.cwd(), timeout: 10000 });
+    } catch {
+      return { total: 0, open: 0, in_progress: 0, closed: 0 };
+    }
+    const beads = JSON.parse(raw.toString('utf8'));
+    const matches = (Array.isArray(beads) ? beads : []).filter(
+      (b) => (b.title || '').includes(needle)
+    );
+    return {
+      total: matches.length,
+      open: matches.filter((b) => b.status === 'open').length,
+      in_progress: matches.filter((b) => b.status === 'in_progress').length,
+      closed: matches.filter((b) => b.status === 'closed').length,
+    };
+  } catch {
+    return { total: 0, open: 0, in_progress: 0, closed: 0 };
+  }
+}
+
+/**
+ * Compute staleness in days from file mtime.
+ * @param {string} filePath
+ * @returns {number}
+ */
+function stalenessDays(filePath) {
+  try {
+    const mtime = fs.statSync(filePath).mtime;
+    return Math.floor((Date.now() - mtime.getTime()) / (1000 * 60 * 60 * 24));
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * `list [--type trd|prd] [--dir <path>]` -> { ok:true, items:[…] }
+ * Scans the given directory for .md files, parses frontmatter, returns
+ * a JSON array sorted by filename.
+ */
+function runList(argv) {
+  const { positionals, flags } = parseArgs(argv, new Set(['type', 'dir']));
+
+  const docType = flags.type || 'trd';
+  if (docType !== 'trd' && docType !== 'prd') {
+    throw new Error(`--type must be 'trd' or 'prd', got '${docType}'`);
+  }
+
+  const scanDir =
+    flags.dir ||
+    path.join(process.cwd(), docType === 'trd' ? 'docs/TRD' : 'docs/PRD');
+
+  let files;
+  try {
+    files = fs.readdirSync(scanDir).filter((f) => f.endsWith('.md'));
+  } catch (err) {
+    throw new Error(`Cannot read directory '${scanDir}': ${err.message}`);
+  }
+
+  const items = [];
+  for (const file of files.sort()) {
+    const filePath = path.join(scanDir, file);
+    let raw;
+    try {
+      raw = fs.readFileSync(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+
+    const { frontmatter } = scanFrontmatter(raw);
+    const slug = deriveSlug(filePath);
+    const beadCounts = docType === 'trd' ? getBeadCounts(slug) : { total: 0, open: 0, in_progress: 0, closed: 0 };
+    const status = inferStatus(frontmatter, slug, beadCounts);
+    const design_readiness_score =
+      extractDesignReadinessScore(frontmatter);
+
+    let lastModified;
+    try {
+      lastModified = fs.statSync(filePath).mtime.toISOString();
+    } catch {
+      lastModified = null;
+    }
+
+    // Determine document_id from frontmatter or filename
+    const frontmatterId = frontmatter && (frontmatter.document_id || frontmatter.id || frontmatter.documentId)
+      ? (frontmatter.document_id || frontmatter.id || frontmatter.documentId)
+      : null;
+
+    items.push({
+      id: frontmatterId || slug,
+      slug,
+      status,
+      design_readiness_score,
+      version: frontmatter && frontmatter.version ? String(frontmatter.version) : null,
+      prd_reference: frontmatter && frontmatter.prd_reference ? frontmatter.prd_reference : null,
+      last_modified: lastModified,
+      total_beads: beadCounts.total,
+      open_beads: beadCounts.open,
+      in_progress_beads: beadCounts.in_progress,
+      closed_beads: beadCounts.closed,
+    });
+  }
+
+  return { ok: true, type: docType, items };
+}
+
+/**
+ * `status <slug> [--type trd|prd] [--dir <path>]` -> { ok:true, … }
+ * Takes a slug (filename stem), resolves to the .md file, parses frontmatter,
+ * queries bead counts, returns full detail object.
+ */
+function runStatus(argv) {
+  const { positionals, flags } = parseArgs(argv, new Set(['type', 'dir']));
+  const slug = positionals[0];
+  if (!slug) throw new Error('Missing required <slug> argument');
+
+  const docType = flags.type || 'trd';
+  const scanDir =
+    flags.dir ||
+    path.join(process.cwd(), docType === 'trd' ? 'docs/TRD' : 'docs/PRD');
+
+  // Find matching file: exact → suffix (slug ends with) → prefix (slug starts with)
+  let filePath;
+  try {
+    const files = fs.readdirSync(scanDir).filter((f) => f.endsWith('.md'));
+    const mapped = files.map((f) => ({ name: f, path: path.join(scanDir, f), slug: deriveSlug(f) }));
+    const exact = mapped.find(({ slug: s }) => s === slug);
+    const suffix = exact || mapped.find(({ slug: s }) => s.endsWith('-' + slug));
+    const prefix = suffix || mapped.find(({ slug: s }) => s.startsWith(slug + '-'));
+    filePath = prefix ? prefix.path : null;
+  } catch (err) {
+    throw new Error(`Cannot read directory '${scanDir}': ${err.message}`);
+  }
+  if (!filePath) throw new Error(`No ${docType.toUpperCase()} found with slug '${slug}'`);
+
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    throw new Error(`Cannot read '${filePath}': ${err.message}`);
+  }
+
+  const { frontmatter } = scanFrontmatter(raw);
+  const beadCounts = docType === 'trd' ? getBeadCounts(slug) : { total: 0, open: 0, in_progress: 0, closed: 0 };
+  const status = inferStatus(frontmatter, slug, beadCounts);
+  const design_readiness_score = extractDesignReadinessScore(frontmatter);
+  const completion_pct =
+    beadCounts.total > 0
+      ? parseFloat(((beadCounts.closed / beadCounts.total) * 100).toFixed(1))
+      : null;
+  const days = stalenessDays(filePath);
+
+  return {
+    ok: true,
+    type: docType,
+    slug,
+    file: filePath,
+    status,
+    design_readiness_score,
+    completion_pct,
+    staleness_days: days,
+    version: frontmatter && frontmatter.version ? String(frontmatter.version) : null,
+    prd_reference: frontmatter && frontmatter.prd_reference ? frontmatter.prd_reference : null,
+    bead_counts: beadCounts,
+    frontmatter: frontmatter || {},
+  };
+}
+
+/**
+ * `migrate-frontmatter <dir>` -> { ok:true, migrated:[…], errors:[…] }
+ * Reads all .md files in the given directory, fills missing status: Draft,
+ * recomputes design_readiness_score (stub — scoring logic lives in evaluator),
+ * and writes the updated frontmatter back.
+ *
+ * Uses scanFrontmatter (handles H1-then-frontmatter layout) and re-serialises.
+ * Scoring is stubbed: design_readiness_score left as-is if present, else null.
+ */
+function runMigrateFrontmatter(argv) {
+  const { positionals, flags } = parseArgs(argv, new Set([]));
+  const dir = positionals[0];
+  if (!dir) throw new Error('Missing required <dir> argument');
+
+  const absDir = path.resolve(dir);
+  if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) {
+    throw new Error(`'${absDir}' is not a directory`);
+  }
+
+  let files;
+  try {
+    files = fs.readdirSync(absDir).filter((f) => f.endsWith('.md'));
+  } catch (err) {
+    throw new Error(`Cannot read directory '${absDir}': ${err.message}`);
+  }
+
+  const migrated = [];
+  const errors = [];
+
+  for (const file of files) {
+    const filePath = path.join(absDir, file);
+    let raw;
+    try {
+      raw = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+      errors.push({ file, error: `read failed: ${err.message}` });
+      continue;
+    }
+
+    const { frontmatter, body, yamlFailed } = scanFrontmatter(raw);
+    const fm = Object.assign({}, frontmatter || {});
+
+    let changed = false;
+    if (!fm.status || fm.status === '') {
+      fm.status = 'Draft';
+      changed = true;
+    }
+    // Only add design_readiness_score when YAML parsing succeeded and the field
+    // is truly absent (undefined key, not null). This avoids re-migrating files
+    // where YAML null (from `key:` or a previous migration) would otherwise
+    // always trigger a re-write.
+    if (!yamlFailed && !Object.prototype.hasOwnProperty.call(fm, 'design_readiness_score')) {
+      fm.design_readiness_score = null;
+      changed = true;
+    }
+
+    if (!changed) {
+      migrated.push({ file, action: 'unchanged' });
+      continue;
+    }
+
+    // Only re-serialise when YAML succeeded (safe round-trip)
+    if (!yamlFailed) {
+      const fmLines = Object.entries(fm).map(([k, v]) => {
+        const val = v === null ? 'null' : String(v);
+        return `${k}: ${val}`;
+      });
+      const newContent = `---\n${fmLines.join('\n')}\n---\n${body}`;
+      try {
+        fs.writeFileSync(filePath, newContent, 'utf8');
+        migrated.push({ file, action: 'migrated', changes: Object.keys(fm) });
+      } catch (err) {
+        errors.push({ file, error: `write failed: ${err.message}` });
+      }
+    } else {
+      // YAML failed — file uses bold-keyed format; log as skipped
+      migrated.push({ file, action: 'skipped', reason: 'bold-keyed frontmatter (YAML parse failed)' });
+    }
+  }
+
+  return { ok: true, migrated, errors };
+}
 // Workflow choices persistence
 // ---------------------------------------------------------------------------
 
@@ -508,12 +915,16 @@ const HANDLERS = {
   'phase-status': (argv) => runPhaseStatus(argv),
   'next-task': (argv) => runNextTask(argv, process.env),
   'pr-plan': (argv) => runPrPlan(argv, process.env),
+  'resolve-sdlc': (argv) => runResolveSdlc(argv, process.env),
   'validate-workstream': (argv) => runValidateWorkstream(argv),
   'create-workstream-trd': (argv) => runCreateWorkstreamTrd(argv),
   'workstream-plan': (argv) => runWorkstreamPlan(argv, process.env),
   'workstream-status': (argv) => runWorkstreamStatus(argv),
   'choices-read': (argv) => runChoicesRead(argv),
   'choices-write': (argv) => runChoicesWrite(argv),
+  list: (argv) => runList(argv),
+  status: (argv) => runStatus(argv),
+  'migrate-frontmatter': (argv) => runMigrateFrontmatter(argv),
 };
 
 /**
@@ -533,7 +944,7 @@ function main(argv) {
     process.stdout.write(
       JSON.stringify({
         error:
-          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|choices-read|choices-write> <trd-path> [...]',
+          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|resolve-sdlc|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|list|status|migrate-frontmatter|choices-read|choices-write> <trd-path> [...]',
       }) + '\n'
     );
     return 1;
@@ -569,6 +980,7 @@ module.exports = {
   runPhaseStatus,
   runNextTask,
   runPrPlan,
+  runResolveSdlc,
   runValidateWorkstream,
   runCreateWorkstreamTrd,
   runWorkstreamPlan,
@@ -576,6 +988,9 @@ module.exports = {
   main,
   runChoicesRead,
   runChoicesWrite,
+  runList,
+  runStatus,
+  runMigrateFrontmatter,
   // exported for unit testing of the helpers
   deriveSlug,
   parseArgs,
