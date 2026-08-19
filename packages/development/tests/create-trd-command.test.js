@@ -51,7 +51,7 @@ describe('create-trd command document ids', () => {
   test('Task Coverage Analysis self-checks the draft Master Task List via trd-cli.js parse', () => {
     const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
     const trdCliResolution =
-      'Resolve TRD_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-cli.js, packages/development/lib/trd-cli.js';
+      'Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js';
     // YAML double-quoted scalar escapes embedded quotes as \" in the raw
     // source text — match the literal bytes on disk, not the unescaped value.
     const parseInvocation = 'node \\"$TRD_CLI\\" parse';

@@ -1,0 +1,69 @@
+# Tool Path Resolution
+
+Resolve the on-disk path of an internal monorepo tool (a Node.js CLI script or a
+shell script) so commands work identically across every runtime this repo
+ships to: the dogfooding monorepo checkout, a legacy CWD-relative install, a
+Claude Code plugin install, and a Pi/OMP vendor bundle.
+
+---
+
+## Inputs
+
+| Variable        | Type   | Description |
+|-----------------|--------|-------------|
+| `RELATIVE_PATH`  | string | Monorepo-root-relative path to the target file, e.g. `packages/development/lib/trd-cli.js` |
+| `TARGET_VAR`     | string | Name of the variable the resolved path is stored in, e.g. `TRD_CLI` |
+
+---
+
+## Algorithm
+
+Try each tier in order. The first path that exists on disk wins.
+
+1. **Canonical monorepo root (dogfooding):**
+   `$(git rev-parse --show-toplevel 2>/dev/null)/<RELATIVE_PATH>`
+
+2. **Legacy CWD-relative:**
+   `<RELATIVE_PATH>` as-is (works when CWD is already the monorepo root).
+
+3. **Claude Code plugin root:**
+   `${CLAUDE_PLUGIN_ROOT}/<RELATIVE_PATH with its packages/<pkg>/ prefix stripped>`
+
+   Special case: the git-town validation script's plugin-root path is nested
+   under `skills/git/git-town/scripts/validate-git-town.sh` — NOT
+   `skills/git-town/...` — because `git` is a whole-directory symlink into the
+   ensemble-git plugin.
+
+4. **Pi/OMP vendor bundle:** resolve the `@sunstone-partners/ensemble-pi`
+   package's own declared install location (do not hardcode `~/.omp/plugins`
+   paths) via:
+
+   ```bash
+   node -e "try{console.log(require.resolve('@sunstone-partners/ensemble-pi/package.json',{paths:[process.env.ENSEMBLE_PI_INSTALL_ROOT, require('os').homedir()+'/.omp/plugins', process.cwd()].filter(Boolean)}))}catch(e){process.exit(1)}"
+   ```
+
+   Then join the directory of that output with:
+   - `vendor/lib/<filename>` — for a `packages/development/lib/*.js` file
+   - `vendor/scripts/<filename>` — for `validate-git-town.sh`
+   - `skills/<skill-dir>/SKILL.md` — for another skill (skills are already
+     Pi-published under `packages/pi/skills/` via the skill-copier mechanism —
+     NOT vendored, unlike lib/scripts)
+
+If none of the four tiers resolve (and, for Node-based tools, `which node`
+fails), the calling command prints its own error message and HALTs/exits —
+this skill defines the resolution *order* only. Each caller's error text and
+follow-on behavior (smoke-checks, HALT wording, etc.) stays with the caller.
+
+---
+
+## Per-file cheat sheet
+
+| Variable                | Relative path | Vendor bundle suffix |
+|-------------------------|---------------|------------------------|
+| `TRD_CLI`               | `packages/development/lib/trd-cli.js` | `vendor/lib/trd-cli.js` |
+| `TRD_GRAPH_CLI`         | `packages/development/lib/trd-graph-cli.js` | `vendor/lib/trd-graph-cli.js` |
+| `PRD_CLI`               | `packages/development/lib/prd-cli.js` | `vendor/lib/prd-cli.js` |
+| `VALIDATE_GIT_TOWN_SH`  | `packages/git/skills/git-town/scripts/validate-git-town.sh` | `vendor/scripts/validate-git-town.sh` |
+
+`VALIDATE_GIT_TOWN_SH`'s Claude Code plugin root path is nested:
+`${CLAUDE_PLUGIN_ROOT}/skills/git/git-town/scripts/validate-git-town.sh`.

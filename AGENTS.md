@@ -7,6 +7,14 @@ The ensemble repo has a GitHub wiki at `https://github.com/Sunstone-Partners/ens
 - **Drafts** are staged at `.wiki-staging/` at the repo root (gitignored via `.git/info/exclude`; local-only).
 - **Publish** via `scripts/wiki-publish.sh`. Handles add/update/sidebar cases with diff gates, idempotent, replays as no-op when wiki is already in the desired state. Run with `--yes` for non-interactive. See header comments in the script for the full contract.
 
+## Generated Artifact Policy
+
+- Edit source files, not generated artifacts.
+- When a file says `DO NOT EDIT - Generated from ...`, treat the referenced source file as authoritative and make the change there.
+- For command/agent/skill markdown generated from YAML or other sources, update the source file first, then run the repo's documented generation step so derived artifacts stay in sync.
+- Only touch generated artifacts directly when the user explicitly asks for that generated file itself to be edited or when no source file exists.
+
+
 ## Beads Workflow Integration
 
 This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/` and tracked in git.

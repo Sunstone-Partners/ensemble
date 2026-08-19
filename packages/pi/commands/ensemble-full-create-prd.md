@@ -145,10 +145,7 @@ user confirmation:
 - The question must be specific enough that a "yes/no" or brief answer fully resolves it
 - Do NOT silently resolve ambiguity with a best-guess — mark it instead
 
-Examples of valid markers:
-- "Users can upload files up to 10MB [NEEDS CLARIFICATION: Is 10MB the right limit, or should this be configurable per plan?]"
-- "Authentication uses JWT tokens [NEEDS CLARIFICATION: Should tokens be short-lived (15min) or long-lived (7d)?]"
-- "The dashboard shows last 30 days by default [NEEDS CLARIFICATION: Should the default time range be configurable by users or admins only?]"
+Example: "Users can upload files up to 10MB [NEEDS CLARIFICATION: Is 10MB the right limit, or should this be configurable per plan?]"
 
 Categories to scan for ambiguities:
 - Numeric thresholds without stated rationale (limits, timeouts, counts)
