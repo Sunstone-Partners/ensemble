@@ -1,9 +1,9 @@
 ---
 name: "ensemble:beads-build"
 description: "Drive an existing bead hierarchy to completion through the full builder, code-review, and close pipeline"
-version: "1.1.0"
+version: "1.2.0"
 category: "implementation"
-last-updated: "2026-06-05"
+last-updated: "2026-08-19"
 allowed-tools: "Read, Write, Edit, Bash, Grep, Glob, Task"
 argument-hint: "[epic-id|slug-pattern] [--trd trd-path] [--strategy tdd|characterization|bug-fix|refactor|test-after|flexible] [max parallel N]"
 model: "sonnet"
@@ -16,6 +16,15 @@ Drive an existing bead hierarchy (epic -> stories -> tasks) to completion throug
 the full builder -> code-review -> close pipeline. This is the canonical build
 engine — works for raw beads with no TRD required. implement-trd-beads --execute
 is effectively a TRD-augmented version of this command.
+Loop architecture (v1.2.0): the WAVE LOOP is a two-tier non-recursive dispatch
+loop. The parent (this command) checks bead-graph state and dispatches a fresh
+Task(subagent_type=beads-build-wave, prompt=...) subagent for each wave. The
+wave-runner subagent runs ONE wave (bv --robot-plan + concurrent Task() track
+dispatch + barrier) and emits a JSON summary line. The parent then decides
+whether to dispatch another wave based on the summary remaining_scoped_count.
+No recursion - wave-runners are depth-1 subagents of this command, and tracks
+are depth-1 subagents of the wave-runner. This shape respects Codex
+max_depth=1 constraint and works uniformly on claude/pi/codex/opencode.
 
 Uses bv --robot-plan as the ONLY scheduler. Each wave partitions the ready set
 into parallel tracks (up to --max-parallel; default 3) and dispatches each track
@@ -28,6 +37,8 @@ and requirement satisfaction report.
 Key behaviors:
 - bv --robot-plan is the only scheduler; no br ready fallback. Each wave is
   a barrier: dispatch all tracks, wait for every track, then re-plan.
+- The parent loop body is mechanical: read count, dispatch wave-runner, read
+  JSON summary, repeat. No narrative reasoning happens between iterations.
 - Quality gates: phase completion triggers test delegation; results recorded as br comments
 - Sync: br sync --flush-only before every bv call
 - Hard requirement: bv is required for orchestration. There is no graceful-degradation path — if bv is missing, install it before invocation. br ready is never a fallback dispatcher; bv --robot-plan is the only scheduler.
@@ -117,37 +128,28 @@ Algorithm defined in packages/development/skills/staleness-gate/SKILL.md.
 
 ### Phase 2: Execute
 
-**1. Track Orchestrator (bv --robot-plan scheduler + track dispatch)**
-   Use bv --robot-plan as the ONLY scheduler. Each scheduling wave partitions the
-TRD/epic-scoped ready set into parallel tracks (up to MAX_PARALLEL) and dispatches
-each track concurrently to a tech-lead-orchestrator Bead-Track subagent. A barrier
-sits between waves: every track must complete before the next bv --robot-plan call.
-The orchestrator inside the track runs beads sequentially; it does NOT re-plan or
-re-partition (the parent has already done that).
+**1. Wave Loop (single-wave subagent dispatch)**
+   Two-tier non-recursive dispatch loop (v1.2.0). Each iteration dispatches
+ONE wave-runner subagent via Task() and reads back a JSON summary. The
+loop body is mechanical: count + dispatch + read summary + decide.
+The wave-runner runs bv --robot-plan and concurrent Task() track dispatch;
+this parent does NOT call bv or Task(tech-lead-orchestrator) directly.
+Cross-platform: every runtime exposes Task(subagent_type, prompt). The
+depth-1 subagent respects Codex's max_depth=1 constraint.
 
 
-   - Run: br sync --flush-only (ensure JSONL is current before any bv call).
-   - TASK_TRACEABILITY rebuild guard: if TRD_MODE=true AND TASK_TRACEABILITY is empty (cross-session resume), re-parse the TRD to rebuild TASK_TRACEABILITY (re-run Preflight step 5 passes for [satisfies], [verifies], validation ACs, and test task classification). Print: "NOTE: TASK_TRACEABILITY rebuilt from TRD (cross-session resume). Tasks: <N>".
-   - If TRD_MODE=false: TASK_TRACEABILITY remains empty. Print: "NOTE: TRD augmentations disabled — traceability tokens will not be written."
-   - WAVE LOOP — repeat until the scoped graph is complete or blocked:
-   - Step 1 (each wave): run br sync --flush-only, then run bv --robot-plan --format toon. Treat a non-zero exit OR malformed TOON output as a HARD FAILURE: print "ERROR: bv --robot-plan failed" with captured diagnostics and HALT. There is no br ready fallback — bv is the only scheduler. SCHEDULING SOURCE LOCK: do NOT derive scheduling decisions, parallel tracks, dispatch order, ready/blocked sets, or wave partitioning from .beads/*.jsonl directly (jq/python/awk are not permitted); the persisted bead graph is opaque to this loop and must only be read through bv.
-   - Step 3 (build immutable track payload per plan step 6 schema):
-   -   goal: <free-text from parent invocation>
-   -   scope: { ROOT_EPIC_ID: <id>, EPIC_SLUG: <slug>, TRD_PATH: <path or null>, STRATEGY: <strategy> }
-   -   team_roles: <TEAM_ROLES object parsed from --team-roles or synthesized from deprecated --builder>
-   -   track_beads: <ordered string[] of bead IDs for this track only>
-   -   lifecycle_contract: literal br command sequence — claim via "br update <BEAD_ID> --status=in_progress", close via "br close <BEAD_ID>" after subagent success, sync via "br sync --flush-only" between operations
-   -   quality_loop: pointer to packages/development/agents/tech-lead-orchestrator.* Quality Loop Execution expertise (lines 99-104 of the YAML source) — the orchestrator follows claim, implement, run tests, delegate to code-reviewer, then if reviewer approves routes through advisor before QA. Architect is invoked on in_design, PM on in_clarification. On REJECTED with fixable issues, delegate back to original specialist with feedback (max 2 review rounds). Skip review only if strategy == "flexible" or task type is docs/documentation-only.
-   -   pm_clarification_guard: count PM clarification round-trips per task. Maximum 3 per task. On the 4th request, HALT that task path and escalate to the lead with the full clarification history instead of looping again.
-   - The payload is constructed once by the parent and never mutated. The orchestrator inside the track runs beads sequentially; it does NOT re-call bv --robot-plan or re-partition.
-   - Step 4 (concurrent dispatch): for each track in the wave, launch Task(subagent_type="tech-lead-orchestrator", prompt=<track_payload>) WITHOUT waiting on any one. Start every track in the wave before waiting on any one.
-   - Step 5 (barrier): wait for every track invocation in the wave to settle. Sibling-track failures are isolated — one failed track does not cancel successful sibling tracks. The next wave starts from the surviving bead graph.
-   - Step 6 (reconcile and re-plan): run br sync --flush-only. Then call bv --robot-plan again so newly unblocked work forms the next wave. Never reuse a stale plan across waves.
-   - Step 7 (empty-plan edge): a wave with zero actionable tracks must distinguish terminal states:
-   -   - Complete: no open scoped beads remain (verify with br list --status=open filtered by EPIC_SLUG). Break the LOOP and proceed to Quality Gate.
-   -   - Blocked: open scoped beads exist but bv returned no actionable tracks (unmet dependencies). Run bv --robot-insights for graph details and HALT with an explicit "blocked" status. Never loop on an empty plan.
-   - Step 8 (context budget monitoring, informational only): after every 5 waves, print: "Context checkpoint: <N> waves completed this session. If quality is degrading, consider: (1) /compact to compress conversation context, (2) start a new session with /ensemble:beads-build <ROOT_EPIC_ID> (beads preserve all state)." Do not halt or pause execution based on this signal.
-   - After the WAVE LOOP exits: run br sync --flush-only. Print: "=== Execution completed: <WAVE_COUNT> waves processed ===". Continue to Quality Gate.
+   - Run: br sync --flush-only (ensure JSONL is current before the loop reads state).
+   - Step 1 (initial state read): REMAINING_SCOPED_COUNT = count from br list --status=open --json filtered by EPIC_SLUG (entries whose .title contains EPIC_SLUG). IN_PROGRESS_SCOPED_COUNT = count from br list --status=in_progress --json filtered by EPIC_SLUG. If REMAINING_SCOPED_COUNT == 0 AND IN_PROGRESS_SCOPED_COUNT == 0: print "=== Execution completed: no remaining scoped work ===" and proceed to Quality Gate.
+   - Step 2 (loop body, single tool turn): in a single tool turn, dispatch Task(subagent_type=<resolved-from-AGENT_ALIAS_MAP-beads-build-wave>, prompt=<wave_payload>) where wave_payload = { ROOT_EPIC_ID, EPIC_SLUG, MAX_PARALLEL, TRD_MODE, TRD_PATH, STRATEGY, TEAM_ROLES, wave_number }. Resolve the namespaced identifier through AGENT_ALIAS_MAP (built by implement-trd-beads.yaml Preflight step 12, or for standalone invocations by scanning packages/*/agents/*.yaml plus ~/.omp/plugins/node_modules/@*/*/agents/*.md). Never pass a bare "beads-build-wave" string.
+   - Step 3 (read summary): the subagent emits ONE JSON summary line at the end of stdout. Parse SUMMARY_JSON = { wave_number, tracks_dispatched, tracks_succeeded, tracks_failed, beads_closed_this_wave, remaining_scoped_count, in_progress_scoped_count, terminal_state, elapsed_seconds, next_action_hint }.
+   - Step 4 (decide, then continue or exit):
+   -   - If SUMMARY_JSON.terminal_state == "complete": print "=== Execution completed: <beads_closed_this_wave> beads closed in final wave ===". Break the loop and proceed to Quality Gate.
+   -   - If SUMMARY_JSON.terminal_state == "blocked": print "=== Execution blocked: <remaining_scoped_count> open scoped beads with no actionable tracks. Run bv --robot-insights for graph details. ===". HALT with "EXECUTION BLOCKED - manual intervention required".
+   -   - If SUMMARY_JSON.terminal_state == "in_progress" AND SUMMARY_JSON.remaining_scoped_count > 0 AND SUMMARY_JSON.next_action_hint == "dispatch_another_wave": immediately return to Step 2 with wave_number = SUMMARY_JSON.wave_number + 1. Do NOT print progress, do NOT summarize, do NOT pause between iterations - the JSON summary is the only output between iterations.
+   -   - If SUMMARY_JSON.terminal_state == "in_progress" AND SUMMARY_JSON.remaining_scoped_count == 0 AND SUMMARY_JSON.in_progress_scoped_count == 0: print "=== Execution completed: state drain reached zero ===". Break the loop and proceed to Quality Gate.
+   - Step 5 (no re-plan or re-partition at this layer): this command does NOT call bv --robot-plan. The wave-runner does. The next wave is a fresh Task() invocation - no state from a prior wave is reused.
+   - Step 6 (context budget monitoring, informational only): after every 5 waves, print "Context checkpoint: <N> waves completed this session. If quality is degrading, consider: (1) /compact to compress conversation context, (2) start a new session with /ensemble:beads-build <ROOT_EPIC_ID> (beads preserve all state)." Do not halt or pause execution based on this signal.
+   - After the loop exits: run br sync --flush-only. Print "=== Execution completed: <WAVE_COUNT> waves processed ===". Continue to Quality Gate.
 
 **2. Debug Loop (TRD-019)**
    Attempt automated fix on track failure via deep-debugger (max 2 retries). Sibling-track failures are isolated; only this track's beads are re-attempted.

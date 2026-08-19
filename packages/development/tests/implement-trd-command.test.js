@@ -176,6 +176,55 @@ describe('implement-trd always-on team roster (team8)', () => {
   });
 });
 
+describe('implement-trd v2.5.0 two-tier task-loop contract', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd.yaml');
+
+  test('Task Loop step is a two-tier dispatch (delegates to implement-trd-task, not inline task work)', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const loopStart = text.indexOf('title: Task Loop');
+    const loopEnd = text.indexOf('title: Quality Gates');
+    expect(loopStart).toBeGreaterThan(-1);
+    expect(loopEnd).toBeGreaterThan(loopStart);
+    const loopBlock = text.slice(loopStart, loopEnd);
+
+    expect(loopBlock).toMatch(/Task\(subagent_type=implement-trd-task/);
+    expect(loopBlock).toMatch(/two-tier non-recursive\s+loop/i);
+    expect(loopBlock).toMatch(/max_depth=1/);
+    expect(loopBlock).toMatch(/task-runner owns specialist dispatch/);
+    expect(loopBlock).toMatch(/does NOT inline any of that work/i);
+  });
+
+  test('Task Loop handles the JSON summary terminal states (parent owns sprint-level decisions)', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const loopStart = text.indexOf('title: Task Loop');
+    const loopEnd = text.indexOf('title: Quality Gates');
+    const loopBlock = text.slice(loopStart, loopEnd);
+
+    expect(loopBlock).toMatch(/task_state == 'approved_closed'/);
+    expect(loopBlock).toMatch(/task_state == 'rejected_halt'/);
+    expect(loopBlock).toMatch(/task_state == 'pm_exhausted_halt'/);
+    expect(loopBlock).toMatch(/task_state == 'blocked'/);
+
+  });
+
+  test('mission summary explains the two-tier loop architecture', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const missionBlock = text.slice(
+      text.indexOf('mission:'),
+      text.indexOf('workflow:')
+    );
+    expect(missionBlock).toMatch(/two-tier non-recursive dispatch\s+loop/i);
+    expect(missionBlock).toMatch(/implement-trd-task/);
+    expect(missionBlock).toMatch(/max_depth=1/);
+  });
+
+  test('metadata version bumped to 2.5.0', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toMatch(/version: 2\.5\.0/);
+    expect(text).toMatch(/lastUpdated: "2026-08-19"/);
+  });
+});
+
 describe('implement-trd PR-boundary doc hook contract', () => {
   const yamlPath = path.join(__dirname, '../commands/implement-trd.yaml');
 
@@ -196,7 +245,7 @@ describe('implement-trd PR-boundary doc hook contract', () => {
 describe('implement-trd PM clarification guard contract', () => {
   const yamlPath = path.join(__dirname, '../commands/implement-trd.yaml');
 
-  test('Task Loop documents a 3-round PM clarification cap', () => {
+  test('Task Loop documents PM clarification contract with task-runner (3-round cap)', () => {
     const text = fs.readFileSync(yamlPath, 'utf8');
     const loopStart = text.indexOf('title: Task Loop');
     const loopEnd = text.indexOf('title: Quality Gates');
@@ -204,8 +253,18 @@ describe('implement-trd PM clarification guard contract', () => {
     expect(loopEnd).toBeGreaterThan(loopStart);
     const loopBlock = text.slice(loopStart, loopEnd);
 
+    // After v2.5.0 split: the parent loop documents the task_state contract for
+    // pm_exhausted_halt; the 3-round cap itself is enforced by the task-runner.
     expect(loopBlock).toMatch(/PM clarification loop guard/);
-    expect(loopBlock).toMatch(/Maximum 3 PM clarification rounds per task/);
-    expect(loopBlock).toMatch(/On the 4th request, HALT and escalate to the lead/);
+    expect(loopBlock).toMatch(/task-runner enforces the 3-round PM cap/);
+    expect(loopBlock).toMatch(/task_state[/='"]*pm_exhausted_halt/);
+  });
+
+  test('implement-trd-task.yaml enforces the 3-round PM cap (parent owns contract, child enforces count)', () => {
+    const taskPath = path.join(__dirname, '../commands/implement-trd-task.yaml');
+    const text = fs.readFileSync(taskPath, 'utf8');
+    expect(text).toMatch(/PM clarification loop guard/);
+    expect(text).toMatch(/Maximum 3 PM clarification rounds per task/);
+    expect(text).toMatch(/emit summary task_state="pm_exhausted_halt"/);
   });
 });

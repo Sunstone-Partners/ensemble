@@ -180,18 +180,14 @@ describe('beads-build team-roles delegation contract', () => {
     expect(stepBlock).toMatch(/TEAM_ROLES=\{/);
   });
 
-  test('track payload includes team_roles roster', () => {
-    const text = fs.readFileSync(yamlPath, 'utf8');
-    const executeStart = text.indexOf('title: Track Orchestrator');
-    const executeEnd = text.indexOf('title: Debug Loop');
-    expect(executeStart).toBeGreaterThan(-1);
-    expect(executeEnd).toBeGreaterThan(executeStart);
-    const executeBlock = text.slice(executeStart, executeEnd);
-
-    expect(executeBlock).toMatch(/team_roles:/);
-    expect(executeBlock).toMatch(/parsed from --team-roles or synthesized from deprecated --builder/);
-    expect(executeBlock).toMatch(/reviewer approves routes through advisor before QA/);
-    expect(executeBlock).toMatch(/Architect is invoked on in_design, PM on in_clarification/);
+  test('beads-build-wave payload includes team_roles roster (moved from inline Track Orchestrator)', () => {
+    const wavePath = path.join(__dirname, '../commands/beads-build-wave.yaml');
+    const text = fs.readFileSync(wavePath, 'utf8');
+    expect(text).toMatch(/team_roles/);
+    expect(text).toMatch(/lifecycle_contract/);
+    expect(text).toMatch(/quality_loop/);
+    expect(text).toMatch(/Architect is invoked on in_design, PM on in_clarification/);
+    expect(text).toMatch(/reviewer approves routes through advisor before QA/);
   });
 });
 
@@ -217,16 +213,11 @@ describe('beads-build PR-boundary doc hook contract', () => {
 describe('beads-build PM clarification guard contract', () => {
   const yamlPath = path.join(__dirname, '../commands/beads-build.yaml');
 
-  test('track payload documents a 3-round PM clarification cap', () => {
-    const text = fs.readFileSync(yamlPath, 'utf8');
-    const executeStart = text.indexOf('title: Track Orchestrator');
-    const executeEnd = text.indexOf('title: Debug Loop');
-    expect(executeStart).toBeGreaterThan(-1);
-    expect(executeEnd).toBeGreaterThan(executeStart);
-    const executeBlock = text.slice(executeStart, executeEnd);
-
-    expect(executeBlock).toMatch(/pm_clarification_guard/);
-    expect(executeBlock).toMatch(/Maximum 3 per task/);
-    expect(executeBlock).toMatch(/On the 4th request, HALT/);
+  test('beads-build-wave payload documents a 3-round PM clarification cap (moved from inline Track Orchestrator)', () => {
+    const wavePath = path.join(__dirname, '../commands/beads-build-wave.yaml');
+    const text = fs.readFileSync(wavePath, 'utf8');
+    expect(text).toMatch(/pm_clarification_guard/);
+    expect(text).toMatch(/maximum 3 PM clarification rounds per task/);
+    expect(text).toMatch(/On the 4th request, HALT/);
   });
 });

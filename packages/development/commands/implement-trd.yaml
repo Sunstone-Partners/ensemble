@@ -1,8 +1,8 @@
 metadata:
   name: ensemble:implement-trd
   description: Complete TRD implementation using git-town workflow with ensemble-orchestrator delegation and TDD methodology
-  version: 2.4.0
-  lastUpdated: "2026-06-05"
+  version: 2.5.0
+  lastUpdated: "2026-08-19"
   category: implementation
   output_path: ensemble/implement-trd.md
   source: sunstone
@@ -14,6 +14,20 @@ mission:
     git-town feature branch workflow. It creates a feature branch and delegates to
     ensemble-orchestrator which routes to tech-lead-orchestrator for structured TDD-based
     development including planning, implementation, testing, and quality gates.
+    Loop architecture (v2.5.0): the TASK LOOP is a two-tier non-recursive dispatch
+    loop. The parent (this command) inspects the current sprint's task graph, selects
+    the next dependency-ready task, and dispatches a fresh
+    Task(subagent_type=implement-trd-task, prompt={task_id, ...}) subagent for that
+    single task. The task-runner subagent runs ONE task (specialist dispatch + code
+    review + close + commit) and emits a JSON summary line. The parent then decides
+    whether to dispatch another task based on the summary task_state and next_action_hint.
+    No recursion - task-runners are depth-1 subagents of this command, and the
+    specialists inside (backend-developer, code-reviewer, deep-debugger) are depth-1
+    subagents of the task-runner. This shape respects Codex max_depth=1 constraint
+    and works uniformly on claude/pi/codex/opencode via the universal Task() primitive.
+    Per-iteration decision cost is reduced to: read summary, dispatch task-runner,
+    repeat; the agent still has to choose to continue, but the work between iterations
+    is mechanical rather than narrative.
 
 workflow:
   phases:
@@ -127,26 +141,37 @@ workflow:
         - order: 2
           title: Task Loop
           description: |
-            TASK LOOP — repeat until every task in CURRENT_SPRINT is closed or no
-            further task in CURRENT_SPRINT can be dispatched (all remaining tasks
-            blocked on an open dependency). This loop is the single execution
-            engine for this command; nothing else in this file marks a task
-            complete or advances CURRENT_SPRINT. Do NOT stop, pause, ask for
-            acknowledgement, or present routine progress between tasks — apply
-            the same non-interactive philosophy as implement-trd-beads.yaml's
-            Non-Interactive Progress Policy. A real user decision is required
-            only when (a) a genuine blocked state is hit (Step 1 below), or (b)
-            Step 5's automated remediation is exhausted. Otherwise, close the
-            task and loop immediately to Step 1 for the next one.
-          actions:
-            - "Step 1 (select next task): from SPRINTS[CURRENT_SPRINT].taskIds, filter out any id already in CLOSED_TASK_IDS. From what remains, select the first task whose dependsOn are ALL in CLOSED_TASK_IDS (dependency-ready). If none are ready but unclosed tasks remain: HALT with 'EXECUTION BLOCKED: sprint <CURRENT_SPRINT> has unclosed tasks with unmet dependencies: <list of blocked task ids and their unmet deps>. Resolve the TRD's dependency graph, or manually mark the blocking task's checkbox and re-run.' If zero tasks remain unclosed for CURRENT_SPRINT: the sprint is complete — exit the TASK LOOP and proceed to Quality Gates (step 3)."
-            - "Step 2 (implement): resolve the appropriate specialist for the task from its targetFiles (backend-developer/frontend-developer/infrastructure-developer/etc. — same alias-resolution convention as implement-trd-beads.yaml's Agent Alias Resolution: never pass a bare name to Task()). Delegate via Task(agent_type=<resolved_specialist>, prompt=<task context>) following RED (write failing test per task.testAc) -> GREEN (minimal implementation per task.implementationAc) -> REFACTOR. Pass the task's full context (id, description, actions, target files, dependencies, implementationAc, testAc) as the delegation prompt — do not summarize away detail the specialist needs to actually do the work."
-            - "Step 3 (review): delegate to @code-reviewer with the diff for this task. Parse verdict (APPROVED/REJECTED). On REJECTED with fixable issues: delegate back to the original specialist with the reviewer's feedback (max 2 review rounds total, mirroring implement-trd-beads.yaml's quality_loop contract). Skip review only when the TRD's declared strategy is characterization/flexible, or the task is docs/documentation-only."
-            - "Step 4 (close): on APPROVED (or skip-eligible per Step 3): update the TRD file's checkbox for this task from '- [ ]' to '- [x]'; add the task id to CLOSED_TASK_IDS; git commit -m 'feat(<trd-slug>): <task.id> — <short description>'. Print 'Task <task.id> complete (<N>/<TOTAL> this sprint).' Then return immediately to Step 1 for the next task — do NOT pause, do NOT summarize progress beyond that one line, do NOT ask for acknowledgement."
-            - "Step 5 (automated remediation before pause): if 2 review rounds are exhausted in Step 3 and the task is still REJECTED: delegate to @deep-debugger with the review feedback, failing tests, and changed files (same automated-remediation pattern as implement-trd-beads.yaml's Debug Loop, TRD-019). If deep-debugger produces a fix: re-run Step 3 (review) once more. If still REJECTED after that single extra attempt: print 'Task <task.id> could not be automatically resolved after 2 review rounds + 1 debug attempt. Reviewer feedback: <feedback>.'; PAUSE for user: fix/skip/abort. This is the ONLY task-level pause in the loop — a single rejection never pauses on its own."
-            - "Context budget monitoring (informational only, mirrors implement-trd-beads.yaml's Execute phase Step 8): after every 5 tasks closed, print a one-line checkpoint noting task count and suggesting /compact if quality is degrading. Do not halt or pause execution based on this signal."
+            TASK LOOP - the parent iteration engine. For each task in CURRENT_SPRINT,
+            the parent selects the next dependency-ready task, dispatches a single
+            Task(subagent_type=implement-trd-task, prompt={task_id, ...}) subagent
+            to run the task end-to-end, and reads the JSON summary. The subagent
+            (a task-runner) owns specialist dispatch, code review, approval, checkbox
+            update, and commit. The parent owns sprint-level decisions: which task is
+            next, what to do on halt, when CURRENT_SPRINT is done.
 
-            - "PM clarification loop guard: when a task re-enters clarification, count prior PM rounds for that task from the commit-trailer history. Maximum 3 PM clarification rounds per task. On the 4th request, HALT and escalate to the lead with the accumulated clarification history instead of looping again."
+            This is a two-tier non-recursive loop. Depth budget: parent Task() dispatch
+            -> task-runner (depth 1) -> specialist (depth 1) -> leaves. The task-runner
+            NEVER calls itself or any sibling task-runner. The parent NEVER implements
+            anything directly. This shape respects Codex max_depth=1.
+
+            HONEST FRAMING: this is NOT a mechanically-enforced loop. The parent agent
+            still has to choose to dispatch the next task after reading the summary.
+            The per-iteration decision cost is reduced to a count check plus a Task()
+            call, but the agent can still stop mid-loop. Enforcing continuation would
+            require runtime-specific mechanisms (Claude Stop hook, runtime CLI bridges)
+            that break the cross-platform promise.
+          actions:
+            - "Step 1 (select next task): from SPRINTS[CURRENT_SPRINT].taskIds, filter out any id already in CLOSED_TASK_IDS. From what remains, select the first task whose dependsOn are ALL in CLOSED_TASK_IDS (dependency-ready). If none are ready but unclosed tasks remain: print 'EXECUTION BLOCKED: sprint <CURRENT_SPRINT> has unclosed tasks with unmet dependencies: <list of blocked task ids and their unmet deps>.' and HALT. If zero tasks remain unclosed for CURRENT_SPRINT: the sprint is complete - exit the TASK LOOP and proceed to Quality Gates (step 3)."
+            - "Step 2 (dispatch task-runner): resolve TRD_SLUG from TRD_PATH filename (lowercase, replace non-alphanumeric with hyphens). Build the task-runner payload: {task_id: <NEXT_TASK_ID>, root_trd_path: <TRD_PATH>, trd_slug: <TRD_SLUG>, sprint_n: <CURRENT_SPRINT>, strategy: <STRATEGY-or-default>}. Launch Task(subagent_type=implement-trd-task, prompt=<payload>) and wait for its result. The task-runner owns specialist dispatch (Step 3 of the OLD loop), code review (Step 3), close (Step 4), and automated remediation (Step 5). The parent does NOT inline any of that work."
+            - "Step 3 (parse summary): the task-runner emits ONE JSON line as the LAST line of its stdout. Schema: { task_id, task_state, review_rounds_used, pm_rounds_used, files_changed, commit_sha, elapsed_seconds, next_action_hint }. Parse the summary. task_state is one of: approved_closed, rejected_halt, pm_exhausted_halt, blocked, already_closed."
+            - "Step 4 (handle terminal states):"
+            - "  task_state == 'approved_closed' OR 'already_closed': record NEXT_TASK_ID in CLOSED_TASK_IDS for the parent's own gate checks. Print 'Task <NEXT_TASK_ID> complete (review_rounds=<N>, elapsed=<S>s).'. Advance sprint-level counters. Return immediately to Step 1 for the next task - do NOT pause, do NOT summarize progress beyond that one line, do NOT ask for acknowledgement."
+            - "  task_state == 'blocked': the task-runner reports unmet dependencies. Print the blocked task list and HALT. The parent owns the recovery path because it has the full sprint context (this is the same shape as the OLD Step 1's HALT, relocated verbatim to the parent so the gate is in one place)."
+            - "  task_state == 'rejected_halt': the task-runner exhausted 2 review rounds + 1 debug attempt. Print 'Task <NEXT_TASK_ID> could not be automatically resolved. Reviewer feedback: <feedback>.' and PAUSE for user: fix/skip/abort. This is the ONLY task-level pause in the loop."
+            - "  task_state == 'pm_exhausted_halt': the task-runner exhausted 3 PM clarification rounds. Print the accumulated clarification history and PAUSE for user: fix/skip/abort."
+            - "Step 5 (sprint exit gate): if at the start of Step 1 the task selection filter found zero unclosed tasks in CURRENT_SPRINT: the sprint is complete - exit the TASK LOOP and proceed to Quality Gates (step 3). This is the same exit gate the old Step 1 had for an empty ready set, kept verbatim on the parent because it owns sprint-level state."
+            - "Context budget monitoring (informational only): after every 5 tasks closed, print a one-line checkpoint noting task count and suggesting /compact if quality is degrading. Do not halt or pause execution based on this signal."
+            - "PM clarification loop guard (parent-side tracker): the task-runner enforces the 3-round PM cap per task and reports task_state='pm_exhausted_halt' on the 4th request. The parent does NOT independently count PM rounds - it relies on the task summary.'s task_state field. This guard is the contract between the two loops; do not duplicate the count on both sides."
         - order: 3
           title: Quality Gates
           description: Full-suite test and coverage check once every task in CURRENT_SPRINT is individually approved and closed by the Task Loop.
