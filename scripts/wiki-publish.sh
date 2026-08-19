@@ -30,6 +30,7 @@ WIKI_BRANCH="${WIKI_BRANCH:-master}"
 STAGING_DIR="${STAGING_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)/.wiki-staging}"
 GIT_USER_NAME="${GIT_USER_NAME:-ensemble-assistant}"
 GIT_USER_EMAIL="${GIT_USER_EMAIL:-assistant@sunstone.local}"
+COMMIT_MSG_DEFAULT="${COMMIT_MSG_DEFAULT:-docs(wiki): publish staged pages}"
 # Files matching this pattern in the staging dir are NOT published.
 # Defensive: prevents local-only docs (e.g., HANDOFF.md, README.md) from leaking
 # into the live wiki. Override via EXCLUDE_PATTERN env var if needed.
