@@ -7,7 +7,14 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PACKAGE_JSON = path.join(ROOT, 'packages', 'codex', 'package.json');
 const PLUGIN_JSON = path.join(ROOT, 'packages', 'codex', '.claude-plugin', 'plugin.json');
-const MARKETPLACE_JSON = path.join(ROOT, 'marketplace.json');
+// Both manifests carry the same plugin entries: Claude Code loads the
+// .claude-plugin/ copy, while validate-all.js and validate-version-sync.js read
+// the root one. validate-all.js requires them byte-identical, so a version bump
+// has to land in both or CI fails.
+const MARKETPLACE_JSONS = [
+  path.join(ROOT, 'marketplace.json'),
+  path.join(ROOT, '.claude-plugin', 'marketplace.json'),
+];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -30,22 +37,25 @@ function main(argv) {
 
   const pkg = readJson(PACKAGE_JSON);
   const plugin = readJson(PLUGIN_JSON);
-  const marketplace = readJson(MARKETPLACE_JSON);
 
   const targetVersion = arg || pkg.version;
   pkg.version = targetVersion;
   plugin.version = targetVersion;
 
-  const entry = (marketplace.plugins || []).find((p) => p.name === 'ensemble-codex');
-  if (!entry) {
-    console.error('marketplace.json entry for ensemble-codex not found');
-    process.exit(1);
-  }
-  entry.version = targetVersion;
+  const marketplaces = MARKETPLACE_JSONS.map((file) => {
+    const marketplace = readJson(file);
+    const entry = (marketplace.plugins || []).find((p) => p.name === 'ensemble-codex');
+    if (!entry) {
+      console.error(`${path.relative(ROOT, file)} entry for ensemble-codex not found`);
+      process.exit(1);
+    }
+    entry.version = targetVersion;
+    return { file, marketplace };
+  });
 
   writeJson(PACKAGE_JSON, pkg);
   writeJson(PLUGIN_JSON, plugin);
-  writeJson(MARKETPLACE_JSON, marketplace);
+  marketplaces.forEach(({ file, marketplace }) => writeJson(file, marketplace));
 
   console.log(`Synced ensemble-codex version to ${targetVersion}`);
 }
