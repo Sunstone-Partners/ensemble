@@ -85,6 +85,30 @@ function validateFullLibMirror() {
 }
 
 /**
+ * Parse a packages/full/skills/<entry> symlink target into the source package
+ * it mirrors wholesale (`../../git/skills` -> `git`), or null for a per-skill
+ * link like `../../development/skills/developing-with-flutter`.
+ *
+ * Separators are normalized because fs.readlinkSync returns the target in the
+ * platform's own form: `../../git/skills` on POSIX but `..\..\git\skills` on
+ * Windows. Matching a forward-slash-only pattern meant no whole-directory
+ * mirror was ever recognized on Windows, so every package covered by one got
+ * per-skill checked and `npm run validate` reported four missing symlinks that
+ * exist and are correct — a false failure Linux CI could never reproduce.
+ *
+ * Splitting on path.sep rather than replacing backslashes keeps this a
+ * deliberate no-op on POSIX, where a backslash is a legal filename character
+ * (same reasoning as toGlobPattern in scripts/lib/file-discovery.js).
+ *
+ * @param {string} target Raw fs.readlinkSync output
+ * @returns {string|null} Source package name, or null
+ */
+function wholeDirMirrorTarget(target) {
+  const match = target.split(path.sep).join('/').match(/^\.\.\/\.\.\/([^/]+)\/skills$/);
+  return match ? match[1] : null;
+}
+
+/**
  * Ensure every skill under packages/<pkg>/skills/<skill>/ (excluding pi and
  * full themselves) is reachable from packages/full/skills/. packages/full
  * mirrors source packages either per-skill (e.g. `developing-with-flutter ->
@@ -110,9 +134,8 @@ function validateFullSkillsMirror() {
   const wholeDirMirroredPackages = new Set();
   for (const entry of fs.readdirSync(fullSkillsDir, { withFileTypes: true })) {
     if (!entry.isSymbolicLink()) continue;
-    const target = fs.readlinkSync(path.join(fullSkillsDir, entry.name));
-    const match = target.match(/^\.\.\/\.\.\/([^/]+)\/skills$/);
-    if (match) wholeDirMirroredPackages.add(match[1]);
+    const pkg = wholeDirMirrorTarget(fs.readlinkSync(path.join(fullSkillsDir, entry.name)));
+    if (pkg) wholeDirMirroredPackages.add(pkg);
   }
 
   let checked = 0;
@@ -284,4 +307,9 @@ function main() {
   console.log('\n✓ All plugins validated successfully');
 }
 
-main();
+// Guarded so scripts/tests can require this module without running validation.
+if (require.main === module) {
+  main();
+}
+
+module.exports = { wholeDirMirrorTarget };
