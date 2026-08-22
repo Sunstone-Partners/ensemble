@@ -218,10 +218,10 @@ describe('implement-trd v2.5.0 two-tier task-loop contract', () => {
     expect(missionBlock).toMatch(/max_depth=1/);
   });
 
-  test('metadata version bumped to 2.5.0', () => {
+  test('metadata version bumped to 2.6.0', () => {
     const text = fs.readFileSync(yamlPath, 'utf8');
-    expect(text).toMatch(/version: 2\.5\.0/);
-    expect(text).toMatch(/lastUpdated: "2026-08-19"/);
+    expect(text).toMatch(/version: 2\.6\.0/);
+    expect(text).toMatch(/lastUpdated: "2026-08-22"/);
   });
 });
 

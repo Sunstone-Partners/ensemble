@@ -27,6 +27,7 @@ being saved to ensure handoff quality.
 **1. Scale Detection**
    Determine project complexity to calibrate PRD depth
 
+   - IF --foreman flag is set: skip asking, default depth level to STANDARD, and announce that STANDARD was auto-selected (not asked) because foreman mode is active -- then proceed directly to the next step.
    - Ask the user: 'Is this a solo/side project, small team (2-5), or enterprise/multi-team effort?'
    - If user provided a product description as arguments, read it first, then ask -- don't make them repeat themselves
    - Set depth level: LIGHT (solo -- 5-10 requirements, minimal ceremony), STANDARD (small team -- 10-25 requirements, full ACs), DEEP (enterprise -- 25+ requirements, risk analysis, compliance section)
@@ -35,6 +36,7 @@ being saved to ensure handoff quality.
 **2. Problem Space Interview**
    Gather core product context through a one-question-at-a-time interview
 
+   - IF --foreman flag is set: do not ask any of these questions. For each one, either resolve it with the most reasonable default based on the provided product description and note the assumption in the PRD, or -- if genuinely unresolvable without human input -- mark it inline in the generated PRD as [NEEDS CLARIFICATION: <question>] per this repo's convention. Do not block; proceed to the next step.
    - INTERVIEW PROTOCOL: Ask exactly ONE question, wait for the user's full answer, then ask the next. Never batch questions.
    - Determine which of these questions are NOT already answered by the product description provided as arguments, then ask only the unanswered ones in order:
    - Q1: 'What problem does this solve, and who feels the pain today?'
@@ -48,6 +50,7 @@ being saved to ensure handoff quality.
 **3. Creative Elicitation**
    Surface hidden and edge-case requirements through a structured one-question-at-a-time interview
 
+   - IF --foreman flag is set: do not ask any SCAMPER or failure-scenario questions. Instead, reason through the same angles internally, resolving each with a reasonable default and noting the assumption, or marking genuinely unresolvable items inline as [NEEDS CLARIFICATION: <question>] in the generated PRD. Do not block.
    - INTERVIEW PROTOCOL: Ask ONE question at a time, wait for the answer, then ask the next.
    - Choose 2-3 SCAMPER angles most relevant to this product and ask them sequentially:
    -   - Substitute angle: 'What if [key component] were replaced or unavailable? What would break?'
@@ -174,6 +177,7 @@ These markers will become the structured interview agenda in /ensemble:refine-pr
 **2. Issue Resolution**
    Walk through issues one at a time and incorporate user decisions
 
+   - IF --foreman flag is set: do not ask the user to confirm resolutions. For each issue, apply your recommended resolution directly and note it was auto-applied under foreman mode; if an issue genuinely cannot be resolved without human input, mark it inline as [NEEDS CLARIFICATION: <question>] in the generated PRD instead of blocking.
    - INTERVIEW PROTOCOL: Present ONE issue at a time. Do not list all issues upfront.
    - For each issue: state the problem, give your recommended resolution, then ask 'Does this resolution work for you, or would you like to adjust it?'
    - Wait for the user's response before moving to the next issue
@@ -191,8 +195,8 @@ These markers will become the structured interview agenda in /ensemble:refine-pr
    -   - Feasibility: are all requirements technically achievable within stated constraints?
    - Compute overall score: average of all dimensions
    - PASS (4.0+): save the PRD
-   - CONCERNS (3.0-3.9): list specific concerns, ask user if they want to address them or proceed
-   - FAIL (<3.0): do not save -- identify the weakest dimensions and loop back to fix them
+   - CONCERNS (3.0-3.9): list specific concerns, ask user if they want to address them or proceed. IF --foreman flag is set: skip the question -- log the concerns clearly and default to proceeding (save the PRD) without pausing for confirmation.
+   - FAIL (<3.0): do not save -- identify the weakest dimensions and loop back to fix them. This is a hard gate and HALTs unchanged regardless of --foreman.
    - Present the scorecard to the user with the gate decision
 
 ### Phase 5: Output Management

@@ -2,7 +2,7 @@
 name: ensemble-create-trd
 description: Create Technical Requirements Document from PRD with architecture design and adversarial review (Codex skill for /ensemble:create-trd)
 user-invocable: true
-argument-hint: '[prd-path] [--team] [--foundational] [--list]'
+argument-hint: '[prd-path] [--team] [--foundational] [--list] [--foreman]'
 model: gpt-5.1-codex
 ---
 
@@ -29,7 +29,10 @@ output with traceability matrices. Team configuration is handled separately by
    If --list is passed, show available PRDs and exit
 
    - If $ARGUMENTS contains '--list': Resolve PRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/prd-cli.js. If none of the 4 tiers resolve: fall back to resolving TRD_CLI via the same skill for packages/development/lib/trd-cli.js. If neither resolves, print 'ERROR: Neither prd-cli.js nor trd-cli.js found — cannot list PRDs.' and HALT.
-   - If $ARGUMENTS contains '--list': run node "$PRD_CLI" list --type prd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of PRDs (columns: ID/Name, Status, Score, Version, Last Modified). Then call AskUserQuestion with id='prd_select', question='Select a PRD to use as the basis for TRD creation:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected PRD_SLUG. Then derive PRD_FILE_PATH as docs/PRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <PRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS prd-path and continue.
+   - If $ARGUMENTS contains '--list': run node "$PRD_CLI" list --type prd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of PRDs (columns: ID/Name, Status, Score, Version, Last Modified).
+   - If $ARGUMENTS contains '--list' AND does NOT contain '--foreman': call AskUserQuestion with id='prd_select', question='Select a PRD to use as the basis for TRD creation:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected PRD_SLUG.
+   - If $ARGUMENTS contains both '--list' and '--foreman': there is no human present to pick interactively. If items has exactly one entry, auto-select it as PRD_SLUG and print 'Foreman mode: auto-selected PRD <slug> (only candidate).' If items has zero or 2+ entries, print 'ERROR: --list with --foreman requires an unambiguous PRD. Candidates: <id/slug list>. Pass a specific prd-path instead.' and HALT.
+   - If $ARGUMENTS contains '--list' (either branch above resolved a PRD_SLUG): derive PRD_FILE_PATH as docs/PRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <PRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS prd-path and continue.
 
 **2. PRD Ingestion**
    Parse and analyze existing PRD document from $ARGUMENTS path
@@ -62,8 +65,8 @@ output with traceability matrices. Team configuration is handled separately by
    - If --foundational with a short capability brief: skip the PRD readiness score gate
    - Otherwise read PRD frontmatter for Readiness Score field
    - If score >= 4.0 (PASS): proceed normally
-   - If score 3.0-3.9 (CONCERNS): warn user about PRD concerns, ask whether to proceed
-   - If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first
+   - If score 3.0-3.9 (CONCERNS): warn user about PRD concerns, ask whether to proceed. If --foreman is set, skip the ask -- log the warning and proceed automatically.
+   - If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first (this HALT is unaffected by --foreman)
    - If no readiness score in frontmatter, proceed with a note that PRD was not gate-checked
 
 ### Phase 2: Architecture Design
@@ -94,7 +97,7 @@ output with traceability matrices. Team configuration is handled separately by
    - Design Option B: most scalable approach -- production-grade architecture, more upfront work
    - Design Option C: best fit for existing codebase (if brownfield) or balanced approach (if greenfield)
    - Present each option with pros, cons, estimated complexity impact, and risk profile
-   - Ask user to choose one option or combine elements before proceeding
+   - Ask user to choose one option or combine elements before proceeding. If --foreman is set, skip the ask -- automatically select Option C (best fit for existing codebase, or balanced approach for greenfield) as the recommended default, and print 'Foreman mode: auto-selected Option C (<summary>)' before continuing.
 
 **4. System Architecture Design**
    Design detailed system architecture based on chosen approach
@@ -233,8 +236,8 @@ output with traceability matrices. Team configuration is handled separately by
    - Score estimate confidence (1-5): are estimates consistent, reasonable, and granular enough?
    - Compute overall score: average of all four dimensions
    - PASS (4.0+): proceed to output
-   - CONCERNS (3.0-3.9): list specific concerns, ask user whether to proceed or loop back
-   - FAIL (<3.0): identify weakest dimensions and loop back to fix before output
+   - CONCERNS (3.0-3.9): list specific concerns, ask user whether to proceed or loop back. If --foreman is set, skip the ask -- log the concerns and proceed to output automatically.
+   - FAIL (<3.0): identify weakest dimensions and loop back to fix before output (this HALT/loop-back is unaffected by --foreman)
    - Present the Design Readiness Scorecard to the user
 
 ### Phase 6: Output Management
@@ -296,5 +299,5 @@ output with traceability matrices. Team configuration is handled separately by
 ## Usage
 
 ```
-/ensemble:create-trd [prd-path] [--team] [--foundational] [--list]
+/ensemble:create-trd [prd-path] [--team] [--foundational] [--list] [--foreman]
 ```

@@ -1,9 +1,9 @@
 ---
 name: "ensemble:implement-trd"
 description: "Complete TRD implementation using git-town workflow with ensemble-orchestrator delegation and TDD methodology"
-version: "2.5.0"
+version: "2.6.0"
 category: "implementation"
-last-updated: "2026-08-19"
+last-updated: "2026-08-22"
 model: "sonnet"
 ---
 <!-- DO NOT EDIT - Generated from implement-trd.yaml -->
@@ -28,6 +28,7 @@ and works uniformly on claude/pi/codex/opencode via the universal Task() primiti
 Per-iteration decision cost is reduced to: read summary, dispatch task-runner,
 repeat; the agent still has to choose to continue, but the work between iterations
 is mechanical rather than narrative.
+--foreman forces non-interactive mode without changing safety HALT behavior.
 
 ## Workflow
 
@@ -40,7 +41,7 @@ is mechanical rather than narrative.
    - Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR 'which node' fails: print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present.' and exit 1.
    - Execute validation script - bash "$VALIDATE_GIT_TOWN_SH"; capture its exit code as GIT_TOWN_EXIT_CODE (0-4).
    - Exit codes 3 (version mismatch) and 4 (not a git repo) are unaffected by this feature — escalate with a specific error message and HALT exactly as before. Exit codes 0 (success), 1 (not installed), and 2 (not configured) no longer escalate/HALT here — they are passed to resolve-sdlc below.
-   - Detect AskUserQuestion availability: set INTERACTIVE=true if available, INTERACTIVE=false otherwise (same technique as implement-trd-beads.yaml).
+   - If the --foreman flag is present in arguments, set INTERACTIVE=false unconditionally (skip availability detection). Otherwise, detect AskUserQuestion availability: set INTERACTIVE=true if available, INTERACTIVE=false otherwise (same technique as implement-trd-beads.yaml).
    - Run: REMOTE_URL=$(git remote get-url origin 2>/dev/null); if REMOTE_URL is empty (no origin configured), set REMOTE_URL to the literal string 'none' — resolve-sdlc requires a non-empty --remote-url, and any non-URL string is treated as 'no unsupported host detected'.
    - Run: node "$TRD_CLI" resolve-sdlc --git-town-exit-code "$GIT_TOWN_EXIT_CODE" --remote-url "$REMOTE_URL"; parse the single JSON object from stdout as RESOLVE_SDLC_RESULT.
    - If RESOLVE_SDLC_RESULT has an 'error' key (trd-cli.js's shared failure contract — a thrown Error caught by main(), printed as {"error":"<msg>"} with exit 1; NOT {ok:false,error:...}): print the error and HALT. This should not normally happen since GIT_TOWN_EXIT_CODE and REMOTE_URL are always well-formed here, but never swallow it.

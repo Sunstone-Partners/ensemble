@@ -6,7 +6,7 @@ description: >-
   while maintaining version history, traceability, and Design Readiness scoring.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:refine-trd | Version: 2.6.0 -->
+<!-- Command: ensemble:refine-trd | Version: 2.7.0 -->
 <!-- Description: Refine and enhance existing TRD with stakeholder feedback and additional detail -->
 
 # ensemble:refine-trd
@@ -19,6 +19,8 @@ disable-model-invocation: true
 > - The arguments describe what should be improved in the document, not what should be built
 > - After refining the TRD, stop and wait for user approval before any implementation
 > - DO NOT make any edits during Synthesis -- findings are presented first, edits happen only after user selects items
+> - --collab (and --long-lived) are mutually exclusive with --foreman -- passing both HALTs before any phase runs (collab requires a human reviewer; foreman implies none is present)
+> - When --foreman is set, the Synthesis and Interview steps are force-skipped and every finding is auto-applied using a best-effort default (or an inline [NEEDS CLARIFICATION: ...] marker when no confident default exists), with every choice logged instead of requested from the user
 
 ## Phase 1: Collaborative Review
 
@@ -254,6 +256,16 @@ and comments. Otherwise, perform the original synthesis below.
 After reviewing the TRD, generate a numbered list of findings — do NOT make
 any edits yet.
 
+IF `--foreman` is present (guaranteed not combined with --collab or
+--long-lived per the HALT check above): still generate the full
+numbered findings list below, but SKIP the ask_user call
+entirely — do not pause for a human reply. Auto-select EVERY
+finding as SELECTED_ITEMS (equivalent to a user reply of "all")
+and log: "Foreman mode: auto-applying <N> findings:" followed by
+the numbered list. Proceed directly to the Interview step, which
+resolves each finding with a best-effort default instead of an
+interactive question.
+
 Scan the TRD for the following categories of issues:
 - Implementation tasks missing a [satisfies REQ-NNN] annotation
 - User-facing implementation tasks missing a paired TRD-NNN-TEST task
@@ -303,6 +315,24 @@ If `--collab` or `--long-lived` is present in $ARGUMENTS, SKIP this
 step entirely — the Collaborative Review phase already collected
 interactive answers. Otherwise, run the original interview below.
 
+IF `--foreman` is present: SKIP the entire interactive
+ask_user loop below — there is no human present to answer
+in Foreman-native automated execution. Instead, for each
+SELECTED_ITEM, apply a best-effort default resolution inline
+using the same guidance listed below as a guide to what a good
+answer looks like (e.g. infer the nearest plausible REQ-NNN from
+surrounding context, infer a reasonable performance target from
+sibling requirements, infer natural task-split boundaries from
+existing subtask structure, etc.). Where no confident default can
+be inferred, do NOT pause — instead insert an inline
+`[NEEDS CLARIFICATION: <specific question>]` marker at the
+relevant location in the TRD, reusing the same question text that
+would otherwise have been asked. Log one line per finding:
+either "Foreman default applied: <finding> -> <default>" or
+"Foreman: inserted [NEEDS CLARIFICATION: ...] for <finding>".
+Then proceed to Feedback Integration using these defaults/markers
+in place of interview answers.
+
 Conduct a focused follow-up interview ONLY about the SELECTED_ITEMS from the
 Synthesis step. Skip any topic the user did not select.
 
@@ -335,7 +365,11 @@ For each selected finding, ask targeted follow-up questions such as:
 If `--collab` or `--long-lived` is present in $ARGUMENTS, source the
 answers and comments from the artifact written by the Collaborative
 Review phase (path printed by that phase); the Interview step is
-bypassed. Otherwise, perform the original feedback integration below.
+bypassed. If `--foreman` is present, source the answers from the
+best-effort defaults and/or inline `[NEEDS CLARIFICATION: ...]`
+markers produced during the Interview step above -- treat those
+exactly as if a human had supplied them. Otherwise, perform the
+original feedback integration below.
 
 Incorporate stakeholder feedback collected during the interview into a change plan
 
@@ -354,7 +388,7 @@ If --list is passed, show available TRDs and exit
 
 **Actions:**
 1. If $ARGUMENTS contains '--list': Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR 'which node' fails: print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present.' and HALT.
-2. If $ARGUMENTS contains '--list': run node "$TRD_CLI" list --type trd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of TRDs (columns: ID/Name, Status, Score, Last Modified). Then call ask_user with id='trd_select', question='Select a TRD to refine:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected TRD_SLUG. Then derive TRD_FILE_PATH as docs/TRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <TRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS positional and continue.
+2. If $ARGUMENTS contains '--list': run node "$TRD_CLI" list --type trd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of TRDs (columns: ID/Name, Status, Score, Last Modified). If $ARGUMENTS also contains '--foreman': skip the ask_user prompt below entirely -- auto-select the item with the highest design_readiness_score (fallback: most recently modified when scores are absent or tied), log 'Foreman mode: auto-selected <TRD_SLUG> (score: <score>)', and proceed directly to path derivation. Otherwise, call ask_user with id='trd_select', question='Select a TRD to refine:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected TRD_SLUG. Then derive TRD_FILE_PATH as docs/TRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <TRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS positional and continue.
 
 ### Step 2: Content Refinement
 

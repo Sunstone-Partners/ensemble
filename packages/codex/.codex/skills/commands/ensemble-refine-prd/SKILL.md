@@ -25,7 +25,16 @@ scoring.
 ### Phase 1: Collaborative Review
 
 **1. Session Bootstrap**
-   GUARD: If BOTH `--collab` and `--long-lived` are absent from
+   HALT CHECK (run first, before the GUARD below or any other
+bootstrap work): If $ARGUMENTS contains BOTH `--collab` and
+`--foreman`, HALT immediately and print:
+"ERROR: --collab requires a human reviewer and cannot be
+combined with --foreman (non-interactive mode). Drop one of
+the two flags." Do not resolve the PRD path, do not generate
+questions, do not bootstrap a session, do not start a server.
+This check runs even before the GUARD below.
+
+GUARD: If BOTH `--collab` and `--long-lived` are absent from
 $ARGUMENTS, skip this entire step and proceed directly to Phase 2
 (PRD Review). Do not bootstrap a session, do not start a server,
 do not block on an artifact. All other steps in this phase are
@@ -260,7 +269,18 @@ any edits yet. Scan for the following issues:
 - Missing Implementation Readiness Gate scorecard
 - Acceptance criteria coverage gaps (Must requirements with fewer than 2 ACs, Should requirements with zero ACs)
 
-Use the AskUserQuestion tool to present a consolidated numbered list in this
+IF `--foreman` is present in $ARGUMENTS: skip the AskUserQuestion
+selection prompt below entirely. Instead, set SELECTED_ITEMS to
+every finding number (equivalent to the user replying "all") and
+print a log line: "Foreman mode: auto-applying N findings: <list>".
+The Interview step (order 3) is also skipped under --foreman —
+see its guard — so best-effort resolutions for each finding are
+applied directly in Feedback Integration / Content Refinement,
+reusing the `[NEEDS CLARIFICATION: <specific question>]` marker
+convention for anything that cannot be safely resolved without
+human input rather than leaving it silently unresolved.
+
+Otherwise, use the AskUserQuestion tool to present a consolidated numbered list in this
 exact format, then capture the user's selection as SELECTED_ITEMS:
 
 ---
@@ -282,7 +302,18 @@ finding number.
 **3. Interview (skip when --collab or --long-lived in $ARGUMENTS)**
    If `--collab` or `--long-lived` is present in $ARGUMENTS, SKIP this
 step entirely — the Collaborative Review phase already collected
-interactive answers. Otherwise, run the original interview below.
+interactive answers. If `--foreman` is present in $ARGUMENTS, ALSO
+skip this step entirely — Synthesis already auto-selected every
+finding. For each selected finding that would normally need a
+follow-up question (unclear requirements, missing ACs, missing
+REQ-NNN IDs, scope gaps, missing constraints, priority ordering,
+MoSCoW/complexity/risk tags, dependency gaps), apply a
+best-effort resolution directly instead of asking, and when no
+safe default exists, insert an inline
+`[NEEDS CLARIFICATION: <specific question>]` marker in place of
+asking the question. Log a one-line summary of every
+auto-applied finding before proceeding to Feedback Integration.
+Otherwise, run the original interview below.
 REQUIRED: Conduct a targeted user interview covering ONLY the topics
 corresponding to SELECTED_ITEMS. Skip any findings the user did not select.
 
@@ -312,7 +343,12 @@ For each selected finding, ask a focused follow-up question. Examples:
    If `--collab` or `--long-lived` is present in $ARGUMENTS, source the
 answers and comments from the artifact written by the Collaborative
 Review phase (path printed by that phase); the Interview step is
-bypassed. Otherwise, perform the original feedback integration below.
+bypassed. If `--foreman` is present in $ARGUMENTS, source the
+answers from the best-effort resolutions (and any inline
+`[NEEDS CLARIFICATION: ...]` markers) auto-applied during
+Synthesis/Interview instead of live interview answers; the
+Interview step is likewise bypassed. Otherwise, perform the
+original feedback integration below.
 
 Incorporate the answers gathered during the Interview step. Apply changes
 only for SELECTED_ITEMS — do not modify sections the user did not select.
