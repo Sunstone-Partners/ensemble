@@ -48,6 +48,10 @@ config_file = "agents/architect.toml"
 description = "Implement server-side logic across languages/stacks; enforce clean architecture and boundaries"
 config_file = "agents/backend-developer.toml"
 
+[agents."beads-build-wave"]
+description = "Depth-1 wave-runner subagent for /ensemble:beads-build. Runs exactly ONE scheduling wave by executing the ensemble:beads-build-wave command, then emits the single-line JSON summary its caller's loop reads."
+config_file = "agents/beads-build-wave.toml"
+
 [agents."beads-scaffold-specialist"]
 description = "Design, create, audit, and repair Beads hierarchies from PRD/TRD/workstream artifacts without implementing code"
 config_file = "agents/beads-scaffold-specialist.toml"
@@ -59,6 +63,10 @@ config_file = "agents/documentation-specialist.toml"
 [agents."frontend-developer"]
 description = "Framework-agnostic front-end implementation (JS/TS, React, Vue, Angular, Svelte) with accessibility and performance optimization"
 config_file = "agents/frontend-developer.toml"
+
+[agents."implement-trd-task"]
+description = "Depth-1 task-runner subagent for /ensemble:implement-trd. Runs exactly ONE TRD task by executing the ensemble:implement-trd-task command, then emits the single-line JSON summary its caller's loop reads."
+config_file = "agents/implement-trd-task.toml"
 
 [agents."pm"]
 description = "Answer requirements questions raised during implementation; clarify ambiguous acceptance criteria; resolve scope disputes between agents."
