@@ -71,7 +71,7 @@
     },
     {
       "name": "ensemble-development",
-      "version": "6.0.4",
+      "version": "6.0.5",
       "source": "./packages/development",
       "description": "Development workflow orchestration and best practices",
       "category": "workflow",
