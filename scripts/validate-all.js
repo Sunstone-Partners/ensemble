@@ -235,6 +235,31 @@ function main() {
     process.exit(1);
   }
 
+  // Claude Code loads .claude-plugin/marketplace.json, not the root
+  // marketplace.json checked above -- and nothing verified the two agreed, so
+  // the loaded copy sat stale from 2026-08-07 until now: five installable
+  // packages (ai, router, permitter, dotnet, reqnroll) missing, two deleted
+  // ones (pane-viewer, task-progress-pane) still listed, and every version
+  // pinned at 5.0.0. Byte-identical is the cheapest invariant that keeps the
+  // file users install from matching the one CI checks.
+  console.log('Validating .claude-plugin/marketplace.json matches marketplace.json...');
+  const rootManifest = path.join(__dirname, '..', 'marketplace.json');
+  const loadedManifest = path.join(__dirname, '..', '.claude-plugin', 'marketplace.json');
+  if (!fs.existsSync(loadedManifest)) {
+    console.error('✗ .claude-plugin/marketplace.json is missing - Claude Code cannot load the marketplace without it');
+    process.exit(1);
+  }
+  // Compare with line endings normalized so a CRLF checkout is not a failure.
+  const readNormalized = file => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  if (readNormalized(rootManifest) !== readNormalized(loadedManifest)) {
+    console.error('✗ .claude-plugin/marketplace.json differs from marketplace.json');
+    console.error('  Claude Code loads .claude-plugin/marketplace.json; this script and');
+    console.error('  validate-version-sync.js check marketplace.json. They must agree.');
+    console.error('  Fix: cp marketplace.json .claude-plugin/marketplace.json');
+    process.exit(1);
+  }
+  console.log('✓ .claude-plugin/marketplace.json in sync\n');
+
   // Get all packages
   const packages = fs.readdirSync(PACKAGES_DIR).filter(name => {
     const stat = fs.statSync(path.join(PACKAGES_DIR, name));
