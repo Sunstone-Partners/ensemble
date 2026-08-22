@@ -12,11 +12,16 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # GitHub withholds secrets and the OIDC token from `pull_request` runs
+    # triggered by a fork, so claude_code_oauth_token arrives empty and the
+    # action dies ~20s in ("Secret source: None", "Unable to get
+    # ACTIONS_ID_TOKEN_REQUEST_URL"). Skip rather than fail: an unreviewable
+    # fork PR should not be flagged red for a review that could never run.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    # Optional: Filter by PR author. Fold any extra condition into the `if`
+    # above with `&&` -- a second job-level `if:` key is a YAML duplicate.
+    #   && (github.event.pull_request.user.login == 'external-contributor' || ...)
 
     runs-on: ubuntu-latest
     permissions:
