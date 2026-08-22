@@ -1,8 +1,8 @@
 metadata:
   name: ensemble:fix-issue
   description: Lightweight workflow for bug fixes and small issues
-  version: 1.1.0
-  lastUpdated: "2026-03-29"
+  version: 1.2.0
+  lastUpdated: "2026-08-22"
   category: implementation
   model: medium
   output_path: ensemble/fix-issue.md
@@ -39,6 +39,11 @@ parameters:
     default: false
     description: Enable detailed user interviews during planning
 
+  - name: foreman
+    type: boolean
+    default: false
+    description: Run in Foreman-native non-interactive mode -- skip the user interview step and always auto-commit + create the PR without pausing for confirmation (for automated Foreman orchestration).
+
 constraints:
   - GitHub only (no GitLab/Bitbucket in v1.0)
   - GitHub CLI (gh) must be installed and authenticated
@@ -46,6 +51,7 @@ constraints:
   - Maximum 2 auto-fix attempts for test failures
   - User interview limited to 5 questions maximum
   - Branch naming follows fixed convention (customizable via --branch)
+  - When --foreman is set, the user interview step is force-skipped and PR creation always proceeds without pausing for confirmation
 
 mission:
   summary: |
@@ -57,7 +63,8 @@ mission:
     - Execute 3-phase workflow - Analysis & Planning, Execution, Validation & Delivery
     - Delegate codebase analysis to general-purpose agent (Haiku for speed)
     - Assemble 4-agent team for collaborative planning (Sonnet for quality)
-    - Conduct user interview only if description is ambiguous or --interactive flag set
+    - Conduct user interview only if description is ambiguous or --interactive flag set (never when --foreman is set)
+    - When --foreman is set, run fully non-interactively - skip the user interview, never pause for confirmation, and always auto-commit and open a PR
     - Create git branch following convention - fix/issue-{num}-{slug}
     - Generate actionable task list and track progress with TodoWrite
     - Delegate implementation to appropriate agents (backend, frontend, infrastructure)
@@ -130,12 +137,18 @@ workflow:
             Use AskUserQuestion for each. Wait for each answer before asking the next.
           conditional: true
           trigger: |
-            Ambiguity detection:
+            IF --foreman flag is set: ALWAYS force-skip this step entirely -- never ask
+            questions, even if ambiguity conditions below would otherwise trigger it.
+            There is no human present to answer in Foreman-native automated execution.
+
+            Otherwise, Ambiguity detection:
             - Description < 20 words
             - Vague terms ("doesn't work", "broken", "issue")
             - Multiple possible interpretations
             - OR --interactive flag is set
           instructions: |
+            0. IF --foreman flag is set: skip this entire step (do not ask any questions)
+               and proceed directly to Execution phase using best-effort assumptions.
             1. Identify up to 5 focused clarifying questions
             2. Ask them ONE AT A TIME using AskUserQuestion -- never batch or list multiple questions
             3. Wait for each answer before asking the next
@@ -261,6 +274,13 @@ workflow:
           tool: Bash
           model: low
           instructions: |
+            NOTE: Commit + push + PR creation always happens by default in this step --
+            there is no gating today. When --foreman is set, this must happen with zero
+            pauses or confirmations (fully autonomous), which is consistent with the
+            existing default behavior but is called out here explicitly for automated
+            Foreman orchestration callers. --draft-pr and --foreman are independent
+            flags: foreman mode can still create a draft PR if --draft-pr is also passed.
+
             1. Generate commit message using conventional commit format:
                - Format: "fix: {brief description}"
                - OR with scope: "fix(scope): {brief description}"
@@ -324,6 +344,7 @@ expectedInput:
     - "/ensemble:fix-issue \"Fix timeout bug in auth flow\""
     - "/ensemble:fix-issue --issue 34"
     - "/ensemble:fix-issue \"Fix pagination\" --interactive"
+    - "/ensemble:fix-issue --issue 34 --foreman"
 
 expectedOutput:
   format: Pull Request

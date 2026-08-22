@@ -20,7 +20,7 @@ describe('Fix-Issue Command', () => {
       expect(commandYaml.metadata).toBeDefined();
       expect(commandYaml.metadata.name).toBe('ensemble:fix-issue');
       expect(commandYaml.metadata.description).toBe('Lightweight workflow for bug fixes and small issues');
-      expect(commandYaml.metadata.version).toBe('1.1.0');
+      expect(commandYaml.metadata.version).toBe('1.2.0');
       expect(commandYaml.metadata.category).toBe('implementation');
       expect(commandYaml.metadata.model).toBe('medium');
       expect(commandYaml.metadata.source).toBe('sunstone');
@@ -34,7 +34,7 @@ describe('Fix-Issue Command', () => {
   describe('Parameters', () => {
     test('defines all required parameters', () => {
       expect(commandYaml.parameters).toBeInstanceOf(Array);
-      expect(commandYaml.parameters.length).toBe(6);
+      expect(commandYaml.parameters.length).toBe(7);
 
       const paramNames = commandYaml.parameters.map(p => p.name);
       expect(paramNames).toContain('description');
@@ -43,6 +43,7 @@ describe('Fix-Issue Command', () => {
       expect(paramNames).toContain('skip-tests');
       expect(paramNames).toContain('draft-pr');
       expect(paramNames).toContain('interactive');
+      expect(paramNames).toContain('foreman');
     });
 
     test('description parameter is optional string', () => {
@@ -85,6 +86,13 @@ describe('Fix-Issue Command', () => {
       expect(param.type).toBe('boolean');
       expect(param.default).toBe(false);
       expect(param.description).toContain('Enable detailed user interviews');
+    });
+
+    test('foreman parameter is boolean with default false', () => {
+      const param = commandYaml.parameters.find(p => p.name === 'foreman');
+      expect(param.type).toBe('boolean');
+      expect(param.default).toBe(false);
+      expect(param.description).toContain('Foreman-native');
     });
   });
 
