@@ -8,6 +8,7 @@
 All ensemble commands use the `/ensemble:` namespace:
 ```
 /ensemble:fold-prompt          # Optimize Claude environment
+/ensemble:reinstall-plugins    # Force-refresh installed plugins (stopgap for version-gated updates)
 /ensemble:create-prd           # Create Product Requirements Document
 /ensemble:create-trd           # Create Technical Requirements Document
 /ensemble:create-trd-foreman   # Create Foreman-native structured Technical Requirements Document
