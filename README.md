@@ -439,7 +439,23 @@ All plugins follow [Semantic Versioning](https://semver.org/):
 - **Minor**: New features, backward compatible (e.g., 5.0 → 5.1)
 - **Patch**: Bug fixes, backward compatible (e.g., 5.0.0 → 5.0.1)
 
-Core plugins (Tier 1-2) maintain version synchronization. Framework and testing plugins (Tier 3-4) may have independent versions.
+Every plugin is versioned independently. `claude plugin install` and
+`claude plugin update` gate on the plugin's own `.claude-plugin/plugin.json`
+version string, so a package whose version does not move never re-syncs on a
+consuming machine — which makes a per-package bump the mechanism that actually
+ships a change, and a repo-wide lockstep bump pure churn for every plugin that
+did not change.
+
+What `npm run validate` enforces is that each package agrees with *itself*:
+`packages/<name>/package.json`, `packages/<name>/.claude-plugin/plugin.json`,
+and that package's `marketplace.json` entry must carry the same version
+(`scripts/validate-version-sync.js`). Drift there is invisible and breaks
+installs. The one exception is the release set — root `package.json`,
+`packages/full/`, and the `ensemble-full` marketplace entry — which must match
+each other before tagging.
+
+When you change a package, bump that package. Nothing requires two different
+packages to share a number.
 
 ## License
 

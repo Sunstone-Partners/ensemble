@@ -3,7 +3,7 @@
 - **Hook Type**: Pre-commit hook (updates version files before commit finalization)
 - **Dependency Format**: `workspace:*` for monorepo development
 - **Multi-commit Strategy**: Highest precedence (breaking > minor > patch)
-- **Versioning Strategy**: Version-locked (all 25 packages maintain same version)
+- **Versioning Strategy**: ~~Version-locked (all 25 packages maintain same version)~~ — **superseded, never implemented.** Packages version independently; see `README.md` Versioning and PRD FR-3.7. Everything below that assumes lockstep bumps (`validate-version-locked`, `check-version-locked-violations`, "update ALL packages") describes a design that was not built.
 - **Merge Conflict Handling**: Fail with conflict (require manual resolution)
 - **Pre-release Scope**: Out of Phase 1 scope
 - **Changelog Strategy**: Root-level only (single CHANGELOG.md)
@@ -12,7 +12,7 @@
 **New (from Refinement v1.1.0): **
 - **Commit Parser**: Use conventional-commits-parser library (battle-tested, robust)
 - **Error Handling**: Fail-fast approach (block commit entirely, require manual resolution)
-- **Performance Strategy**: Always update all packages (maintains version-locked strategy)
+- **Performance Strategy**: ~~Always update all packages (maintains version-locked strategy)~~ — superseded with the version-locked strategy above.
 1. **Atomic Operations**: All version updates must be transactional (all or nothing)
 2. **Idempotency**: Running operations multiple times produces same result
 3. **Fail-Fast**: Detect errors early and provide clear recovery paths (block commit on any error)

@@ -274,7 +274,7 @@ Validation:
 - **FR-3.4**: Handle multiple constituent changes in single commit (apply highest precedence: breaking > minor > patch)
 - **FR-3.5**: Update marketplace.json ensemble-full entry
 - **FR-3.6**: Skip cascade if only ensemble-full itself changes
-- **FR-3.7**: **Version-locked strategy**: All 25 packages maintain same version number for simplicity ("Ensemble 5.2.0")
+- **FR-3.7**: ~~**Version-locked strategy**: All 25 packages maintain same version number for simplicity ("Ensemble 5.2.0")~~ — **SUPERSEDED, never implemented.** Packages are versioned independently; see the Versioning section of `README.md`. `claude plugin update` gates on each plugin's own `plugin.json` version, so lockstep bumps churn every unchanged plugin while doing nothing a per-package bump does not. The enforcement this FR implied (`validate-version-locked.js`, `check-version-locked-violations.js`) was never built; `scripts/validate-version-sync.js` enforces the contract that actually holds — three-way agreement *within* each package.
 
 **Test Scenarios:**
 ```
@@ -911,8 +911,8 @@ ensemble/
 - **Rationale**: One breaking change in a PR = major bump for entire PR
 - **Impact**: Updated FR-3.4 to clarify precedence order
 
-**Q4 - Versioning Strategy Decision:**
-- **Decision**: **Version-locked** - all 25 packages maintain same version number
+**Q4 - Versioning Strategy Decision:** *(superseded — see FR-3.7)*
+- **Decision**: ~~**Version-locked** - all 25 packages maintain same version number~~
 - **Rationale**: Simpler for users ("Ensemble 5.2.0"), reduces confusion
 - **Impact**: Added FR-3.7 to document version-locked strategy
 
