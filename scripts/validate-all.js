@@ -222,6 +222,8 @@ function main() {
   console.log('Ensemble Plugin Validation');
   console.log('========================\n');
 
+  let errors = 0;
+
   // Validate marketplace.json
   console.log('Validating marketplace.json...');
   try {
@@ -247,18 +249,20 @@ function main() {
   const loadedManifest = path.join(__dirname, '..', '.claude-plugin', 'marketplace.json');
   if (!fs.existsSync(loadedManifest)) {
     console.error('✗ .claude-plugin/marketplace.json is missing - Claude Code cannot load the marketplace without it');
-    process.exit(1);
+    errors++;
+  } else {
+    // Compare with line endings normalized so a CRLF checkout is not a failure.
+    const readNormalized = file => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    if (readNormalized(rootManifest) !== readNormalized(loadedManifest)) {
+      console.error('✗ .claude-plugin/marketplace.json differs from marketplace.json');
+      console.error('  Claude Code loads .claude-plugin/marketplace.json; this script and');
+      console.error('  validate-version-sync.js check marketplace.json. They must agree.');
+      console.error('  Fix: cp marketplace.json .claude-plugin/marketplace.json');
+      errors++;
+    } else {
+      console.log('✓ .claude-plugin/marketplace.json in sync\n');
+    }
   }
-  // Compare with line endings normalized so a CRLF checkout is not a failure.
-  const readNormalized = file => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
-  if (readNormalized(rootManifest) !== readNormalized(loadedManifest)) {
-    console.error('✗ .claude-plugin/marketplace.json differs from marketplace.json');
-    console.error('  Claude Code loads .claude-plugin/marketplace.json; this script and');
-    console.error('  validate-version-sync.js check marketplace.json. They must agree.');
-    console.error('  Fix: cp marketplace.json .claude-plugin/marketplace.json');
-    process.exit(1);
-  }
-  console.log('✓ .claude-plugin/marketplace.json in sync\n');
 
   // Get all packages
   const packages = fs.readdirSync(PACKAGES_DIR).filter(name => {
@@ -267,7 +271,6 @@ function main() {
   });
 
   // Validate each package
-  let errors = 0;
   packages.forEach(pkg => {
     try {
       validatePlugin(path.join(PACKAGES_DIR, pkg));
