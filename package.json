@@ -19,6 +19,7 @@
     "generate:validate": "node scripts/generate-markdown.js --validate",
     "generate:opencode": "node scripts/generate-opencode/index.js",
     "generate:pi": "npm run generate --workspace=packages/pi",
+    "postgenerate:pi": "node scripts/bump-pi-version-if-changed.js",
     "generate:codex": "node scripts/generate-codex/index.js",
     "install:codex": "node scripts/install-codex-project.js",
     "version:codex": "node scripts/sync-codex-version.js",

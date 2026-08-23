@@ -11,7 +11,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # fetch-depth: 0 (full history) is required so scripts/bump-pi-version-if-changed.js
+      # (invoked via the postgenerate:pi hook during "Generate Pi artifacts" below) can
+      # compute a real merge-base against origin/main. With the default shallow (depth 1)
+      # checkout, that merge-base lookup fails and the script no-ops (by design, so it
+      # never hard-fails a build over missing history) -- which would silently defeat the
+      # version-drift check two steps down.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -28,7 +36,8 @@ jobs:
       - name: Generate Pi artifacts
         run: npm run generate:pi
 
-      # PI-CI-002: Drift detection - fail if generated artifacts differ from committed versions
+      # PI-CI-002: Drift detection - fail if generated artifacts (or the
+      # package's declared version) differ from committed versions
       #
       # Guards packages/pi/commands, the actual output directory since the move
       # off prompts/. This previously pointed at prompts/, which the generator
@@ -38,11 +47,21 @@ jobs:
       # The colon-namespaced commands/ensemble:*.md files are gitignored (illegal
       # on NTFS, generated at publish time), so git diff correctly ignores them
       # here; the committed ensemble-full-*.md aliases are what gets compared.
+      #
+      # packages/pi/package.json and packages/pi/.claude-plugin/plugin.json are
+      # also included: `npm run generate:pi` above runs the postgenerate:pi hook
+      # (scripts/bump-pi-version-if-changed.js), which auto-bumps the patch
+      # version when content changed since origin/main and nobody manually
+      # bumped it. If that produces a diff here, the contributor forgot to run
+      # `npm run generate:pi` locally and commit its full output (including the
+      # version bump) -- without this, a version bump could be silently missed
+      # and `pi install` would gate on an unchanged version, serving stale
+      # content forever.
       - name: Check for stale generated output
         run: |
-          PATHS="packages/pi/commands packages/pi/agents packages/pi/skills packages/pi/AGENTS.md"
+          PATHS="packages/pi/commands packages/pi/agents packages/pi/skills packages/pi/AGENTS.md packages/pi/package.json packages/pi/.claude-plugin/plugin.json"
           git diff --exit-code $PATHS || {
-            echo "ERROR: Generated Pi artifacts are stale. Run 'npm run generate:pi' and commit the results."
+            echo "ERROR: Generated Pi artifacts (or version files) are stale. Run 'npm run generate:pi' and commit the results."
             echo ""
             echo "Changed files:"
             git diff --name-only $PATHS
