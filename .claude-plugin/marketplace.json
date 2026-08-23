@@ -38,7 +38,7 @@
   "plugins": [
     {
       "name": "ensemble-core",
-      "version": "5.5.1",
+      "version": "5.6.0",
       "source": "./packages/core",
       "description": "Core utilities including framework detection and XDG-compliant configuration",
       "category": "core",
