@@ -29,7 +29,17 @@ const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const PACKAGE_JSON = path.join(ROOT, 'packages', 'pi', 'package.json');
 const PLUGIN_JSON = path.join(ROOT, 'packages', 'pi', '.claude-plugin', 'plugin.json');
-const MARKETPLACE_JSON = path.join(ROOT, 'marketplace.json');
+// Both manifests carry the same plugin entries: Claude Code loads the
+// .claude-plugin/ copy, while validate-all.js and validate-version-sync.js read
+// the root one. They are two real files (the .claude-plugin/ path must not be a
+// symlink -- see the comment in validate-all.js for why), and validate-all.js
+// requires them byte-identical, so a version bump has to land in both or CI
+// fails. Writing both paths here is what keeps that true automatically (see
+// scripts/sync-codex-version.js, which follows the same pattern).
+const MARKETPLACE_JSONS = [
+  path.join(ROOT, 'marketplace.json'),
+  path.join(ROOT, '.claude-plugin', 'marketplace.json'),
+];
 const CONTENT_PATHS = [
   'packages/pi/commands',
   'packages/pi/agents',
@@ -160,15 +170,20 @@ function main() {
   plugin.version = newVersion;
   writeJson(PLUGIN_JSON, plugin);
 
-  // Also keep marketplace.json's ensemble-pi entry in sync -- scripts/
-  // validate-version-sync.js (run by `npm run validate`) checks it against
-  // package.json/plugin.json for every package with a marketplace entry.
-  if (fs.existsSync(MARKETPLACE_JSON)) {
-    const marketplace = readJson(MARKETPLACE_JSON);
+  // Also keep both marketplace.json copies' ensemble-pi entry in sync --
+  // scripts/validate-version-sync.js (run by `npm run validate`) checks it
+  // against package.json/plugin.json for every package with a marketplace
+  // entry, and validate-all.js requires the two marketplace.json copies to be
+  // byte-identical.
+  for (const marketplaceFile of MARKETPLACE_JSONS) {
+    if (!fs.existsSync(marketplaceFile)) {
+      continue;
+    }
+    const marketplace = readJson(marketplaceFile);
     const entry = (marketplace.plugins || []).find((p) => p.name === 'ensemble-pi');
     if (entry) {
       entry.version = newVersion;
-      writeJson(MARKETPLACE_JSON, marketplace);
+      writeJson(marketplaceFile, marketplace);
     }
   }
 
