@@ -261,25 +261,35 @@ function main() {
   }
 
   // Claude Code loads .claude-plugin/marketplace.json, not the root
-  // marketplace.json checked above. .claude-plugin/marketplace.json is now a
-  // relative symlink to ../marketplace.json (same convention as the
-  // packages/full/lib and packages/full/skills mirrors below), which makes
-  // drift structurally impossible instead of merely detected: there is only
-  // ever one file on disk. Before this, the loaded copy sat stale from
-  // 2026-08-07 until it was caught: five installable packages (ai, router,
-  // permitter, dotnet, reqnroll) missing, two deleted ones (pane-viewer,
-  // task-progress-pane) still listed, and every version pinned at 5.0.0. This
-  // check remains as a defensive sanity check for a broken symlink or a tool
-  // that replaces the symlink with a real file (e.g. some editors/zip
-  // extractors do this) -- reading through a correct symlink returns
-  // byte-identical content, so the comparison below still passes in the
-  // common case and only fires if something has gone wrong.
+  // marketplace.json checked above -- and nothing verified the two agreed, so
+  // the loaded copy sat stale from 2026-08-07 until it was caught: five
+  // installable packages (ai, router, permitter, dotnet, reqnroll) missing, two
+  // deleted ones (pane-viewer, task-progress-pane) still listed, and every
+  // version pinned at 5.0.0.
+  //
+  // This path must be a REGULAR FILE, never a symlink to ../marketplace.json.
+  // A symlink is the tempting fix -- one file on disk makes drift structurally
+  // impossible rather than merely detected -- but Git for Windows leaves
+  // core.symlinks=false unless the installer's symlink option was ticked, and
+  // such a checkout materializes the link as a 19-byte text file containing
+  // "../marketplace.json". Claude Code reads that instead of JSON and the
+  // marketplace fails to load entirely. CI runs on Linux, where the link
+  // resolves and the byte comparison below passes, so only the explicit lstat
+  // catches it.
   console.log('Validating .claude-plugin/marketplace.json matches marketplace.json...');
   const rootManifest = path.join(__dirname, '..', 'marketplace.json');
   const loadedManifest = path.join(__dirname, '..', '.claude-plugin', 'marketplace.json');
+  const FIX_HINT = '  Fix: cp marketplace.json .claude-plugin/marketplace.json';
   if (!fs.existsSync(loadedManifest)) {
     console.error('✗ .claude-plugin/marketplace.json is missing - Claude Code cannot load the marketplace without it');
-    console.error('  Fix: ln -sf ../marketplace.json .claude-plugin/marketplace.json');
+    console.error(FIX_HINT);
+    errors++;
+  } else if (fs.lstatSync(loadedManifest).isSymbolicLink()) {
+    console.error('✗ .claude-plugin/marketplace.json is a symlink - it must be a regular file');
+    console.error('  A Windows checkout without core.symlinks writes the link target as plain');
+    console.error('  text, so Claude Code reads "../marketplace.json" instead of JSON and the');
+    console.error('  marketplace does not load at all. See the comment above this check.');
+    console.error('  Fix: rm .claude-plugin/marketplace.json && cp marketplace.json .claude-plugin/marketplace.json');
     errors++;
   } else {
     // Compare with line endings normalized so a CRLF checkout is not a failure.
@@ -288,9 +298,7 @@ function main() {
       console.error('✗ .claude-plugin/marketplace.json differs from marketplace.json');
       console.error('  Claude Code loads .claude-plugin/marketplace.json; this script and');
       console.error('  validate-version-sync.js check marketplace.json. They must agree.');
-      console.error('  .claude-plugin/marketplace.json should be a symlink to ../marketplace.json --');
-      console.error('  it has been replaced with a real file. Fix: rm .claude-plugin/marketplace.json');
-      console.error('  && ln -sf ../marketplace.json .claude-plugin/marketplace.json');
+      console.error(FIX_HINT);
       errors++;
     } else {
       console.log('✓ .claude-plugin/marketplace.json in sync\n');
