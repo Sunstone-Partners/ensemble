@@ -7,10 +7,11 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PACKAGE_JSON = path.join(ROOT, 'packages', 'codex', 'package.json');
 const PLUGIN_JSON = path.join(ROOT, 'packages', 'codex', '.claude-plugin', 'plugin.json');
-// Both manifests carry the same plugin entries: Claude Code loads the
-// .claude-plugin/ copy, while validate-all.js and validate-version-sync.js read
-// the root one. validate-all.js requires them byte-identical, so a version bump
-// has to land in both or CI fails.
+// Claude Code loads the .claude-plugin/ path, while validate-all.js and
+// validate-version-sync.js read the root one. .claude-plugin/marketplace.json
+// is a symlink to ../marketplace.json, so writing "both" paths below writes
+// the same underlying file twice -- harmless, and keeps this script correct
+// even if that symlink is ever replaced with a real file again.
 const MARKETPLACE_JSONS = [
   path.join(ROOT, 'marketplace.json'),
   path.join(ROOT, '.claude-plugin', 'marketplace.json'),
