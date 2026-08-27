@@ -98,3 +98,30 @@ describe('author-playwright-tests.yaml orchestrator wiring (PR 5)', () => {
     expect(text).toMatch(/NEVER rolled back/i);
   });
 });
+
+describe('helper modules resolve outside the ensemble monorepo (br-e2e-lib-path)', () => {
+  test('no lib module is referenced by a bare CWD-relative monorepo path', () => {
+    // The regression: every module was named as `packages/e2e-testing/lib/x.js`,
+    // which only resolves when CWD is this monorepo. Run in a consuming repo
+    // (e.g. an Azure-DevOps-hosted C# Playwright project) the very first action
+    // failed, and the session reported the command "can't run here" -- masking
+    // the fact that the modules ship inside the installed plugin.
+    expect(text).not.toContain('packages/e2e-testing/lib/');
+    expect(text).not.toContain('packages/e2e-testing/agents/');
+  });
+
+  test('E2E_LIB is resolved before the first module is used', () => {
+    const resolveIndex = text.indexOf('Resolve E2E_LIB');
+    expect(resolveIndex).toBeGreaterThan(-1);
+    expect(text).toContain('${CLAUDE_PLUGIN_ROOT}/lib');
+
+    const firstUse = text.indexOf('$E2E_LIB/');
+    expect(firstUse).toBeGreaterThan(resolveIndex);
+  });
+
+  test('every module reference goes through $E2E_LIB', () => {
+    for (const module of EXPECTED_MODULE_ORDER) {
+      expect(text).toContain(`$E2E_LIB/${module}.js`);
+    }
+  });
+});
