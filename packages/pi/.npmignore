@@ -1,15 +1,8 @@
 # This file exists so npm does NOT fall back to the repo's .gitignore when
 # packing this package.
 #
-# The root .gitignore excludes commands/ensemble:*.md, because ':' is illegal
-# on NTFS and committing those files makes the repo impossible to check out on
-# Windows. They are still required in the published tarball — OMP derives its
-# slash-command name from the filename, so the canonical "ensemble:<cmd>" form
-# is what registers /ensemble:<cmd>. prepublishOnly regenerates them just
-# before packing.
-#
-# Without this file, npm would apply .gitignore's rule and silently ship a
-# tarball missing every colon-namespaced command.
-#
-# The "files" array in package.json is the real allowlist; nothing extra needs
-# excluding here.
+# The "files" array in package.json is the real allowlist for the tarball.
+# Without an .npmignore present, npm falls back to the root .gitignore, which
+# excludes build output such as dist/ -- so packing would silently drop the
+# compiled generator. Keeping this (intentionally minimal) file pins tarball
+# contents to the package.json "files" allowlist instead.

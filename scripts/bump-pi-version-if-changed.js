@@ -7,7 +7,7 @@
  *
  * Why this exists: pi install (like `claude plugin update`, see
  * packages/core/commands/reinstall-plugins.yaml) gates re-fetching content on
- * whether the declared version string changed. If packages/pi/commands,
+ * whether the declared version string changed. If packages/pi/prompts,
  * agents, skills, or AGENTS.md drift from what's published while
  * packages/pi/package.json / .claude-plugin/plugin.json stay pinned, `pi
  * install` silently keeps serving stale content forever. This script closes
@@ -41,7 +41,7 @@ const MARKETPLACE_JSONS = [
   path.join(ROOT, '.claude-plugin', 'marketplace.json'),
 ];
 const CONTENT_PATHS = [
-  'packages/pi/commands',
+  'packages/pi/prompts',
   'packages/pi/agents',
   'packages/pi/skills',
   'packages/pi/AGENTS.md',

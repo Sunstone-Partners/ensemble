@@ -26,7 +26,7 @@ Determine which TRDs to graph
 Invoke the deterministic CLI to build and emit the dependency graph
 
 **Actions:**
-1. Resolve TRD_GRAPH_CLI to first existing path among: ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js, packages/development/lib/trd-graph-cli.js. If missing, print error and HALT.
+1. Resolve TRD_GRAPH_CLI to first existing path among, in order: (1) "$(git rev-parse --show-toplevel 2>/dev/null)/packages/development/lib/trd-graph-cli.js" (canonical monorepo root); (2) ${CLAUDE_PLUGIN_ROOT}/lib/trd-graph-cli.js; (3) packages/development/lib/trd-graph-cli.js (legacy CWD-relative); (4) the Pi/OMP vendor bundle path — resolve the ensemble-pi package's own declared install location via node -e "try{console.log(require.resolve('@sunstone-partners/ensemble-pi/package.json',{paths:[process.env.ENSEMBLE_PI_INSTALL_ROOT, require('os').homedir()+'/.omp/plugins', process.cwd()].filter(Boolean)}))}catch(e){process.exit(1)}" and join the directory of that output with /vendor/lib/trd-graph-cli.js. If missing, print error and HALT.
 2. Run: node "$TRD_GRAPH_CLI" graph <dir|paths> --format <json|mermaid|dot>
 3. Default to --format mermaid for a human-facing answer (renders in GitHub); use json when the caller needs machine output, dot for Graphviz
 4. Interpret exit code: 0 = acyclic, 2 = a dependency cycle was detected (report the cycle)

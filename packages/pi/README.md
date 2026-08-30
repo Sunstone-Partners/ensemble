@@ -30,7 +30,7 @@ pi install ./packages/pi
 
 | Directory / File | Count | Description |
 |-----------------|-------|-------------|
-| `commands/` | 23 files | Command templates (one per Ensemble slash command) |
+| `prompts/` | 43 files | Prompt templates (one per Ensemble command; invoked `/ensemble-<cmd>`) |
 | `agents/` | 28 files | Agent definition markdown (one per Ensemble agent) |
 | `skills/` | 49 directories | Skill documentation copied from all packages |
 | `AGENTS.md` | 1 file | Agent mesh reference extracted from the monorepo |
@@ -92,7 +92,7 @@ Ensemble YAML sources (packages/*/commands/*.yaml, agents/*.yaml, skills/)
           |
     ┌─────┴──────────────────────────────┐
     |             Transformer pipeline    |
-    |  command-transformer   → commands/  |
+    |  command-transformer   → prompts/  |
     |  agent-transformer     → agents/   |
     |  skill-copier          → skills/   |
     |  agents-md-generator   → AGENTS.md |

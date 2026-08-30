@@ -269,16 +269,12 @@ export function generateAgentsMd(
 
 /**
  * Wrap the imported command transformer to produce a TransformResult.
- * Output path keeps the canonical "ensemble:command-name" form so that OMP
- * (which derives the slash-command name from the filename) registers the
- * command under its original "/ensemble:command-name" namespace.
  *
- * ':' is illegal on NTFS, so these files are gitignored and generated at
- * publish time (see packages/pi/.npmignore and prepublishOnly) rather than
- * committed — committing them made the repo, and the marketplace clone Claude
- * Code keeps under ~/.claude/plugins/marketplaces/, impossible to check out on
- * Windows. Do not "fix" that gitignore rule. The ensemble-full-<cmd>.md
- * aliases emitted below are the committed, cross-platform artifacts.
+ * Ensemble command YAMLs carry the Claude-style name "ensemble:<cmd>". Pi and
+ * OMP register a prompt template under its filename stem, and ':' is illegal on
+ * Windows NTFS, so the on-disk artifact uses the Windows-safe "ensemble-<cmd>"
+ * form and registers as /ensemble-<cmd>. Output goes to prompts/ — the pi-native
+ * home that both native pi and OMP load (native pi has no commands/ concept).
  */
 function buildCommandResult(
   commandYaml: CommandYaml,
@@ -287,7 +283,8 @@ function buildCommandResult(
   verbose: boolean
 ): TransformResult {
   const name = commandYaml.metadata.name;
-  const outputPath = path.join(outputRoot, 'commands', `${name}.md`);
+  const piName = name.replace(/^ensemble:/, 'ensemble-');
+  const outputPath = path.join(outputRoot, 'prompts', `${piName}.md`);
   const content = transformCommand(commandYaml, sourcePath, { verbose });
   return { sourcePath, outputPath, content, type: 'command' };
 }
@@ -422,19 +419,6 @@ export async function generate(options: GeneratorOptions): Promise<void> {
     }
 
     results.push(result);
-
-    // Emit ensemble-full: command aliases so `ensemble-full:<cmd>` resolves
-    // at runtime. e.g. ensemble:create-prd → ensemble-full-create-prd.md
-    const name = commandYaml.metadata.name;
-    if (name.startsWith('ensemble:')) {
-      const commandPart = name.slice('ensemble:'.length); // e.g. 'create-prd'
-      const aliasName = `ensemble-full-${commandPart}`;
-      const aliasPath = path.join(outputRoot, 'commands', `${aliasName}.md`);
-      results.push({ sourcePath: filePath, outputPath: aliasPath, content: result.content, type: 'command' });
-      if (verbose) {
-        process.stdout.write(`  alias: ${filePath} → ${aliasPath}\n`);
-      }
-    }
   }
 
   // ------------------------------------------------------------------

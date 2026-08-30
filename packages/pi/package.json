@@ -1,12 +1,12 @@
 {
   "name": "@sunstone-partners/ensemble-pi",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "Pi runtime support — translates ensemble artifacts for Pi coding agent",
   "main": "dist/index.js",
   "files": [
     "dist/",
     "skills/",
-    "commands/",
+    "prompts/",
     "agents/",
     "vendor/",
     ".claude-plugin/",
@@ -43,8 +43,8 @@
     "skills": [
       "./skills"
     ],
-    "commands": [
-      "./commands"
+    "prompts": [
+      "./prompts"
     ],
     "agents": [
       "./agents"

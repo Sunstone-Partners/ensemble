@@ -16,18 +16,20 @@ import { GeneratorOptions, TransformResult } from '../types';
 import matter from 'gray-matter';
 
 /**
- * Commands that get SKILL.md wrappers.
- * Key = skill name (kebab-case, Pi-valid), Value = prompt filename suffix.
+ * Commands that get SKILL.md wrappers. These heavy workflows are surfaced in
+ * pi's skill inventory in addition to their /ensemble-<cmd> prompt template.
+ * Key = skill name (matches the prompt stem; distinguished by the /skill: prefix),
+ * Value = prompt filename stem in prompts/.
  */
 const TARGET_COMMANDS: Record<string, string> = {
-  'ensemble-full-create-prd': 'ensemble-full-create-prd',
-  'ensemble-full-refine-prd': 'ensemble-full-refine-prd',
-  'ensemble-full-create-trd': 'ensemble-full-create-trd',
-  'ensemble-full-refine-trd': 'ensemble-full-refine-trd',
-  'ensemble-full-implement-trd': 'ensemble-full-implement-trd',
-  'ensemble-full-implement-trd-beads': 'ensemble-full-implement-trd-beads',
-  'ensemble-full-create-trd-foreman': 'ensemble-full-create-trd-foreman',
-  'ensemble-full-beads-build': 'ensemble-full-beads-build',
+  'ensemble-create-prd': 'ensemble-create-prd',
+  'ensemble-refine-prd': 'ensemble-refine-prd',
+  'ensemble-create-trd': 'ensemble-create-trd',
+  'ensemble-refine-trd': 'ensemble-refine-trd',
+  'ensemble-implement-trd': 'ensemble-implement-trd',
+  'ensemble-implement-trd-beads': 'ensemble-implement-trd-beads',
+  'ensemble-create-trd-foreman': 'ensemble-create-trd-foreman',
+  'ensemble-beads-build': 'ensemble-beads-build',
 };
 
 /**
@@ -70,12 +72,12 @@ export async function generateCommandSkills(
 ): Promise<TransformResult[]> {
   const { dryRun = false, verbose = false } = options;
 
-  const commandsDir = path.join(outputRoot, 'commands');
+  const promptsDir = path.join(outputRoot, 'prompts');
   const skillsOutputDir = path.join(outputRoot, 'skills');
   const results: TransformResult[] = [];
 
   for (const [skillName, promptSuffix] of Object.entries(TARGET_COMMANDS)) {
-    const promptPath = path.join(commandsDir, `${promptSuffix}.md`);
+    const promptPath = path.join(promptsDir, `${promptSuffix}.md`);
 
     if (!fs.existsSync(promptPath)) {
       if (verbose) {

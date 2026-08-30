@@ -2,10 +2,10 @@
  * TRD-002-TEST: Pi install and manifest discovery
  *
  * Validates that the pi package has correct manifest structure:
- *   - package.json has a `pi` field pointing to ./skills, ./commands, and ./agents
+ *   - package.json has a `pi` field pointing to ./skills, ./prompts, and ./agents
  *   - .claude-plugin/plugin.json exists with name "ensemble-pi"
  *   - Version is consistent between package.json and plugin.json
- *   - Required directories (skills/, commands/, agents/) exist and are populated
+ *   - Required directories (skills/, prompts/, agents/) exist and are populated
  */
 
 import * as fs from 'fs';
@@ -45,10 +45,10 @@ describe('package.json pi field', () => {
     expect(pi['skills']).toContain('./skills');
   });
 
-  test('pi.commands includes "./commands"', () => {
+  test('pi.prompts includes "./prompts"', () => {
     const pi = packageJson['pi'] as Record<string, unknown>;
-    expect(Array.isArray(pi['commands'])).toBe(true);
-    expect(pi['commands']).toContain('./commands');
+    expect(Array.isArray(pi['prompts'])).toBe(true);
+    expect(pi['prompts']).toContain('./prompts');
   });
 
   test('pi.agents includes "./agents"', () => {
@@ -95,15 +95,15 @@ describe('skills/ directory', () => {
   });
 });
 
-describe('commands/ directory', () => {
-  test('commands/ directory exists', () => {
-    const commandsDir = path.join(PI_ROOT, 'commands');
-    expect(fs.existsSync(commandsDir)).toBe(true);
+describe('prompts/ directory', () => {
+  test('prompts/ directory exists', () => {
+    const promptsDir = path.join(PI_ROOT, 'prompts');
+    expect(fs.existsSync(promptsDir)).toBe(true);
   });
 
-  test('commands/ directory contains at least one .md file', () => {
-    const commandsDir = path.join(PI_ROOT, 'commands');
-    const entries = fs.readdirSync(commandsDir, { withFileTypes: true });
+  test('prompts/ directory contains at least one .md file', () => {
+    const promptsDir = path.join(PI_ROOT, 'prompts');
+    const entries = fs.readdirSync(promptsDir, { withFileTypes: true });
     const mdFiles = entries.filter((e) => e.isFile() && e.name.endsWith('.md'));
     expect(mdFiles.length).toBeGreaterThan(0);
   });

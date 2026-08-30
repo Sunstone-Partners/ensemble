@@ -22,14 +22,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const COMMANDS_DIR = path.resolve(__dirname, '..', 'commands');
+const PROMPTS_DIR = path.resolve(__dirname, '..', 'prompts');
 
-// Reads the Windows-safe "ensemble-full-<cmd>.md" alias rather than the
-// colon-namespaced "ensemble:<cmd>.md" primary. The alias is emitted from the
-// same content, but the colon form is gitignored (illegal on NTFS) and only
-// exists after a generate, so reading it would fail on a fresh clone.
-function readCommand(name: string): string {
-  return fs.readFileSync(path.join(COMMANDS_DIR, name), 'utf8');
+// Reads a generated prompt template by its Windows-safe "ensemble-<cmd>.md"
+// filename from prompts/ — the pi-native home that both native pi and OMP load.
+function readPrompt(name: string): string {
+  return fs.readFileSync(path.join(PROMPTS_DIR, name), 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +38,7 @@ describe('PRD template structural equivalence', () => {
   let createPrd: string;
 
   beforeAll(() => {
-    createPrd = readCommand('ensemble-full-create-prd.md');
+    createPrd = readPrompt('ensemble-create-prd.md');
   });
 
   it('has document frontmatter instructions', () => {
@@ -89,7 +87,7 @@ describe('TRD template structural equivalence', () => {
   let createTrd: string;
 
   beforeAll(() => {
-    createTrd = readCommand('ensemble-full-create-trd.md');
+    createTrd = readPrompt('ensemble-create-trd.md');
   });
 
   it('has architecture decision section', () => {
@@ -131,7 +129,7 @@ describe('Refine-PRD template structural equivalence', () => {
   let refinePrd: string;
 
   beforeAll(() => {
-    refinePrd = readCommand('ensemble-full-refine-prd.md');
+    refinePrd = readPrompt('ensemble-refine-prd.md');
   });
 
   it('has interview protocol for gathering feedback', () => {
@@ -156,9 +154,9 @@ describe('All Pi command templates — baseline integrity', () => {
 
   beforeAll(() => {
     commandFiles = fs
-      .readdirSync(COMMANDS_DIR)
+      .readdirSync(PROMPTS_DIR)
       .filter((f) => f.endsWith('.md'))
-      .map((f) => path.join(COMMANDS_DIR, f));
+      .map((f) => path.join(PROMPTS_DIR, f));
   });
 
   it('at least 20 command files exist', () => {

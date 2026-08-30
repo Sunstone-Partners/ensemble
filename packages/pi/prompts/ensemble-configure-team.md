@@ -302,8 +302,7 @@ Preservation check (mandatory, single re-read, do NOT loop):
   injected section's contents, do NOT validate the team.roles schema
   against parseTeamConfig-equivalent logic, do NOT look for stale
   "Validation Failure" or "Options" prose from prior runs, do NOT
-  add a TodoList to "fix" the section, do NOT re-read the file
-  again. Equality success is the terminal marker; the only
+  add a TodoList to "fix" the section, do NOT re-read the file again. Equality success is the terminal marker; the only
   acceptable subsequent state is Phase 5 step 3 (Summary).
 
 **Actions:**
