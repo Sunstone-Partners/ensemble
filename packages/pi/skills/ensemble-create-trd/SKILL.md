@@ -9,10 +9,10 @@ description: >-
   /ensemble:configure-team. All outputs are saved to docs/TRD/.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:create-trd | Version: 3.2.0 -->
+<!-- Command: ensemble-create-trd | Version: 3.2.0 -->
 <!-- Description: Create Technical Requirements Document from PRD with architecture design and adversarial review -->
 
-# ensemble:create-trd
+# ensemble-create-trd
 
 > **Mission:** Create a Technical Requirements Document (TRD) from a Product Requirements Document (PRD). Performs PRD validation, architecture design with alternatives, task breakdown with traceability, optional MCP enhancement, adversarial self-review with a Design Readiness Gate, and structured output with traceability matrices. Team configuration is handled separately by /ensemble:configure-team. All outputs are saved to docs/TRD/.
 

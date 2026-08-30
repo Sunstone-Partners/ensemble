@@ -8,10 +8,10 @@ description: >-
   and Implementation Readiness Gate scoring.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:refine-prd | Version: 2.7.0 -->
+<!-- Command: ensemble-refine-prd | Version: 2.7.0 -->
 <!-- Description: Refine and enhance existing PRD with stakeholder feedback and additional detail -->
 
-# ensemble:refine-prd
+# ensemble-refine-prd
 
 > **Mission:** Refine and enhance an existing Product Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates PRD while maintaining version history, traceability, and alignment with the create-prd v2.2.0 format including PRD Health summaries, MoSCoW priorities, and Implementation Readiness Gate scoring.
 

@@ -28,10 +28,10 @@ description: >-
   completion-verification-failed still HALT unchanged).
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:implement-trd-beads | Version: 2.21.0 -->
+<!-- Command: ensemble-implement-trd-beads | Version: 2.21.0 -->
 <!-- Description: Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via br/bv, and cross-session resumability -->
 
-# ensemble:implement-trd-beads
+# ensemble-implement-trd-beads
 
 > **Mission:** Parse a TRD and create a beads hierarchy (epic -> stories -> tasks) before any implementation begins. Drive execution order through bv --robot-plan (the only scheduler) rather than TRD re-parsing. bv --robot-plan partitions the TRD-scoped bead subgraph into parallel tracks (up to max_parallel) and the build pipeline dispatches each track concurrently. Record all state transitions in br beads so the implementation is resumable across sessions without access to local state files. This command wraps the implement-trd-enhanced execution model with a full beads project management layer powered by br (beads_rust) and bv (beads_viewer). It transforms TRD-structured work into a persistent, queryable beads hierarchy and drives execution order through bv --robot-plan — enabling cross-session resumability, graph-aware triage, and parallel execution planning. Key behaviors: - Scaffold: epic -> stories -> tasks created in br before first line of code - Idempotency: existing scaffolds detected via title-prefix matching; partial scaffolds resumed safely - Execution: bv --robot-plan is the only scheduler; tracks partitioned and dispatched concurrently (max N parallel); br sync --flush-only before every bv call; barrier-and-replan between waves - Quality gates: phase completion triggers test delegation; results recorded as br comments - Sync: br sync --flush-only exports JSONL before every bv call - Hard requirement: bv is required. There is no graceful-degradation path — if bv is missing, installation is a precondition. br ready is never a fallback dispatcher; bv --robot-plan is the only scheduler. - --foreman forces non-interactive mode without changing safety HALT behavior (branch-intent-required, PR-backend-unresolved, and completion-verification-failed still HALT unchanged).
 

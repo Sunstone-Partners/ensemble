@@ -9,10 +9,10 @@ description: >-
   tables. All outputs are saved to docs/TRD/.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:create-trd-foreman | Version: 3.0.1 -->
+<!-- Command: ensemble-create-trd-foreman | Version: 3.0.1 -->
 <!-- Description: Create Foreman-native structured Technical Requirements Document from PRD — omits adversarial review phase, outputs parser-compatible tables -->
 
-# ensemble:create-trd-foreman
+# ensemble-create-trd-foreman
 
 > **Mission:** Create a Foreman-native Technical Requirements Document (TRD) from a Product Requirements Document (PRD). The resulting TRD must be machine-consumable by Foreman's existing `parseTrd()` parser and suitable for immediate native task creation via `foreman sling prd`. Perform PRD validation, architecture design with alternatives, and a structured task breakdown with deterministic markdown tables. All outputs are saved to docs/TRD/.
 

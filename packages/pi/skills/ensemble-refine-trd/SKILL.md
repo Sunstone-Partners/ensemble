@@ -6,10 +6,10 @@ description: >-
   while maintaining version history, traceability, and Design Readiness scoring.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:refine-trd | Version: 2.7.0 -->
+<!-- Command: ensemble-refine-trd | Version: 2.7.0 -->
 <!-- Description: Refine and enhance existing TRD with stakeholder feedback and additional detail -->
 
-# ensemble:refine-trd
+# ensemble-refine-trd
 
 > **Mission:** Refine and enhance an existing Technical Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates TRD while maintaining version history, traceability, and Design Readiness scoring.
 

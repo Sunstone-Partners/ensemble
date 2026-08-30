@@ -9,10 +9,10 @@ description: >-
   handoff quality.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:create-prd | Version: 2.5.0 -->
+<!-- Command: ensemble-create-prd | Version: 2.5.0 -->
 <!-- Description: Create comprehensive Product Requirements Document with structured elicitation and adversarial review -->
 
-# ensemble:create-prd
+# ensemble-create-prd
 
 > **Mission:** Create a comprehensive Product Requirements Document (PRD) through structured elicitation, contextual research, and adversarial self-review. Adapts depth to project scale (solo dev through enterprise). Uses clarifying interviews and creative elicitation techniques to surface hidden requirements before writing. Every PRD passes an Implementation Readiness Gate before being saved to ensure handoff quality.
 

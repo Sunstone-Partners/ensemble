@@ -23,10 +23,10 @@ description: >-
   without changing safety HALT behavior.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble:implement-trd | Version: 2.6.0 -->
+<!-- Command: ensemble-implement-trd | Version: 2.6.0 -->
 <!-- Description: Complete TRD implementation using git-town workflow with ensemble-orchestrator delegation and TDD methodology -->
 
-# ensemble:implement-trd
+# ensemble-implement-trd
 
 > **Mission:** This command implements a complete Technical Requirements Document (TRD) using modern git-town feature branch workflow. It creates a feature branch and delegates to ensemble-orchestrator which routes to tech-lead-orchestrator for structured TDD-based development including planning, implementation, testing, and quality gates. Loop architecture (v2.5.0): the TASK LOOP is a two-tier non-recursive dispatch loop. The parent (this command) inspects the current sprint's task graph, selects the next dependency-ready task, and dispatches a fresh Task(subagent_type=implement-trd-task, prompt={task_id, ...}) subagent for that single task. The task-runner subagent runs ONE task (specialist dispatch + code review + close + commit) and emits a JSON summary line. The parent then decides whether to dispatch another task based on the summary task_state and next_action_hint. No recursion - task-runners are depth-1 subagents of this command, and the specialists inside (backend-developer, code-reviewer, deep-debugger) are depth-1 subagents of the task-runner. This shape respects Codex max_depth=1 constraint and works uniformly on claude/pi/codex/opencode via the universal Task() primitive. Per-iteration decision cost is reduced to: read summary, dispatch task-runner, repeat; the agent still has to choose to continue, but the work between iterations is mechanical rather than narrative. --foreman forces non-interactive mode without changing safety HALT behavior.
 

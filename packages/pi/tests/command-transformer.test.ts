@@ -93,7 +93,7 @@ describe('transformCommand', () => {
 
     it('includes the command name and version in the second comment line', () => {
       const output = transformCommand(MINIMAL_COMMAND, SOURCE_PATH, {});
-      expect(output).toContain('Command: ensemble:create-prd | Version: 1.0.0');
+      expect(output).toContain('Command: ensemble-create-prd | Version: 1.0.0');
     });
 
     it('includes the description in the third comment line', () => {
@@ -105,7 +105,7 @@ describe('transformCommand', () => {
   describe('H1 title', () => {
     it('renders the metadata name as an H1 heading', () => {
       const output = transformCommand(MINIMAL_COMMAND, SOURCE_PATH, {});
-      expect(output).toContain('# ensemble:create-prd');
+      expect(output).toContain('# ensemble-create-prd');
     });
 
     it('uses the name from metadata when it differs', () => {
@@ -114,7 +114,7 @@ describe('transformCommand', () => {
         metadata: { ...MINIMAL_COMMAND.metadata, name: 'ensemble:custom-command' },
       };
       const output = transformCommand(cmd, SOURCE_PATH, {});
-      expect(output).toContain('# ensemble:custom-command');
+      expect(output).toContain('# ensemble-custom-command');
     });
   });
 
