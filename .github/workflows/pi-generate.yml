@@ -39,14 +39,11 @@ jobs:
       # PI-CI-002: Drift detection - fail if generated artifacts (or the
       # package's declared version) differ from committed versions
       #
-      # Guards packages/pi/commands, the actual output directory since the move
-      # off prompts/. This previously pointed at prompts/, which the generator
-      # no longer writes, so the check passed vacuously and real drift in
-      # commands/ went unnoticed.
-      #
-      # The colon-namespaced commands/ensemble:*.md files are gitignored (illegal
-      # on NTFS, generated at publish time), so git diff correctly ignores them
-      # here; the committed ensemble-full-*.md aliases are what gets compared.
+      # Guards packages/pi/prompts, the Pi command output directory. Pi loads
+      # commands from prompts/ (native pi ignores commands/), so each command is
+      # emitted exactly once as prompts/ensemble-<cmd>.md. There are no
+      # gitignored colon-namespaced files any more; every generated prompt is
+      # committed and compared here.
       #
       # packages/pi/package.json and packages/pi/.claude-plugin/plugin.json are
       # also included: `npm run generate:pi` above runs the postgenerate:pi hook
@@ -59,7 +56,7 @@ jobs:
       # content forever.
       - name: Check for stale generated output
         run: |
-          PATHS="packages/pi/commands packages/pi/agents packages/pi/skills packages/pi/AGENTS.md packages/pi/package.json packages/pi/.claude-plugin/plugin.json"
+          PATHS="packages/pi/prompts packages/pi/agents packages/pi/skills packages/pi/AGENTS.md packages/pi/package.json packages/pi/.claude-plugin/plugin.json"
           git diff --exit-code $PATHS || {
             echo "ERROR: Generated Pi artifacts (or version files) are stale. Run 'npm run generate:pi' and commit the results."
             echo ""
