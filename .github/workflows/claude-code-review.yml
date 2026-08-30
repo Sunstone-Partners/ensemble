@@ -1,14 +1,17 @@
 name: Claude Code Review
 
+# DISABLED: this review action requires a valid CLAUDE_CODE_OAUTH_TOKEN secret,
+# which is not configured on this repository — every same-repo PR run dies ~20s
+# in with a 401 ("Claude Code is not installed on this repository"), flagging the
+# `claude-review` check red for a review that can never run. Until the OAuth token
+# is provisioned, run only via manual dispatch so it no longer gates PRs. To
+# re-enable automatic review, restore the `pull_request` trigger below:
+#
+#   pull_request:
+#     types: [opened, synchronize]
+#
 on:
-  pull_request:
-    types: [opened, synchronize]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+  workflow_dispatch:
 
 jobs:
   claude-review:
