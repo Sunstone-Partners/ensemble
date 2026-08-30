@@ -18,7 +18,7 @@
 
 Verify that both required arguments are provided and that both files exist on disk.
 
-If $ARGUMENTS does not contain two tokens: print 'ERROR: Usage: /ensemble:analyze-requirements <prd-path> <trd-path>' and EXIT with code 1.
+If $ARGUMENTS does not contain two tokens: print 'ERROR: Usage: /ensemble-analyze-requirements <prd-path> <trd-path>' and EXIT with code 1.
 Resolve PRD_PATH from the first argument. If file does not exist: print 'ERROR: PRD file not found: <PRD_PATH>' and EXIT with code 1.
 Resolve TRD_PATH from the second argument. If file does not exist: print 'ERROR: TRD file not found: <TRD_PATH>' and EXIT with code 1.
 

@@ -41,4 +41,4 @@ Summarize what was generated and surface gaps
 1. Report the output directory, number of feature files, and total scenarios
 2. List every AC tagged @needs-clarification (free-form or carrying a [NEEDS CLARIFICATION] marker) so the author can fix the PRD
 3. Echo any parser warnings (e.g. requirements with no acceptance criteria)
-4. Remind the user to commit the generated features and run /ensemble:check-feature-drift after future PRD edits
+4. Remind the user to commit the generated features and run /ensemble-check-feature-drift after future PRD edits

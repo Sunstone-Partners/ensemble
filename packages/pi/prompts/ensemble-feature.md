@@ -21,13 +21,13 @@
 Parse $ARGUMENTS and initialize pipeline variables.
 
 1. If $ARGUMENTS is empty or blank, print the following and exit without running any pipeline step:
-   Usage: /ensemble:feature <description> [--skip-refine]
+   Usage: /ensemble-feature <description> [--skip-refine]
 
 2. Scan $ARGUMENTS for the --skip-refine token. If found, set SKIP_REFINE=true and remove the token from the remaining text. If not found, set SKIP_REFINE=false.
 
 3. Scan the remaining text for any other tokens that begin with --. If any unknown flag is found, print the following and exit without running any pipeline step:
    Error: Unknown flag '<flag>'. Only --skip-refine is supported.
-   Usage: /ensemble:feature <description> [--skip-refine]
+   Usage: /ensemble-feature <description> [--skip-refine]
 
 4. Set FEATURE_DESCRIPTION to the remaining argument text after removing --skip-refine if it was present. Preserve the description verbatim -- no transformation, truncation, or summarization.
 
@@ -37,7 +37,7 @@ Parse $ARGUMENTS and initialize pipeline variables.
 
 Print: [Step 1/5] create-prd...
 
-Invoke /ensemble:create-prd with FEATURE_DESCRIPTION as the argument. Pass the description verbatim with no modification.
+Invoke /ensemble-create-prd with FEATURE_DESCRIPTION as the argument. Pass the description verbatim with no modification.
 
 After completion, use Glob to find the most recently modified .md file in docs/PRD/. Store the path as PRD_PATH.
 
@@ -48,7 +48,7 @@ Error details:
 <error output from the failed step>
 
 To retry from this step, run:
-  /ensemble:create-prd <FEATURE_DESCRIPTION>
+  /ensemble-create-prd <FEATURE_DESCRIPTION>
 
 ### Step 2: Step 2 - refine-prd
 
@@ -56,7 +56,7 @@ Check SKIP_REFINE.
 
 If SKIP_REFINE=true: Print [Step 2/5] refine-prd... (skipped) and proceed to Step 3. Do not invoke refine-prd.
 
-If SKIP_REFINE=false: Print [Step 2/5] refine-prd... (pausing for your input) and invoke /ensemble:refine-prd. The refine-prd command internally uses ask_user to conduct the interview -- no special pause mechanism is needed here. Wait for refine-prd to complete before proceeding.
+If SKIP_REFINE=false: Print [Step 2/5] refine-prd... (pausing for your input) and invoke /ensemble-refine-prd. The refine-prd command internally uses ask_user to conduct the interview -- no special pause mechanism is needed here. Wait for refine-prd to complete before proceeding.
 
 If refine-prd fails, print the following and halt the pipeline immediately:
 [Step 2/5] refine-prd failed. Pipeline halted.
@@ -65,13 +65,13 @@ Error details:
 <error output from the failed step>
 
 To retry from this step, run:
-  /ensemble:refine-prd
+  /ensemble-refine-prd
 
 ### Step 3: Step 3 - create-trd
 
 Print: [Step 3/5] create-trd...
 
-Invoke /ensemble:create-trd with PRD_PATH (captured from Step 1) as the argument. Passing the explicit PRD path ensures create-trd reads the correct PRD and not a stale or unrelated document in docs/PRD/.
+Invoke /ensemble-create-trd with PRD_PATH (captured from Step 1) as the argument. Passing the explicit PRD path ensures create-trd reads the correct PRD and not a stale or unrelated document in docs/PRD/.
 
 After completion, use Glob to find the most recently modified .md file in docs/TRD/. Store the path as TRD_PATH.
 
@@ -82,7 +82,7 @@ Error details:
 <error output from the failed step>
 
 To retry from this step, run:
-  /ensemble:create-trd <PRD_PATH>
+  /ensemble-create-trd <PRD_PATH>
 
 ### Step 4: Step 4 - refine-trd
 
@@ -90,7 +90,7 @@ Check SKIP_REFINE.
 
 If SKIP_REFINE=true: Print [Step 4/5] refine-trd... (skipped) and proceed to Step 5. Do not invoke refine-trd.
 
-If SKIP_REFINE=false: Print [Step 4/5] refine-trd... (pausing for your input) and invoke /ensemble:refine-trd. The refine-trd command internally uses ask_user to conduct the interview -- no special pause mechanism is needed here. Wait for refine-trd to complete before proceeding.
+If SKIP_REFINE=false: Print [Step 4/5] refine-trd... (pausing for your input) and invoke /ensemble-refine-trd. The refine-trd command internally uses ask_user to conduct the interview -- no special pause mechanism is needed here. Wait for refine-trd to complete before proceeding.
 
 If refine-trd fails, print the following and halt the pipeline immediately:
 [Step 4/5] refine-trd failed. Pipeline halted.
@@ -99,13 +99,13 @@ Error details:
 <error output from the failed step>
 
 To retry from this step, run:
-  /ensemble:refine-trd
+  /ensemble-refine-trd
 
 ### Step 5: Step 5 - implement-trd-beads --plan
 
 Print: [Step 5/5] implement-trd-beads --plan...
 
-Invoke /ensemble:implement-trd-beads with TRD_PATH (captured from Step 3) and the --plan flag. The --plan flag MUST be hardcoded. User arguments from $ARGUMENTS MUST NOT be forwarded to this command. Never invoke implement-trd-beads with --execute.
+Invoke /ensemble-implement-trd-beads with TRD_PATH (captured from Step 3) and the --plan flag. The --plan flag MUST be hardcoded. User arguments from $ARGUMENTS MUST NOT be forwarded to this command. Never invoke implement-trd-beads with --execute.
 
 If the command fails, print the following and halt the pipeline immediately:
 [Step 5/5] implement-trd-beads --plan failed. Pipeline halted.
@@ -114,7 +114,7 @@ Error details:
 <error output from the failed step>
 
 To retry from this step, run:
-  /ensemble:implement-trd-beads --plan
+  /ensemble-implement-trd-beads --plan
 
 ## Phase 3: Handoff
 
@@ -131,7 +131,7 @@ Pipeline complete. Your implementation plan is ready.
 
 To start implementation:
 
-  In this window:    /ensemble:implement-trd-beads <TRD_PATH> --execute
+  In this window:    /ensemble-implement-trd-beads <TRD_PATH> --execute
   In a new window:   ntm
 
 Where <PRD_PATH> and <TRD_PATH> are the actual file paths captured from Steps 1 and 3 respectively.

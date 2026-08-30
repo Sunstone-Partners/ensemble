@@ -25,7 +25,7 @@ Read and structurally parse the provided meeting summary
 **Actions:**
 1. Read the meeting summary from $ARGUMENTS -- either inline text or a file path
 2. Expect a normalized shape with some subset of: meeting title/date/attendees, Decisions, Open Questions, Discussion Points (optionally grouped by topic), Action Items (optionally tagged with an owner). Different adapters populate different subsets of this shape -- do not fail if one section is missing, just note what's absent
-3. If $ARGUMENTS is empty or does not resemble a meeting summary (no Decisions/Discussion Points/Action Items section found at all), stop and tell the user this command needs a meeting summary, not a free-form product description -- suggest /ensemble:create-prd for that instead
+3. If $ARGUMENTS is empty or does not resemble a meeting summary (no Decisions/Discussion Points/Action Items section found at all), stop and tell the user this command needs a meeting summary, not a free-form product description -- suggest /ensemble-create-prd for that instead
 
 ### Step 2: Scale Detection (inferred, not asked)
 
@@ -67,7 +67,7 @@ Maintain consistency with prior product documentation
 2. Generate a collision-resistant micro UUID for the document id: 8 lowercase hex characters from a UUID/random source (e.g., `node -e "console.log(require('crypto').randomUUID().replace(/-/g,'').slice(0,8))"`). Do NOT scan for highest sequence numbers or increment NNN; teams create PRDs concurrently
 3. Set Document ID to PRD-{current_year}-{micro_uuid}, for example PRD-2026-a1b2c3d4
 4. Note any cross-cutting requirements from existing PRDs that this feature must respect
-5. If the meeting summary itself references an existing PRD or feature by name, flag that as a candidate for /ensemble:refine-prd-meeting instead -- this command is for new PRDs, not extending an existing one
+5. If the meeting summary itself references an existing PRD or feature by name, flag that as a candidate for /ensemble-refine-prd-meeting instead -- this command is for new PRDs, not extending an existing one
 
 ### Step 3: Technical Dependency Mapping
 
@@ -135,7 +135,7 @@ stated explicitly in the meeting summary:
 
 After marking: count the total [NEEDS CLARIFICATION] markers and print:
 "Ambiguity scan complete: N items marked for clarification (meeting-sourced draft -- expect more than a live create-prd run)."
-These markers become the structured interview agenda in a later, human-run /ensemble:refine-prd.
+These markers become the structured interview agenda in a later, human-run /ensemble-refine-prd.
 
 ### Step 5: Dependency Map
 
@@ -201,4 +201,4 @@ Save to docs/PRD/ directory and confirm
 **Actions:**
 1. Create docs/PRD/ directory if it doesn't exist
 2. Save the PRD to docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md
-3. Print: file path, requirement count, readiness score, [NEEDS CLARIFICATION] marker count, and the suggested next step -- /ensemble:refine-prd on this file to close out the clarification markers interactively, not /ensemble:create-trd directly, given the marker count
+3. Print: file path, requirement count, readiness score, [NEEDS CLARIFICATION] marker count, and the suggested next step -- /ensemble-refine-prd on this file to close out the clarification markers interactively, not /ensemble-create-trd directly, given the marker count

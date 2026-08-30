@@ -118,6 +118,23 @@ describe('transformCommand', () => {
     });
   });
 
+  describe('command reference normalization', () => {
+    it('rewrites ensemble:<cmd> command references to the Pi ensemble-<cmd> form', () => {
+      const cmd: CommandYaml = {
+        ...MINIMAL_COMMAND,
+        mission: {
+          summary: 'Then run /ensemble:refine-trd and see the ensemble:beads-build workflow.',
+        },
+      };
+      const output = transformCommand(cmd, SOURCE_PATH, {});
+      expect(output).toContain('/ensemble-refine-trd');
+      expect(output).toContain('ensemble-beads-build');
+      // No Claude-style colon command references survive into Pi output
+      // (covers the H1 title and every in-body cross-command reference).
+      expect(output).not.toMatch(/ensemble:[a-z0-9-]+/);
+    });
+  });
+
   describe('mission blockquote', () => {
     it('emits a blockquote when mission.summary is present', () => {
       const output = transformCommand(FULL_COMMAND, SOURCE_PATH, {});

@@ -312,10 +312,17 @@ export async function copySkills(
     }
 
     // Normalise SKILL.md frontmatter for Pi compatibility; normalize CRLF for all files
-    const content =
+    const normalizedContent =
       entry.fileName === 'SKILL.md'
         ? normalizeSkillMd(rawContent, entry.skillDirName)
         : rawContent.replace(/\r\n/g, '\n');
+
+    // Rewrite Claude-style command references (ensemble:<cmd>) to the Pi
+    // invocation form (ensemble-<cmd>). Pi commands are emitted as
+    // prompts/ensemble-<cmd>.md and invoked as /ensemble-<cmd>; skill bodies
+    // that point at ensemble:<cmd> would otherwise reference names that do not
+    // resolve in Pi. Source stays authored in the Claude-canonical colon form.
+    const content = normalizedContent.replace(/ensemble:([a-z0-9-]+)/g, 'ensemble-$1');
 
     const result: TransformResult = {
       sourcePath: entry.srcPath,

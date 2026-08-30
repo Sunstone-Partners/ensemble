@@ -19,7 +19,7 @@ The `[Given(@"...")]` attributes in generated `Steps/*.cs` are **authoritative a
 read-only**. Bind by editing **method bodies only** — never the attribute text. A
 hand-edited attribute that no longer matches the scenario step becomes an *undefined
 step*. Wrong/missing attribute text is a drift signal (see
-`/ensemble:check-binding-drift`), not something to fix by hand.
+`/ensemble-check-binding-drift`), not something to fix by hand.
 
 ## Package set (already wired by the generator)
 

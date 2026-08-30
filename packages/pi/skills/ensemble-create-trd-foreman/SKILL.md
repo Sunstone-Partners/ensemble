@@ -65,7 +65,7 @@ Check if the PRD passed its own readiness gate before proceeding
 2. Otherwise read PRD frontmatter for Readiness Score field
 3. If score >= 4.0 (PASS): proceed normally
 4. If score 3.0-3.9 (CONCERNS): warn about PRD concerns and proceed automatically for non-interactive callers
-5. If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first
+5. If score < 3.0 (FAIL): halt and recommend running /ensemble-refine-prd first
 6. If no readiness score in frontmatter, proceed with a note that PRD was not gate-checked
 
 ## Phase 2: Architecture Design
@@ -90,7 +90,7 @@ Reuse existing foundational work instead of duplicating it (dedup-by-reference)
 2. Run: node "$TRD_GRAPH_CLI" capabilities docs/TRD --json to list capabilities already provided by foundational TRDs; if docs/TRD does not exist yet, treat the registry as empty and continue
 3. For each technical capability this PRD needs, check the registry: EXPLICIT match = a listed capability token; otherwise IMPLICIT match by comparing needed work to foundational TRD labels/titles and target files (also: node "$TRD_GRAPH_CLI" overlap docs/TRD)
 4. If a foundational TRD already provides the capability: DO NOT emit duplicate task rows for it. Keep the Foreman Dependencies column local-only; record external reuse under a '## Reused Capabilities' section as capability -> foundational slug/document id/ref (<foundational-slug>#TRD-NNN or #PR-N)
-5. If a needed capability is clearly reusable but no foundational TRD exists, recommend extracting it via /ensemble:create-trd <prd> --foundational instead of embedding it here
+5. If a needed capability is clearly reusable but no foundational TRD exists, recommend extracting it via /ensemble-create-trd <prd> --foundational instead of embedding it here
 6. Reference foundational work by slug / document id only -- never by label
 
 ### Step 3: Architecture Alternatives

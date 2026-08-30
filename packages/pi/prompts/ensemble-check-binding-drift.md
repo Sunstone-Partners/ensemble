@@ -4,7 +4,7 @@
 
 # ensemble-check-binding-drift
 
-> **Mission:** Re-derive the step inventory from a PRD's current acceptance criteria and compare it against the [Given/When/Then(@"...")] attributes actually present in the generated Reqnroll step classes. Reports UNBOUND steps (in the PRD but with no binding) and ORPHANED bindings (in code but no longer in the PRD). This is the second tier of requirement traceability: /ensemble:check-feature-drift covers PRD vs .feature, this covers .feature vs the step bindings. The CLI exit code (0 in-sync, 2 drift) lets the same check gate CI or a pre-commit hook.
+> **Mission:** Re-derive the step inventory from a PRD's current acceptance criteria and compare it against the [Given/When/Then(@"...")] attributes actually present in the generated Reqnroll step classes. Reports UNBOUND steps (in the PRD but with no binding) and ORPHANED bindings (in code but no longer in the PRD). This is the second tier of requirement traceability: /ensemble-check-feature-drift covers PRD vs .feature, this covers .feature vs the step bindings. The CLI exit code (0 in-sync, 2 drift) lets the same check gate CI or a pre-commit hook.
 
 > **Constraints:**
 > - This command is READ-ONLY -- it reports drift and never rewrites .cs, .feature, or project files
@@ -36,6 +36,6 @@ Explain the drift and how to resolve it
 
 **Actions:**
 1. If IN_SYNC: confirm the bindings cover the PRD's steps
-2. If UNBOUND: list the steps needing new bindings -- re-run /ensemble:generate-reqnroll-bindings to add stubs (write-once preserves filled bodies)
+2. If UNBOUND: list the steps needing new bindings -- re-run /ensemble-generate-reqnroll-bindings to add stubs (write-once preserves filled bodies)
 3. If ORPHANED: list bindings whose acceptance criterion was removed or reworded -- update or delete them
-4. If no bindings exist yet: tell the user to run /ensemble:generate-reqnroll-bindings first
+4. If no bindings exist yet: tell the user to run /ensemble-generate-reqnroll-bindings first

@@ -4,7 +4,7 @@
 
 # ensemble-create-workstream-trd
 
-> **Mission:** Combine multiple canonical TRDs into one generated, executable workstream TRD that preserves source PRD/TRD/REQ/AC provenance and can be passed as the single input to /ensemble:implement-trd-beads. Source TRDs remain canonical. The generated workstream TRD is an execution artifact that normalizes the graph-critical Master Task List while preserving source task markdown verbatim. It decomposes every referenced PRD acceptance criterion into AC-level implementation, executable-test, and validation tasks with Definition of Done evidence requirements. Generated workstream files use micro UUID document IDs (TRD-YYYY-<8hex>-workstream-<slug>.md), not sequence numbers, to avoid collisions across large teams.
+> **Mission:** Combine multiple canonical TRDs into one generated, executable workstream TRD that preserves source PRD/TRD/REQ/AC provenance and can be passed as the single input to /ensemble-implement-trd-beads. Source TRDs remain canonical. The generated workstream TRD is an execution artifact that normalizes the graph-critical Master Task List while preserving source task markdown verbatim. It decomposes every referenced PRD acceptance criterion into AC-level implementation, executable-test, and validation tasks with Definition of Done evidence requirements. Generated workstream files use micro UUID document IDs (TRD-YYYY-<8hex>-workstream-<slug>.md), not sequence numbers, to avoid collisions across large teams.
 
 ## Phase 1: Generate Workstream TRD
 
@@ -31,5 +31,5 @@ Create normalized executable workstream TRD
 Tell the user how to execute the generated workstream
 
 **Actions:**
-1. Print generated path, workstream slug, source TRD count, and next step: /ensemble:implement-trd-beads <generated-path>.
+1. Print generated path, workstream slug, source TRD count, and next step: /ensemble-implement-trd-beads <generated-path>.
 2. Do not start implementation automatically.

@@ -10,7 +10,7 @@
 > - DO NOT implement, build, or execute any work described in the PRD
 > - This command ONLY refines the PRD document itself
 > - $ARGUMENTS must identify both a PRD file path AND a meeting summary (inline text or a path to one) -- this command needs two distinct inputs, not one
-> - DO NOT invent answers to findings the meeting summary does not actually address -- leave those findings and their [NEEDS CLARIFICATION] markers untouched for a later live /ensemble:refine-prd pass, do not guess
+> - DO NOT invent answers to findings the meeting summary does not actually address -- leave those findings and their [NEEDS CLARIFICATION] markers untouched for a later live /ensemble-refine-prd pass, do not guess
 > - DO NOT make any edits to the PRD during the Synthesis step -- findings are classified first, edits happen only after
 > - The meeting-summary input contract is source-agnostic, same as create-prd-meeting -- any adapter that normalizes into the expected shape (see Phase 1) can feed this command
 
@@ -35,7 +35,7 @@ Read and structurally parse the meeting summary provided alongside the PRD path
 **Actions:**
 1. Read the meeting summary from $ARGUMENTS -- inline text or a file path, distinct from the PRD path
 2. Expect the same normalized shape as create-prd-meeting: some subset of meeting title/date/attendees, Decisions, Open Questions, Discussion Points (optionally topic-grouped), Action Items (optionally owner-tagged). Do not assume every section is present
-3. If $ARGUMENTS only identifies a PRD with no meeting summary content or path alongside it, stop and tell the user this command needs both a PRD path and a meeting summary -- suggest /ensemble:refine-prd for a live-interview refinement instead
+3. If $ARGUMENTS only identifies a PRD with no meeting summary content or path alongside it, stop and tell the user this command needs both a PRD path and a meeting summary -- suggest /ensemble-refine-prd for a live-interview refinement instead
 
 ### Step 3: Synthesis
 
@@ -113,7 +113,7 @@ Re-score the PRD after refinement to measure improvement
 4. Compute overall score: average of all 4 dimensions
 5. If a previous score exists, print delta: 'Readiness score: X.X -> Y.Y (improved/declined)'
 6. If the score dropped compared to previous, warn the user and identify which dimensions declined
-7. Note plainly if a meaningful STILL_OPEN count remains -- the score may legitimately stay below PASS until a live /ensemble:refine-prd closes those out, and that's expected, not a defect in this pass
+7. Note plainly if a meaningful STILL_OPEN count remains -- the score may legitimately stay below PASS until a live /ensemble-refine-prd closes those out, and that's expected, not a defect in this pass
 8. Update the Readiness Score in the PRD frontmatter
 9. Status transition rule (explicit, matching create-prd-meeting): regardless of whether the re-score lands on PASS, CONCERNS, or FAIL, this command never changes the PRD's Status field away from whatever it already was (typically Draft). A meeting-sourced refinement pass -- even one that reaches PASS -- doesn't itself graduate a PRD to a reviewed/approved state; that still requires a live human check. Only note the gate result and score, don't act on it by changing Status
 
@@ -128,4 +128,4 @@ Save the refined PRD with updated metadata and changelog
 2. Update the PRD Health summary: recalculate requirement counts by priority, AC coverage percentage, risk flag count, dependency count
 3. Add changelog entry at the bottom of the PRD: date, version, list of changes made during this refinement, noting it was a meeting-sourced pass and naming the meeting if the input included a title/date
 4. Save the updated PRD to the same file path (overwrite the original)
-5. Print summary: number of changes made, new version, updated readiness score and delta, RESOLVABLE_FROM_MEETING count applied, and STILL_OPEN count remaining -- so the user knows a live /ensemble:refine-prd pass is still needed for the remainder if that count is nonzero
+5. Print summary: number of changes made, new version, updated readiness score and delta, RESOLVABLE_FROM_MEETING count applied, and STILL_OPEN count remaining -- so the user knows a live /ensemble-refine-prd pass is still needed for the remainder if that count is nonzero

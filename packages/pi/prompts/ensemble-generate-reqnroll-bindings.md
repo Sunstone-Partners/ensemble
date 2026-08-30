@@ -11,7 +11,7 @@
 > - Codegen runs through the reqnroll-cli helper -- DO NOT hand-author .feature, .cs, .csproj, or reqnroll.json files
 > - The generated [Given/When/Then(@"...")] attributes are authoritative -- never edit them by hand
 > - Step .cs files are WRITE-ONCE -- regeneration preserves filled bodies and only adds new step stubs (unless --force)
-> - Every generated step body is a Pending stub; making them pass is a separate, test-first step (see /ensemble:reqnroll-tdd)
+> - Every generated step body is a Pending stub; making them pass is a separate, test-first step (see /ensemble-reqnroll-tdd)
 
 ## Phase 1: Generate
 
@@ -41,4 +41,4 @@ Summarize the scaffold and the next move
 1. Report the output directory, feature count, and distinct step-binding count
 2. List any step files that were preserved (write-once) versus newly created
 3. Echo parser warnings and remind the user that needs-clarification ACs produce step-less scenarios until the PRD is fixed
-4. Point the user to /ensemble:reqnroll-tdd to fill the Pending() bodies test-first, or /ensemble:check-binding-drift to audit coverage later
+4. Point the user to /ensemble-reqnroll-tdd to fill the Pending() bodies test-first, or /ensemble-check-binding-drift to audit coverage later

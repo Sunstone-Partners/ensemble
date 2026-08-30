@@ -327,4 +327,4 @@ Print configuration summary and suggest next command
 2. List all assigned agents by role (lead, builders, reviewer, qa)
 3. List any marketplace plugins that were installed
 4. Print: 'Review the ## Team Configuration section and edit agent assignments if needed'
-5. Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-NNN-slug.md'
+5. Suggest: '/ensemble-implement-trd-beads docs/TRD/TRD-YYYY-NNN-slug.md'

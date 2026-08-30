@@ -105,9 +105,9 @@ Validate TRD file and build traceability map when TRD_MODE is enabled
 2. If TRD_MODE=true: verify TRD_PATH file exists on disk; if not found print "ERROR: TRD file not found at <TRD_PATH>" and HALT
 3. Read TRD file; parse YAML frontmatter block (between --- delimiters) for design_readiness_score field
 4. If score >= 4.0 (PASS): print "Design Readiness: PASS (<score>)" and continue
-5. If score >= 3.0 AND < 4.0 (CONCERNS): print "WARNING: TRD has Design Readiness score of <score> (CONCERNS). Consider running /ensemble:refine-trd before implementation."
-6. If score < 3.0 (FAIL): print "ERROR: TRD has Design Readiness score of <score> (FAIL). Run /ensemble:refine-trd to improve the TRD before implementation." and HALT
-7. If no design_readiness_score found: print "NOTE: No Design Readiness score found (pre-v3.0.0 TRD). Consider running /ensemble:refine-trd." and continue
+5. If score >= 3.0 AND < 4.0 (CONCERNS): print "WARNING: TRD has Design Readiness score of <score> (CONCERNS). Consider running /ensemble-refine-trd before implementation."
+6. If score < 3.0 (FAIL): print "ERROR: TRD has Design Readiness score of <score> (FAIL). Run /ensemble-refine-trd to improve the TRD before implementation." and HALT
+7. If no design_readiness_score found: print "NOTE: No Design Readiness score found (pre-v3.0.0 TRD). Consider running /ensemble-refine-trd." and continue
 8. Build TASK_TRACEABILITY map: scan TRD for [satisfies REQ-NNN], [satisfies INFRA], [satisfies ARCH], [verifies TRD-NNN], "Validates PRD ACs:" fields, "Implementation AC:" blocks, "Proof of requirement:" fields per task; store in map keyed by task.id
 9. Classify task type: if task.id ends in -TEST suffix, mark is_test_task=true; extract verifies_task_id and satisfies_req_id; store in TASK_TRACEABILITY[task.id]
 10. Print "TRD augmentations: enabled (traceability, checkbox sync, requirement report)"
@@ -157,7 +157,7 @@ depth-1 subagent respects Codex's max_depth=1 constraint.
 8. - If SUMMARY_JSON.terminal_state == "in_progress" AND SUMMARY_JSON.remaining_scoped_count > 0 AND SUMMARY_JSON.next_action_hint == "dispatch_another_wave": immediately return to Step 2 with wave_number = SUMMARY_JSON.wave_number + 1. Do NOT print progress, do NOT summarize, do NOT pause between iterations - the JSON summary is the only output between iterations.
 9. - If SUMMARY_JSON.terminal_state == "in_progress" AND SUMMARY_JSON.remaining_scoped_count == 0 AND SUMMARY_JSON.in_progress_scoped_count == 0: print "=== Execution completed: state drain reached zero ===". Break the loop and proceed to Quality Gate.
 10. Step 5 (no re-plan or re-partition at this layer): this command does NOT call bv --robot-plan. The wave-runner does. The next wave is a fresh Task() invocation - no state from a prior wave is reused.
-11. Step 6 (context budget monitoring, informational only): after every 5 waves, print "Context checkpoint: <N> waves completed this session. If quality is degrading, consider: (1) /compact to compress conversation context, (2) start a new session with /ensemble:beads-build <ROOT_EPIC_ID> (beads preserve all state)." Do not halt or pause execution based on this signal.
+11. Step 6 (context budget monitoring, informational only): after every 5 waves, print "Context checkpoint: <N> waves completed this session. If quality is degrading, consider: (1) /compact to compress conversation context, (2) start a new session with /ensemble-beads-build <ROOT_EPIC_ID> (beads preserve all state)." Do not halt or pause execution based on this signal.
 12. After the loop exits: run br sync --flush-only. Print "=== Execution completed: <WAVE_COUNT> waves processed ===". Continue to Quality Gate.
 
 ### Step 2: Debug Loop (TRD-019)
@@ -178,7 +178,7 @@ Handle br command failures during execution
 1. After any br command: if exit code != 0 AND prior br commands in session succeeded -> possible br failure
 2. Print error message with br command that failed and its exit code
 3. Print: check br status and .beads/ directory integrity
-4. PAUSE for user decision (resume with /ensemble:beads-build <ROOT_EPIC_ID> after issue resolved)
+4. PAUSE for user decision (resume with /ensemble-beads-build <ROOT_EPIC_ID> after issue resolved)
 
 ## Phase 3: Quality Gate
 
@@ -255,5 +255,5 @@ Print final summary, requirement satisfaction table (if TRD_MODE), and PR remind
 18. If PR_BACKEND=='ado': remind user: git push -u origin <branch>; az repos pr create --source-branch <branch> --target-branch main --title "<title>"; or via the portal: Repos > Pull Requests > New Pull Request, source=<branch>, target=main; after merge: move any TRD file to docs/TRD/completed/
 19. If PR_BACKEND=='manual': remind user: git push -u origin <branch>; then create the PR yourself via gh pr create --base main (or the ADO CLI/portal equivalent if the remote is Azure DevOps); after merge: move any TRD file to docs/TRD/completed/
 20. Remind user: br sync --flush-only && git add .beads/ && git commit -m "chore: final beads sync"
-21. TIP: The execution engine used here is also available via /ensemble:implement-trd-beads <trd-path> for TRD-driven workflows with full scaffold, traceability validation, and Design Readiness gate.
+21. TIP: The execution engine used here is also available via /ensemble-implement-trd-beads <trd-path> for TRD-driven workflows with full scaffold, traceability validation, and Design Readiness gate.
 22. Do NOT auto-create PR — user must create it manually per the PR_BACKEND-specific reminder above

@@ -19,7 +19,7 @@ Resolve the TRD slug from $ARGUMENTS.
 If $ARGUMENTS is a file path: derive TRD_SLUG from filename (lowercase, replace non-alphanumeric with hyphens).
 If $ARGUMENTS is a slug string: use directly as TRD_SLUG.
 If $ARGUMENTS empty: list recent TRD-prefixed epics via br list --status=open --json and prompt user.
-If br list returns no TRD-prefixed epics: print 'No TRD implementations found in beads storage. Run /ensemble:implement-trd-beads first.' and EXIT.
+If br list returns no TRD-prefixed epics: print 'No TRD implementations found in beads storage. Run /ensemble-implement-trd-beads first.' and EXIT.
 
 ### Step 2: Root Epic Location
 

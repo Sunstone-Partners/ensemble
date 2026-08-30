@@ -10,7 +10,7 @@ messaging and require an explicit user override before proceeding.
 
 ## Motivation
 
-A TRD was reported "complete" via `/ensemble:implement-trd-beads`, but manual
+A TRD was reported "complete" via `/ensemble-implement-trd-beads`, but manual
 inspection found large swaths of missing functionality. The root cause: the
 existing completion logic trusts *self-reported* state — bead status set by
 whichever agent closed a task, checkbox ticks, and `req-verified:` comment

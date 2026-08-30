@@ -161,7 +161,7 @@ Categories to scan for ambiguities:
 
 After marking: count the total [NEEDS CLARIFICATION] markers and print:
 "Ambiguity scan complete: N items marked for clarification."
-These markers will become the structured interview agenda in /ensemble:refine-prd.
+These markers will become the structured interview agenda in /ensemble-refine-prd.
 
 ### Step 5: Dependency Map
 
@@ -243,4 +243,4 @@ Save to docs/PRD/ directory and confirm
 **Actions:**
 1. Create docs/PRD/ directory if it doesn't exist
 2. Save the PRD to docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md
-3. Print: file path, requirement count, readiness score, and suggested next step (e.g., '/ensemble:create-trd docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md')
+3. Print: file path, requirement count, readiness score, and suggested next step (e.g., '/ensemble-create-trd docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md')

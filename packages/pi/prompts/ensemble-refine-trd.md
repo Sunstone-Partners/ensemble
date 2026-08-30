@@ -453,7 +453,7 @@ Determine whether task changes warrant team reconfiguration
 **Actions:**
 1. Calculate task count delta (original vs refined)
 2. Calculate hour estimate delta (original vs refined)
-3. If task count changed by >20%, suggest: '/ensemble:configure-team <trd-path> to re-configure the team'
+3. If task count changed by >20%, suggest: '/ensemble-configure-team <trd-path> to re-configure the team'
 4. Update the readiness score in frontmatter
 
 ## Phase 5: Output Management

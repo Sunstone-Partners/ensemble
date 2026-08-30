@@ -5,7 +5,7 @@ description: 'Detect whether a TRD is stale before implementation begins. If sta
 # TRD Staleness Gate
 
 Detect whether a TRD is stale before implementation begins. If stale, invoke
-`/ensemble:refine-trd` to refresh it, then proceed. If refinement fails, halt.
+`/ensemble-refine-trd` to refresh it, then proceed. If refinement fails, halt.
 
 ---
 
@@ -158,13 +158,13 @@ IF STALE_DRIFT:
     IF NEWER_COUNT > 10:
         MESSAGE += "  (and ${NEWER_COUNT - 10} more)\n"
 
-MESSAGE += "Running /ensemble:refine-trd before implementation."
+MESSAGE += "Running /ensemble-refine-trd before implementation."
 ```
 
 Print the message, then invoke:
 
 ```
-/ensemble:refine-trd <TRD_PATH>
+/ensemble-refine-trd <TRD_PATH>
 ```
 
 ---
@@ -204,6 +204,6 @@ This limitation is accepted and documented in PRD-2026-022 non-goals. Semantic
 staleness detection (git log-based, content-aware) is out of scope for this release.
 
 **Workaround:** If you encounter false-positive staleness after a fresh clone,
-either run `/ensemble:refine-trd` manually (it will confirm the TRD is current and
+either run `/ensemble-refine-trd` manually (it will confirm the TRD is current and
 re-touch its mtime), or proceed past the gate — the refinement step is designed to
 be safe to run even when the TRD is already accurate.

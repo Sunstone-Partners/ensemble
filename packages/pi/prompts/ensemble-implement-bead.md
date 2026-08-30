@@ -4,7 +4,7 @@
 
 # ensemble-implement-bead
 
-> **Mission:** Implement a single beads task identified by its bead ID. Fetches bead details, creates a feature branch, analyses the codebase, implements the required changes, runs tests, then closes the bead and creates a pull request. Designed for focused single-task execution — use /ensemble:beads-build for multi-task epic-level orchestration. Records all state transitions in beads for cross-session visibility. Key behaviors: - Validates bead exists and is not already closed before starting - Warns (does not halt) on dirty working directory - Derives branch name from bead title with bead/<ID>- prefix - Marks bead in_progress before implementing; closed on success - Records br comments at each state transition - Creates PR via gh pr create on completion
+> **Mission:** Implement a single beads task identified by its bead ID. Fetches bead details, creates a feature branch, analyses the codebase, implements the required changes, runs tests, then closes the bead and creates a pull request. Designed for focused single-task execution — use /ensemble-beads-build for multi-task epic-level orchestration. Records all state transitions in beads for cross-session visibility. Key behaviors: - Validates bead exists and is not already closed before starting - Warns (does not halt) on dirty working directory - Derives branch name from bead title with bead/<ID>- prefix - Marks bead in_progress before implementing; closed on success - Records br comments at each state transition - Creates PR via gh pr create on completion
 
 ## Phase 1: Preflight
 

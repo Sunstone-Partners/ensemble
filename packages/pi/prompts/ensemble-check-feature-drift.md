@@ -4,7 +4,7 @@
 
 # ensemble-check-feature-drift
 
-> **Mission:** Re-parse a PRD and compare its current acceptance criteria against the .prd-trace.json manifest produced by /ensemble:generate-feature-tests. Reports ADDED acceptance criteria with no feature scenario, REMOVED criteria whose feature scenario is now orphaned, and CHANGED criteria whose wording has materially diverged from the generated feature. This makes requirement/test traceability continuous rather than a one-time snapshot, and the CLI exit code (0 in-sync, 2 drift) lets the same check run as a CI or pre-commit gate.
+> **Mission:** Re-parse a PRD and compare its current acceptance criteria against the .prd-trace.json manifest produced by /ensemble-generate-feature-tests. Reports ADDED acceptance criteria with no feature scenario, REMOVED criteria whose feature scenario is now orphaned, and CHANGED criteria whose wording has materially diverged from the generated feature. This makes requirement/test traceability continuous rather than a one-time snapshot, and the CLI exit code (0 in-sync, 2 drift) lets the same check run as a CI or pre-commit gate.
 
 > **Constraints:**
 > - This command is READ-ONLY -- it never rewrites feature files; it reports drift and tells the user how to resync
@@ -38,5 +38,5 @@ Explain the drift and the path back to sync
 **Actions:**
 1. If IN_SYNC: confirm the feature files match the PRD
 2. If ADDED/REMOVED/CHANGED: list the affected AC ids under each category
-3. If no manifest exists: tell the user to run /ensemble:generate-feature-tests first
-4. Recommend re-running /ensemble:generate-feature-tests to resync, then committing the updated features and manifest
+3. If no manifest exists: tell the user to run /ensemble-generate-feature-tests first
+4. Recommend re-running /ensemble-generate-feature-tests to resync, then committing the updated features and manifest

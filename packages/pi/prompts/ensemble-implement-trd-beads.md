@@ -63,7 +63,7 @@ Process --status and --reset-task arguments for early exit paths
 
 **Actions:**
 1. If $ARGUMENTS contains '--plan' AND $ARGUMENTS contains '--execute': print 'ERROR: --plan and --execute are mutually exclusive.' and EXIT
-2. Parse $ARGUMENTS for .md paths. Initialize COMBINED_WORKSTREAM_MODE=false before branching. If two or more TRD paths are present without '--workstream' or '--legacy-multi': print 'ERROR: Multiple TRDs passed directly. Direct multi-TRD execution is deprecated because it can lose fidelity across parser/runtime merge boundaries. Run /ensemble:create-workstream-trd <trd1> <trd2> ... then /ensemble:implement-trd-beads <generated-workstream-trd>, or rerun with --workstream to generate first.' and HALT before any br/git/scaffold side effects. If two or more TRD paths are present with '--workstream': resolve TRD_CLI and run node "$TRD_CLI" create-workstream-trd <TRD_PATHS...>; parse {ok,path}. If ok is false or JSON malformed, print errors and HALT. Replace TRD path list with the generated single workstream TRD path and continue normal single-TRD behavior. If two or more TRD paths are present with '--legacy-multi': set COMBINED_WORKSTREAM_MODE=true, set SOURCE_TRD_PATHS to the ordered path list, print 'DEPRECATED: direct multi-TRD mode; prefer /ensemble:create-workstream-trd then implement the generated workstream TRD', and list every source TRD. If exactly one TRD path is present: keep COMBINED_WORKSTREAM_MODE=false and preserve existing single-TRD behavior exactly. If zero TRD paths are present: keep COMBINED_WORKSTREAM_MODE=false and defer to normal single-TRD selection in Preflight step 4.
+2. Parse $ARGUMENTS for .md paths. Initialize COMBINED_WORKSTREAM_MODE=false before branching. If two or more TRD paths are present without '--workstream' or '--legacy-multi': print 'ERROR: Multiple TRDs passed directly. Direct multi-TRD execution is deprecated because it can lose fidelity across parser/runtime merge boundaries. Run /ensemble-create-workstream-trd <trd1> <trd2> ... then /ensemble-implement-trd-beads <generated-workstream-trd>, or rerun with --workstream to generate first.' and HALT before any br/git/scaffold side effects. If two or more TRD paths are present with '--workstream': resolve TRD_CLI and run node "$TRD_CLI" create-workstream-trd <TRD_PATHS...>; parse {ok,path}. If ok is false or JSON malformed, print errors and HALT. Replace TRD path list with the generated single workstream TRD path and continue normal single-TRD behavior. If two or more TRD paths are present with '--legacy-multi': set COMBINED_WORKSTREAM_MODE=true, set SOURCE_TRD_PATHS to the ordered path list, print 'DEPRECATED: direct multi-TRD mode; prefer /ensemble-create-workstream-trd then implement the generated workstream TRD', and list every source TRD. If exactly one TRD path is present: keep COMBINED_WORKSTREAM_MODE=false and preserve existing single-TRD behavior exactly. If zero TRD paths are present: keep COMBINED_WORKSTREAM_MODE=false and defer to normal single-TRD selection in Preflight step 4.
 3. If $ARGUMENTS contains '--plan': set PLAN_ONLY=true (scaffold phase runs, Execute phase is skipped — print wheel instructions and exit after scaffold completes)
 4. If $ARGUMENTS contains '--execute': set EXECUTE_ONLY=true (scaffold phase is skipped — resume detection runs, Execute phase runs against existing beads)
 5. If $ARGUMENTS contains '--use-current-branch': set USE_CURRENT_BRANCH_REQUESTED=true; if $ARGUMENTS also contains '--branch=<name>': print 'ERROR: --use-current-branch and --branch=<name> are mutually exclusive.' and HALT before any git side effects. If flag absent: set USE_CURRENT_BRANCH_REQUESTED=false. If $ARGUMENTS contains '--branch=<name>': extract the branch name after '=' and store it as BRANCH_REQUESTED; if --use-current-branch is also present this is already caught and HALTed above.
@@ -119,9 +119,9 @@ Check if the TRD passed the Design Readiness Gate from create-trd v3.0.0
 **Actions:**
 1. Parse TRD frontmatter (YAML block between --- delimiters at top of file) for 'design_readiness_score' or 'Design Readiness Score' field
 2. If score exists AND score >= 4.0 (PASS): print 'Design Readiness: PASS (<score>)' and continue
-3. If score exists AND score >= 3.0 AND score < 4.0 (CONCERNS): print 'WARNING: TRD has Design Readiness score of <score> (CONCERNS). Consider running /ensemble:refine-trd to address issues before implementation.' Ask user to continue or abort.
-4. If score exists AND score < 3.0 (FAIL): print 'ERROR: TRD has Design Readiness score of <score> (FAIL). Run /ensemble:refine-trd to improve the TRD before implementation.' and HALT
-5. If no design readiness score found in frontmatter (pre-v3.0.0 TRD): print 'NOTE: No Design Readiness score found (pre-v3.0.0 TRD). Consider running /ensemble:refine-trd to generate a score.' and continue
+3. If score exists AND score >= 3.0 AND score < 4.0 (CONCERNS): print 'WARNING: TRD has Design Readiness score of <score> (CONCERNS). Consider running /ensemble-refine-trd to address issues before implementation.' Ask user to continue or abort.
+4. If score exists AND score < 3.0 (FAIL): print 'ERROR: TRD has Design Readiness score of <score> (FAIL). Run /ensemble-refine-trd to improve the TRD before implementation.' and HALT
+5. If no design readiness score found in frontmatter (pre-v3.0.0 TRD): print 'NOTE: No Design Readiness score found (pre-v3.0.0 TRD). Consider running /ensemble-refine-trd to generate a score.' and continue
 
 ### Step 7: Resume Detection
 
@@ -134,7 +134,7 @@ fields choices-read/choices-write ever persist; BRANCHING_STRATEGY and PR_BACKEN
 never written there and are always live-resolved).
 
 **Actions:**
-1. If EXECUTE_ONLY=true: skip scaffold phase entirely. Run resume detection to find ROOT_EPIC_ID. If no existing scaffold found: print 'ERROR: --execute requires an existing bead scaffold. Run /ensemble:implement-trd-beads --plan first.' and EXIT.
+1. If EXECUTE_ONLY=true: skip scaffold phase entirely. Run resume detection to find ROOT_EPIC_ID. If no existing scaffold found: print 'ERROR: --execute requires an existing bead scaffold. Run /ensemble-implement-trd-beads --plan first.' and EXIT.
 2. Run: br list --status=open --json
 3. Parse JSON output, search for entry where title matches pattern [trd:<TRD_SLUG>] with type epic
 4. If found (either EXECUTE_ONLY=false or EXECUTE_ONLY=true — this is a resumed TRD): set ROOT_EPIC_ID from JSON .id field, run br sync --flush-only, then call trd_progress() (Preflight step 1) with TRD_SLUG to show resumed TRD-scoped progress, skip Scaffold phase, proceed to Execute
@@ -261,10 +261,10 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
 20. Print '=============================='
 21. Step 5 — HALT decision: if any ERRORS (orphaned annotations) found:
 22. Print 'ERROR: Traceability validation failed. Fix orphaned [satisfies] annotations in TRD before implementing.'
-23. Print 'Run /ensemble:validate-requirements <prd-path> <trd-path> for details.'
+23. Print 'Run /ensemble-validate-requirements <prd-path> <trd-path> for details.'
 24. HALT
 25. Note: No beads were created. No git operations were performed. Plugin installations from this session are permanent. Re-run after fixing the TRD annotations.
-26. Step 6 — If only WARNINGs (no errors): print 'Traceability warnings found but continuing. Address before closing implementation. Run /ensemble:validate-requirements <PRD_PATH> <TRD_PATH> at any time to review warnings.' and proceed to Scaffold
+26. Step 6 — If only WARNINGs (no errors): print 'Traceability warnings found but continuing. Address before closing implementation. Run /ensemble-validate-requirements <PRD_PATH> <TRD_PATH> at any time to review warnings.' and proceed to Scaffold
 
 ## Phase 2: Scaffold
 
@@ -361,7 +361,7 @@ Run bv --robot-plan and --robot-triage for graph-aware execution planning
 4. Parse PLAN_OUTPUT to extract parallel tracks (track numbers, task lists per track)
 5. Store PARALLEL_TRACKS for use in wheel instructions
 6. On bv failure (non-zero exit OR malformed TOON output): print 'ERROR: bv --robot-plan failed' with captured diagnostics and HALT — bv is the required scheduler, there is no sequential-fallback path (contract: bv is required, line 122 of this skill; install bv from https://github.com/Dicklesworthstone/beads_viewer).
-7. Run: INSIGHTS_OUTPUT=$(bv --robot-insights --format toon) — capture graph health. Parse INSIGHTS_OUTPUT with explicit text patterns: cycles if /cycle|cycles/i and not /cycles:\s*none/i; unexpected blockers if /unexpected blocker|stale blocker|blocked by closed|missing blocker/i; priority/order mismatches if /priority.*mismatch|order.*mismatch|contradict|inversion/i. If cycles are detected: print the matching lines and HALT before execution until the user fixes dependencies or reruns refine-beads. If only unexpected blockers or priority/order mismatches are detected: print matching lines and ask user to continue, run /ensemble:refine-beads, or abort; continue only on explicit user approval. Never invoke bare bv; only --robot-* flags.
+7. Run: INSIGHTS_OUTPUT=$(bv --robot-insights --format toon) — capture graph health. Parse INSIGHTS_OUTPUT with explicit text patterns: cycles if /cycle|cycles/i and not /cycles:\s*none/i; unexpected blockers if /unexpected blocker|stale blocker|blocked by closed|missing blocker/i; priority/order mismatches if /priority.*mismatch|order.*mismatch|contradict|inversion/i. If cycles are detected: print the matching lines and HALT before execution until the user fixes dependencies or reruns refine-beads. If only unexpected blockers or priority/order mismatches are detected: print matching lines and ask user to continue, run /ensemble-refine-beads, or abort; continue only on explicit user approval. Never invoke bare bv; only --robot-* flags.
 8. Run: TRIAGE_OUTPUT=$(bv --robot-triage --format toon) — capture triage analysis
 9. Parse TRIAGE_OUTPUT to extract: quick_ref, recommendations (ranked list with scores), quick_wins, blockers_to_clear
 10. Store TRIAGE_RECOMMENDATIONS for use in wheel instructions
@@ -394,14 +394,14 @@ Print execution instructions for multi-agent parallel implementation. AC: FR-WI-
 2. ================================================================
 3. EXECUTION INSTRUCTIONS
 4. ================================================================
-5. Use /ensemble:implement-trd-beads --execute or bv --robot-plan to drive parallel implementation.
+5. Use /ensemble-implement-trd-beads --execute or bv --robot-plan to drive parallel implementation.
 6. Each bead runs through: Explorer → Developer → QA → Reviewer → Finalize
 7. ----------------------------------------------------------------
 8. PREREQUISITES (run once):
 9. br list --status=open              # Sanity check that br works
 10. ----------------------------------------------------------------
 11. RUN (dispatches agents to all ready beads):
-12. /ensemble:implement-trd-beads --execute
+12. /ensemble-implement-trd-beads --execute
 13. # Or drive manually: bv --robot-plan (repeat until epic is complete)
 14. # Reads bv --robot-plan tracks, assigns to agents, runs pipeline,
 15. # merges completed branches, and closes beads automatically.
@@ -416,14 +416,14 @@ Print execution instructions for multi-agent parallel implementation. AC: FR-WI-
 24. git town propose                   # Propose PR for feature branch
 25. ================================================================
 26. If BV_AVAILABLE == true: also print the BV analysis from Scaffold Step 7 (parallel tracks and triage recommendations) above the execution instructions as planning context.
-27. If PLAN_ONLY=true: print 'Plan complete. Bead hierarchy created. Run /ensemble:implement-trd-beads --execute to begin implementation.' and EXIT. Do not enter Execute phase.
-28. TIP: You can also run /ensemble:beads-plan <ROOT_EPIC_ID> at any time to regenerate bv analysis and execution instructions without re-running TRD scaffold.
+27. If PLAN_ONLY=true: print 'Plan complete. Bead hierarchy created. Run /ensemble-implement-trd-beads --execute to begin implementation.' and EXIT. Do not enter Execute phase.
+28. TIP: You can also run /ensemble-beads-plan <ROOT_EPIC_ID> at any time to regenerate bv analysis and execution instructions without re-running TRD scaffold.
 
 ## Phase 3: Execute
 
 ### Step 1: Delegate to beads-build
 
-Run /ensemble:beads-build with the current TRD root epic and --trd flag. The standalone beads-build command implements the canonical dispatch loop (bv --robot-plan scheduler + parallel track execution + barrier-and-replan). implement-trd-beads delegates to it so there is exactly one execution engine. AC: FR-GD-1, FR-GD-2, FR-GD-3, AC-TD-3, AC-BC-1
+Run /ensemble-beads-build with the current TRD root epic and --trd flag. The standalone beads-build command implements the canonical dispatch loop (bv --robot-plan scheduler + parallel track execution + barrier-and-replan). implement-trd-beads delegates to it so there is exactly one execution engine. AC: FR-GD-1, FR-GD-2, FR-GD-3, AC-TD-3, AC-BC-1
 
 **Actions:**
 1. TRD-019 — Debug Loop integration: any uncaught error from the delegated beads-build invocation must be surfaced back here as a Debug Loop entry. Debug Loop is the only allowed path for halting execution mid-TRD; do NOT add new halt paths.
@@ -434,7 +434,7 @@ Run /ensemble:beads-build with the current TRD root epic and --trd flag. The sta
 6. Determine MAX_PARALLEL: if --max-parallel was passed as an argument, use that value; else if the TRD frontmatter sets max_parallel, use that value; else default to 3.
 7. Determine TEAM_ROLES_JSON: if a parsed/default teamRoles object is already in scope from Team Configuration Detection, serialize that object as compact JSON and use it; else if --builder was passed as an argument or the TRD frontmatter sets builder_agent, synthesize a DEPRECATED compatibility roster {lead:{agents:['tech-lead-orchestrator'],owns:['planning','escalation']},builder:{agents:[<builder-override-or-frontmatter>],owns:['implementation']},architect:{agents:['architect'],owns:['task-design']},documentation:{agents:['documentation-specialist'],owns:['pr-boundary-doc-maintenance']}} and serialize it; else synthesize the same compatibility roster with builder=['tech-lead-orchestrator']. This deprecated synthesis path remains for one minor version only.
 8. Verify prerequisites are ready: TASK_TRACEABILITY is non-empty (built during Scaffold) and ROOT_EPIC_ID is set; if either is missing, HALT with 'ERROR: Cannot delegate to beads-build — <field> missing. Re-run from Scaffold phase or pass --trd explicitly.'
-9. Run the delegated command via the agent harness: invoke /ensemble:beads-build with arguments: <ROOT_EPIC_ID> --trd <TRD_FILE_PATH> --max-parallel <MAX_PARALLEL> --team-roles '<TEAM_ROLES_JSON>' --label <TRD_LABEL>
+9. Run the delegated command via the agent harness: invoke /ensemble-beads-build with arguments: <ROOT_EPIC_ID> --trd <TRD_FILE_PATH> --max-parallel <MAX_PARALLEL> --team-roles '<TEAM_ROLES_JSON>' --label <TRD_LABEL>
 10. Equivalent shape for environments without native slash-command dispatch (e.g. Pi/OMP): invoke the ensemble-beads-build skill directly (it is Pi-wrapped) with the same arguments: --epic <ROOT_EPIC_ID> --trd <TRD_FILE_PATH> --max-parallel <MAX_PARALLEL> --team-roles '<TEAM_ROLES_JSON>' --label <TRD_LABEL>. Keep --builder as a deprecated fallback accepted by beads-build for one minor version; there is no standalone packages/development/bin/implement.js CLI binary — do not reference one; it has never existed in this repo.
 11. If the delegated invocation returns non-zero exit code: capture stderr/stdout, surface as Debug Loop entry per TRD-019, then HALT.
 12. If the delegated invocation returns zero: read its stdout for the final completion summary (bead counts, branch state, last task closed). Persist TASK_CLOSED_IDS from the summary into this command's state so Quality Gate and Completion phases can reuse it.
@@ -529,7 +529,7 @@ manual instructions, never automated).
 2. Print 'Completion verification report (authoritative): <COMPLETION_REPORT_PATH>' — the Requirement Satisfaction Table below is informational/supplementary; the completion-verification skill's report is the authoritative record of gaps.
 3. Requirement Satisfaction Table: scan ROOT_EPIC_ID comments for req-verified: tokens
 4. Run: br comment list <ROOT_EPIC_ID>
-5. If br comment list fails or returns non-JSON: print 'WARNING: Could not read root epic comments — req-verified data unavailable. Run /ensemble:requirement-status <TRD_SLUG> to generate the report manually.' Continue with empty VERIFIED_REQS.
+5. If br comment list fails or returns non-JSON: print 'WARNING: Could not read root epic comments — req-verified data unavailable. Run /ensemble-requirement-status <TRD_SLUG> to generate the report manually.' Continue with empty VERIFIED_REQS.
 6. Parse each comment for tokens: req-verified:REQ-NNN, by:TRD-NNN-TEST, reviewer:<agent>, ac-proven:AC-NNN-M,...
 7. Build VERIFIED_REQS map: REQ-NNN -> {test_task, reviewer_agent, acs_proven}
 8. If TRD has PRD reference: also load PRD REQ-NNN list for cross-reference (unverified reqs show as NOT VERIFIED)
@@ -552,4 +552,4 @@ manual instructions, never automated).
 25. If STACKED_PRS=true: Remind user how each PR/phase was created, per PR_BACKEND: 'gh'+git-town — via git town propose (merge <label> 1 first; git-town auto-retargets subsequent PRs against main after each merge); 'gh'+plain-git — via standalone gh pr create per branch (retarget subsequent PRs manually after each merge — plain git has no auto-retarget); 'ado' — via the azure-devops MCP tool where connected, else created manually per the az repos pr create/portal instructions printed at that phase gate; 'manual' — created manually per the instructions printed at each phase gate. In every case: merge <label> 1 first (it targets main).
 26. Remind user: after all PRs merge, run: mv <trd_file> docs/TRD/completed/
 27. Remind user: br sync --flush-only && git add .beads/ && git commit -m 'chore: final beads sync'
-28. TIP: The execution engine used here is also available standalone as /ensemble:beads-build <epic-id>. Use it to drive any bead hierarchy (not just TRD-generated ones) through the same build pipeline.
+28. TIP: The execution engine used here is also available standalone as /ensemble-beads-build <epic-id>. Use it to drive any bead hierarchy (not just TRD-generated ones) through the same build pipeline.

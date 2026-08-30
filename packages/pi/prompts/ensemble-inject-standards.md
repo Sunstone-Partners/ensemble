@@ -19,7 +19,7 @@ Verify the standards index exists before proceeding
 
 **Actions:**
 1. Check if standards/index.yml exists in the project root
-2. If standards/index.yml does not exist: print "ERROR: No standards index found. Run /ensemble:discover-standards first." and stop
+2. If standards/index.yml does not exist: print "ERROR: No standards index found. Run /ensemble-discover-standards first." and stop
 3. If the file exists, read standards/index.yml fully into memory
 4. Note the stack metadata (language, framework) and the full list of categories and rules
 
@@ -29,7 +29,7 @@ Parse the task description and extract keyword signals for relevance matching
 
 **Actions:**
 1. Read $ARGUMENTS as TASK_DESCRIPTION
-2. If TASK_DESCRIPTION is empty: print "ERROR: Provide a task description, e.g., /ensemble:inject-standards 'implement user authentication endpoint'" and stop
+2. If TASK_DESCRIPTION is empty: print "ERROR: Provide a task description, e.g., /ensemble-inject-standards 'implement user authentication endpoint'" and stop
 3. Convert TASK_DESCRIPTION to lowercase and extract individual keywords
 4. Identify technology terms (language names, framework names, library names)
 5. Identify domain nouns (user, order, payment, product, auth, session, etc.)
@@ -84,4 +84,4 @@ Print instructions for the agent to proceed with the injected context
 
 **Actions:**
 1. Print: "Standards injected. Proceed with task using the above conventions."
-2. Print: "Run /ensemble:discover-standards to refresh the index if the codebase has changed."
+2. Print: "Run /ensemble-discover-standards to refresh the index if the codebase has changed."

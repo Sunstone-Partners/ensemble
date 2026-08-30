@@ -6,7 +6,7 @@ description: >-
   alternatives, task breakdown with traceability, optional MCP enhancement,
   adversarial self-review with a Design Readiness Gate, and structured output
   with traceability matrices. Team configuration is handled separately by
-  /ensemble:configure-team. All outputs are saved to docs/TRD/.
+  /ensemble-configure-team. All outputs are saved to docs/TRD/.
 disable-model-invocation: true
 ---
 <!-- Command: ensemble-create-trd | Version: 3.2.0 -->
@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 # ensemble-create-trd
 
-> **Mission:** Create a Technical Requirements Document (TRD) from a Product Requirements Document (PRD). Performs PRD validation, architecture design with alternatives, task breakdown with traceability, optional MCP enhancement, adversarial self-review with a Design Readiness Gate, and structured output with traceability matrices. Team configuration is handled separately by /ensemble:configure-team. All outputs are saved to docs/TRD/.
+> **Mission:** Create a Technical Requirements Document (TRD) from a Product Requirements Document (PRD). Performs PRD validation, architecture design with alternatives, task breakdown with traceability, optional MCP enhancement, adversarial self-review with a Design Readiness Gate, and structured output with traceability matrices. Team configuration is handled separately by /ensemble-configure-team. All outputs are saved to docs/TRD/.
 
 > **Constraints:**
 > - DO NOT implement, build, or execute any technical work described in the requirements
@@ -76,7 +76,7 @@ Check if the PRD passed its own readiness gate before proceeding
 2. Otherwise read PRD frontmatter for Readiness Score field
 3. If score >= 4.0 (PASS): proceed normally
 4. If score 3.0-3.9 (CONCERNS): warn user about PRD concerns, ask whether to proceed. If --foreman is set, skip the ask -- log the warning and proceed automatically.
-5. If score < 3.0 (FAIL): halt and recommend running /ensemble:refine-prd first (this HALT is unaffected by --foreman)
+5. If score < 3.0 (FAIL): halt and recommend running /ensemble-refine-prd first (this HALT is unaffected by --foreman)
 6. If no readiness score in frontmatter, proceed with a note that PRD was not gate-checked
 
 ## Phase 2: Architecture Design
@@ -101,7 +101,7 @@ Reuse existing foundational work instead of duplicating it (dedup-by-reference)
 2. Run: node "$TRD_GRAPH_CLI" capabilities docs/TRD --json to list capabilities already provided by foundational TRDs; if docs/TRD does not exist yet, treat the registry as empty and continue
 3. For each technical capability this PRD needs (from Domain Analysis), check the registry: an EXPLICIT match is one of the listed capability tokens; otherwise judge an IMPLICIT match by comparing the needed work to existing foundational TRD labels/titles and their target files (also consult: node "$TRD_GRAPH_CLI" overlap docs/TRD)
 4. If a foundational TRD already provides the capability: DO NOT generate duplicate tasks for it. Instead add a cross-TRD dependency [depends: <foundational-slug>#TRD-NNN] (or #PR-N) on the task that needs it, and record it under a '## Reused Capabilities' section (capability -> foundational TRD label + document id)
-5. If a needed capability is clearly reusable across PRDs but no foundational TRD exists yet, recommend extracting it: suggest running /ensemble:create-trd <prd> --foundational to create a shared TRD, rather than embedding the work here
+5. If a needed capability is clearly reusable across PRDs but no foundational TRD exists yet, recommend extracting it: suggest running /ensemble-create-trd <prd> --foundational to create a shared TRD, rather than embedding the work here
 6. Reference foundational work by slug / document id only -- never by label (labels are display-only and may change)
 
 ### Step 3: Architecture Alternatives
@@ -302,6 +302,6 @@ Save TRD and suggest follow-up commands
 1. Create docs/TRD/ directory if it doesn't exist
 2. Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md
 3. Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID)
-4. Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'
-5. Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'
-6. If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path
+4. Suggest: '/ensemble-configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'
+5. Suggest: '/ensemble-implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'
+6. If --team flag was passed in $ARGUMENTS, auto-run /ensemble-configure-team on the saved TRD path
