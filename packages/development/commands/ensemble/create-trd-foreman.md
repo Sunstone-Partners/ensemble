@@ -15,6 +15,20 @@ Create a Foreman-native Technical Requirements Document (TRD) from a Product Req
 The resulting TRD must be machine-consumable by Foreman's existing `parseTrd()` parser and suitable for
 immediate native task creation via `foreman sling prd`. Perform PRD validation, architecture design with
 alternatives, and a structured task breakdown with deterministic markdown tables. All outputs are saved to docs/TRD/.
+Foreman subject contract: under --foreman, FOREMAN_TASK_TITLE and
+FOREMAN_TASK_DESCRIPTION carry the dispatched task's title and description (Foreman
+dispatch sets them; nothing else does). When FOREMAN_TASK_TITLE is set and non-empty
+the TRD must plan exactly that task, and you print the title you read before
+writing anything. FOREMAN_SOURCE_PRD_PATH, when set and non-empty, is the absolute path
+of the PRD the previous Foreman phase actually produced: it is an INPUT to consume, not
+an output path to write, and it is the only PRD you may read. Confirm that PRD's own
+subject matches FOREMAN_TASK_TITLE before consuming it; if they describe different
+work, STOP and report the mismatch quoting both subjects rather than planning the wrong
+PRD. If FOREMAN_SOURCE_PRD_PATH is set but missing on disk, STOP and report the path --
+never fall back to a directory scan. If NEITHER a prd-path was passed as arguments NOR
+FOREMAN_SOURCE_PRD_PATH is set, STOP and report that no source PRD was delivered.
+NEVER choose a PRD by recency, glob, or plausibility. Outside Foreman dispatch these
+variables are absent and behavior is unchanged.
 
 ## Workflow
 
@@ -23,6 +37,7 @@ alternatives, and a structured task breakdown with deterministic markdown tables
 **1. PRD Ingestion**
    Parse and analyze existing PRD document from $ARGUMENTS path
 
+   - If FOREMAN_SOURCE_PRD_PATH is set and non-empty, that file is THE PRD to consume -- read it and no other. If it is set but absent on disk, print 'ERROR: FOREMAN_SOURCE_PRD_PATH points at a missing file: <path>' and HALT without falling back to a directory scan. If it is unset AND no prd-path argument was provided, print 'ERROR: no source PRD was delivered (FOREMAN_SOURCE_PRD_PATH unset, no prd-path argument)' and HALT. Never select a PRD by recency, glob, or plausibility. When FOREMAN_TASK_TITLE is set, verify the PRD's subject matches it and HALT on a mismatch, quoting both.
    - Read PRD file from specified path
    - If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), skip PRD-structure validation for this run, and build a capability registry from the brief's named capabilities / scope / target files instead of REQ-NNN IDs
    - If a full PRD is provided: validate document structure (required sections present), extract key requirements with REQ-NNN IDs, and build requirements registry for traceability tracking

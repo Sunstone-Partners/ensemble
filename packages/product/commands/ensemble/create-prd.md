@@ -15,6 +15,22 @@ contextual research, and adversarial self-review. Adapts depth to project scale 
 through enterprise). Uses clarifying interviews and creative elicitation techniques to surface
 hidden requirements before writing. Every PRD passes an Implementation Readiness Gate before
 being saved to ensure handoff quality.
+Foreman subject contract: under --foreman the dispatched task -- not the repository --
+decides what this PRD is about. FOREMAN_TASK_TITLE carries that task's title and
+FOREMAN_TASK_DESCRIPTION its description (Foreman dispatch sets them; nothing else
+does). When FOREMAN_TASK_TITLE is set and non-empty it is the authoritative subject:
+write the PRD about exactly that, treat FOREMAN_TASK_DESCRIPTION as the product
+description this command would otherwise receive as arguments, and print the title you
+read before writing anything so the delivered subject is visible in the phase output.
+NEVER infer the subject from repository contents, git history, docs/PRD/ entries, the
+most recent PRD, or a plausible-looking gap you noticed: a Foreman command phase
+receives no conversation and no arguments, so an inferred subject is an invented one.
+If NEITHER a product description was passed as arguments NOR FOREMAN_TASK_TITLE is set
+and non-empty, STOP immediately -- write no PRD and report that the subject was never
+delivered, naming FOREMAN_TASK_TITLE. Halting is correct there: a well-formed PRD about
+a subject nobody asked for is worse than no PRD, because the run reports success.
+Outside Foreman dispatch both variables are simply absent, and behavior is unchanged --
+the arguments are the product description.
 
 ## Workflow
 
@@ -23,6 +39,7 @@ being saved to ensure handoff quality.
 **1. Scale Detection**
    Determine project complexity to calibrate PRD depth
 
+   - IF --foreman flag is set: the PRD subject is FOREMAN_TASK_TITLE and its requirements input is FOREMAN_TASK_DESCRIPTION. Read both before anything else, print the title you read, and use them everywhere these steps say 'the product description provided as arguments'. If FOREMAN_TASK_TITLE is unset or empty AND no product description was passed as arguments, STOP here -- write no PRD and report that the subject was never delivered. Never substitute a subject inferred from the repository, git history, or docs/PRD/ contents.
    - IF --foreman flag is set: skip asking, default depth level to STANDARD, and announce that STANDARD was auto-selected (not asked) because foreman mode is active -- then proceed directly to the next step.
    - Ask the user: 'Is this a solo/side project, small team (2-5), or enterprise/multi-team effort?'
    - If user provided a product description as arguments, read it first, then ask -- don't make them repeat themselves

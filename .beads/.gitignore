@@ -3,6 +3,8 @@
 *.db-journal
 *.db-shm
 *.db-wal
+*.db-wal-cert
+*.db-wal-cert-head
 
 # Lock files
 *.lock

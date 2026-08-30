@@ -4,6 +4,13 @@ description: >-
   Refine and enhance an existing Technical Requirements Document based on
   stakeholder feedback, additional research, or identified gaps. Updates TRD
   while maintaining version history, traceability, and Design Readiness scoring.
+  --foreman also carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set
+  and non-empty, write the phase report to that exact path (creating parent
+  directories as needed) IN ADDITION TO any repo-local report this command
+  already writes -- Foreman computes that path and reads it back to confirm the
+  phase produced an artifact. Never invent, alter, or relocate the path, and
+  never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman
+  dispatch it is simply absent and behavior is unchanged).
 disable-model-invocation: true
 ---
 <!-- Command: ensemble-refine-trd | Version: 2.7.0 -->
@@ -11,7 +18,7 @@ disable-model-invocation: true
 
 # ensemble-refine-trd
 
-> **Mission:** Refine and enhance an existing Technical Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates TRD while maintaining version history, traceability, and Design Readiness scoring.
+> **Mission:** Refine and enhance an existing Technical Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates TRD while maintaining version history, traceability, and Design Readiness scoring. --foreman also carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
 > **Constraints:**
 > - DO NOT implement, build, or execute any technical work described in the TRD
@@ -21,6 +28,7 @@ disable-model-invocation: true
 > - DO NOT make any edits during Synthesis -- findings are presented first, edits happen only after user selects items
 > - --collab (and --long-lived) are mutually exclusive with --foreman -- passing both HALTs before any phase runs (collab requires a human reviewer; foreman implies none is present)
 > - When --foreman is set, the Synthesis and Interview steps are force-skipped and every finding is auto-applied using a best-effort default (or an inline [NEEDS CLARIFICATION: ...] marker when no confident default exists), with every choice logged instead of requested from the user
+> - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
 ## Phase 1: Collaborative Review
 

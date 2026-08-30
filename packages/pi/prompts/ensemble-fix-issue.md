@@ -4,7 +4,7 @@
 
 # ensemble-fix-issue
 
-> **Mission:** Orchestrate a complete bug fix workflow from analysis to PR creation, assembling a virtual team of specialized agents (Product Manager, Tech Lead, Architect, QA Lead) to ensure high-quality fixes with minimal user intervention.
+> **Mission:** Orchestrate a complete bug fix workflow from analysis to PR creation, assembling a virtual team of specialized agents (Product Manager, Tech Lead, Architect, QA Lead) to ensure high-quality fixes with minimal user intervention. --foreman also carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
 > **Constraints:**
 > - GitHub only (no GitLab/Bitbucket in v1.0)
@@ -14,6 +14,7 @@
 > - User interview limited to 5 questions maximum
 > - Branch naming follows fixed convention (customizable via --branch)
 > - When --foreman is set, the user interview step is force-skipped and PR creation always proceeds without pausing for confirmation
+> - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
 ## Phase 1: Analysis & Planning
 

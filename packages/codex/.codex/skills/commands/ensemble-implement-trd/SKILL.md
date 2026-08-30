@@ -33,6 +33,13 @@ Per-iteration decision cost is reduced to: read summary, dispatch task-runner,
 repeat; the agent still has to choose to continue, but the work between iterations
 is mechanical rather than narrative.
 --foreman forces non-interactive mode without changing safety HALT behavior.
+--foreman also carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set
+and non-empty, write the phase report to that exact path (creating parent
+directories as needed) IN ADDITION TO any repo-local report this command
+already writes -- Foreman computes that path and reads it back to confirm the
+phase produced an artifact. Never invent, alter, or relocate the path, and
+never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman
+dispatch it is simply absent and behavior is unchanged).
 
 ## Workflow
 

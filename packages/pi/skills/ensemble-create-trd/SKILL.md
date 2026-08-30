@@ -6,7 +6,29 @@ description: >-
   alternatives, task breakdown with traceability, optional MCP enhancement,
   adversarial self-review with a Design Readiness Gate, and structured output
   with traceability matrices. Team configuration is handled separately by
-  /ensemble-configure-team. All outputs are saved to docs/TRD/.
+  /ensemble-configure-team. All outputs are saved to docs/TRD/. --foreman also
+  carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set and non-empty,
+  write the phase report to that exact path (creating parent directories as
+  needed) IN ADDITION TO any repo-local report this command already writes --
+  Foreman computes that path and reads it back to confirm the phase produced an
+  artifact. Never invent, alter, or relocate the path, and never treat an unset
+  FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply
+  absent and behavior is unchanged). Foreman subject contract: under --foreman,
+  FOREMAN_TASK_TITLE and FOREMAN_TASK_DESCRIPTION carry the dispatched task's
+  title and description (Foreman dispatch sets them; nothing else does). When
+  FOREMAN_TASK_TITLE is set and non-empty the TRD must plan exactly that task,
+  and you print the title you read before writing anything.
+  FOREMAN_SOURCE_PRD_PATH, when set and non-empty, is the absolute path of the
+  PRD the previous Foreman phase actually produced: it is an INPUT to consume,
+  not an output path to write, and it is the only PRD you may read. Confirm that
+  PRD's own subject matches FOREMAN_TASK_TITLE before consuming it; if they
+  describe different work, STOP and report the mismatch quoting both subjects
+  rather than planning the wrong PRD. If FOREMAN_SOURCE_PRD_PATH is set but
+  missing on disk, STOP and report the path -- never fall back to a directory
+  scan. If NEITHER a prd-path was passed as arguments NOR
+  FOREMAN_SOURCE_PRD_PATH is set, STOP and report that no source PRD was
+  delivered. NEVER choose a PRD by recency, glob, or plausibility. Outside
+  Foreman dispatch these variables are absent and behavior is unchanged.
 disable-model-invocation: true
 ---
 <!-- Command: ensemble-create-trd | Version: 3.2.0 -->
@@ -14,7 +36,7 @@ disable-model-invocation: true
 
 # ensemble-create-trd
 
-> **Mission:** Create a Technical Requirements Document (TRD) from a Product Requirements Document (PRD). Performs PRD validation, architecture design with alternatives, task breakdown with traceability, optional MCP enhancement, adversarial self-review with a Design Readiness Gate, and structured output with traceability matrices. Team configuration is handled separately by /ensemble-configure-team. All outputs are saved to docs/TRD/.
+> **Mission:** Create a Technical Requirements Document (TRD) from a Product Requirements Document (PRD). Performs PRD validation, architecture design with alternatives, task breakdown with traceability, optional MCP enhancement, adversarial self-review with a Design Readiness Gate, and structured output with traceability matrices. Team configuration is handled separately by /ensemble-configure-team. All outputs are saved to docs/TRD/. --foreman also carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged). Foreman subject contract: under --foreman, FOREMAN_TASK_TITLE and FOREMAN_TASK_DESCRIPTION carry the dispatched task's title and description (Foreman dispatch sets them; nothing else does). When FOREMAN_TASK_TITLE is set and non-empty the TRD must plan exactly that task, and you print the title you read before writing anything. FOREMAN_SOURCE_PRD_PATH, when set and non-empty, is the absolute path of the PRD the previous Foreman phase actually produced: it is an INPUT to consume, not an output path to write, and it is the only PRD you may read. Confirm that PRD's own subject matches FOREMAN_TASK_TITLE before consuming it; if they describe different work, STOP and report the mismatch quoting both subjects rather than planning the wrong PRD. If FOREMAN_SOURCE_PRD_PATH is set but missing on disk, STOP and report the path -- never fall back to a directory scan. If NEITHER a prd-path was passed as arguments NOR FOREMAN_SOURCE_PRD_PATH is set, STOP and report that no source PRD was delivered. NEVER choose a PRD by recency, glob, or plausibility. Outside Foreman dispatch these variables are absent and behavior is unchanged.
 
 > **Constraints:**
 > - DO NOT implement, build, or execute any technical work described in the requirements
@@ -22,6 +44,7 @@ disable-model-invocation: true
 > - The arguments describe what should be documented, not what should be built
 > - After creating the TRD, stop and wait for user approval before any implementation
 > - When --foreman is set, soft confirmation prompts (CONCERNS-band readiness warnings, architecture-alternative picks) proceed automatically with the choice logged; hard FAIL gates and the --list interactive picker's ambiguous case still HALT
+> - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
 ## Phase 1: PRD Ingestion and Validation
 
@@ -41,9 +64,10 @@ If --list is passed, show available PRDs and exit
 Parse and analyze existing PRD document from $ARGUMENTS path
 
 **Actions:**
-1. Read PRD file from specified path
-2. If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), skip PRD-structure validation for this run, and build a capability registry from the brief's named capabilities / scope / target files instead of REQ-NNN IDs
-3. If a full PRD is provided: validate document structure (required sections present), extract key requirements with REQ-NNN IDs, and build requirements registry for traceability tracking
+1. If FOREMAN_SOURCE_PRD_PATH is set and non-empty, that file is THE PRD to consume -- read it and no other, and let it override any --list selection. If it is set but absent on disk, print 'ERROR: FOREMAN_SOURCE_PRD_PATH points at a missing file: <path>' and HALT without falling back to a directory scan. If it is unset AND no prd-path argument was provided, print 'ERROR: no source PRD was delivered (FOREMAN_SOURCE_PRD_PATH unset, no prd-path argument)' and HALT. Never select a PRD by recency, glob, or plausibility. When FOREMAN_TASK_TITLE is set, verify the PRD's subject matches it and HALT on a mismatch, quoting both.
+2. Read PRD file from specified path
+3. If --foundational and no full PRD exists: accept a short capability brief instead (the shared work to build), skip PRD-structure validation for this run, and build a capability registry from the brief's named capabilities / scope / target files instead of REQ-NNN IDs
+4. If a full PRD is provided: validate document structure (required sections present), extract key requirements with REQ-NNN IDs, and build requirements registry for traceability tracking
 
 ### Step 3: Requirements Validation
 
