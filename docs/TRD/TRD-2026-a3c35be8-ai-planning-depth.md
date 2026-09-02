@@ -3,10 +3,10 @@ document_id: TRD-2026-a3c35be8
 label: trd-ai-planning-depth
 kind: trd
 prd_reference: PRD-2026-a3c35be8 (docs/PRD/PRD-2026-a3c35be8-ai-planning-depth.md v1.0.1)
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: 2026-09-02
-design_readiness_score: 4.65
+design_readiness_score: 4.8
 ensemble_implement_trd_beads:
   branch_name: feature/trd-2026-a3c35be8-ai-planning-depth
   use_proposed: true
@@ -15,16 +15,17 @@ ensemble_implement_trd_beads:
 
 # TRD-2026-a3c35be8: adhoc-94ba81bd — AI-Driven Planning Depth Auto-Selection
 
-**Source PRD:** `docs/PRD/PRD-2026-a3c35be8-ai-planning-depth.md` (v1.0.1, readiness 4.85 PASS)
+**Source PRD:** `docs/PRD/PRD-2026-a3c35be8-ai-planning-depth.md` (v1.0.1, readiness 4.85 PASS)<br>
 **Foreman subject:** `adhoc-94ba81bd`
 
 ## Reused Capabilities
 
-No foundational TRDs are registered. `node packages/development/lib/trd-graph-cli.js capabilities docs/TRD --json` returned an empty capability registry. Existing local parsing/generation capabilities are reused from source files rather than duplicated:
+No foundational TRDs are registered. `node packages/development/lib/trd-graph-cli.js capabilities docs/TRD --json` returned an empty capability registry. The implementation should reuse existing command-generation and command-orchestration patterns instead of duplicating them:
 
 - `packages/product/commands/create-prd.yaml` for PRD creation path semantics.
-- `packages/product/commands/feature.yaml` for full planning-pipeline orchestration precedent.
-- `packages/development/commands/create-trd.yaml` and `create-trd-foreman.yaml` for TRD path semantics.
+- `packages/product/commands/feature.yaml` for planning pipeline orchestration precedent.
+- `packages/development/commands/create-trd.yaml` and `packages/development/commands/create-trd-foreman.yaml` for TRD creation semantics.
+- `packages/development/commands/refine-trd.yaml` for the Complex refinement gate.
 - `packages/development/commands/fix-issue.yaml` for Simple path semantics.
 - `scripts/generate-markdown.js` / `npm run generate` for generated command markdown.
 
@@ -32,27 +33,27 @@ No foundational TRDs are registered. `node packages/development/lib/trd-graph-cl
 
 ### Chosen approach — Option C: deterministic local analyzer plus explicit adaptive planning entrypoint
 
-Foreman mode: auto-selected Option C (brownfield best fit). The implementation should add a local, deterministic complexity-analysis module and expose it through a new product command entrypoint that routes to existing Ensemble workflows. The analyzer should not call a remote model in v1. It should score free-text descriptions from explicit, testable signals and return structured factor rationale.
+Foreman mode auto-selected Option C as the brownfield-safe default. The feature should add a local deterministic work-complexity analyzer and expose it through an operator-facing adaptive planning command. The v1 analyzer must not call a remote model. It scores free-text work descriptions from explicit, testable signals and returns structured factor rationale.
 
-The routing layer should sit before downstream planning starts:
+The routing layer sits before any downstream planning begins:
 
-1. Parse the work description and optional overrides.
+1. Parse the work description, `--depth`, `--no-auto-complexity`, `--foreman`, and optional config defaults.
 2. Run local complexity analysis unless disabled.
-3. Print / report score, selected depth, selected path, factor rationale, uncertainty, and override state.
-4. Route to one of the existing command paths:
+3. Print or report score, selected depth, selected path, factor rationale, uncertainty, and override state.
+4. Route by fixed score bands:
    - Simple score 1–3: `fix-issue`.
    - Medium score 4–6: `create-prd` → `create-trd`.
    - Complex score 7–10: `create-prd` → `refine-prd` → `create-trd` → `refine-trd`; implementation remains blocked until refined TRD approval.
 
-This keeps the AI-facing behavior auditable while preserving existing manual command invocations. The first implementation should produce a plan / command handoff rather than silently executing downstream code in interactive mode; Foreman can consume the same structured result non-interactively.
+This preserves direct manual command behavior while making adaptive routing auditable. Interactive use should report the chosen path before invoking downstream commands. Foreman use should record the same decision block in its phase artifact and must never prompt.
 
 ### Alternatives considered
 
-**Option A — prose-only command instruction.** Add classifier instructions directly to existing command YAML and let the agent infer score each run. Fastest, but too hard to test, tune, or make deterministic. Rejected because REQ-012 requires stable fixtures.
+**Option A — prose-only command instruction.** Add classifier instructions directly to command YAML and let the agent infer score each run. Fastest, but hard to test or tune. Rejected because REQ-012 requires deterministic fixtures.
 
-**Option B — external LLM/provider classifier.** Use a model to classify each request. More flexible on vague language, but introduces cost, latency, nondeterminism, auth/config requirements, and harder tests. Rejected for v1 because the PRD does not require a new paid service and needs deterministic validation.
+**Option B — external LLM/provider classifier.** Use a model call for classification. More flexible, but adds cost, latency, nondeterminism, auth/config, and harder validation. Rejected for v1 because the PRD does not require a new paid service.
 
-**Option C — local scoring library with command orchestration.** Selected. It gives deterministic fixtures, clear override precedence, and small integration points with existing command YAML and generated markdown.
+**Option C — local scoring library with command orchestration.** Selected. It gives deterministic tests, clear override precedence, and small integration points with existing command sources and generated markdown.
 
 ## System Architecture
 
@@ -60,14 +61,14 @@ This keeps the AI-facing behavior auditable while preserving existing manual com
 
 | Component | Status | Responsibility |
 |---|---|---|
-| `packages/product/lib/work-complexity-analyzer.js` | new | Pure function that analyzes description text, scores 1–10, returns depth/path/factor rationale/uncertainty |
-| `packages/product/lib/index.js` | modified | Export analyzer helpers for tests and future commands |
-| `packages/product/commands/analyze-complexity.yaml` | new | Operator-facing command for scoring and route selection before downstream planning |
-| `packages/product/commands/feature.yaml` | modified | Optionally call or document adaptive mode while preserving current explicit pipeline behavior |
-| `packages/product/tests/work-complexity-analyzer.test.js` | new | Deterministic fixtures for Simple/Medium/Complex, factor rationale, empty input, overrides |
-| `packages/product/tests/analyze-complexity-command.test.js` | new | Command source tests for output contract, Foreman behavior, override/disable flags, path mapping |
-| `packages/product/commands/ensemble/analyze-complexity.md` | generated | Generated command markdown after `npm run generate` |
-| `packages/product/README.md` and/or `docs/guides/environment-variables.md` | modified | Document scoring scale, paths, override, disable config, Foreman report behavior |
+| `packages/product/lib/work-complexity-analyzer.js` | new | Pure scoring module for description validation, factor extraction, score, depth, path, uncertainty, and override state |
+| `packages/product/lib/index.js` | modified | Export analyzer helpers for tests and command use |
+| `packages/product/commands/analyze-complexity.yaml` | new | Operator-facing command for score/rationale/path output before downstream planning |
+| `packages/product/commands/feature.yaml` | modified | Advertise or invoke adaptive planning without changing explicit manual paths |
+| `packages/product/tests/work-complexity-analyzer.test.js` | new | Deterministic analyzer fixtures for Simple, Medium, Complex, empty input, uncertainty, overrides, and disable behavior |
+| `packages/product/tests/analyze-complexity-command.test.js` | new | Command-source tests for score output, Foreman artifact behavior, flags, and path mapping |
+| `packages/product/commands/ensemble/analyze-complexity.md` | generated | Generated command markdown produced by `npm run generate` |
+| `packages/product/README.md` and/or `docs/guides/environment-variables.md` | modified | Operator docs for scale, paths, overrides, disable config, Foreman behavior, generated artifact workflow |
 
 ### Analyzer contract
 
@@ -78,7 +79,11 @@ Input:
   description: string,
   overrideDepth?: 'simple' | 'medium' | 'complex',
   disableAuto?: boolean,
-  nonInteractive?: boolean
+  nonInteractive?: boolean,
+  config?: {
+    autoComplexity?: boolean,
+    defaultDepth?: 'simple' | 'medium' | 'complex'
+  }
 }
 ```
 
@@ -86,7 +91,7 @@ Output:
 
 ```js
 {
-  score: 1..10,
+  score: number, // integer 1..10
   depth: 'Simple' | 'Medium' | 'Complex',
   path: ['fix-issue'] | ['create-prd', 'create-trd'] | ['create-prd', 'refine-prd', 'create-trd', 'refine-trd'],
   factors: {
@@ -96,33 +101,36 @@ Output:
     teamSize: { level: 'low'|'medium'|'high'|'uncertain', evidence: string[] }
   },
   rationale: string,
-  originalClassification?: {...},
-  overrideApplied: boolean
+  uncertainty: string[],
+  originalClassification?: { score: number, depth: string, path: string[] },
+  overrideApplied: boolean,
+  disabled: boolean
 }
 ```
 
-Suggested v1 scoring: each factor maps to 0–2 points, plus a 1-point base and bounded risk uplift for severe automation/security/data-loss language. Clamp final score to 1–10. Band mapping is fixed: 1–3 Simple, 4–6 Medium, 7–10 Complex.
+Suggested v1 scoring: each factor maps to 0–2 points, plus a 1-point base and a bounded uplift for severe automation/security/data-loss language. Clamp final score to 1–10. Band mapping is fixed: 1–3 Simple, 4–6 Medium, 7–10 Complex.
 
 ### Data flow
 
 ```text
 User / Foreman work description
   -> analyze-complexity command argument parsing
-  -> work-complexity-analyzer.js pure scoring
+  -> work-complexity-analyzer.js pure scoring or manual-depth fallback
   -> route selector maps score band to command path
   -> score/rationale block printed before planning side effects
   -> optional override/disable logic applies
   -> existing command path is invoked or reported as handoff
-  -> Foreman phase report includes score/rationale/path audit block
+  -> Foreman phase report includes score/rationale/path/override audit block
 ```
 
 ### Integration and failure handling
 
-- Empty or whitespace-only description halts with a clear error.
-- Insufficient evidence for a factor records `uncertain`; it does not invent evidence.
-- Existing explicit invocations of `fix-issue`, `create-prd`, or `create-trd` remain unchanged.
-- Per-invocation disable/override flags take precedence over global config.
-- Non-interactive mode never asks; it uses selected classification or supplied override.
+- Empty or whitespace-only descriptions halt with a clear error and no selected path.
+- Insufficient factor evidence records `uncertain`; it must not invent evidence.
+- Existing direct `fix-issue`, `create-prd`, `create-trd`, and `refine-trd` invocations remain unchanged.
+- Per-invocation flags (`--depth`, `--no-auto-complexity`) take precedence over global config.
+- Non-interactive `--foreman` mode never asks; it uses the analyzer result or supplied override automatically.
+- Foreman reports must include score, rationale, selected depth/path, override state, disable state, and uncertainty.
 - Generated markdown must be regenerated from YAML with `npm run generate`.
 
 ## Master Task List
@@ -133,13 +141,13 @@ User / Foreman work description
 
 - [ ] **TRD-001** Create `packages/product/lib/work-complexity-analyzer.js` with input validation and a structured analysis result (3h) `[satisfies REQ-001, REQ-002]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2
-  - Implementation AC: Given a non-empty work description, when `analyzeWorkComplexity` runs, then it returns an integer score from 1 through 10 with `depth`, `path`, `factors`, `rationale`, and `overrideApplied` fields.
+  - Implementation AC: Given a non-empty work description, when `analyzeWorkComplexity` runs, then it returns an integer score from 1 through 10 with `depth`, `path`, `factors`, `rationale`, `uncertainty`, and `overrideApplied` fields.
   - Implementation AC: Given an empty description, when analysis runs, then it throws or returns a typed error that callers can display without selecting a path.
 
 - [ ] **TRD-002** Implement scope-size signal detection for isolated fixes, single commands, multiple features, workflows, packages, and user roles (2h) `[satisfies REQ-003] [depends: TRD-001]`
   - Validates PRD ACs: AC-003-1, AC-003-2
   - Implementation AC: Given a description of one isolated bug, when scoring runs, then the scope factor is low and contributes toward Simple.
-  - Implementation AC: Given a description mentioning multiple features/workflows/packages/roles, when scoring runs, then the scope factor records those evidence snippets and contributes toward a higher score.
+  - Implementation AC: Given a description mentioning multiple features/workflows/packages/roles, when scoring runs, then the scope factor records evidence snippets and contributes toward a higher score.
 
 - [ ] **TRD-003** Implement dependency signal detection for integrations, shared libraries, generated artifacts, Foreman phases, and multiple commands (2h) `[satisfies REQ-004] [depends: TRD-001]`
   - Validates PRD ACs: AC-004-1, AC-004-2
@@ -154,7 +162,7 @@ User / Foreman work description
 - [ ] **TRD-005** Implement band-to-path mapping and override/disable precedence in the analyzer module (2.5h) `[satisfies REQ-007, REQ-008, REQ-009, REQ-011, REQ-013] [depends: TRD-002, TRD-003, TRD-004]`
   - Validates PRD ACs: AC-007-1, AC-008-1, AC-009-1, AC-011-2, AC-011-3, AC-013-2
   - Implementation AC: Given score 1–3, 4–6, or 7–10, when route mapping runs, then it returns Simple/Medium/Complex with the exact command path required by the PRD.
-  - Implementation AC: Given both global disable config and a per-invocation flag, when classification runs, then the command flag takes precedence and the result records original and final classification where applicable.
+  - Implementation AC: Given both global config and a per-invocation flag, when classification runs, then the command flag takes precedence and the result records original and final classification where applicable.
 
 - [ ] **TRD-001-TEST** Add unit tests for analyzer input validation, output schema, integer score bounds, and factor rationale fields (1.5h) `[verifies TRD-001] [satisfies REQ-001, REQ-002] [depends: TRD-001]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2
@@ -221,7 +229,7 @@ User / Foreman work description
 - [ ] **TRD-010** Integrate adaptive classification into the appropriate product planning entrypoint without changing explicit `fix-issue`, `create-prd`, or `create-trd` invocations (3h) `[satisfies REQ-001, REQ-007, REQ-008, REQ-009, REQ-013] [depends: TRD-009]`
   - Validates PRD ACs: AC-001-1, AC-007-1, AC-008-1, AC-009-1, AC-013-1
   - Implementation AC: Given the adaptive entrypoint receives a description, when planning starts, then classification runs before downstream route selection.
-  - Implementation AC: Given explicit legacy commands are invoked directly, when they run, then they retain their prior documented behavior and do not require analyzer input.
+  - Implementation AC: Given explicit legacy commands are invoked directly, when they run, then they retain prior documented behavior and do not require analyzer input.
 
 - [ ] **TRD-011** Implement Medium and Complex route handoff semantics, including implementation block after refined TRD for Complex (2.5h) `[satisfies REQ-008, REQ-009, REQ-010] [depends: TRD-010]`
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-009-1, AC-009-2, AC-010-1
@@ -263,11 +271,11 @@ Deliver PR 1. Focus: pure scoring module, factor rationale, path mapping, and de
 
 ### Sprint 2: Command surface
 
-Deliver PR 2. Focus: `/ensemble:analyze-complexity`, Foreman report behavior, override flags, generated markdown.
+Deliver PR 2. Focus: `/ensemble:analyze-complexity`, Foreman report behavior, override flags, and generated markdown.
 
 ### Sprint 3: Adaptive routing and docs
 
-Deliver PR 3. Focus: integrate adaptive entrypoint, route handoff semantics, compatibility proof, operator docs.
+Deliver PR 3. Focus: integrate adaptive entrypoint, route handoff semantics, compatibility proof, and operator docs.
 
 ## Acceptance Criteria Traceability
 
@@ -292,24 +300,26 @@ Traceability check: 14 requirements covered, 0 uncovered, 0 orphaned annotations
 
 ## Quality Requirements
 
-- **Testing:** Jest tests under `packages/product/tests/`; pure analyzer tests should avoid agent/model calls. Command-source tests should inspect YAML text for workflow contracts that cannot run as ordinary unit tests.
+- **Testing:** Jest tests belong under `packages/product/tests/`. Pure analyzer tests must avoid agent/model calls. Command-source tests should inspect YAML for workflow contracts that cannot run as ordinary unit tests.
 - **Security:** Do not send work descriptions to external services in v1. Avoid logging secrets if descriptions include credentials; docs should warn operators not to paste secrets.
-- **Reliability:** Analyzer must be deterministic for identical input and config. Unknown factors must be marked uncertain, not hallucinated.
+- **Reliability:** Analyzer output must be deterministic for identical input and config. Unknown factors must be marked uncertain, not hallucinated.
 - **Compatibility:** Existing manual commands remain callable. Generated markdown must come from YAML sources.
-- **Observability:** Foreman report includes score/rationale/path/override state for audit.
+- **Observability:** Foreman report includes score, rationale, selected depth/path, override state, disable state, and uncertainty for audit.
 
 ## Adversarial Review Findings
 
 ### Architecture issues
 
 1. **Issue:** A heuristic local analyzer can misclassify domain language that lacks obvious keywords. **Resolution:** keep factor-level evidence and uncertainty visible; add fixture coverage and document override controls.
-2. **Issue:** Route execution could accidentally trigger implementation for Simple if it calls `fix-issue` directly. **Resolution:** make adaptive entrypoint report or plan the chosen path first; retain explicit approval / downstream command contracts before implementation.
+2. **Issue:** Route execution could accidentally trigger implementation for Simple if it calls `fix-issue` directly. **Resolution:** make the adaptive entrypoint report or plan the chosen path first; retain explicit approval and downstream command contracts before implementation.
 3. **Issue:** Command orchestration details differ between interactive and Foreman contexts. **Resolution:** encode non-interactive `--foreman` behavior in command YAML and phase report tests.
+4. **Issue:** Override/disable behavior can drift between command parsing and analyzer behavior. **Resolution:** centralize precedence in the analyzer module, then test command docs/source against that contract.
 
 ### Coverage issues
 
-1. **Issue:** REQ-012 fixture coverage could be deferred until after routing, weakening early proof. **Resolution:** PR 3 explicitly includes the PRD's required simple and complex fixtures, and PR 1 includes factor-level fixtures.
+1. **Issue:** REQ-012 fixture coverage could be deferred until routing, weakening early proof. **Resolution:** PR 3 explicitly includes the PRD-required simple and complex fixtures, and PR 1 includes factor-level fixtures.
 2. **Issue:** REQ-013 backward compatibility might be claimed only in docs. **Resolution:** TRD-010-TEST requires integration proof that explicit commands remain unchanged.
+3. **Issue:** Foreman auditability could be missed if only interactive output is tested. **Resolution:** TRD-008 and TRD-008-TEST require exact artifact-path behavior and report contents.
 
 ### Dependency and estimate issues
 
@@ -325,16 +335,30 @@ Traceability check: 14 requirements covered, 0 uncovered, 0 orphaned annotations
 
 | Dimension | Score (1-5) | Notes |
 |---|:-:|---|
-| Architecture completeness | 4.6 | Components, data flow, analyzer contract, routing semantics, and Foreman behavior are defined; final exact entrypoint name can still be adjusted during implementation if docs/tests track it. |
-| Task coverage | 4.8 | All 14 PRD requirements have implementation and test coverage; no orphaned REQ annotations. |
-| Dependency clarity | 4.6 | Dependencies are explicit and acyclic across three PRs; longest chain is acceptable for a routing feature. |
-| Estimate confidence | 4.6 | Tasks are granular, 1–3h each, with no 8h+ breakdown candidates. |
-| **Overall** | **4.65** | **PASS** |
+| Architecture completeness | 4.8 | Components, data flow, analyzer contract, override/disable precedence, routing semantics, and Foreman behavior are defined. |
+| Task coverage | 4.9 | All 14 PRD requirements have implementation and test coverage; no orphaned REQ annotations. |
+| Dependency clarity | 4.8 | Dependencies are explicit and acyclic across three PRs; no forward dependency crosses a later PR boundary. |
+| Estimate confidence | 4.7 | Tasks are granular, 1–3h each, with no 8h+ breakdown candidates. |
+| **Overall** | **4.8** | **PASS** |
 
 Gate decision: PASS.
+
+## Foreman Refinement Log
+
+Foreman mode auto-applied all refinement findings without interview:
+
+1. Restored corrupted lower-half markdown (traceability, quality requirements, adversarial review, readiness, next steps) into valid TRD sections.
+2. Made override/disable precedence explicit in the analyzer contract and task validation.
+3. Tightened Foreman artifact/report obligations for the analyze-complexity command.
+4. Re-scored design readiness from 4.65 to 4.8.
 
 ## Next Steps
 
 1. Review and approve this TRD before implementation.
 2. Optional team configuration: `/ensemble-configure-team docs/TRD/TRD-2026-a3c35be8-ai-planning-depth.md`.
 3. Implementation planning: `/ensemble-implement-trd-beads docs/TRD/TRD-2026-a3c35be8-ai-planning-depth.md`.
+
+## Changelog
+
+- **v1.0.1** (2026-09-02) — Refined via `ensemble-refine-trd --foreman`; repaired corrupted markdown, clarified override/disable precedence and Foreman report contracts, refreshed traceability and readiness score.
+- **v1.0.0** (2026-09-02) — Initial TRD via `ensemble-create-trd-foreman` for Foreman task `adhoc-94ba81bd`.
