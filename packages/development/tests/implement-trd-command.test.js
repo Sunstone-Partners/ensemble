@@ -242,6 +242,41 @@ describe('implement-trd PR-boundary doc hook contract', () => {
   });
 });
 
+describe('implement-trd quickstart validation artifact contract', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd.yaml');
+
+  test('states quickstart output path rules for Foreman and non-Foreman runs', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('QUICKSTART_PATH is dirname(FOREMAN_ARTIFACT_PATH)/quickstart.md');
+    expect(text).toContain('beside the exact phase artifact path');
+    expect(text).toContain('QUICKSTART_PATH is dirname(TRD_PATH)/quickstart.md');
+    expect(text).toContain('beside the source TRD');
+  });
+
+  test('runs quickstart after completion verification and before implementation complete success branches', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const completionIdx = text.indexOf('Completion Verification');
+    const quickstartIdx = text.indexOf('Quickstart generation: run node \\"$TRD_CLI\\" quickstart');
+    const completeIdx = text.indexOf('implementation complete', quickstartIdx);
+    expect(completionIdx).toBeGreaterThan(-1);
+    expect(quickstartIdx).toBeGreaterThan(completionIdx);
+    expect(completeIdx).toBeGreaterThan(quickstartIdx);
+    expect(text).toContain('HALT before claiming implementation complete');
+  });
+
+  test('final reporting includes quickstart coverage fields and preserves Foreman artifact path', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('quickstart path');
+    expect(text).toContain('parsed AC count');
+    expect(text).toContain('scenario count');
+    expect(text).toContain('unmapped AC count');
+    expect(text).toContain('clarification count');
+    expect(text).toContain('coverage percentage');
+    expect(text).toContain('write the Foreman phase report to that exact path');
+    expect(text).toContain('do not substitute the quickstart path for FOREMAN_ARTIFACT_PATH');
+  });
+});
+
 describe('implement-trd PM clarification guard contract', () => {
   const yamlPath = path.join(__dirname, '../commands/implement-trd.yaml');
 

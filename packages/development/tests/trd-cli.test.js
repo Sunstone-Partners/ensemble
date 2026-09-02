@@ -20,6 +20,7 @@ const {
   runNextTask,
   runPrPlan,
   runResolveSdlc,
+  runQuickstart,
   main,
   deriveSlug,
 } = require('../lib/trd-cli');
@@ -323,6 +324,53 @@ describe('runResolveSdlc', () => {
     expect(() => runResolveSdlc(['--git-town-exit-code', '0'], {})).toThrow(
       /Missing required --remote-url/
     );
+  });
+});
+
+describe('runQuickstart', () => {
+  function writeQuickstartFixture(contents) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trd-cli-quickstart-'));
+    const trdPath = path.join(tmpDir, 'TRD-2026-quickstart-fixture.md');
+    const outPath = path.join(tmpDir, 'quickstart.md');
+    fs.writeFileSync(trdPath, contents, 'utf8');
+    return { tmpDir, trdPath, outPath };
+  }
+
+  test('quickstart success writes markdown and returns JSON-compatible coverage', () => {
+    const { trdPath, outPath } = writeQuickstartFixture(`---\nprd_reference: \n---\n# Fixture\n\n## Master Task List\n\n### PR 1: Build\n\n- [ ] **TRD-001** Add quickstart output (1h) \`[satisfies REQ-001]\`\n  - Validates PRD ACs: AC-001-1\n`);
+
+    const out = runQuickstart([trdPath, '--out', outPath, '--json']);
+    expect(out.ok).toBe(true);
+    expect(out.quickstartPath).toBe(outPath);
+    expect(out.coverage).toMatchObject({
+      parsedAcCount: 1,
+      scenarioCount: 1,
+      unmappedAcIds: [],
+      coveragePercent: 100,
+    });
+    expect(fs.readFileSync(outPath, 'utf8')).toContain('## Coverage Summary');
+    expectJsonSerializable(out);
+  });
+
+  test('quickstart failure returns shared JSON error through main and does not report success', () => {
+    const { trdPath, outPath } = writeQuickstartFixture('# No ACs\n\n## Master Task List\n\n- [ ] **TRD-001** Task with no ACs (1h)\n');
+    const writes = [];
+    const orig = process.stdout.write;
+    process.stdout.write = (chunk) => {
+      writes.push(String(chunk));
+      return true;
+    };
+    let code;
+    try {
+      code = main(['quickstart', trdPath, '--out', outPath, '--json']);
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(code).toBe(1);
+    const parsed = JSON.parse(writes.join(''));
+    expect(parsed.error).toMatch(/No parsed acceptance criteria found/);
+    expect(parsed.ok).toBeUndefined();
+    expect(fs.existsSync(outPath)).toBe(false);
   });
 });
 

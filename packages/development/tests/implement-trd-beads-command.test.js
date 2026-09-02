@@ -95,6 +95,17 @@ describe('implement-trd-beads execution blocked-check logic', () => {
     expect(text).not.toMatch(/EXECUTION BLOCKED.*all.*remaining open tasks are waiting/);
   });
 });
+describe('implement-trd-beads v1 quickstart unsupported path', () => {
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+
+  test('documents unsupported quickstart generation and points to standard implement-trd', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toContain('beads-backed quickstart.md generation is unsupported in v1');
+    expect(text).toContain('use standard /ensemble:implement-trd');
+    expect(text).toContain('If a quickstart.md validation artifact is required');
+  });
+});
+
 describe('implement-trd-beads branch-intent flags', () => {
   const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
 

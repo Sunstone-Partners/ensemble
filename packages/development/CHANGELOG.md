@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Standard `/ensemble:implement-trd` now documents parser-backed `quickstart.md` generation after completion verification, including Foreman phase-report visibility for the quickstart path and AC coverage summary. Beads-backed quickstart generation is explicitly unsupported in v1; use standard `/ensemble:implement-trd` when a quickstart validation artifact is required.
+
 ### Fixed
 
 - Runner subagent dispatches now resolve. `beads-build.yaml` dispatched `Task(subagent_type=beads-build-wave)` and `implement-trd.yaml` dispatched `Task(subagent_type=implement-trd-task)`, but both targets shipped only as commands, never as agents — so neither dispatch could resolve and `/ensemble:beads-build`'s Execute phase and `/ensemble:implement-trd`'s Task Loop were both unreachable. Added thin runner agents that load their command as the single source of truth rather than duplicating the procedure.

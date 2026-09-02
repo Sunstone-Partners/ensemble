@@ -130,46 +130,46 @@ Use Node.js only. No new runtime dependencies. Tests use Jest. Command markdown 
 
 **Shippable State:** Operators can run `node packages/development/lib/trd-cli.js quickstart <trd-path> --out quickstart.md --json` and receive a checkbox-based manual smoke-test runbook with 100% parsed-AC coverage or a blocking coverage error.
 
-- [ ] **TRD-001** Add `quickstart-generator.js` acceptance-criteria collection from parsed TRD tasks (2h) `[satisfies REQ-002] [satisfies REQ-006] [satisfies REQ-012]`
+- [x] **TRD-001** Add `quickstart-generator.js` acceptance-criteria collection from parsed TRD tasks (2h) `[satisfies REQ-002] [satisfies REQ-006] [satisfies REQ-012]`
   - Target files: `packages/development/lib/quickstart-generator.js`
   - Validates PRD ACs: AC-002-1, AC-006-1, AC-006-2, AC-012-1, AC-012-2
   - Implementation AC: Given parsed TRD output with task `validatesAcs`, `satisfies`, and task IDs, when AC collection runs, then each AC source includes AC ID, related TRD task ID, related REQ IDs, source description where available, and original parse order.
   - Implementation AC: Given the same parsed TRD twice, when AC collection runs, then the returned AC sequence is stable.
 
-- [ ] **TRD-002** Render Markdown scenarios with setup, action, expected result, checkbox, and metadata fields (3h) `[satisfies REQ-003] [satisfies REQ-004] [satisfies REQ-005] [satisfies REQ-006] [satisfies REQ-009] [depends: TRD-001]`
+- [x] **TRD-002** Render Markdown scenarios with setup, action, expected result, checkbox, and metadata fields (3h) `[satisfies REQ-003] [satisfies REQ-004] [satisfies REQ-005] [satisfies REQ-006] [satisfies REQ-009] [depends: TRD-001]`
   - Target files: `packages/development/lib/quickstart-generator.js`
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-004-1, AC-004-2, AC-005-1, AC-005-2, AC-006-1, AC-006-2, AC-009-1
   - Implementation AC: Given any collected AC, when scenarios are built, then the rendered scenario contains an execution checkbox, setup/preconditions, actions, expected result, source AC ID, and available REQ/TRD metadata.
   - Implementation AC: Given an AC whose source context lacks observable expected behavior, when scenarios are built, then the scenario remains present and includes a specific `[NEEDS CLARIFICATION: ...]` note.
 
-- [ ] **TRD-003** Add blocking coverage validation and top-level coverage summary generation (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-009] [depends: TRD-002]`
+- [x] **TRD-003** Add blocking coverage validation and top-level coverage summary generation (2h) `[satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-009] [depends: TRD-002]`
   - Target files: `packages/development/lib/quickstart-generator.js`
   - Validates PRD ACs: AC-002-2, AC-003-1, AC-007-1, AC-007-2, AC-008-1, AC-008-2, AC-009-2
   - Implementation AC: Given parsed ACs and generated scenarios, when coverage validation runs, then it fails if any parsed AC lacks a scenario and reports the exact missing AC IDs.
   - Implementation AC: Given every parsed AC has at least one scenario, when Markdown is rendered, then the top summary table includes parsed AC count, scenario count, unmapped AC count, clarification count, and coverage percentage.
 
-- [ ] **TRD-004** Expose `trd-cli.js quickstart` with `--out` and `--json` support (1.5h) `[satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-003]`
+- [x] **TRD-004** Expose `trd-cli.js quickstart` with `--out` and `--json` support (1.5h) `[satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-003]`
   - Target files: `packages/development/lib/trd-cli.js`
   - Validates PRD ACs: AC-001-2, AC-007-1, AC-008-1, AC-008-2
   - Implementation AC: Given a parseable TRD and `--out <path>`, when `node trd-cli.js quickstart <trd> --out <path> --json` runs, then it writes the Markdown file and prints `{ok:true, quickstartPath, coverage}` as JSON.
   - Implementation AC: Given a TRD with no parsed ACs or missing coverage, when the subcommand runs, then it exits non-zero, prints a JSON error, and does not report success.
 
-- [ ] **TRD-001-TEST** Cover AC collection from parsed TRD output, including metadata and deterministic order (1.5h) `[verifies TRD-001] [satisfies REQ-002] [satisfies REQ-006] [satisfies REQ-012] [depends: TRD-001]`
+- [x] **TRD-001-TEST** Cover AC collection from parsed TRD output, including metadata and deterministic order (1.5h) `[verifies TRD-001] [satisfies REQ-002] [satisfies REQ-006] [satisfies REQ-012] [depends: TRD-001]`
   - Target files: `packages/development/tests/quickstart-generator.test.js`
   - Validates PRD ACs: AC-002-1, AC-006-1, AC-006-2, AC-012-1, AC-012-2
   - Implementation AC: Given a fixture parsed TRD with two tasks and multiple ACs, when `collectAcceptanceCriteria` runs, then all source IDs and metadata are preserved in parser order.
 
-- [ ] **TRD-002-TEST** Cover scenario rendering fields and clarification markers (1.5h) `[verifies TRD-002] [satisfies REQ-003] [satisfies REQ-004] [satisfies REQ-005] [satisfies REQ-006] [satisfies REQ-009] [depends: TRD-002]`
+- [x] **TRD-002-TEST** Cover scenario rendering fields and clarification markers (1.5h) `[verifies TRD-002] [satisfies REQ-003] [satisfies REQ-004] [satisfies REQ-005] [satisfies REQ-006] [satisfies REQ-009] [depends: TRD-002]`
   - Target files: `packages/development/tests/quickstart-generator.test.js`
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-004-1, AC-004-2, AC-005-1, AC-005-2, AC-006-1, AC-006-2, AC-009-1
   - Implementation AC: Given happy-path, edge-case, and vague AC fixtures, when quickstart Markdown is rendered, then each scenario has checkbox fields and vague scenarios include `[NEEDS CLARIFICATION: ...]` without being omitted.
 
-- [ ] **TRD-003-TEST** Cover coverage summary and blocking validation failures (1.5h) `[verifies TRD-003] [satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-009] [depends: TRD-003]`
+- [x] **TRD-003-TEST** Cover coverage summary and blocking validation failures (1.5h) `[verifies TRD-003] [satisfies REQ-002] [satisfies REQ-003] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-009] [depends: TRD-003]`
   - Target files: `packages/development/tests/quickstart-generator.test.js`
   - Validates PRD ACs: AC-002-2, AC-003-1, AC-007-1, AC-007-2, AC-008-1, AC-008-2, AC-009-2
   - Implementation AC: Given a missing-scenario fixture, when coverage validation runs, then it returns/fails with the missing AC ID; given full coverage, it reports 100% and zero unmapped ACs.
 
-- [ ] **TRD-004-TEST** Cover `trd-cli.js quickstart` success and failure JSON contracts (1.5h) `[verifies TRD-004] [satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-004]`
+- [x] **TRD-004-TEST** Cover `trd-cli.js quickstart` success and failure JSON contracts (1.5h) `[verifies TRD-004] [satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-004]`
   - Target files: `packages/development/tests/trd-cli.test.js`
   - Validates PRD ACs: AC-001-2, AC-007-1, AC-008-1, AC-008-2
   - Implementation AC: Given a fixture TRD with parsed ACs, when the CLI runs with `--json`, then stdout is JSON with `ok:true` and coverage metadata; given a no-AC fixture, then stdout is JSON error and exit code is non-zero.
@@ -178,44 +178,44 @@ Use Node.js only. No new runtime dependencies. Tests use Jest. Command markdown 
 
 **Shippable State:** A successful standard `/ensemble:implement-trd --foreman` run writes `quickstart.md` before declaring implementation complete and includes the quickstart path plus AC coverage in the Foreman phase report.
 
-- [ ] **TRD-005** Resolve the default quickstart output path for normal and Foreman runs (1.5h) `[satisfies REQ-001] [satisfies REQ-011] [depends: TRD-004]`
+- [x] **TRD-005** Resolve the default quickstart output path for normal and Foreman runs (1.5h) `[satisfies REQ-001] [satisfies REQ-011] [depends: TRD-004]`
   - Target files: `packages/development/commands/implement-trd.yaml`
   - Validates PRD ACs: AC-001-1, AC-011-1, AC-011-2
   - Implementation AC: Given `FOREMAN_ARTIFACT_PATH` is set and non-empty, when `implement-trd` computes the quickstart path, then it chooses `quickstart.md` in the same directory as that exact phase artifact path.
   - Implementation AC: Given Foreman variables are absent and no explicit output path is supplied, when `implement-trd` computes the quickstart path, then it chooses `quickstart.md` beside the source TRD.
 
-- [ ] **TRD-006** Invoke `trd-cli.js quickstart` after completion verification passes and before final success reporting (2.5h) `[satisfies REQ-001] [satisfies REQ-008] [satisfies REQ-010] [depends: TRD-005]`
+- [x] **TRD-006** Invoke `trd-cli.js quickstart` after completion verification passes and before final success reporting (2.5h) `[satisfies REQ-001] [satisfies REQ-008] [satisfies REQ-010] [depends: TRD-005]`
   - Target files: `packages/development/commands/implement-trd.yaml`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-008-1, AC-008-2, AC-010-1
   - Implementation AC: Given completion verification returns `COMPLETE`, when the command reaches final reporting, then it runs `node "$TRD_CLI" quickstart "$TRD_PATH" --out "$QUICKSTART_PATH" --json` before printing implementation complete.
   - Implementation AC: Given quickstart generation returns non-zero or missing coverage, when final reporting would run, then the command prints the quickstart failure and halts instead of claiming success.
 
-- [ ] **TRD-007** Include quickstart path and coverage summary in standard and Foreman phase output (2h) `[satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-011] [depends: TRD-006]`
+- [x] **TRD-007** Include quickstart path and coverage summary in standard and Foreman phase output (2h) `[satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-011] [depends: TRD-006]`
   - Target files: `packages/development/commands/implement-trd.yaml`
   - Validates PRD ACs: AC-001-1, AC-007-1, AC-007-2, AC-011-1, AC-011-2
   - Implementation AC: Given quickstart generation succeeds, when the final report is printed or written to `FOREMAN_ARTIFACT_PATH`, then it includes the quickstart file path, parsed AC count, scenario count, unmapped AC count, clarification count, and coverage percentage.
   - Implementation AC: Given `FOREMAN_ARTIFACT_PATH` is set, when the phase report is written, then the report is written to that exact path and not substituted with the quickstart path.
 
-- [ ] **TRD-008** Regenerate generated command markdown for `implement-trd` changes (0.5h) `[satisfies INFRA] [depends: TRD-005, TRD-006, TRD-007]`
+- [x] **TRD-008** Regenerate generated command markdown for `implement-trd` changes (0.5h) `[satisfies INFRA] [depends: TRD-005, TRD-006, TRD-007]`
   - Target files: `packages/development/commands/ensemble/implement-trd.md`
   - Implementation AC: Given `implement-trd.yaml` is edited, when `npm run generate` runs, then generated command markdown reflects the quickstart completion/reporting instructions.
 
-- [ ] **TRD-005-TEST** Assert quickstart output path rules for Foreman and non-Foreman prose (1h) `[verifies TRD-005] [satisfies REQ-001] [satisfies REQ-011] [depends: TRD-005]`
+- [x] **TRD-005-TEST** Assert quickstart output path rules for Foreman and non-Foreman prose (1h) `[verifies TRD-005] [satisfies REQ-001] [satisfies REQ-011] [depends: TRD-005]`
   - Target files: `packages/development/tests/implement-trd-command.test.js`
   - Validates PRD ACs: AC-001-1, AC-011-1, AC-011-2
   - Implementation AC: Given `implement-trd.yaml` raw text, when scanned, then it states Foreman writes `quickstart.md` beside `FOREMAN_ARTIFACT_PATH` and non-Foreman defaults beside the source TRD.
 
-- [ ] **TRD-006-TEST** Assert lifecycle ordering and blocking failure behavior in `implement-trd.yaml` (1h) `[verifies TRD-006] [satisfies REQ-001] [satisfies REQ-008] [satisfies REQ-010] [depends: TRD-006]`
+- [x] **TRD-006-TEST** Assert lifecycle ordering and blocking failure behavior in `implement-trd.yaml` (1h) `[verifies TRD-006] [satisfies REQ-001] [satisfies REQ-008] [satisfies REQ-010] [depends: TRD-006]`
   - Target files: `packages/development/tests/implement-trd-command.test.js`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-008-1, AC-008-2, AC-010-1
   - Implementation AC: Given `implement-trd.yaml`, when the completion and final reporting steps are inspected, then the quickstart command appears after completion verification and before any `implementation complete` success branch.
 
-- [ ] **TRD-007-TEST** Assert final report and Foreman artifact content includes quickstart coverage fields (1h) `[verifies TRD-007] [satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-011] [depends: TRD-007]`
+- [x] **TRD-007-TEST** Assert final report and Foreman artifact content includes quickstart coverage fields (1h) `[verifies TRD-007] [satisfies REQ-001] [satisfies REQ-007] [satisfies REQ-011] [depends: TRD-007]`
   - Target files: `packages/development/tests/implement-trd-command.test.js`
   - Validates PRD ACs: AC-001-1, AC-007-1, AC-007-2, AC-011-1, AC-011-2
   - Implementation AC: Given `implement-trd.yaml`, when scanned, then final reporting includes quickstart path, parsed AC count, scenario count, unmapped AC count, clarification count, and coverage percentage.
 
-- [ ] **TRD-008-TEST** Verify generated command markdown is synchronized (0.5h) `[verifies TRD-008] [satisfies INFRA] [depends: TRD-008]`
+- [x] **TRD-008-TEST** Verify generated command markdown is synchronized (0.5h) `[verifies TRD-008] [satisfies INFRA] [depends: TRD-008]`
   - Target files: `packages/development/tests/implement-trd-command.test.js`
   - Implementation AC: Given the PR head, when `npm run generate` is re-run, then `git status` shows no stale generated command markdown for `implement-trd`.
 
@@ -223,31 +223,31 @@ Use Node.js only. No new runtime dependencies. Tests use Jest. Command markdown 
 
 **Shippable State:** Operators using `/ensemble:implement-trd-beads` see that quickstart generation is intentionally unsupported for v1 and are directed to standard `/ensemble:implement-trd` when a quickstart artifact is required.
 
-- [ ] **TRD-009** Document and guard the `implement-trd-beads` v1 unsupported quickstart path (1h) `[satisfies REQ-010] [depends: TRD-004]`
+- [x] **TRD-009** Document and guard the `implement-trd-beads` v1 unsupported quickstart path (1h) `[satisfies REQ-010] [depends: TRD-004]`
   - Target files: `packages/development/commands/implement-trd-beads.yaml`
   - Validates PRD ACs: AC-010-2
   - Implementation AC: Given `implement-trd-beads` runs in v1 and quickstart generation is requested or expected, when the command reaches the relevant preflight/completion documentation, then it clearly states beads-backed quickstart generation is unsupported and points operators to standard `implement-trd`.
 
-- [ ] **TRD-010** Update user-facing docs/release notes for quickstart artifact behavior (1h) `[satisfies REQ-010] [satisfies REQ-011] [depends: TRD-007, TRD-009]`
+- [x] **TRD-010** Update user-facing docs/release notes for quickstart artifact behavior (1h) `[satisfies REQ-010] [satisfies REQ-011] [depends: TRD-007, TRD-009]`
   - Target files: `packages/development/README.md`, `packages/development/CHANGELOG.md`
   - Validates PRD ACs: AC-010-2, AC-011-1, AC-011-2
   - Implementation AC: Given docs are updated, when an operator reads quickstart artifact behavior, then standard `implement-trd` support, Foreman reporting, and beads-backed v1 unsupported status are all visible.
 
-- [ ] **TRD-011** Regenerate generated command markdown for beads/doc command changes (0.5h) `[satisfies INFRA] [depends: TRD-009, TRD-010]`
+- [x] **TRD-011** Regenerate generated command markdown for beads/doc command changes (0.5h) `[satisfies INFRA] [depends: TRD-009, TRD-010]`
   - Target files: `packages/development/commands/ensemble/implement-trd-beads.md`
   - Implementation AC: Given `implement-trd-beads.yaml` is edited, when `npm run generate` runs, then generated command markdown reflects the unsupported quickstart behavior.
 
-- [ ] **TRD-009-TEST** Assert `implement-trd-beads` documents the unsupported v1 quickstart path (1h) `[verifies TRD-009] [satisfies REQ-010] [depends: TRD-009]`
+- [x] **TRD-009-TEST** Assert `implement-trd-beads` documents the unsupported v1 quickstart path (1h) `[verifies TRD-009] [satisfies REQ-010] [depends: TRD-009]`
   - Target files: `packages/development/tests/implement-trd-beads-command.test.js`
   - Validates PRD ACs: AC-010-2
   - Implementation AC: Given `implement-trd-beads.yaml` raw text, when scanned, then it contains the unsupported quickstart message and a reference to standard `implement-trd`.
 
-- [ ] **TRD-010-TEST** Assert README/CHANGELOG mention quickstart support and Foreman visibility (0.75h) `[verifies TRD-010] [satisfies REQ-010] [satisfies REQ-011] [depends: TRD-010]`
+- [x] **TRD-010-TEST** Assert README/CHANGELOG mention quickstart support and Foreman visibility (0.75h) `[verifies TRD-010] [satisfies REQ-010] [satisfies REQ-011] [depends: TRD-010]`
   - Target files: `packages/development/tests/doc-maintenance.test.js`
   - Validates PRD ACs: AC-010-2, AC-011-1, AC-011-2
   - Implementation AC: Given docs are scanned, then they mention standard `implement-trd` quickstart generation, Foreman phase reporting, and beads-backed v1 unsupported status.
 
-- [ ] **TRD-011-TEST** Verify generated beads command markdown is synchronized (0.5h) `[verifies TRD-011] [satisfies INFRA] [depends: TRD-011]`
+- [x] **TRD-011-TEST** Verify generated beads command markdown is synchronized (0.5h) `[verifies TRD-011] [satisfies INFRA] [depends: TRD-011]`
   - Target files: `packages/development/tests/implement-trd-beads-command.test.js`
   - Implementation AC: Given the PR head, when `npm run generate` is re-run, then `git status` shows no stale generated command markdown for `implement-trd-beads`.
 

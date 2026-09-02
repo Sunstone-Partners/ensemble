@@ -113,3 +113,18 @@ describe('runDocMaintenance', () => {
     expect(fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8')).toContain('updated');
   });
 });
+
+describe('quickstart artifact docs', () => {
+  test('README and CHANGELOG mention standard support, Foreman reporting, and beads v1 unsupported status', () => {
+    const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8');
+    const changelog = fs.readFileSync(path.join(__dirname, '../CHANGELOG.md'), 'utf8');
+    const combined = `${readme}\n${changelog}`;
+
+    expect(combined).toContain('Standard `/ensemble:implement-trd`');
+    expect(combined).toContain('Foreman phase report');
+    expect(combined).toContain('quickstart path');
+    expect(combined).toContain('coverage summary');
+    expect(combined).toContain('quickstart generation is explicitly unsupported in v1');
+    expect(readme).toContain('/ensemble:implement-trd-beads` does not generate quickstart artifacts in v1');
+  });
+});
