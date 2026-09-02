@@ -1,12 +1,12 @@
 ---
 document_id: PRD-2026-a3c35be8
 label: prd-ai-planning-depth
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: 2026-09-02
 scale_depth: STANDARD
 total_requirements: 14
-readiness_score: 4.40
+readiness_score: 4.85
 design_readiness_score: null
 ---
 
@@ -21,9 +21,9 @@ design_readiness_score: null
 | Could requirements | 0 |
 | Won't requirements | 0 |
 | AC coverage | 14/14 (100%) |
-| Risk flags | 7 |
-| Cross-requirement dependencies | 18 |
-| [NEEDS CLARIFICATION] markers | 2 |
+| Risk flags | 9 |
+| Cross-requirement dependencies | 19 |
+| [NEEDS CLARIFICATION] markers | 0 |
 
 ## Acceptance Criteria Summary
 
@@ -48,7 +48,7 @@ design_readiness_score: null
 
 **Problem:** Ensemble planning currently depends on a manual complexity classification. Developers and PMs must decide whether work should take a lightweight fix path, a PRD→TRD planning path, or a fuller pipeline with extra review. That manual choice can over-plan small bugs, under-plan risky initiatives, and make Foreman automation depend on caller judgment rather than the work description itself.
 
-**Solution:** Add an AI-driven complexity analysis capability that scores a work description from 1–10 using scope size, dependency count, risk indicators, and team-size signals. The score automatically selects the planning depth before planning begins: 1–3 maps to the Simple fix-issue path, 4–6 maps to the Medium PRD→TRD path, and 7–10 maps to the Complex full pipeline with extra review. The user sees the score, rationale, and selected path, then can override the classification.
+**Solution:** Add an AI-driven complexity analysis capability that scores a work description from 1–10 using scope size, dependency count, risk indicators, and team-size signals. The score automatically selects the planning depth before planning begins: 1–3 maps to the Simple fix-issue path, 4–6 maps to the Medium PRD→TRD path, and 7–10 maps to the Complex pipeline of create PRD, refine PRD, create TRD, and refine TRD before any implementation approval. The user sees the score, rationale, and selected path, then can override the classification.
 
 **Value proposition:** Planning effort matches actual work complexity with less manual triage, fewer mismatched workflows, and clearer operator confidence before expensive planning starts.
 
@@ -68,7 +68,7 @@ design_readiness_score: null
 
 **Goals:**
 - Score work descriptions on a 1–10 complexity scale before planning starts.
-- Route planning depth automatically based on Simple, Medium, and Complex bands.
+- Route planning depth automatically based on Simple, Medium, and Complex bands, with Complex mapped to create PRD → refine PRD → create TRD → refine TRD before implementation approval.
 - Show the score, selected path, and rationale before planning begins.
 - Allow explicit user or caller override of the AI classification.
 - Provide verifiable fixtures proving simple and complex descriptions route correctly.
@@ -128,7 +128,7 @@ Recent PRDs use YAML frontmatter, `REQ-NNN` H3 headings, Given/When/Then AC bull
 - AC-003-2: Given a work description mentions multiple features, workflows, packages, or user roles, when scoring runs, then the scope-size factor contributes toward a higher complexity score.
 
 ### REQ-004: Evaluate Dependency Signals
-**Priority:** Must | **Complexity:** Medium
+**Priority:** Must | **Complexity:** Medium | **[RISK: implicit generated-artifact or workflow dependencies can be missed if only named services are counted]**
 
 - AC-004-1: Given a work description mentions integrations, shared libraries, generated artifacts, Foreman phases, or multiple commands, when scoring runs, then dependency signals are reflected in the rationale.
 - AC-004-2: Given no dependencies are detectable, when scoring runs, then the dependency factor is recorded as low or uncertain rather than inventing dependencies.
@@ -162,7 +162,7 @@ Recent PRDs use YAML frontmatter, `REQ-NNN` H3 headings, Given/When/Then AC bull
 ### REQ-009: Map Scores 7–10 to Complex Full Pipeline
 **Priority:** Must | **Complexity:** Medium | **[RISK: full-pipeline semantics may differ by caller if “extra review” is not mapped to concrete commands]**
 
-- AC-009-1: Given a score of 7, 8, 9, or 10, when the routing decision is made, then the selected planning depth is Complex and the recommended path is full pipeline with extra review [NEEDS CLARIFICATION: Should “extra review” mean refine-prd + create-trd + refine-trd before implementation, or a different concrete command sequence?].
+- AC-009-1: Given a score of 7, 8, 9, or 10, when the routing decision is made, then the selected planning depth is Complex and the recommended path is `create-prd` → `refine-prd` → `create-trd` → `refine-trd`, with implementation blocked until the refined TRD receives explicit approval.
 - AC-009-2: Given a complex initiative description is analyzed in validation, when scoring completes, then the score is `>=7` and the selected path is Complex.
 
 ### REQ-010: Show Score Before Planning Begins
@@ -187,10 +187,10 @@ Recent PRDs use YAML frontmatter, `REQ-NNN` H3 headings, Given/When/Then AC bull
 - AC-012-2: Given a complex initiative description fixture, when the test suite evaluates analyzer behavior, then the expected result is score `>=7` and Complex path with extra gates.
 
 ### REQ-013: Preserve Backward Compatibility and Manual Paths
-**Priority:** Should | **Complexity:** Medium
+**Priority:** Should | **Complexity:** Medium | **[RISK: introducing auto-selection as the default can surprise existing scripted callers unless opt-out precedence is explicit]**
 
 - AC-013-1: Given an existing command invocation that already explicitly selects `fix-issue`, `create-prd`, or `create-trd`, when the new analyzer exists, then existing behavior remains available and documented.
-- AC-013-2: Given a caller disables auto-complexity selection [NEEDS CLARIFICATION: Should the disable control be a global config setting, a command flag, or both?], when planning starts, then the manual classification path is used.
+- AC-013-2: Given a caller disables auto-complexity selection via a global configuration setting or a per-invocation command flag, when planning starts, then the manual classification path is used, with the command flag taking precedence over global configuration.
 
 ### REQ-014: Document Operator-Facing Behavior
 **Priority:** Should | **Complexity:** Low
@@ -229,21 +229,23 @@ Foreman mode auto-applied these resolutions without user interview:
 2. **Issue:** Simple/Medium/Complex route bands were defined, but timing was not. **Resolution:** Require analysis before any downstream planning starts (REQ-001, REQ-010).
 3. **Issue:** User override could conflict with non-interactive Foreman. **Resolution:** Split interactive override from non-interactive override flag/field behavior (REQ-011).
 4. **Issue:** Existing TRD team complexity logic may be confused with this feature. **Resolution:** Explicitly define this as pre-planning classification and mark existing TRD classifier as separate context.
-5. **Issue:** “Full pipeline with extra review” is not concrete enough. **Resolution:** Added a clarification marker to force refinement before implementation chooses exact command sequence.
-6. **Issue:** Backward compatibility could be lost if auto-analysis becomes mandatory everywhere. **Resolution:** Require manual/disable path preservation (REQ-013).
+5. **Issue:** “Full pipeline with extra review” was not concrete enough. **Resolution:** Defined the Complex path as `create-prd` → `refine-prd` → `create-trd` → `refine-trd`, with explicit approval still required before implementation.
+6. **Issue:** Backward compatibility could be lost if auto-analysis becomes mandatory everywhere. **Resolution:** Require manual/disable path preservation through both global configuration and a per-invocation flag, with flag precedence (REQ-013).
+7. **Issue:** Medium-complexity dependency and compatibility requirements lacked explicit risk indicators. **Resolution:** Added risk indicators for implicit dependency detection and opt-out precedence (REQ-004, REQ-013).
 
 ## Readiness Scorecard
 
 | Dimension | Score (1-5) | Notes |
 |-----------|:-:|-------|
-| Completeness | 4.4 | Covers input, scoring factors, routing bands, visibility, overrides, validation, compatibility, docs |
-| Testability | 4.5 | Every requirement has GWT ACs; simple and complex fixtures are explicit |
-| Clarity | 4.2 | Core bands are clear; two markers remain for exact full-pipeline sequence and disable-control shape |
-| Feasibility | 4.5 | Fits existing YAML command + Node/Jest + generation patterns; no new infra required |
-| **Overall** | **4.40** | **PASS** |
+| Completeness | 4.8 | Covers input, scoring factors, routing bands, visibility, overrides, validation, compatibility, docs, and concrete Complex-path sequencing |
+| Testability | 4.9 | Every requirement has GWT ACs; simple and complex fixtures are explicit; override precedence is verifiable |
+| Clarity | 4.9 | Core bands, full-pipeline sequence, disable controls, and non-interactive behavior are explicit with no clarification markers remaining |
+| Feasibility | 4.8 | Fits existing YAML command + Node/Jest + generation patterns; no new infra required |
+| **Overall** | **4.85** | **PASS** |
 
-**Gate decision: PASS.** The PRD is ready for TRD handoff, with 2 refinement questions to resolve before implementation.
+**Gate decision: PASS.** The PRD is ready for TRD handoff with all identified clarification markers resolved.
 
 ## Changelog
 
+- **v1.0.1** (2026-09-02) — Refined via `ensemble-refine-prd --foreman`; resolved Complex pipeline and disable-control clarifications, added missing Medium/High risk indicators, updated health metrics, and re-scored readiness.
 - **v1.0.0** (2026-09-02) — Initial draft via `ensemble-create-prd --foreman` for Foreman task `adhoc-94ba81bd`.
