@@ -1,12 +1,12 @@
 ---
 document_id: PRD-2026-b967cc9e
 label: prd-ai-complexity-planning-depth
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: Wed Sep 2 2026 18:46:04 GMT-0500 (Central Daylight Time)
 scale_depth: STANDARD
 total_requirements: 16
-readiness_score: 4.25
+readiness_score: 4.75
 ---
 
 # PRD-2026-b967cc9e: AI-Driven Complexity Analysis for Adaptive Planning Depth
@@ -22,9 +22,9 @@ readiness_score: 4.25
 | AC coverage | 16/16 (100%) |
 | Risk flags | 10 |
 | Cross-requirement dependencies | 18 |
-| [NEEDS CLARIFICATION] markers | 9 |
+| Clarification markers | 0 |
 
-Ambiguity scan complete: 9 items marked for clarification.
+Ambiguity scan complete: 9 previously open clarification items resolved under `--foreman` with conservative defaults.
 
 ## Product Summary
 
@@ -41,12 +41,18 @@ Ambiguity scan complete: 9 items marked for clarification.
 - Product manager / planner: wants planning depth to match scope, dependencies, risks, and team impact.
 - Foreman automation operator: wants non-interactive runs to choose predictable routes from task metadata.
 
-**Assumptions auto-applied under `--foreman`:**
-- STANDARD PRD depth selected because Foreman mode skips scale interview.
-- The first product surface is an Ensemble slash command named `/ensemble:analyze-complexity` [NEEDS CLARIFICATION: Should the command name be exactly `/ensemble:analyze-complexity`, or should adaptive routing be exposed through another command such as `/ensemble:plan`?]
+**Refinement decisions auto-applied under `--foreman`:**
+- STANDARD PRD depth remains selected because Foreman mode skips scale interview.
+- The v1 product surface is a new opt-in slash command named `/ensemble:analyze-complexity`; existing direct commands remain unchanged unless the user invokes the analyzer.
 - Complexity is scored from four required dimensions named scope size, dependencies, risk factors, and team size.
-- Medium route means PRD then TRD creation, with implementation requiring later approval [NEEDS CLARIFICATION: Should the Medium route stop after TRD creation, or continue into `implement-trd` only after an explicit approval gate?]
-- Complex route means full PRD/refine/TRD/refine flow with extra review before implementation [NEEDS CLARIFICATION: Which exact command sequence constitutes the Complex “full pipeline with extra review”?]
+- Each dimension must expose both a numeric sub-score and a qualitative label so the final score is auditable.
+- Medium route creates PRD and TRD planning artifacts, then stops before implementation until a separate explicit approval or implementation command is provided.
+- Complex route executes `/ensemble:create-prd`, `/ensemble:refine-prd`, `/ensemble:create-trd`, and `/ensemble:refine-trd`, with an extra human or Foreman approval gate before any implementation command.
+- Override input uses route names only (`simple`, `medium`, `complex`) through `--route <value>` or the equivalent interactive selection; direct command names are not accepted as override values.
+- Adaptive planning can be disabled through `adaptive_planning.enabled: false` in Ensemble configuration or per invocation with `--no-adaptive-planning`; the invocation flag takes precedence.
+- Foreman low-confidence analysis chooses the safer higher-depth route between plausible candidates, but still halts when the subject/description is missing or no required dimension can be scored.
+- Foreman runs write classification details to a machine-readable sidecar artifact and include a human-readable summary in the phase report.
+- AI analysis failure uses a conservative deterministic heuristic when enough non-secret structural details are present; otherwise it halts safely with no downstream side effects.
 
 **Non-goals (v1):**
 - No implementation of the selected route in this PRD creation phase.
@@ -105,7 +111,7 @@ The analyzer must score work on scope size, dependency count, risk factors, and 
 
 - AC-003-1: Given a work description with small single-file scope, no external dependencies, low risk, and one-person ownership, when scored, then the result is in the Simple range unless other evidence raises the score.
 - AC-003-2: Given a work description with cross-cutting changes, multiple dependencies, user-facing risk, or multi-team ownership, when scored, then each factor contributing to the elevated score is listed in the rationale.
-- AC-003-3: Given a score is emitted, when the user reads the output, then they can see each dimension's sub-score or qualitative level [NEEDS CLARIFICATION: Should each factor expose numeric sub-scores, qualitative labels, or both?]
+- AC-003-3: Given a score is emitted, when the user reads the output, then they can see each dimension's numeric sub-score and qualitative label.
 
 ### REQ-004: Score Bands and Route Mapping
 **Priority:** Must | **Complexity:** Medium | **[RISK: route thresholds could under-plan borderline work if they are too rigid]**
@@ -124,7 +130,7 @@ The analyzer must report confidence and avoid silently routing when evidence is 
 
 - AC-005-1: Given the work description lacks enough detail to score at least two required dimensions, when analysis completes, then the output flags low confidence and lists missing details.
 - AC-005-2: Given low confidence in interactive mode, when the analyzer presents a recommendation, then it asks for clarification or explicit confirmation before executing downstream planning.
-- AC-005-3: Given low confidence in Foreman mode, when the analyzer cannot ask questions, then it chooses the safer higher-depth route between the plausible candidates [NEEDS CLARIFICATION: Should Foreman low-confidence handling always choose the higher route, or halt for missing detail?]
+- AC-005-3: Given low confidence in Foreman mode and at least one plausible route can be scored, when the analyzer cannot ask questions, then it chooses the safer higher-depth route between plausible candidates and records the missing details.
 
 ### Planning Depth Presentation and Control
 
@@ -143,7 +149,7 @@ Users must be able to override the AI classification.
 
 - AC-007-1: Given a user supplies an explicit override flag, when analysis completes, then the selected route follows the override while still recording the AI-recommended route.
 - AC-007-2: Given interactive mode and a displayed recommendation, when the user chooses a different route, then the command proceeds with the user's selected route and notes that it was human-overridden.
-- AC-007-3: Given invalid override input, when route selection runs, then the command rejects it with valid choices listed and performs no downstream side effects [NEEDS CLARIFICATION: Should override choices be `simple|medium|complex`, direct command names, or both?]
+- AC-007-3: Given invalid override input, when route selection runs, then the command rejects it with valid route choices (`simple`, `medium`, `complex`) listed and performs no downstream side effects.
 
 ### REQ-008: Configurable Disable Controls
 **Priority:** Should | **Complexity:** Medium | **[RISK: teams may need deterministic legacy behavior for CI or audited workflows]**
@@ -151,7 +157,7 @@ Users must be able to override the AI classification.
 Teams should be able to disable adaptive classification globally or per invocation.
 
 - AC-008-1: Given adaptive classification is disabled in configuration, when a user invokes an existing direct command, then existing behavior remains unchanged.
-- AC-008-2: Given a per-invocation disable flag is present, when both config and flag could apply, then the invocation flag takes precedence [NEEDS CLARIFICATION: What exact config key and command flag names should control disable behavior?]
+- AC-008-2: Given `--no-adaptive-planning` is present, when `adaptive_planning.enabled` is true or unset in configuration, then the invocation flag takes precedence and adaptive classification is skipped for that invocation.
 
 ### REQ-009: Backward Compatibility for Existing Commands
 **Priority:** Must | **Complexity:** Low
@@ -177,7 +183,7 @@ The adaptive route must define which downstream commands can run and where it mu
 The analyzer should leave a concise audit trail of the decision.
 
 - AC-011-1: Given a route recommendation is produced, when the command exits successfully, then the final output includes score, band, confidence, override status, and rationale.
-- AC-011-2: Given Foreman mode is active, when a route is selected, then the phase report or console output includes the same classification details for later run inspection [NEEDS CLARIFICATION: Should the classification be written to a dedicated machine-readable artifact in Foreman runs?]
+- AC-011-2: Given Foreman mode is active, when a route is selected, then the phase report includes human-readable classification details and a dedicated machine-readable classification artifact path for later run inspection.
 
 ### Quality, Tests, and Operations
 
@@ -197,7 +203,7 @@ The feature must include repeatable tests for scoring, boundaries, overrides, an
 The analyzer must minimize surprise from repeated scoring.
 
 - AC-013-1: Given the same work description and same configuration, when analysis is repeated, then the output should remain in the same route band unless the model returns materially different rationale.
-- AC-013-2: Given AI analysis fails or returns malformed output, when fallback runs, then the command either applies a conservative deterministic heuristic or halts safely with no downstream side effects [NEEDS CLARIFICATION: Should the fallback heuristic exist in v1, or should AI failure always halt?]
+- AC-013-2: Given AI analysis fails or returns malformed output, when enough non-secret structural details are present, then a conservative deterministic heuristic selects the safer plausible route; otherwise the command halts safely with no downstream side effects.
 
 ### REQ-014: Integration with Existing Generation Workflow
 **Priority:** Must | **Complexity:** Low
@@ -252,28 +258,37 @@ No circular dependencies identified.
 
 | Issue | Category | Resolution |
 |-------|----------|------------|
-| Command name is not specified by the task. | Ambiguity | Auto-assumed `/ensemble:analyze-complexity` and marked for clarification. |
-| Medium and Complex routes could accidentally cross into implementation. | Approval boundary | Added REQ-010 with explicit stop-before-implementation behavior. |
+| Command name is not specified by the task. | Ambiguity | Resolved to a new opt-in `/ensemble:analyze-complexity` command for v1. |
+| Medium and Complex routes could accidentally cross into implementation. | Approval boundary | Resolved Medium to PRD+TRD only and Complex to PRD/refine/TRD/refine plus approval before implementation. |
 | AI scoring may be non-deterministic. | Missing edge case | Added REQ-013 deterministic fallback behavior and tests in REQ-012. |
-| User override syntax is unspecified. | Ambiguity | Added REQ-007 and clarification marker for accepted override forms. |
-| Foreman low-confidence behavior cannot ask questions. | Automation risk | Added REQ-005 with conservative higher-route default plus clarification marker. |
+| User override syntax is unspecified. | Ambiguity | Resolved override values to route names only: `simple`, `medium`, `complex`. |
+| Foreman low-confidence behavior cannot ask questions. | Automation risk | Resolved to safer higher-depth route selection when scoreable; halt only when required input is absent or unscoreable. |
 | Secrets could be echoed in classifier rationale. | Security gap | Added REQ-015 for secret-safe output. |
-| Existing direct commands must not be forced through adaptive routing. | Backward compatibility | Added REQ-008 and REQ-009. |
+| Existing direct commands must not be forced through adaptive routing. | Backward compatibility | Added REQ-008 and REQ-009; v1 analyzer is opt-in. |
+| Disable controls were unspecified. | Configuration ambiguity | Resolved to `adaptive_planning.enabled` and `--no-adaptive-planning`. |
+| Foreman artifact format was unspecified. | Auditability gap | Resolved to a machine-readable classification sidecar plus phase-report summary. |
 
-All recommended resolutions above were auto-applied under Foreman mode; unresolved policy choices were marked inline with `[NEEDS CLARIFICATION]` markers.
+All recommended resolutions above were auto-applied under Foreman mode.
 
 ## Readiness Scorecard
 
 | Dimension | Score (1-5) | Notes |
 |-----------|:-:|-------|
-| Completeness | 4.3 | Covers command surface, scoring, route bands, Foreman input, overrides, compatibility, tests, docs, and security. Exact command/config names remain open. |
-| Testability | 4.6 | Every Must/Should requirement has Given/When/Then ACs, including supplied verification examples and boundary cases. |
-| Clarity | 3.9 | Core behavior is clear, but route command sequence, override syntax, and artifact format need refinement. |
-| Feasibility | 4.2 | Fits existing Node/YAML command architecture and can reuse existing command/test patterns. Main risk is AI output determinism. |
-| **Overall** | **4.25** | **PASS** |
+| Completeness | 4.8 | Covers command surface, scoring, route bands, Foreman input, overrides, disable controls, compatibility, tests, docs, security, and route stop points. |
+| Testability | 4.8 | Every Must/Should requirement has Given/When/Then ACs, including verification examples, boundaries, overrides, fallback, and Foreman artifact behavior. |
+| Clarity | 4.7 | Command name, route sequence, approval boundary, override syntax, config controls, and artifact expectations are now explicit. |
+| Feasibility | 4.7 | Fits existing Node/YAML command architecture and can reuse command/test patterns. Remaining risk is calibrating deterministic heuristics against model output. |
+| **Overall** | **4.75** | **PASS** |
 
-**Gate decision: PASS.** The PRD is ready for `/ensemble:refine-prd` to resolve the 9 clarification markers before TRD creation.
+**Gate decision: PASS.** The PRD is ready for TRD creation.
 
 ## Suggested Next Step
 
-`/ensemble:refine-prd docs/PRD/PRD-2026-b967cc9e-ai-complexity-planning-depth.md`
+`/ensemble:create-trd docs/PRD/PRD-2026-b967cc9e-ai-complexity-planning-depth.md`
+
+## Changelog
+
+### 2026-09-02 — v1.0.1
+- Resolved 9 open policy/detail decisions under `--foreman` using conservative defaults.
+- Fixed command name, route sequence, approval boundaries, score-detail format, override syntax, disable controls, Foreman audit artifact behavior, low-confidence behavior, and fallback behavior.
+- Updated PRD Health Summary and Implementation Readiness Gate score from 4.25 to 4.75.
