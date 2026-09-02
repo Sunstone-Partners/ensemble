@@ -1,12 +1,12 @@
 ---
 document_id: PRD-2026-7f4708b4
 label: prd-hard-enforce-constitution
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: Wed Sep 02 2026 14:13:00 GMT-0500 (Central Daylight Time)
 scale_depth: STANDARD
 total_requirements: 14
-readiness_score: 4.25
+readiness_score: 4.75
 design_readiness_score: null
 ---
 
@@ -21,9 +21,9 @@ design_readiness_score: null
 | Could requirements | 0 |
 | Won't requirements | 0 |
 | AC coverage | 14/14 (100%) |
-| Risk flags | 6 |
+| Risk flags | 11 |
 | Cross-requirement dependencies | 13 |
-| [NEEDS CLARIFICATION] markers | 3 |
+| Clarification markers | 0 |
 
 **Foreman subject read:** `PRD-1: Hard-enforce constitution`  
 **Foreman mode:** STANDARD depth auto-selected; clarification interviews skipped.  
@@ -69,7 +69,7 @@ design_readiness_score: null
 
 - Implementing a full new constitution authoring workflow.
 - Changing implementation-phase completion verification override semantics.
-- Rewriting all Spec-Kit Nine Articles; this PRD assumes an existing constitution source, likely `docs/standards/constitution.md` and/or `.specify/memory/constitution.md` [NEEDS CLARIFICATION: Should Ensemble enforce only `docs/standards/constitution.md`, only `.specify/memory/constitution.md`, or both with precedence?].
+- Rewriting all Spec-Kit Nine Articles; this PRD uses the repo constitution source-discovery policy: enforce `docs/standards/constitution.md` when present, otherwise enforce `.specify/memory/constitution.md`; if both are present, `docs/standards/constitution.md` is canonical and the gate should warn when the secondary file diverges.
 - Blocking implementation commands unless they currently execute spec/plan constitution gates.
 - Adding organization-specific compliance policy beyond constitution article checks.
 
@@ -78,7 +78,7 @@ design_readiness_score: null
 - Constitution enforcement applies to Ensemble spec/plan phases: `ensemble:create-prd` and `ensemble:create-trd`.
 - A violation means any failed check mapped to a constitution article.
 - Blocking means no normal phase artifact is saved; a failure report may still be emitted to the Foreman artifact path for observability.
-- Article identifiers follow a numeric article format compatible with Spec-Kit's Nine Articles [NEEDS CLARIFICATION: What exact article ID format should messages use: `Article I`, `Article 1`, `A1`, or repo-local headings?].
+- Article identifiers in messages use the article heading identifier exactly as written in the constitution source, preserving repo-local forms such as `Article I`, `Article 1`, or `A1`, and include the article title when available.
 - Existing non-constitution soft confirmations, such as CONCERNS-band readiness prompts, remain intact unless they are masking a constitution violation.
 
 ## Requirements
@@ -89,7 +89,7 @@ design_readiness_score: null
 The spec/plan commands must identify the constitution source before checking generated PRD or TRD content. **Priority:** Must | **Complexity:** Medium [RISK: constitution source precedence may affect repos with multiple constitution files]
 
 - AC-001-1: Given a repo has the configured constitution file, when `create-prd` starts its compliance gate, then the gate loads that file before phase completion.
-- AC-001-2: Given no supported constitution file exists, when a spec/plan command reaches the compliance gate, then it reports constitution enforcement cannot run and blocks or follows a documented no-constitution policy [NEEDS CLARIFICATION: Should missing constitution block generation, or should it be treated as no enforceable policy?].
+- AC-001-2: Given no supported constitution file exists, when a spec/plan command reaches the compliance gate, then it reports a constitution configuration error and blocks generation rather than treating the absence as a pass.
 
 ### REQ-002: Map checks to article numbers
 Every constitution check must be traceable to one or more article numbers. **Priority:** Must | **Complexity:** Medium [RISK: weak mapping would produce unhelpful hard-block errors]
@@ -106,7 +106,7 @@ The `create-prd` phase must fail hard when the generated PRD violates the consti
 - AC-003-2: Given a generated PRD draft violates a constitution article in Foreman mode, when the phase exits, then Foreman receives a failed phase report instead of a successful PRD artifact claim.
 
 ### REQ-004: Verify PRD compliance before completion
-`create-prd` must run constitutional compliance after draft generation and before any success messaging. **Priority:** Must | **Complexity:** Medium
+`create-prd` must run constitutional compliance after draft generation and before any success messaging. **Priority:** Must | **Complexity:** Medium [RISK: gate ordering may conflict with existing save-and-announce flow]
 
 - AC-004-1: Given a compliant PRD draft, when `create-prd` completes, then the command records that constitution compliance passed before printing the final saved file path.
 - AC-004-2: Given a failing PRD draft, when `create-prd` formats its final output, then no suggested `/ensemble:create-trd` next step is printed.
@@ -120,7 +120,7 @@ The `create-trd` phase must fail hard when the generated TRD violates the consti
 - AC-005-2: Given a generated TRD draft violates a constitution article in Foreman mode, when the phase exits, then Foreman receives a failed phase report instead of a successful TRD artifact claim.
 
 ### REQ-006: Verify TRD compliance before completion
-`create-trd` must run constitutional compliance after architecture/task design and before any success messaging. **Priority:** Must | **Complexity:** Medium
+`create-trd` must run constitutional compliance after architecture/task design and before any success messaging. **Priority:** Must | **Complexity:** Medium [RISK: gate ordering may conflict with existing TRD finalization flow]
 
 - AC-006-1: Given a compliant TRD draft, when `create-trd` completes, then the command records that constitution compliance passed before printing the final saved file path.
 - AC-006-2: Given a failing TRD draft, when `create-trd` exits, then no implementation next step is printed.
@@ -140,7 +140,7 @@ No CLI flag, env var, or documented command parameter may bypass constitution en
 - AC-008-2: Given command docs are generated, when searched for constitution skip semantics, then no supported bypass path is documented.
 
 ### REQ-009: Provide actionable article-specific errors
-Violation errors must help users fix the PRD/TRD without reading source code. **Priority:** Must | **Complexity:** Medium
+Violation errors must help users fix the PRD/TRD without reading source code. **Priority:** Must | **Complexity:** Medium [RISK: overly terse errors would satisfy blocking while delaying remediation]
 
 - AC-009-1: Given a violation is detected, when the command fails, then the error includes the article number, article title if available, failing artifact section, and remediation hint.
 - AC-009-2: Given multiple articles fail, when the error is printed, then all failing article numbers are listed without collapsing to a generic constitution failure.
@@ -154,13 +154,13 @@ Existing non-constitution CONCERNS-band readiness behavior must remain unchanged
 ### Validation and Observability
 
 ### REQ-011: Add violating PRD regression test
-The product test suite must prove violating PRDs hard-block. **Priority:** Must | **Complexity:** Medium
+The product test suite must prove violating PRDs hard-block. **Priority:** Must | **Complexity:** Medium [RISK: tests may assert error text but miss artifact side effects]
 
 - AC-011-1: Given a fixture PRD draft that violates a constitution article, when the PRD constitution gate test runs, then it asserts no PRD file is saved.
 - AC-011-2: Given the same fixture, when the error is inspected, then it asserts an article number appears in the message.
 
 ### REQ-012: Add violating TRD regression test
-The development test suite must prove violating TRDs hard-block. **Priority:** Must | **Complexity:** Medium
+The development test suite must prove violating TRDs hard-block. **Priority:** Must | **Complexity:** Medium [RISK: tests may miss Foreman artifact/reporting semantics]
 
 - AC-012-1: Given a fixture TRD draft that violates a constitution article, when the TRD constitution gate test runs, then it asserts no TRD file is saved.
 - AC-012-2: Given the same fixture, when the error is inspected, then it asserts an article number appears in the message.
@@ -235,9 +235,9 @@ No circular dependencies detected.
 
 | Issue | Risk | Resolution Applied Under Foreman Mode |
 |-------|------|---------------------------------------|
-| Constitution source precedence is unspecified. | Teams may have both Ensemble and Spec-Kit constitution files. | Added REQ-001 plus clarification marker on source precedence. |
-| Missing constitution policy is ambiguous. | Hard enforcement could block all repos without a constitution or silently do nothing. | Added AC-001-2 with clarification marker. |
-| Article number format is unspecified. | Error messages may pass tests but not match operator expectations. | Added assumption and clarification marker for article ID format. |
+| Constitution source precedence is unspecified. | Teams may have both Ensemble and Spec-Kit constitution files. | Resolved precedence: `docs/standards/constitution.md` is canonical when present; fallback to `.specify/memory/constitution.md`; warn on divergence when both exist. |
+| Missing constitution policy is ambiguous. | Hard enforcement could block all repos without a constitution or silently do nothing. | Resolved as a blocking configuration error so hard enforcement cannot silently pass. |
+| Article number format is unspecified. | Error messages may pass tests but not match operator expectations. | Resolved to preserve the repo-local article heading identifier exactly as written and include the title when available. |
 | Removing soft gates too broadly could break legitimate CONCERNS workflows. | Existing Foreman behavior might regress outside constitution failures. | Added REQ-010 to preserve unrelated soft gates. |
 | Foreman artifact semantics can conflict with "do not save PRD/TRD" on failure. | Foreman still needs a phase report even when artifact generation blocks. | Clarified in assumptions that failure reports may be emitted while repo-local PRD/TRD artifacts are not saved. |
 
@@ -245,15 +245,17 @@ No circular dependencies detected.
 
 | Dimension | Score | Notes |
 |-----------|-------|-------|
-| Completeness | 4 | Covers PRD, TRD, errors, overrides, docs, and tests. Constitution source precedence remains open. |
+| Completeness | 5 | Covers PRD, TRD, errors, overrides, docs, tests, source precedence, missing-source behavior, and article ID formatting. |
 | Testability | 5 | Every requirement has concrete Given/When/Then ACs. |
-| Clarity | 4 | Hard-block semantics are explicit; three source/format questions need confirmation. |
+| Clarity | 5 | Hard-block semantics and prior source/format ambiguities are explicit. |
 | Feasibility | 4 | Fits existing Node/Jest/YAML generator architecture but may require evaluator design. |
 
-**Overall score:** 4.25  
+**Overall score:** 4.75
 **Gate decision:** PASS
 
-Ambiguity scan complete: 3 items marked for clarification.
+Readiness score: 4.25 -> 4.75 (improved)
+
+Ambiguity scan complete: 0 items marked for clarification.
 
 ## Technical Dependency Mapping
 
@@ -273,8 +275,18 @@ Ambiguity scan complete: 3 items marked for clarification.
 
 ## Suggested Next Step
 
-Resolve the 3 clarification markers, then run:
+Run:
 
 ```bash
 /ensemble:create-trd docs/PRD/PRD-2026-7f4708b4-hard-enforce-constitution.md --foreman
 ```
+
+## Changelog
+
+### 2026-09-02 — v1.0.1
+
+- Resolved all 3 Foreman-mode clarification markers with best-effort defaults.
+- Defined constitution source precedence and missing-source blocking behavior.
+- Defined article identifier formatting for violation messages.
+- Added risk indicators to touched Medium-complexity requirements.
+- Re-scored readiness from 4.25 to 4.75.
