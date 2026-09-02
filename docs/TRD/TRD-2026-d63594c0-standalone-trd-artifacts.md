@@ -2,7 +2,7 @@
 document_id: TRD-2026-d63594c0
 label: trd-standalone-trd-artifacts
 prd_reference: PRD-2026-d63594c0
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: 2026-09-02
 design_readiness_score: 4.75
@@ -84,6 +84,8 @@ Source PRD
 - If generation changes source-derived markdown unexpectedly, tests fail until generated artifacts are synchronized.
 
 ## Master Task List
+
+Task summary: 16 total tasks (8 implementation, 8 test), 52h total estimate. No task is 8h or larger.
 
 ### PR 1: Domain trigger and output-path contract
 **Shippable State:** Running `/ensemble:create-trd` on a PRD now has an explicit, reviewable contract for deciding whether companion artifacts are required and for deriving their deterministic paths; no artifact templates are emitted until PR 2.
@@ -238,7 +240,7 @@ All implementation ACs have objective pass/fail checks based on source text, gen
 | Architecture completeness | 4.8 | Components, data flow, integration points, path derivation, and Foreman reporting are defined. |
 | Task coverage | 4.8 | All 14 PRD requirements have implementation and test coverage. |
 | Dependency clarity | 4.7 | Dependencies are explicit and acyclic; critical path is long but intentional. |
-| Estimate confidence | 4.7 | No task exceeds 5h except none; estimates are granular and consistent. |
+| Estimate confidence | 4.7 | No task exceeds 5h; estimates are granular and consistent. |
 | **Overall** | **4.75** | **PASS** |
 
 **Gate decision:** PASS.
@@ -248,3 +250,12 @@ All implementation ACs have objective pass/fail checks based on source text, gen
 - Review and approve this TRD before implementation.
 - Suggested implementation command: `/ensemble-implement-trd-beads docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts.md`
 - Optional team configuration: `/ensemble-configure-team docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts.md`
+
+## Changelog
+
+### 2026-09-02 — v1.0.1
+
+- Refined via `/ensemble-refine-trd --foreman`.
+- Added explicit Master Task List task/hour summary for validation drift checks.
+- Confirmed PR-stack shippable states, REQ/AC traceability, dependency graph, and readiness score remain valid.
+- Preserved stable `document_id`, `label`, PRD reference, task IDs, and 52h total estimate.
