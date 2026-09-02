@@ -2,10 +2,10 @@
 document_id: TRD-2026-b967cc9e
 label: trd-ai-complexity-planning-depth
 prd_reference: docs/PRD/PRD-2026-b967cc9e-ai-complexity-planning-depth.md
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: Wed Sep 2 2026 19:08:00 GMT-0500 (Central Daylight Time)
-design_readiness_score: 4.65
+design_readiness_score: 4.8
 kind: trd
 ---
 
@@ -84,7 +84,7 @@ None.
 
 ## Architecture Decision
 
-Implement adaptive planning as a new opt-in command surface, `/ensemble:analyze-complexity`, with deterministic helper code under `packages/development/lib/` and source command YAML under `packages/product/commands/` or `packages/development/commands/` per existing command ownership. Generated markdown under `commands/ensemble/` is regenerated, not hand-edited.
+Implement adaptive planning as a new opt-in command surface, `/ensemble:analyze-complexity`, with source command YAML at `packages/development/commands/analyze-complexity.yaml`, generated markdown from `npm run generate`, and deterministic helper code at `packages/development/lib/complexity-analyzer.js`. Existing route commands remain downstream owners of PRD/TRD/fix behavior; the analyzer prepares a dispatch plan and never bypasses approval boundaries.
 
 ### Rationale
 
@@ -92,6 +92,7 @@ Implement adaptive planning as a new opt-in command surface, `/ensemble:analyze-
 - The scoring rubric, boundary bands, overrides, and fallback behavior need unit tests.
 - Foreman requires non-interactive metadata handling and exact artifact writes.
 - A helper CLI enables repeatable JSON fixtures without forcing downstream implementation in this planning TRD.
+- Placing the command in `packages/development/commands/` matches the existing planning and fix workflow ownership (`create-trd`, `refine-trd`, and `fix-issue`).
 
 ## System Architecture
 
@@ -99,11 +100,11 @@ Implement adaptive planning as a new opt-in command surface, `/ensemble:analyze-
 
 | Component | Responsibility | Interfaces |
 |-----------|----------------|------------|
-| `analyze-complexity.yaml` command source | User and Foreman workflow entry point; validates inputs; prints disclosure; selects route. | Command args, `--route`, `--no-adaptive-planning`, `--foreman`, Foreman env vars. |
-| `complexity-analyzer.js` helper | Normalizes task metadata, computes dimension scores, final score, confidence, route band, fallback decision, and redacted rationale. | JS functions plus optional CLI JSON output. |
+| `packages/development/commands/analyze-complexity.yaml` command source | User and Foreman workflow entry point; validates inputs; prints disclosure; selects route. | Command args, `--route`, `--no-adaptive-planning`, `--foreman`, Foreman env vars. |
+| `packages/development/lib/complexity-analyzer.js` helper | Normalizes task metadata, computes dimension scores, final score, confidence, route band, fallback decision, and redacted rationale. | JS functions plus CLI mode: `node packages/development/lib/complexity-analyzer.js analyze --json`. |
 | Config resolver | Reads Ensemble config and applies invocation precedence. | `adaptive_planning.enabled`, command flags. |
-| Route dispatcher prose | Invokes or instructs existing route commands without changing their direct behavior. | `/ensemble:fix-issue`, `/ensemble:create-prd`, `/ensemble:create-trd`, `/ensemble:refine-prd`, `/ensemble:refine-trd`. |
-| Foreman artifact writer | Writes human-readable phase report and machine-readable classification sidecar. | `FOREMAN_ARTIFACT_PATH`, derived sidecar path, original subject/description metadata. |
+| Route dispatcher plan | Emits the downstream command sequence and approval stop state without changing direct command behavior. | `/ensemble:fix-issue`, `/ensemble:create-prd`, `/ensemble:create-trd`, `/ensemble:refine-prd`, `/ensemble:refine-trd`. |
+| Foreman artifact writer | Writes human-readable phase report and machine-readable classification sidecar. | `FOREMAN_ARTIFACT_PATH`, `<FOREMAN_ARTIFACT_PATH basename>.classification.json`, original subject/description metadata. |
 | Tests | Verifies scoring, boundaries, overrides, fallback, redaction, and generated artifact sync. | Jest fixtures and command validation scripts. |
 | Docs/help | Documents score bands, route controls, disable controls, and Foreman metadata behavior. | README or command help generated from YAML. |
 
@@ -149,7 +150,11 @@ Implement adaptive planning as a new opt-in command surface, `/ensemble:analyze-
 - Override values: only `simple`, `medium`, `complex`.
 - Score bands: 1-3 Simple, 4-6 Medium, 7-10 Complex.
 - Foreman subject source: `FOREMAN_TASK_TITLE` and `FOREMAN_TASK_DESCRIPTION`.
-- Sidecar artifact: JSON adjacent to or linked from `FOREMAN_ARTIFACT_PATH` when available.
+- Sidecar artifact: JSON adjacent to `FOREMAN_ARTIFACT_PATH` using the same basename plus `.classification.json` (example: `phase-4.md` -> `phase-4.classification.json`).
+
+### Generated Artifact Boundary
+
+Command implementation edits start in `packages/development/commands/analyze-complexity.yaml`. Generated markdown must be refreshed with `npm run generate` and validated with `npm run validate`; generated files are not hand-edited. Helper logic and fixtures live under `packages/development/lib/` and `packages/development/tests/` so deterministic behavior is covered outside prompt prose.
 
 ### Failure Handling
 
@@ -169,7 +174,7 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 1: Analyzer Command Skeleton and Input Contract
 **Shippable State:** Users and Foreman runs can invoke `/ensemble:analyze-complexity` and receive validated missing-input or normalized-input disclosure without route side effects.
 
-- [ ] **TRD-001**: Add the source YAML command for `/ensemble:analyze-complexity` with args, `--foreman`, `--route`, and `--no-adaptive-planning` parameters (3h) [satisfies REQ-001, REQ-002, REQ-006, REQ-014]
+- [ ] **TRD-001**: Add `packages/development/commands/analyze-complexity.yaml` for `/ensemble:analyze-complexity` with args, `--foreman`, `--route`, and `--no-adaptive-planning` parameters (3h) [satisfies REQ-001, REQ-002, REQ-006, REQ-014]
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-002-3, AC-006-1, AC-014-1
   - Implementation ACs:
     - Given a description argument is present, when the command starts, then it identifies the argument as the work description before creating downstream artifacts.
@@ -195,7 +200,7 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 2: Deterministic Scoring and Route Mapping
 **Shippable State:** Users can see a scored Simple/Medium/Complex recommendation with dimension detail and boundary-correct route mapping.
 
-- [ ] **TRD-003**: Add `complexity-analyzer.js` scoring helpers for scope size, dependencies, risk factors, and team size (5h) [satisfies REQ-003, REQ-005, REQ-013]
+- [ ] **TRD-003**: Add `packages/development/lib/complexity-analyzer.js` scoring helpers for scope size, dependencies, risk factors, and team size (5h) [satisfies REQ-003, REQ-005, REQ-013]
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-003-3, AC-005-1, AC-013-1
   - Implementation ACs:
     - Given a single-file low-risk description, when scored, then all dimensions include numeric score, label, and evidence.
@@ -276,11 +281,11 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
   - Implementation ACs:
     - Given route fixtures, when dispatch plans are generated, then command sequence and final stop state match the PRD.
 
-- [ ] **TRD-010**: Add Foreman phase report and classification sidecar artifact output with safe path handling (4h) [satisfies REQ-011]
+- [ ] **TRD-010**: Add Foreman phase report and deterministic `<artifact>.classification.json` sidecar output with safe path handling (4h) [satisfies REQ-011]
   - Validates PRD ACs: AC-011-1, AC-011-2
   - Implementation ACs:
     - Given `FOREMAN_ARTIFACT_PATH` is set, when classification completes, then a phase report is written to that exact path.
-    - Given Foreman mode is active, when classification completes, then a linked JSON sidecar contains score, route, confidence, override status, and rationale.
+    - Given Foreman mode is active, when classification completes, then a linked JSON sidecar named from the phase artifact basename contains score, route, confidence, override status, and rationale.
 - [ ] **TRD-010-TEST**: Add Foreman artifact path and sidecar JSON tests (2h) [verifies TRD-010] [satisfies REQ-011, REQ-012] [depends: TRD-010]
   - Validates PRD ACs: AC-011-1, AC-011-2
   - Implementation ACs:
@@ -309,7 +314,7 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
   - Implementation ACs:
     - Given docs files, when tests or validation scripts scan them, then required terms are present.
 
-- [ ] **TRD-013**: Run source/generated workflow by regenerating command markdown from YAML sources (1h) [satisfies REQ-014]
+- [ ] **TRD-013**: Run `npm run generate` to regenerate command markdown from YAML sources (1h) [satisfies REQ-014]
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation ACs:
     - Given YAML command sources changed, when generation runs, then generated command markdown updates from source.
@@ -471,11 +476,11 @@ MCP enhancement: skipped (no MCP tools detected).
 
 | Dimension | Score (1-5) | Notes |
 |-----------|:-:|-------|
-| Architecture completeness | 4.6 | Components, interfaces, data flow, artifacts, failure modes, and redaction boundaries are defined. |
+| Architecture completeness | 4.8 | Components, interfaces, data flow, concrete file ownership, artifacts, failure modes, and redaction boundaries are defined. |
 | Task coverage | 4.8 | Every REQ has implementation and test coverage with AC traceability. |
-| Dependency clarity | 4.6 | Dependencies are explicit, acyclic, and grouped into shippable PRs. |
-| Estimate confidence | 4.6 | Tasks are granular; no implementation task is >=8h; core helper estimates include tests. |
-| **Overall** | **4.65** | **PASS** |
+| Dependency clarity | 4.8 | Dependencies are explicit, acyclic, grouped into shippable PRs, and include deterministic sidecar naming. |
+| Estimate confidence | 4.8 | Tasks are granular; no implementation task is >=8h; core helper estimates include tests and exact generation commands. |
+| **Overall** | **4.8** | **PASS** |
 
 **Gate decision: PASS.** TRD is ready for review and team configuration. No implementation has been performed.
 
@@ -487,11 +492,22 @@ MCP enhancement: skipped (no MCP tools detected).
 - Test tasks: 16
 - Total tasks: 32
 - Estimated implementation/test effort: 72h
-- Design readiness score: 4.65 PASS
+- Design readiness score: 4.8 PASS
 
 ## Suggested Next Steps
 
 1. `/ensemble-configure-team docs/TRD/TRD-2026-b967cc9e-ai-complexity-planning-depth.md`
 2. After explicit approval only: `/ensemble-implement-trd-beads docs/TRD/TRD-2026-b967cc9e-ai-complexity-planning-depth.md`
+
+## Change Log
+
+### 2026-09-02 — v1.0.1
+
+- Foreman mode auto-applied refinement findings without interactive prompts.
+- Replaced ambiguous command-source ownership with `packages/development/commands/analyze-complexity.yaml`.
+- Replaced generic helper reference with `packages/development/lib/complexity-analyzer.js` and CLI JSON contract.
+- Added deterministic Foreman sidecar naming: `<FOREMAN_ARTIFACT_PATH basename>.classification.json`.
+- Added generated-artifact boundary requiring source YAML edits, `npm run generate`, and `npm run validate`.
+- Re-scored Design Readiness from 4.65 to 4.8 PASS.
 
 Stop here. Await explicit approval before implementation.
