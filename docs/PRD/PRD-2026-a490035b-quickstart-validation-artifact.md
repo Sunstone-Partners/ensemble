@@ -1,12 +1,12 @@
 ---
 document_id: PRD-2026-a490035b
 label: prd-quickstart-validation-artifact
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: 2026-09-02
 scale_depth: STANDARD
 total_requirements: 12
-readiness_score: 4.25
+readiness_score: 4.50
 ---
 
 # PRD-2026-a490035b: quickstart.md Validation Artifact
@@ -20,9 +20,9 @@ readiness_score: 4.25
 | Could requirements | 1 |
 | Won't requirements | 0 |
 | AC coverage | 12/12 (100%) |
-| Risk flags | 5 |
-| Cross-requirement dependencies | 13 |
-| [NEEDS CLARIFICATION] markers | 5 |
+| Risk flags | 7 |
+| Cross-requirement dependencies | 15 |
+| Open PRD clarification markers | 0 |
 
 ## Product Summary
 
@@ -45,7 +45,7 @@ readiness_score: 4.25
 - Node.js workspace conventions and YAML-driven command generation must be respected.
 - Source command YAML must remain the edited source of truth when implementation occurs; generated markdown must be regenerated from YAML.
 - Default artifact name is `quickstart.md` to match the Foreman task title and description.
-- Artifact destination defaults to the implementation output context [NEEDS CLARIFICATION: Should quickstart.md be written next to the TRD, inside a run artifact directory, at repo root, or at a path supplied by Foreman?].
+- Artifact destination defaults to the implementation output context: when `FOREMAN_ARTIFACT_PATH` is present, write `quickstart.md` beside that phase artifact and report the path in the phase output; otherwise write beside the source TRD unless an explicit output path is supplied.
 
 ## Existing Context
 
@@ -67,7 +67,7 @@ Existing docs style uses YAML frontmatter, `PRD-YYYY-<micro_uuid>` document IDs,
 - Ensure every parsed AC maps to at least one scenario.
 - Make the artifact usable by QA without deep knowledge of Ensemble internals.
 - Surface coverage gaps or unparseable ACs before reporting successful artifact generation.
-- Preserve existing implementation behavior unless the feature is explicitly enabled by the relevant command path [NEEDS CLARIFICATION: Should quickstart.md generation be mandatory for all implement-trd runs or enabled only under Foreman/QA-oriented modes?].
+- Preserve existing implementation behavior for normal operator runs unless quickstart generation is explicitly requested; enable quickstart generation by default for Foreman-mode `implement-trd` runs because Foreman is the QA/artifact-producing execution path.
 
 ### Non-Goals
 
@@ -164,7 +164,7 @@ When an AC lacks enough detail to produce clear setup/actions/expected results, 
 The feature works for both standard `implement-trd` and beads-backed `implement-trd-beads` completion flows, or explicitly documents any unsupported path before release.
 
 - AC-010-1: Given a successful `implement-trd` run, when quickstart generation is enabled, then the artifact is produced in the completion path.
-- AC-010-2: Given a successful `implement-trd-beads` run, when quickstart generation is enabled, then the artifact is produced or the command documents that this path is intentionally unsupported [NEEDS CLARIFICATION: Is beads-backed implementation in scope for v1, or only standard implement-trd?].
+- AC-010-2: Given a successful `implement-trd-beads` run in v1, when quickstart generation is requested, then the command documents that beads-backed quickstart generation is intentionally unsupported and points operators to standard `implement-trd` for v1 quickstart artifacts.
 
 #### REQ-011: Make artifact path visible to Foreman
 **Priority:** Should · **Complexity:** Medium · **[RISK: Foreman may treat a phase as missing output if artifact location is not reported through its contract]**
@@ -232,26 +232,34 @@ No circular dependencies identified.
 
 | Issue | Resolution Applied Under Foreman Mode |
 |---|---|
-| Artifact path is not specified by the task description. | Defaulted to `quickstart.md` but marked destination as needing clarification. |
-| Scope across `implement-trd` vs `implement-trd-beads` is ambiguous. | Added REQ-010 and an inline clarification marker. |
+| Artifact path is not specified by the task description. | Defaulted to `quickstart.md` beside `FOREMAN_ARTIFACT_PATH` in Foreman runs and beside the source TRD otherwise. |
+| Scope across `implement-trd` vs `implement-trd-beads` is ambiguous. | Scoped v1 generation to standard `implement-trd`; `implement-trd-beads` must explicitly document unsupported status. |
 | Generated scenarios could become superficial if source ACs are vague. | Added REQ-009 to preserve ACs and mark scenario-level clarification prompts. |
 | Success could be reported even with incomplete AC coverage. | Added REQ-008 as a Must validation gate. |
 | Foreman may not see the artifact if only a repo-local file is written. | Added REQ-011 to include path and coverage in phase report. |
 
-Ambiguity scan complete: 5 items marked for clarification.
+Ambiguity scan complete: 3 product ambiguities auto-resolved under Foreman mode; 0 open PRD clarification markers remain. Scenario-level `[NEEDS CLARIFICATION: ...]` text remains as required generated artifact behavior, not open PRD ambiguity.
 
 ## Implementation Readiness Gate
 
 | Dimension | Score | Notes |
 |---|---:|---|
-| Completeness | 4.5 | Covers artifact generation, AC mapping, scenario content, validation, reporting, and command-path integration. |
+| Completeness | 4.5 | Covers artifact generation, AC mapping, scenario content, validation, reporting, and command-path integration with v1 scoping clarified. |
 | Testability | 4.5 | Every Must/Should requirement has objective Given/When/Then criteria. |
-| Clarity | 4.0 | Three scope/path questions remain explicitly marked; implementation can still begin with defaults or refine first. |
-| Feasibility | 4.0 | Reuses existing parser and command lifecycle, but dual command paths add integration risk. |
-| **Overall** | **4.25** | **PASS** |
+| Clarity | 4.75 | Artifact destination, enablement mode, and beads-backed v1 scope are now explicit. |
+| Feasibility | 4.25 | Reuses existing parser and standard command lifecycle; v1 avoids beads-backed implementation risk by documenting unsupported status. |
+| **Overall** | **4.50** | **PASS** |
 
 ## Next Step
 
 ```bash
 /ensemble:create-trd docs/PRD/PRD-2026-a490035b-quickstart-validation-artifact.md --foreman
 ```
+
+## Changelog
+
+### 2026-09-02 — v1.0.1
+
+- Auto-applied Foreman refinement findings for artifact destination, enablement mode, and `implement-trd-beads` v1 scope.
+- Updated PRD Health summary counts for risk flags, dependency edges, and open PRD clarification markers.
+- Re-scored Implementation Readiness Gate from 4.25 to 4.50 after resolving open product ambiguity.
