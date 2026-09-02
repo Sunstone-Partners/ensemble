@@ -3,10 +3,10 @@ document_id: TRD-2026-a490035b
 label: trd-quickstart-validation-artifact
 kind: trd
 prd_reference: PRD-2026-a490035b (docs/PRD/PRD-2026-a490035b-quickstart-validation-artifact.md v1.0.1)
-version: 1.0.0
+version: 1.0.1
 status: Draft
 date: 2026-09-02
-design_readiness_score: 4.50
+design_readiness_score: 4.75
 ensemble_implement_trd_beads:
   branch_name: feature/trd-2026-a490035b-quickstart-validation-artifact
   use_proposed: true
@@ -323,11 +323,11 @@ All Implementation ACs use concrete pass/fail observations: function outputs, CL
 
 | Dimension | Score | Notes |
 |---|---:|---|
-| Architecture completeness | 4.5 | Components, interfaces, data flow, output paths, and failure modes are defined. |
-| Task coverage | 4.5 | All 12 PRD requirements have implementation and test coverage. |
-| Dependency clarity | 4.5 | Dependencies are explicit and acyclic; long chain is justified by CLI-first integration. |
-| Estimate confidence | 4.5 | Tasks are small, testable, and aligned with existing repo patterns. |
-| **Overall** | **4.50** | **PASS** |
+| Architecture completeness | 4.75 | Components, interfaces, data flow, output paths, failure modes, and v1 command-path boundaries are defined. |
+| Task coverage | 4.75 | All 12 PRD requirements have implementation and test coverage, including the unsupported beads-backed path. |
+| Dependency clarity | 4.75 | Dependencies are explicit and acyclic; long chain is justified by CLI-first integration and each PR remains shippable. |
+| Estimate confidence | 4.75 | Tasks are small, testable, aligned with existing repo patterns, and no task exceeds 3h. |
+| **Overall** | **4.75** | **PASS** |
 
 MCP enhancement: skipped (no MCP tools detected).
 
@@ -336,10 +336,19 @@ MCP enhancement: skipped (no MCP tools detected).
 - Do not edit generated `packages/development/commands/ensemble/*.md` directly; edit YAML sources and run `npm run generate`.
 - Preserve existing `trd-cli.js` stdout contract: JSON only on stdout, diagnostics on stderr.
 - Use `FOREMAN_ARTIFACT_PATH` only as the phase report path; the quickstart artifact is a sibling named `quickstart.md`.
+- Implement this TRD through standard `implement-trd`; `implement-trd-beads` is a documented unsupported path for v1 quickstart generation.
 
 ## Next Steps
 
 ```bash
 /ensemble-configure-team docs/TRD/TRD-2026-a490035b-quickstart-validation-artifact.md
-/ensemble-implement-trd-beads docs/TRD/TRD-2026-a490035b-quickstart-validation-artifact.md
+/ensemble-implement-trd docs/TRD/TRD-2026-a490035b-quickstart-validation-artifact.md --foreman
 ```
+
+## Changelog
+
+### 2026-09-02 — v1.0.1
+
+- Auto-applied Foreman refinement finding for command-path consistency: Next Steps now route implementation through standard `implement-trd` instead of unsupported `implement-trd-beads`.
+- Added implementation note preserving `implement-trd-beads` as an explicitly unsupported v1 quickstart path.
+- Re-scored Design Readiness Gate from 4.50 to 4.75 after resolving the execution-path inconsistency.
