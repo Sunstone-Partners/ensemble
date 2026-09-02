@@ -90,6 +90,92 @@ describe('create-trd command document ids', () => {
     expect(scoped).toContain(trdCliResolution);
     expect(scoped).toContain(parseInvocation);
   });
+
+  test('classifies companion artifact domains with no-op guards', () => {
+    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    const domainStart = text.indexOf('title: Domain Analysis');
+    const nextStepStart = text.indexOf('title: Capability Reuse Check');
+    expect(domainStart).toBeGreaterThan(-1);
+    expect(nextStepStart).toBeGreaterThan(domainStart);
+    const scoped = text.slice(domainStart, nextStepStart);
+
+    expect(scoped).toContain('COMPANION_DOMAINS');
+    expect(scoped).toContain('add `data-model` when requirements mention persistence changes');
+    expect(scoped).toContain('entities, schemas, database tables, migrations, backfills');
+    expect(scoped).toContain('Do NOT add `data-model` for incidental data mentions');
+    expect(scoped).toContain('read-only display data');
+    expect(scoped).toContain('Add `research` when requirements require comparative technology decisions');
+    expect(scoped).toContain('vendor/tool selection');
+    expect(scoped).toContain('Do NOT add `research` for routine brownfield architecture description');
+  });
+
+  test('derives deterministic companion artifact paths without placeholders', () => {
+    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    const generationStart = text.indexOf('title: TRD Document Generation');
+    const traceabilityStart = text.indexOf('title: Acceptance Criteria Traceability');
+    expect(generationStart).toBeGreaterThan(-1);
+    expect(traceabilityStart).toBeGreaterThan(generationStart);
+    const scoped = text.slice(generationStart, traceabilityStart);
+
+    expect(scoped).toContain('reuse the same TRD_MICRO_UUID and slug');
+    expect(scoped).toContain('append only `-research.md` and/or `-data-model.md` suffixes');
+    expect(scoped).toContain('TRD-2026-d63594c0-standalone-trd-artifacts-research.md');
+    expect(scoped).toContain('TRD-2026-d63594c0-standalone-trd-artifacts-data-model.md');
+    expect(scoped).toContain('Stable rerun rule');
+    expect(scoped).toContain('do not create stale placeholder artifacts');
+  });
+
+  test('requires standalone data-model companion template and traceability fields', () => {
+    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    expect(text).toContain('If `data-model` is detected');
+    expect(text).toContain('generated-artifact note');
+    expect(text).toContain('source TRD id');
+    expect(text).toContain('source PRD id');
+    expect(text).toContain('relative TRD back-link');
+    expect(text).toContain('relevant REQ/AC refs');
+    for (const section of [
+      'Overview',
+      'Entities',
+      'Relationships',
+      'Data Ownership',
+      'Migration/Backfill Notes',
+      'Validation Rules',
+      'Privacy/Security Notes',
+      'Open Questions',
+    ]) {
+      expect(text).toContain(section);
+    }
+    expect(text).toContain('[NEEDS CLARIFICATION: specify the missing data-model detail and source REQ/AC]');
+  });
+
+  test('requires standalone research companion template and separation from TRD architecture', () => {
+    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    expect(text).toContain('If `research` is detected');
+    for (const section of [
+      'Decision Context',
+      'Options Considered',
+      'Evaluation Criteria',
+      'Recommendation',
+      'Tradeoffs/Risks',
+      'Rejected Alternatives',
+      'Open Questions',
+    ]) {
+      expect(text).toContain(section);
+    }
+    expect(text).toContain('links back to the TRD Architecture Decision');
+    expect(text).toContain('must not replace, fork, or contradict');
+    expect(text).toContain('[NEEDS CLARIFICATION: specify the missing research/detail and source REQ/AC]');
+  });
+
+  test('requires conditional companion links and Foreman reporting', () => {
+    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    expect(text).toContain('## Companion Artifacts');
+    expect(text).toContain('relative links only to files actually generated');
+    expect(text).toContain('No companion artifacts generated.');
+    expect(text).toContain('Companion artifacts generated:');
+    expect(text).toContain('phase report written to that exact path must list the TRD path and every generated companion artifact path');
+    expect(text).toContain('Preserve the existing FOREMAN_ARTIFACT_PATH write contract exactly');
+  });
 });
 
 describe('create-trd constitution gate contract', () => {

@@ -90,75 +90,75 @@ Task summary: 16 total tasks (8 implementation, 8 test), 52h total estimate. No 
 ### PR 1: Domain trigger and output-path contract
 **Shippable State:** Running `/ensemble:create-trd` on a PRD now has an explicit, reviewable contract for deciding whether companion artifacts are required and for deriving their deterministic paths; no artifact templates are emitted until PR 2.
 
-- [ ] **TRD-001** Extend `packages/development/commands/create-trd.yaml` Domain Analysis actions to classify `database/data-model` and `research/technology-decision` companion domains using persistence/schema and comparative technology/integration signals, including explicit incidental-data and routine-architecture no-op cases [satisfies REQ-001, REQ-002, REQ-003, REQ-004] (4h)
+- [x] **TRD-001** Extend `packages/development/commands/create-trd.yaml` Domain Analysis actions to classify `database/data-model` and `research/technology-decision` companion domains using persistence/schema and comparative technology/integration signals, including explicit incidental-data and routine-architecture no-op cases [satisfies REQ-001, REQ-002, REQ-003, REQ-004] (4h)
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-003-1, AC-003-2, AC-004-1
   - Implementation AC: Given PRD text with entities, schemas, migrations, persistence, relationships, records, or database changes, when Domain Analysis runs, then it records `data-model.md` as required.
   - Implementation AC: Given PRD text with only read-only display data, when Domain Analysis runs, then it does not require `data-model.md` unless another persistence signal exists.
   - Implementation AC: Given PRD text with comparative technology, integration, architecture, dependency, or vendor decisions, when Domain Analysis runs, then it records `research.md` as required.
 
-- [ ] **TRD-001-TEST** Add command-contract tests that assert the YAML contains database/data-model and research trigger language plus no-op guards for incidental data and routine architecture [verifies TRD-001] [satisfies REQ-001, REQ-002, REQ-003, REQ-004] [depends: TRD-001] (3h)
+- [x] **TRD-001-TEST** Add command-contract tests that assert the YAML contains database/data-model and research trigger language plus no-op guards for incidental data and routine architecture [verifies TRD-001] [satisfies REQ-001, REQ-002, REQ-003, REQ-004] [depends: TRD-001] (3h)
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-003-2, AC-004-1
 
-- [ ] **TRD-002** Add companion output path derivation instructions to TRD Document Generation/File Save: reuse the TRD micro UUID and slug, write beside the TRD in `docs/TRD/`, and use `-research.md` / `-data-model.md` suffixes only for detected domains [satisfies REQ-003, REQ-007] [depends: TRD-001] (3h)
+- [x] **TRD-002** Add companion output path derivation instructions to TRD Document Generation/File Save: reuse the TRD micro UUID and slug, write beside the TRD in `docs/TRD/`, and use `-research.md` / `-data-model.md` suffixes only for detected domains [satisfies REQ-003, REQ-007] [depends: TRD-001] (3h)
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-007-1, AC-007-2
   - Implementation AC: Given TRD path `docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts.md`, when both domains are detected, then companion paths are `docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts-research.md` and `docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts-data-model.md`.
 
-- [ ] **TRD-002-TEST** Add tests that pin deterministic companion filename examples and stable rerun language in `create-trd.yaml` [verifies TRD-002] [satisfies REQ-003, REQ-007] [depends: TRD-002] (2h)
+- [x] **TRD-002-TEST** Add tests that pin deterministic companion filename examples and stable rerun language in `create-trd.yaml` [verifies TRD-002] [satisfies REQ-003, REQ-007] [depends: TRD-002] (2h)
   - Validates PRD ACs: AC-003-1, AC-007-1, AC-007-2
 
 ### PR 2: Companion artifact templates and generated-doc policy
 **Shippable State:** When a detected domain requires a companion, `/ensemble:create-trd` now writes a complete standalone artifact with required sections, source IDs, generated-artifact note, and safe clarification placeholders.
 
-- [ ] **TRD-003** Add `data-model.md` authoring instructions and template sections to `create-trd.yaml`: Overview, Entities, Relationships, Data Ownership, Migration/Backfill Notes, Validation Rules, Privacy/Security Notes, and Open Questions [satisfies REQ-005, REQ-009, REQ-011, REQ-012] [depends: TRD-002] (5h)
+- [x] **TRD-003** Add `data-model.md` authoring instructions and template sections to `create-trd.yaml`: Overview, Entities, Relationships, Data Ownership, Migration/Backfill Notes, Validation Rules, Privacy/Security Notes, and Open Questions [satisfies REQ-005, REQ-009, REQ-011, REQ-012] [depends: TRD-002] (5h)
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-009-1, AC-009-2, AC-011-1, AC-012-1
   - Implementation AC: Given incomplete source context for any required data-model section, when generated, then the section exists with a specific standard needs-clarification placeholder rather than fabricated detail.
   - Implementation AC: Given generated `data-model.md`, when opened, then it names the source TRD id, source PRD id, relative TRD back-link, relevant REQ/AC refs, and generated-artifact note.
 
-- [ ] **TRD-003-TEST** Add command-contract tests for every required `data-model.md` template section, generated note, source IDs, back-link, and clarification placeholder instruction [verifies TRD-003] [satisfies REQ-005, REQ-009, REQ-011, REQ-012] [depends: TRD-003] (3h)
+- [x] **TRD-003-TEST** Add command-contract tests for every required `data-model.md` template section, generated note, source IDs, back-link, and clarification placeholder instruction [verifies TRD-003] [satisfies REQ-005, REQ-009, REQ-011, REQ-012] [depends: TRD-003] (3h)
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-009-1, AC-009-2, AC-011-1, AC-012-1
 
-- [ ] **TRD-004** Add `research.md` authoring instructions and template sections to `create-trd.yaml`: Decision Context, Options Considered, Evaluation Criteria, Recommendation, Tradeoffs/Risks, Rejected Alternatives, and Open Questions [satisfies REQ-006, REQ-009, REQ-011, REQ-012] [depends: TRD-002] (5h)
+- [x] **TRD-004** Add `research.md` authoring instructions and template sections to `create-trd.yaml`: Decision Context, Options Considered, Evaluation Criteria, Recommendation, Tradeoffs/Risks, Rejected Alternatives, and Open Questions [satisfies REQ-006, REQ-009, REQ-011, REQ-012] [depends: TRD-002] (5h)
   - Validates PRD ACs: AC-006-1, AC-006-2, AC-009-1, AC-009-2, AC-011-1, AC-012-1
   - Implementation AC: Given generated `research.md`, when opened, then it expands comparative rationale, links back to the TRD architecture decision, and does not replace or contradict the TRD's chosen architecture section.
   - Implementation AC: Given generated `research.md`, when source details are insufficient, then Open Questions contains specific standard clarification placeholders.
 
-- [ ] **TRD-004-TEST** Add command-contract tests for every required `research.md` template section, generated note, source IDs, back-link, and separation-from-TRD-architecture language [verifies TRD-004] [satisfies REQ-006, REQ-009, REQ-011, REQ-012] [depends: TRD-004] (3h)
+- [x] **TRD-004-TEST** Add command-contract tests for every required `research.md` template section, generated note, source IDs, back-link, and separation-from-TRD-architecture language [verifies TRD-004] [satisfies REQ-006, REQ-009, REQ-011, REQ-012] [depends: TRD-004] (3h)
   - Validates PRD ACs: AC-006-1, AC-006-2, AC-009-1, AC-009-2, AC-011-1, AC-012-1
 
 ### PR 3: TRD linking, traceability, and reporting
 **Shippable State:** Generated TRDs become the navigation hub for any companion artifacts, artifact contents remain traceable to PRD REQs/ACs, and Foreman/operator summaries list exactly what was written.
 
-- [ ] **TRD-005** Add TRD `## Companion Artifacts` section instructions that include relative links only to artifacts actually generated, plus task/architecture references that point to companions instead of duplicating full artifact content [satisfies REQ-008, REQ-011] [depends: TRD-003, TRD-004] (4h)
+- [x] **TRD-005** Add TRD `## Companion Artifacts` section instructions that include relative links only to artifacts actually generated, plus task/architecture references that point to companions instead of duplicating full artifact content [satisfies REQ-008, REQ-011] [depends: TRD-003, TRD-004] (4h)
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-011-2
   - Implementation AC: Given no companion artifacts are generated, when the TRD is written, then the section is omitted or explicitly states no companions without broken links.
   - Implementation AC: Given a task depends on a research or data-model decision, when the task is written, then it references the companion artifact path and relevant REQ/AC ids rather than copying the entire artifact body.
 
-- [ ] **TRD-005-TEST** Add tests that assert companion links are relative, conditional, and not emitted for no-domain cases [verifies TRD-005] [satisfies REQ-008, REQ-011] [depends: TRD-005] (3h)
+- [x] **TRD-005-TEST** Add tests that assert companion links are relative, conditional, and not emitted for no-domain cases [verifies TRD-005] [satisfies REQ-008, REQ-011] [depends: TRD-005] (3h)
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-011-2
 
-- [ ] **TRD-006** Extend terminal output and Foreman phase report instructions to print the TRD path and each generated companion artifact path, while preserving the exact `FOREMAN_ARTIFACT_PATH` write contract [satisfies REQ-014] [depends: TRD-005] (3h)
+- [x] **TRD-006** Extend terminal output and Foreman phase report instructions to print the TRD path and each generated companion artifact path, while preserving the exact `FOREMAN_ARTIFACT_PATH` write contract [satisfies REQ-014] [depends: TRD-005] (3h)
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation AC: Given `FOREMAN_ARTIFACT_PATH` is set and companion artifacts are generated, when the phase report is written, then it includes the TRD path and all companion paths.
   - Implementation AC: Given no companion domains are detected, when the command completes, then it prints `No companion artifacts generated.`.
 
-- [ ] **TRD-006-TEST** Add tests pinning companion artifact summary output, no-domain no-op output, and Foreman phase-report artifact path requirements [verifies TRD-006] [satisfies REQ-004, REQ-014] [depends: TRD-006] (2h)
+- [x] **TRD-006-TEST** Add tests pinning companion artifact summary output, no-domain no-op output, and Foreman phase-report artifact path requirements [verifies TRD-006] [satisfies REQ-004, REQ-014] [depends: TRD-006] (2h)
   - Validates PRD ACs: AC-004-1, AC-014-1, AC-014-2
 
 ### PR 4: Generated artifacts sync and full validation
 **Shippable State:** The source command contract, generated Claude/Pi artifacts, and tests all agree; reviewers can independently diff the generated research/data-model guidance and existing no-companion workflows remain compatible.
 
-- [ ] **TRD-007** Regenerate derived command and Pi artifacts from the updated YAML using the existing generation pipeline, keeping generated markdown/skills synchronized with source [satisfies REQ-010, REQ-012] [depends: TRD-001, TRD-002, TRD-003, TRD-004, TRD-005, TRD-006] (3h)
+- [x] **TRD-007** Regenerate derived command and Pi artifacts from the updated YAML using the existing generation pipeline, keeping generated markdown/skills synchronized with source [satisfies REQ-010, REQ-012] [depends: TRD-001, TRD-002, TRD-003, TRD-004, TRD-005, TRD-006] (3h)
   - Validates PRD ACs: AC-010-1, AC-012-2
   - Implementation AC: Given source YAML changes, when `npm run generate` and the repo's Pi generation step run, then `packages/development/commands/ensemble/create-trd.md` and Pi outputs reflect the new companion artifact contract.
 
-- [ ] **TRD-007-TEST** Add/gate generated-artifact synchronization checks so rerunning generation leaves no uncommitted diffs for create-trd artifacts [verifies TRD-007] [satisfies REQ-012] [depends: TRD-007] (2h)
+- [x] **TRD-007-TEST** Add/gate generated-artifact synchronization checks so rerunning generation leaves no uncommitted diffs for create-trd artifacts [verifies TRD-007] [satisfies REQ-012] [depends: TRD-007] (2h)
   - Validates PRD ACs: AC-012-2
 
-- [ ] **TRD-008** Run and document focused validation for command-contract tests, parser self-check, generation cleanliness, and repo validation [satisfies REQ-010, REQ-013] [depends: TRD-007] (3h)
+- [x] **TRD-008** Run and document focused validation for command-contract tests, parser self-check, generation cleanliness, and repo validation [satisfies REQ-010, REQ-013] [depends: TRD-007] (3h)
   - Validates PRD ACs: AC-010-2, AC-013-1, AC-013-2
   - Implementation AC: Given database-domain, research-domain, both-domain, and no-domain fixture snippets, when tests inspect the command contract, then they assert required companion behavior and absence of placeholder artifacts.
 
-- [ ] **TRD-008-TEST** Ensure CI/focused Jest coverage includes database-domain requires `data-model.md`, research-domain requires `research.md`, both-domain emits both, and no-domain emits none [verifies TRD-008] [satisfies REQ-013] [depends: TRD-008] (4h)
+- [x] **TRD-008-TEST** Ensure CI/focused Jest coverage includes database-domain requires `data-model.md`, research-domain requires `research.md`, both-domain emits both, and no-domain emits none [verifies TRD-008] [satisfies REQ-013] [depends: TRD-008] (4h)
   - Validates PRD ACs: AC-013-1, AC-013-2
 
 ## Dependency Graph and Critical Path
