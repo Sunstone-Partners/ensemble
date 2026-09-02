@@ -253,19 +253,38 @@ variables are absent and behavior is unchanged.
    - Score dependency clarity (1-5): are dependencies explicit and acyclic?
    - Score estimate confidence (1-5): are estimates consistent, reasonable, and granular enough?
    - Compute overall score: average of all four dimensions
-   - PASS (4.0+): proceed to output
-   - CONCERNS (3.0-3.9): list specific concerns, ask user whether to proceed or loop back. If --foreman is set, skip the ask -- log the concerns and proceed to output automatically.
+   - PASS (4.0+): proceed to the Constitution Gate before output
+   - CONCERNS (3.0-3.9): list specific concerns, ask user whether to proceed or loop back. If --foreman is set, skip the ask -- log the concerns and proceed to the Constitution Gate before output automatically.
    - FAIL (<3.0): identify weakest dimensions and loop back to fix before output (this HALT/loop-back is unaffected by --foreman)
    - Present the Design Readiness Scorecard to the user
 
-### Phase 6: Output Management
+### Phase 6: Constitution Gate
+
+**1. Constitution Gate Contract**
+   Non-bypassable pre-save constitution validation
+
+   - Run this gate after architecture, task draft generation, traceability/design readiness evaluation, and Design Readiness Gate scoring exist in memory, and before creating docs/TRD/, writing any repo-local TRD artifact, printing success, or printing /ensemble:configure-team or /ensemble:implement-trd-beads next steps.
+   - Resolve the constitution source with strict precedence: use docs/standards/constitution.md as canonical when present; otherwise fall back to .specify/memory/constitution.md.
+   - If both docs/standards/constitution.md and .specify/memory/constitution.md exist and their normalized contents differ, print a warning naming both paths, but continue with docs/standards/constitution.md as canonical.
+   - If neither constitution source exists, HALT as CONSTITUTION_CONFIG_ERROR; do not save any repo-local TRD artifact and do not print downstream next steps.
+   - Extract source article heading identifiers and titles from the canonical constitution, preserving repo-local heading text such as Article I, Article 1, or A1 and including the title when available.
+   - Every enforceable constitution check MUST map to at least one source article id. If an enforceable check has no article id, HALT as CONSTITUTION_CONFIG_ERROR; this unmapped article check is a gate configuration failure.
+   - Evaluate the in-memory TRD draft against the mapped article checks. Constitution violations are non-bypassable in every mode, including --foreman.
+   - Format each violation with article id, article title when available, failing draft section, specific finding, and remediation hint. For multiple violations, list every failing article id; never collapse them to a generic constitution failure.
+   - Do not offer any proceed anyway, override, skip, soft-confirmation, default-proceed, or Foreman auto-proceed path for constitution source errors, unmapped article checks, or article violations.
+   - Existing CONCERNS-band PRD readiness and Design Readiness Gate auto-proceed in Foreman mode is preserved only for non-constitution concerns and only when constitution compliance passes; constitution violations are excluded from CONCERNS auto-proceed.
+   - On constitution failure, do not write docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md, do not create docs/TRD/ as proof of success, do not print saved-file success output, and do not print /ensemble:configure-team or /ensemble:implement-trd-beads next-step output.
+   - If --foreman is active and FOREMAN_ARTIFACT_PATH is set and non-empty, write a failure phase report to that exact path, creating parent directories as needed; the report must identify CONSTITUTION_CONFIG_ERROR or the article-specific violations and must not claim a saved repo-local TRD artifact.
+   - If the gate passes, record `Constitution compliance: passed` in the saved TRD frontmatter, design readiness notes, or health/summary notes, then continue to Output Management save and success messaging.
+
+### Phase 7: Output Management
 
 **1. TRD Document Generation**
    Generate comprehensive TRD document with frontmatter and structured sections
 
    - Derive the TRD document micro UUID from the source PRD, so PRD/TRD artifacts share the same 8-hex correlation id. Parse the PRD filename or frontmatter Document ID for PRD-YYYY-<micro_uuid> where micro_uuid is 8 lowercase hex chars. If found, set TRD_MICRO_UUID to that value. Only if the PRD has a legacy sequence id or no parseable id, generate a new 8-hex micro UUID from a UUID/random source. Do NOT scan for highest TRD sequence number or increment NNN.
    - Derive the TRD Label from the source PRD's label so the pair reads as one effort: take the PRD's `label: prd-<stem>` (from its frontmatter, or derive prd-<stem> from the PRD title) and set TRD_LABEL = trd-<stem> (swap the prd- prefix for trd-, keep the same stem). The label is display-only and NEVER a reference key — cross-references use TRD_MICRO_UUID.
-   - Include frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), Label (trd-<stem>), PRD reference, version 1.0.0, status Draft, date, Design Readiness Score, and kind (default `trd`)
+   - Include frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), Label (trd-<stem>), PRD reference, version 1.0.0, status Draft, date, Design Readiness Score, kind (default `trd`), and Constitution compliance: passed
    - If --foundational: this is a shared/reusable TRD not tied 1:1 to a PRD. Set frontmatter `kind: foundational`; the PRD reference is optional (treat the input as a capability brief if no full PRD exists); and add a `capabilities:` frontmatter list of the machine-matchable capability tokens this TRD provides (e.g. order-domain, money-value-object) so other TRDs' Capability Reuse Check can find and reference it
    - Generate Architecture Decision section documenting the chosen approach and alternatives considered
    - Generate Master Task List with all TRD-NNN tasks and TRD-NNN-TEST tasks, organized under ### PR N: headings (not ### Phase N: or ### Sprint N:). Each ### PR N: heading must be immediately followed by a **Shippable State:** line before the first task entry. This is the machine-parsed section used by implement-trd-beads to create stacked PRs.
@@ -294,12 +313,12 @@ variables are absent and behavior is unchanged.
 **4. File Save and Next Steps**
    Save TRD and suggest follow-up commands
 
-   - Create docs/TRD/ directory if it doesn't exist
-   - Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md
-   - Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID)
-   - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'
-   - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'
-   - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path
+   - Create docs/TRD/ directory if it doesn't exist only after the Constitution Gate Contract passes
+   - Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md only after `Constitution compliance: passed` is recorded
+   - Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID) only after constitution compliance passes
+   - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team' only after constitution compliance passes
+   - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md' only after constitution compliance passes
+   - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path only after constitution compliance passes
 
 ## Expected Output
 

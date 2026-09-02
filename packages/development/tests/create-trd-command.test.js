@@ -3,9 +3,34 @@
 const fs = require('fs');
 const path = require('path');
 
+const sourcePath = path.join(__dirname, '../commands/create-trd.yaml');
+const generatedPath = path.join(__dirname, '../commands/ensemble/create-trd.md');
+
+function read(filePath) {
+  return fs.readFileSync(filePath, 'utf8');
+}
+
+function contractSection(text) {
+  const outputStart = text.indexOf('Output Management');
+  expect(outputStart).toBeGreaterThan(-1);
+  const start = text.lastIndexOf('Constitution Gate Contract', outputStart);
+  expect(start).toBeGreaterThan(-1);
+  return text.slice(start, outputStart);
+}
+
+function unguardedConstitutionBypassLines(section) {
+  const bypassWords = /(proceed anyway|override|skip|auto-proceed|default-proceed)/i;
+  const constitutionScope = /(constitution|article)/i;
+  const explicitDeny = /(Do not offer|excluded|cannot bypass|non-bypassable|only for non-constitution|preserved only)/i;
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => constitutionScope.test(line) && bypassWords.test(line) && !explicitDeny.test(line));
+}
+
 describe('create-trd command document ids', () => {
   test('reuses source PRD micro UUID instead of allocating a new sequence', () => {
-    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    const text = read(sourcePath);
     expect(text).toContain('Derive the TRD document micro UUID from the source PRD');
     expect(text).toContain('PRD-YYYY-<micro_uuid>');
     expect(text).toContain('TRD_MICRO_UUID');
@@ -15,7 +40,7 @@ describe('create-trd command document ids', () => {
   });
 
   test('requires the checkbox prefix in Master Task List Generation, unconditionally and outside MCP Enhancement', () => {
-    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    const text = read(sourcePath);
     const distinguishing = 'Every task line MUST begin with a GitHub checkbox';
     expect(text).toContain(distinguishing);
 
@@ -35,7 +60,7 @@ describe('create-trd command document ids', () => {
   });
 
   test('requires the identical checkbox prefix in Test Task Generation for TRD-NNN-TEST lines', () => {
-    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    const text = read(sourcePath);
     const distinguishing =
       'Every TRD-NNN-TEST line MUST begin with the same checkbox-prefix requirement as implementation tasks';
     expect(text).toContain(distinguishing);
@@ -49,7 +74,7 @@ describe('create-trd command document ids', () => {
   });
 
   test('Task Coverage Analysis self-checks the draft Master Task List via trd-cli.js parse', () => {
-    const text = fs.readFileSync(path.join(__dirname, '../commands/create-trd.yaml'), 'utf8');
+    const text = read(sourcePath);
     const trdCliResolution =
       'Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js';
     // YAML double-quoted scalar escapes embedded quotes as \" in the raw
@@ -64,5 +89,88 @@ describe('create-trd command document ids', () => {
     const scoped = text.slice(taskCoverageStart, nextStepStart);
     expect(scoped).toContain(trdCliResolution);
     expect(scoped).toContain(parseInvocation);
+  });
+});
+
+describe('create-trd constitution gate contract', () => {
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s pins source precedence, config errors, and non-bypassable semantics', (_label, filePath) => {
+    const text = read(filePath);
+    const contract = contractSection(text);
+
+    expect(contract).toContain('docs/standards/constitution.md');
+    expect(contract).toContain('.specify/memory/constitution.md');
+    expect(contract).toContain('strict precedence');
+    expect(contract).toContain('normalized contents differ');
+    expect(contract).toContain('CONSTITUTION_CONFIG_ERROR');
+    expect(contract).toContain('Every enforceable constitution check MUST map to at least one source article id');
+    expect(contract).toContain('unmapped article check is a gate configuration failure');
+    expect(contract).toContain('Constitution violations are non-bypassable in every mode, including --foreman');
+    expect(contract).toContain('Do not offer any proceed anyway, override, skip, soft-confirmation, default-proceed, or Foreman auto-proceed path');
+    expect(unguardedConstitutionBypassLines(contract)).toEqual([]);
+  });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s requires article-specific violation formatting', (_label, filePath) => {
+    const contract = contractSection(read(filePath));
+
+    expect(contract).toContain('article id');
+    expect(contract).toContain('article title when available');
+    expect(contract).toContain('failing draft section');
+    expect(contract).toContain('specific finding');
+    expect(contract).toContain('remediation hint');
+    expect(contract).toContain('list every failing article id');
+    expect(contract).toContain('never collapse them to a generic constitution failure');
+  });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s hard-blocks TRD save and implementation next steps on violation', (_label, filePath) => {
+    const contract = contractSection(read(filePath));
+
+    expect(contract).toContain('before creating docs/TRD/');
+    expect(contract).toContain('writing any repo-local TRD artifact');
+    expect(contract).toContain('printing /ensemble:configure-team or /ensemble:implement-trd-beads next steps');
+    expect(contract).toContain('do not write docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md');
+    expect(contract).toContain('do not print /ensemble:configure-team or /ensemble:implement-trd-beads next-step output');
+  });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s records Foreman failure reports separately from successful artifacts', (_label, filePath) => {
+    const contract = contractSection(read(filePath));
+
+    expect(contract).toContain('FOREMAN_ARTIFACT_PATH');
+    expect(contract).toContain('write a failure phase report to that exact path');
+    expect(contract).toContain('creating parent directories as needed');
+    expect(contract).toContain('must not claim a saved repo-local TRD artifact');
+  });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s preserves non-constitution CONCERNS auto-proceed only after constitution pass', (_label, filePath) => {
+    const text = read(filePath);
+    const contract = contractSection(text);
+
+    expect(text).toContain('CONCERNS-band');
+    expect(contract).toContain('preserved only for non-constitution concerns and only when constitution compliance passes');
+    expect(contract).toContain('constitution violations are excluded from CONCERNS auto-proceed');
+  });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s adds the saved-document success audit status', (_label, filePath) => {
+    const text = read(filePath);
+
+    expect(text).toContain('Constitution compliance: passed');
+    expect(text).toContain('only after constitution compliance passes');
   });
 });

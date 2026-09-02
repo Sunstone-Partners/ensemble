@@ -124,39 +124,39 @@ create-prd.yaml / create-trd.yaml
 
 **Shippable State:** Running the PRD or TRD authoring command now exposes one documented constitution gate contract: it resolves the applicable constitution source, treats missing/unmapped article checks as configuration errors, and defines a non-bypassable failure path before any artifact save.
 
-- [ ] **TRD-001** Add a Constitution Gate Contract section/action block to `packages/product/commands/create-prd.yaml` with source precedence, missing-source failure, divergence warning, article-id extraction, and no override path (1.5h) `[satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008]`
+- [x] **TRD-001** Add a Constitution Gate Contract section/action block to `packages/product/commands/create-prd.yaml` with source precedence, missing-source failure, divergence warning, article-id extraction, and no override path (1.5h) `[satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-007-1, AC-007-2, AC-008-1
   - Implementation AC: Given `create-prd.yaml`, when read, then it states `docs/standards/constitution.md` is canonical, `.specify/memory/constitution.md` is fallback, divergence is warned, and absence blocks generation.
   - Implementation AC: Given the same source, when searched for constitution failure behavior, then no proceed/override/skip option is offered and Foreman mode is explicitly forbidden from auto-proceeding.
 
-- [ ] **TRD-002** Add the matching Constitution Gate Contract block to `packages/development/commands/create-trd.yaml` with identical semantics and TRD-specific phase placement (1.5h) `[satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-001]`
+- [x] **TRD-002** Add the matching Constitution Gate Contract block to `packages/development/commands/create-trd.yaml` with identical semantics and TRD-specific phase placement (1.5h) `[satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-001]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-007-1, AC-007-2, AC-008-1
   - Implementation AC: Given `create-trd.yaml`, when read, then it contains the same source precedence, missing-source block, article-id requirement, and no-bypass language as `create-prd.yaml`.
   - Implementation AC: Given the TRD command flow, when the gate is located, then it runs after task/architecture draft generation and before File Save and Next Steps.
 
-- [ ] **TRD-003** Define article-specific violation formatting in both commands, including article id, title, failing draft section, finding, and remediation hint (1h) `[satisfies REQ-009] [depends: TRD-001, TRD-002]`
+- [x] **TRD-003** Define article-specific violation formatting in both commands, including article id, title, failing draft section, finding, and remediation hint (1h) `[satisfies REQ-009] [depends: TRD-001, TRD-002]`
   - Validates PRD ACs: AC-009-1, AC-009-2
   - Implementation AC: Given a single violation, when the command failure prose is read, then it requires article id, optional article title, section, finding, and remediation hint.
   - Implementation AC: Given multiple violations, when failure formatting is read, then it requires listing every failing article id without reducing them to a generic failure.
 
-- [ ] **TRD-004** Preserve non-constitution readiness behavior by explicitly scoping existing CONCERNS auto-proceed prompts outside constitution violations (0.75h) `[satisfies REQ-010] [depends: TRD-001, TRD-002]`
+- [x] **TRD-004** Preserve non-constitution readiness behavior by explicitly scoping existing CONCERNS auto-proceed prompts outside constitution violations (0.75h) `[satisfies REQ-010] [depends: TRD-001, TRD-002]`
   - Validates PRD ACs: AC-010-1, AC-010-2
   - Implementation AC: Given PRD readiness is CONCERNS and constitution passes, when `create-prd --foreman` is described, then the existing auto-proceed policy remains.
   - Implementation AC: Given TRD design readiness is CONCERNS and constitution passes, when `create-trd --foreman` is described, then the existing auto-proceed policy remains.
 
-- [ ] **TRD-001-TEST** Add product command source tests that assert PRD constitution source precedence, missing-source hard block, and no constitution override path (1h) `[verifies TRD-001] [satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-001]`
+- [x] **TRD-001-TEST** Add product command source tests that assert PRD constitution source precedence, missing-source hard block, and no constitution override path (1h) `[verifies TRD-001] [satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-001]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-007-1, AC-007-2, AC-008-1
   - Implementation AC: Given `packages/product/tests/create-prd-command.test.js`, when run, then it fails if the PRD command source lacks canonical/fallback paths, missing-source block language, article mapping language, or explicit no-override language.
 
-- [ ] **TRD-002-TEST** Add development command source tests that assert TRD constitution source precedence, missing-source hard block, and no constitution override path (1h) `[verifies TRD-002] [satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-002]`
+- [x] **TRD-002-TEST** Add development command source tests that assert TRD constitution source precedence, missing-source hard block, and no constitution override path (1h) `[verifies TRD-002] [satisfies REQ-001] [satisfies REQ-002] [satisfies REQ-007] [satisfies REQ-008] [depends: TRD-002]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-007-1, AC-007-2, AC-008-1
   - Implementation AC: Given `packages/development/tests/create-trd-command.test.js`, when run, then it fails if the TRD command source lacks the same required hard-gate wording.
 
-- [ ] **TRD-003-TEST** Add formatting tests that pin article-specific error content in both command sources (0.75h) `[verifies TRD-003] [satisfies REQ-009] [depends: TRD-003]`
+- [x] **TRD-003-TEST** Add formatting tests that pin article-specific error content in both command sources (0.75h) `[verifies TRD-003] [satisfies REQ-009] [depends: TRD-003]`
   - Validates PRD ACs: AC-009-1, AC-009-2
   - Implementation AC: Given both command YAML files, when scanned by tests, then each contains article id, article title, failing section, finding, remediation hint, and all-violations listing requirements.
 
-- [ ] **TRD-004-TEST** Add regression tests proving non-constitution CONCERNS wording remains available in Foreman mode (0.5h) `[verifies TRD-004] [satisfies REQ-010] [depends: TRD-004]`
+- [x] **TRD-004-TEST** Add regression tests proving non-constitution CONCERNS wording remains available in Foreman mode (0.5h) `[verifies TRD-004] [satisfies REQ-010] [depends: TRD-004]`
   - Validates PRD ACs: AC-010-1, AC-010-2
   - Implementation AC: Given both command YAML files, when scanned, then existing CONCERNS-band Foreman auto-proceed wording remains, but is explicitly scoped away from constitution violations.
 
@@ -164,28 +164,28 @@ create-prd.yaml / create-trd.yaml
 
 **Shippable State:** A PRD authoring run with a constitution violation now fails before repo-local PRD save, prints article-specific remediation, writes only an optional Foreman failure report, and omits the create-TRD next step.
 
-- [ ] **TRD-005** Reorder `create-prd.yaml` Output Management so constitution compliance runs after PRD draft/readiness scoring and before repo-local save or success messaging (1h) `[satisfies REQ-003] [satisfies REQ-004] [depends: TRD-001, TRD-003]`
+- [x] **TRD-005** Reorder `create-prd.yaml` Output Management so constitution compliance runs after PRD draft/readiness scoring and before repo-local save or success messaging (1h) `[satisfies REQ-003] [satisfies REQ-004] [depends: TRD-001, TRD-003]`
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-004-1, AC-004-2
   - Implementation AC: Given a failing PRD draft, when the gate runs, then the command source says no `docs/PRD/...` file is written and no `/ensemble:create-trd` next step is printed.
   - Implementation AC: Given a passing PRD draft, when saved, then the final output occurs only after constitution compliance is recorded as passed.
 
-- [ ] **TRD-006** Add PRD success audit status to saved PRD output instructions, e.g. health summary or notes line `Constitution compliance: passed` (0.5h) `[satisfies REQ-014] [depends: TRD-005]`
+- [x] **TRD-006** Add PRD success audit status to saved PRD output instructions, e.g. health summary or notes line `Constitution compliance: passed` (0.5h) `[satisfies REQ-014] [depends: TRD-005]`
   - Validates PRD ACs: AC-014-1
   - Implementation AC: Given a compliant PRD run, when the saved document is inspected, then it contains a clear constitution compliance passed record.
 
-- [ ] **TRD-007** Define PRD Foreman failure report behavior: write an error report to `FOREMAN_ARTIFACT_PATH` when set, without claiming a saved PRD artifact (0.75h) `[satisfies REQ-003] [depends: TRD-005]`
+- [x] **TRD-007** Define PRD Foreman failure report behavior: write an error report to `FOREMAN_ARTIFACT_PATH` when set, without claiming a saved PRD artifact (0.75h) `[satisfies REQ-003] [depends: TRD-005]`
   - Validates PRD ACs: AC-003-2
   - Implementation AC: Given a PRD violation in Foreman mode with `FOREMAN_ARTIFACT_PATH` set, when failure handling is read, then it writes a failure report there while leaving repo-local PRD artifact unsaved.
 
-- [ ] **TRD-005-TEST** Add violating PRD fixture/source regression coverage for no repo-local save and no create-TRD next step (1h) `[verifies TRD-005] [satisfies REQ-003] [satisfies REQ-004] [satisfies REQ-011] [depends: TRD-005]`
+- [x] **TRD-005-TEST** Add violating PRD fixture/source regression coverage for no repo-local save and no create-TRD next step (1h) `[verifies TRD-005] [satisfies REQ-003] [satisfies REQ-004] [satisfies REQ-011] [depends: TRD-005]`
   - Validates PRD ACs: AC-003-1, AC-004-2, AC-011-1, AC-011-2
   - Implementation AC: Given a fixture PRD draft violating a constitution article, when product command tests run, then they assert the command source requires no repo-local PRD save, an article id in the error, and no `/ensemble:create-trd` next-step output.
 
-- [ ] **TRD-006-TEST** Add product tests for PRD success audit status wording (0.5h) `[verifies TRD-006] [satisfies REQ-014] [depends: TRD-006]`
+- [x] **TRD-006-TEST** Add product tests for PRD success audit status wording (0.5h) `[verifies TRD-006] [satisfies REQ-014] [depends: TRD-006]`
   - Validates PRD ACs: AC-014-1
   - Implementation AC: Given `create-prd.yaml`, when tested, then it contains explicit saved-document constitution compliance passed wording.
 
-- [ ] **TRD-007-TEST** Add product tests for Foreman failure report semantics on PRD constitution violations (0.5h) `[verifies TRD-007] [satisfies REQ-003] [satisfies REQ-011] [depends: TRD-007]`
+- [x] **TRD-007-TEST** Add product tests for Foreman failure report semantics on PRD constitution violations (0.5h) `[verifies TRD-007] [satisfies REQ-003] [satisfies REQ-011] [depends: TRD-007]`
   - Validates PRD ACs: AC-003-2, AC-011-1, AC-011-2
   - Implementation AC: Given `create-prd.yaml`, when tested, then it distinguishes optional Foreman failure report output from successful repo-local PRD artifact save.
 
@@ -193,28 +193,28 @@ create-prd.yaml / create-trd.yaml
 
 **Shippable State:** A TRD authoring run with a constitution violation now fails before repo-local TRD save, prints article-specific remediation, writes only an optional Foreman failure report, and omits implementation next steps.
 
-- [ ] **TRD-008** Reorder `create-trd.yaml` Output Management so constitution compliance runs after architecture/task draft and design gate, but before repo-local TRD save or implementation next-step messaging (1h) `[satisfies REQ-005] [satisfies REQ-006] [depends: TRD-002, TRD-003]`
+- [x] **TRD-008** Reorder `create-trd.yaml` Output Management so constitution compliance runs after architecture/task draft and design gate, but before repo-local TRD save or implementation next-step messaging (1h) `[satisfies REQ-005] [satisfies REQ-006] [depends: TRD-002, TRD-003]`
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-006-1, AC-006-2
   - Implementation AC: Given a failing TRD draft, when the gate runs, then the command source says no `docs/TRD/...` file is written and no `/ensemble:implement-trd-beads` next step is printed.
   - Implementation AC: Given a passing TRD draft, when saved, then the final output occurs only after constitution compliance is recorded as passed.
 
-- [ ] **TRD-009** Add TRD success audit status to saved TRD output instructions, e.g. validation section line `Constitution compliance: passed` (0.5h) `[satisfies REQ-014] [depends: TRD-008]`
+- [x] **TRD-009** Add TRD success audit status to saved TRD output instructions, e.g. validation section line `Constitution compliance: passed` (0.5h) `[satisfies REQ-014] [depends: TRD-008]`
   - Validates PRD ACs: AC-014-2
   - Implementation AC: Given a compliant TRD run, when the saved document is inspected, then it contains a clear constitution compliance passed record.
 
-- [ ] **TRD-010** Define TRD Foreman failure report behavior: write an error report to `FOREMAN_ARTIFACT_PATH` when set, without claiming a saved TRD artifact (0.75h) `[satisfies REQ-005] [depends: TRD-008]`
+- [x] **TRD-010** Define TRD Foreman failure report behavior: write an error report to `FOREMAN_ARTIFACT_PATH` when set, without claiming a saved TRD artifact (0.75h) `[satisfies REQ-005] [depends: TRD-008]`
   - Validates PRD ACs: AC-005-2
   - Implementation AC: Given a TRD violation in Foreman mode with `FOREMAN_ARTIFACT_PATH` set, when failure handling is read, then it writes a failure report there while leaving repo-local TRD artifact unsaved.
 
-- [ ] **TRD-008-TEST** Add violating TRD fixture/source regression coverage for no repo-local save and no implementation next step (1h) `[verifies TRD-008] [satisfies REQ-005] [satisfies REQ-006] [satisfies REQ-012] [depends: TRD-008]`
+- [x] **TRD-008-TEST** Add violating TRD fixture/source regression coverage for no repo-local save and no implementation next step (1h) `[verifies TRD-008] [satisfies REQ-005] [satisfies REQ-006] [satisfies REQ-012] [depends: TRD-008]`
   - Validates PRD ACs: AC-005-1, AC-006-2, AC-012-1, AC-012-2
   - Implementation AC: Given a fixture TRD draft violating a constitution article, when development command tests run, then they assert the command source requires no repo-local TRD save, an article id in the error, and no `/ensemble:implement-trd-beads` next-step output.
 
-- [ ] **TRD-009-TEST** Add development tests for TRD success audit status wording (0.5h) `[verifies TRD-009] [satisfies REQ-014] [depends: TRD-009]`
+- [x] **TRD-009-TEST** Add development tests for TRD success audit status wording (0.5h) `[verifies TRD-009] [satisfies REQ-014] [depends: TRD-009]`
   - Validates PRD ACs: AC-014-2
   - Implementation AC: Given `create-trd.yaml`, when tested, then it contains explicit saved-document constitution compliance passed wording.
 
-- [ ] **TRD-010-TEST** Add development tests for Foreman failure report semantics on TRD constitution violations (0.5h) `[verifies TRD-010] [satisfies REQ-005] [satisfies REQ-012] [depends: TRD-010]`
+- [x] **TRD-010-TEST** Add development tests for Foreman failure report semantics on TRD constitution violations (0.5h) `[verifies TRD-010] [satisfies REQ-005] [satisfies REQ-012] [depends: TRD-010]`
   - Validates PRD ACs: AC-005-2, AC-012-1, AC-012-2
   - Implementation AC: Given `create-trd.yaml`, when tested, then it distinguishes optional Foreman failure report output from successful repo-local TRD artifact save.
 
@@ -222,27 +222,27 @@ create-prd.yaml / create-trd.yaml
 
 **Shippable State:** Published Ensemble command documentation now says constitution violations hard-block without override, generated artifacts are in sync with YAML sources, and the package test/validation suite proves no constitution bypass wording remains in the affected commands.
 
-- [ ] **TRD-011** Regenerate command markdown with `npm run generate` after YAML source edits (0.5h) `[satisfies REQ-013] [satisfies INFRA] [depends: TRD-005, TRD-008]`
+- [x] **TRD-011** Regenerate command markdown with `npm run generate` after YAML source edits (0.5h) `[satisfies REQ-013] [satisfies INFRA] [depends: TRD-005, TRD-008]`
   - Validates PRD ACs: AC-013-1
   - Implementation AC: Given edited YAML sources, when `npm run generate` runs, then `packages/product/commands/ensemble/create-prd.md` and `packages/development/commands/ensemble/create-trd.md` reflect hard-block constitution wording.
 
-- [ ] **TRD-012** Remove or rewrite generated command prose that suggests constitution failures can be skipped, overridden, or proceeded through (0.5h) `[satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [depends: TRD-011]`
+- [x] **TRD-012** Remove or rewrite generated command prose that suggests constitution failures can be skipped, overridden, or proceeded through (0.5h) `[satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [depends: TRD-011]`
   - Validates PRD ACs: AC-007-1, AC-008-2, AC-013-2
   - Implementation AC: Given generated command docs, when searched for constitution-adjacent override language, then no supported bypass path is documented.
 
-- [ ] **TRD-013** Run focused and repo validation gates: product command tests, development command tests, `npm run generate`, `npm run validate`, and `git diff --check` (1h) `[satisfies REQ-011] [satisfies REQ-012] [satisfies REQ-013] [depends: TRD-011, TRD-012]`
+- [x] **TRD-013** Run focused and repo validation gates: product command tests, development command tests, `npm run generate`, `npm run validate`, and `git diff --check` (1h) `[satisfies REQ-011] [satisfies REQ-012] [satisfies REQ-013] [depends: TRD-011, TRD-012]`
   - Validates PRD ACs: AC-011-1, AC-011-2, AC-012-1, AC-012-2, AC-013-1, AC-013-2
   - Implementation AC: Given the completed change, when validation runs, then targeted Jest tests, generator idempotence, repo validation, and whitespace checks pass.
 
-- [ ] **TRD-011-TEST** Assert regenerated `create-prd.md` and `create-trd.md` contain hard-block constitution wording and source precedence (0.75h) `[verifies TRD-011] [satisfies REQ-013] [depends: TRD-011]`
+- [x] **TRD-011-TEST** Assert regenerated `create-prd.md` and `create-trd.md` contain hard-block constitution wording and source precedence (0.75h) `[verifies TRD-011] [satisfies REQ-013] [depends: TRD-011]`
   - Validates PRD ACs: AC-013-1, AC-013-2
   - Implementation AC: Given generated markdown files, when package tests scan them, then both contain hard-block constitution source and violation text.
 
-- [ ] **TRD-012-TEST** Add grep-style test coverage that rejects constitution-adjacent `Proceed anyway`, `Override`, or `Skip` bypass wording in affected source/generated docs (0.75h) `[verifies TRD-012] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [depends: TRD-012]`
+- [x] **TRD-012-TEST** Add grep-style test coverage that rejects constitution-adjacent `Proceed anyway`, `Override`, or `Skip` bypass wording in affected source/generated docs (0.75h) `[verifies TRD-012] [satisfies REQ-007] [satisfies REQ-008] [satisfies REQ-013] [depends: TRD-012]`
   - Validates PRD ACs: AC-007-1, AC-008-2, AC-013-2
   - Implementation AC: Given affected source/generated docs, when tests scan a bounded constitution context window, then no bypass phrase is accepted for constitution violations while unrelated non-constitution override prose may remain elsewhere.
 
-- [ ] **TRD-013-TEST** Capture final validation commands and outputs in implementation notes or PR body (0.5h) `[verifies TRD-013] [satisfies REQ-011] [satisfies REQ-012] [satisfies REQ-013] [depends: TRD-013]`
+- [x] **TRD-013-TEST** Capture final validation commands and outputs in implementation notes or PR body (0.5h) `[verifies TRD-013] [satisfies REQ-011] [satisfies REQ-012] [satisfies REQ-013] [depends: TRD-013]`
   - Validates PRD ACs: AC-011-1, AC-011-2, AC-012-1, AC-012-2, AC-013-1, AC-013-2
   - Implementation AC: Given the implementation PR, when reviewed, then it lists the exact test/generation/validation commands run and their pass/fail outcomes.
 

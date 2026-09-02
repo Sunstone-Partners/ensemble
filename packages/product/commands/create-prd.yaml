@@ -19,7 +19,9 @@ parameters:
       [NEEDS CLARIFICATION: ...] instead of asking. Soft "proceed anyway?"
       confirmations are skipped (default to proceeding, with the warning still
       logged). Hard gate failures (e.g. Implementation Readiness Gate FAIL)
-      still HALT unchanged. For automated Foreman orchestration.
+      still HALT unchanged. Constitution Gate Contract failures also hard HALT;
+      --foreman cannot bypass missing-source, unmapped-check, or article violation
+      failures. For automated Foreman orchestration.
 
 constraints:
   - DO NOT implement, build, or execute any work described in the product description
@@ -28,8 +30,9 @@ constraints:
   - After creating the PRD, stop and wait for user approval before any implementation
   - DO NOT skip the elicitation phase -- always ask clarifying questions before generating requirements (unless --foreman is set, see parameters)
   - DO NOT save the PRD until it passes the Implementation Readiness Gate
+  - DO NOT save the PRD until the Constitution Gate Contract passes
   - 'Mark every unresolved ambiguity inline with [NEEDS CLARIFICATION: <specific question>] rather than making a best-guess assumption — these markers drive the refine-prd interview'
-  - 'When --foreman is set, Scale Detection and all clarifying-question interviews are force-skipped in favor of best-effort defaults and inline [NEEDS CLARIFICATION: ...] markers; the CONCERNS-level Implementation Readiness Gate confirmation defaults to proceeding (with the warning still shown); the FAIL-level HALT is unaffected'
+  - 'When --foreman is set, Scale Detection and all clarifying-question interviews are force-skipped in favor of best-effort defaults and inline [NEEDS CLARIFICATION: ...] markers; the CONCERNS-level Implementation Readiness Gate confirmation defaults to proceeding (with the warning still shown) only for non-constitution concerns; constitution violations are excluded from CONCERNS auto-proceed and always HALT; the FAIL-level HALT is unaffected'
 
 mission:
   summary: |
@@ -249,13 +252,34 @@ workflow:
             - "  - Clarity: could two different developers read this and build the same thing?"
             - "  - Feasibility: are all requirements technically achievable within stated constraints?"
             - "Compute overall score: average of all dimensions"
-            - "PASS (4.0+): save the PRD"
-            - "CONCERNS (3.0-3.9): list specific concerns, ask user if they want to address them or proceed. IF --foreman flag is set: skip the question -- log the concerns clearly and default to proceeding (save the PRD) without pausing for confirmation."
+            - "PASS (4.0+): proceed to the Constitution Gate before saving the PRD"
+            - "CONCERNS (3.0-3.9): list specific concerns, ask user if they want to address them or proceed. IF --foreman flag is set: skip the question -- log the concerns clearly and default to proceeding to the Constitution Gate before saving the PRD, without pausing for confirmation."
             - "FAIL (<3.0): do not save -- identify the weakest dimensions and loop back to fix them. This is a hard gate and HALTs unchanged regardless of --foreman."
             - "Present the scorecard to the user with the gate decision"
 
-    - name: Output Management
+    - name: Constitution Gate
       order: 5
+      steps:
+        - order: 1
+          title: Constitution Gate Contract
+          description: Non-bypassable pre-save constitution validation
+          actions:
+            - "Run this gate after the PRD draft and Implementation Readiness Gate score exist in memory, and before creating docs/PRD/, writing any repo-local PRD artifact, printing success, or printing the /ensemble:create-trd next step."
+            - "Resolve the constitution source with strict precedence: use docs/standards/constitution.md as canonical when present; otherwise fall back to .specify/memory/constitution.md."
+            - "If both docs/standards/constitution.md and .specify/memory/constitution.md exist and their normalized contents differ, print a warning naming both paths, but continue with docs/standards/constitution.md as canonical."
+            - "If neither constitution source exists, HALT as CONSTITUTION_CONFIG_ERROR; do not save any repo-local PRD artifact and do not print downstream next steps."
+            - "Extract source article heading identifiers and titles from the canonical constitution, preserving repo-local heading text such as Article I, Article 1, or A1 and including the title when available."
+            - "Every enforceable constitution check MUST map to at least one source article id. If an enforceable check has no article id, HALT as CONSTITUTION_CONFIG_ERROR; this unmapped article check is a gate configuration failure."
+            - "Evaluate the in-memory PRD draft against the mapped article checks. Constitution violations are non-bypassable in every mode, including --foreman."
+            - "Format each violation with article id, article title when available, failing draft section, specific finding, and remediation hint. For multiple violations, list every failing article id; never collapse them to a generic constitution failure."
+            - "Do not offer any proceed anyway, override, skip, soft-confirmation, default-proceed, or Foreman auto-proceed path for constitution source errors, unmapped article checks, or article violations."
+            - "Existing CONCERNS-band Implementation Readiness Gate auto-proceed in Foreman mode is preserved only for non-constitution concerns and only when constitution compliance passes; constitution violations are excluded from CONCERNS auto-proceed."
+            - "On constitution failure, do not write docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md, do not create docs/PRD/ as proof of success, do not print saved-file success output, and do not print /ensemble:create-trd next-step output."
+            - "If --foreman is active and FOREMAN_ARTIFACT_PATH is set and non-empty, write a failure phase report to that exact path, creating parent directories as needed; the report must identify CONSTITUTION_CONFIG_ERROR or the article-specific violations and must not claim a saved repo-local PRD artifact."
+            - "If the gate passes, record `Constitution compliance: passed` in the saved PRD Health summary or notes, then continue to Output Management save and success messaging."
+
+    - name: Output Management
+      order: 6
       steps:
         - order: 1
           title: PRD Document Generation
@@ -267,6 +291,7 @@ workflow:
             - "  - AC coverage: N/N requirements have acceptance criteria (percentage)"
             - "  - Risk flags: N requirements flagged with risk indicators"
             - "  - Dependency count: N cross-requirement dependencies"
+            - "  - Constitution compliance: passed"
             - "Generate Acceptance Criteria summary table: | REQ-NNN | Description | Priority | Complexity | AC Count |"
             - "Include the dependency map section"
             - "File naming: docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md (micro_uuid = 8 lowercase hex chars; no sequence number)"
@@ -275,9 +300,9 @@ workflow:
           title: File Organization
           description: Save to docs/PRD/ directory and confirm
           actions:
-            - "Create docs/PRD/ directory if it doesn't exist"
-            - Save the PRD to docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md
-            - "Print: file path, requirement count, readiness score, and suggested next step (e.g., '/ensemble:create-trd docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md')"
+            - "Create docs/PRD/ directory if it doesn't exist only after the Constitution Gate Contract passes"
+            - "Save the PRD to docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md only after `Constitution compliance: passed` is recorded"
+            - "Print: file path, requirement count, readiness score, and suggested next step (e.g., '/ensemble:create-trd docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md') only after constitution compliance passes"
 
 expectedOutput:
   format: Product Requirements Document (PRD)
