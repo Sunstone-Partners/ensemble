@@ -1,0 +1,1 @@
+../../development/lib/quickstart-generator.js

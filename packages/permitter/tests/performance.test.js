@@ -256,6 +256,10 @@ describe('Performance: Memory Usage', () => {
       parseCommand('npm test iteration' + i);
     }
 
+    if (global.gc) {
+      global.gc();
+    }
+
     const finalMemory = getMemoryMB();
     const memoryGrowth = finalMemory - initialMemory;
 

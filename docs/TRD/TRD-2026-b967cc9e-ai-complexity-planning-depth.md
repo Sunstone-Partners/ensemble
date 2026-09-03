@@ -174,24 +174,24 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 1: Analyzer Command Skeleton and Input Contract
 **Shippable State:** Users and Foreman runs can invoke `/ensemble:analyze-complexity` and receive validated missing-input or normalized-input disclosure without route side effects.
 
-- [ ] **TRD-001**: Add `packages/development/commands/analyze-complexity.yaml` for `/ensemble:analyze-complexity` with args, `--foreman`, `--route`, and `--no-adaptive-planning` parameters (3h) [satisfies REQ-001, REQ-002, REQ-006, REQ-014]
+- [x] **TRD-001**: Add `packages/development/commands/analyze-complexity.yaml` for `/ensemble:analyze-complexity` with args, `--foreman`, `--route`, and `--no-adaptive-planning` parameters (3h) [satisfies REQ-001, REQ-002, REQ-006, REQ-014]
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-002-3, AC-006-1, AC-014-1
   - Implementation ACs:
     - Given a description argument is present, when the command starts, then it identifies the argument as the work description before creating downstream artifacts.
     - Given `--foreman` and `FOREMAN_TASK_TITLE` are present, when the command starts, then it prints the Foreman subject before scoring.
     - Given no subject is available, when the command starts, then it halts with no route side effects.
-- [ ] **TRD-001-TEST**: Add command input-contract tests for normal args, Foreman metadata, and missing-subject halt behavior (2h) [verifies TRD-001] [satisfies REQ-001, REQ-002, REQ-006, REQ-012] [depends: TRD-001]
+- [x] **TRD-001-TEST**: Add command input-contract tests for normal args, Foreman metadata, and missing-subject halt behavior (2h) [verifies TRD-001] [satisfies REQ-001, REQ-002, REQ-006, REQ-012] [depends: TRD-001]
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-002-3, AC-006-1, AC-012-1
   - Implementation ACs:
     - Given no work description exists, when tests execute the command fixture, then no downstream command marker is emitted.
     - Given Foreman env vars exist, when tests execute the fixture, then title and description are selected over repository context.
 
-- [ ] **TRD-002**: Implement input normalization that preserves original subject/description and selects Foreman metadata only under Foreman mode (3h) [satisfies REQ-002, REQ-010]
+- [x] **TRD-002**: Implement input normalization that preserves original subject/description and selects Foreman metadata only under Foreman mode (3h) [satisfies REQ-002, REQ-010]
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-010-4
   - Implementation ACs:
     - Given both command args and Foreman metadata exist under `--foreman`, when normalization runs, then Foreman metadata wins.
     - Given interactive args exist without Foreman mode, when normalization runs, then args are used unchanged.
-- [ ] **TRD-002-TEST**: Add unit tests for normalization precedence and original-description preservation (2h) [verifies TRD-002] [satisfies REQ-002, REQ-010, REQ-012] [depends: TRD-002]
+- [x] **TRD-002-TEST**: Add unit tests for normalization precedence and original-description preservation (2h) [verifies TRD-002] [satisfies REQ-002, REQ-010, REQ-012] [depends: TRD-002]
   - Validates PRD ACs: AC-002-1, AC-002-2, AC-002-3, AC-010-4, AC-012-4
   - Implementation ACs:
     - Given mixed input sources, when the helper is called, then selected source and original values match expected fixtures.
@@ -200,34 +200,34 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 2: Deterministic Scoring and Route Mapping
 **Shippable State:** Users can see a scored Simple/Medium/Complex recommendation with dimension detail and boundary-correct route mapping.
 
-- [ ] **TRD-003**: Add `packages/development/lib/complexity-analyzer.js` scoring helpers for scope size, dependencies, risk factors, and team size (5h) [satisfies REQ-003, REQ-005, REQ-013]
+- [x] **TRD-003**: Add `packages/development/lib/complexity-analyzer.js` scoring helpers for scope size, dependencies, risk factors, and team size (5h) [satisfies REQ-013, REQ-003, REQ-005]
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-003-3, AC-005-1, AC-013-1
   - Implementation ACs:
     - Given a single-file low-risk description, when scored, then all dimensions include numeric score, label, and evidence.
     - Given cross-cutting or risky text, when scored, then each elevated dimension lists concrete evidence.
-- [ ] **TRD-003-TEST**: Add unit fixtures for low, medium, and high complexity dimension scoring (3h) [verifies TRD-003] [satisfies REQ-003, REQ-005, REQ-012, REQ-013] [depends: TRD-003]
+- [x] **TRD-003-TEST**: Add unit fixtures for low, medium, and high complexity dimension scoring (3h) [verifies TRD-003] [satisfies REQ-003, REQ-005, REQ-012, REQ-013] [depends: TRD-003]
   - Validates PRD ACs: AC-003-1, AC-003-2, AC-003-3, AC-005-1, AC-012-1, AC-012-2, AC-013-1
   - Implementation ACs:
     - Given fixture text for simple, medium, and complex work, when tests score it, then expected score ranges and evidence fields are present.
     - Given repeated scoring of the same fixture, then the route band is stable.
 
-- [ ] **TRD-004**: Implement inclusive score-band route mapping for Simple 1-3, Medium 4-6, and Complex 7-10 (2h) [satisfies REQ-004, REQ-010]
+- [x] **TRD-004**: Implement inclusive score-band route mapping for Simple 1-3, Medium 4-6, and Complex 7-10 (2h) [satisfies REQ-004, REQ-010]
   - Validates PRD ACs: AC-004-1, AC-004-2, AC-004-3, AC-004-4, AC-010-1, AC-010-2, AC-010-3
   - Implementation ACs:
     - Given scores 1 through 10, when mapping runs, then every score maps to exactly one documented route.
     - Given scores 3, 4, 6, and 7, when mapping runs, then boundary mappings match the PRD.
-- [ ] **TRD-004-TEST**: Add boundary route-mapping tests for scores 3, 4, 6, and 7 (2h) [verifies TRD-004] [satisfies REQ-004, REQ-012] [depends: TRD-004]
+- [x] **TRD-004-TEST**: Add boundary route-mapping tests for scores 3, 4, 6, and 7 (2h) [verifies TRD-004] [satisfies REQ-004, REQ-012] [depends: TRD-004]
   - Validates PRD ACs: AC-004-1, AC-004-2, AC-004-3, AC-004-4, AC-012-3
   - Implementation ACs:
     - Given boundary fixtures, when the mapping helper is called, then returned routes are Simple, Medium, Medium, and Complex respectively.
 
-- [ ] **TRD-005**: Implement confidence detection and deterministic fallback for weak or malformed AI scoring output (5h) [satisfies REQ-005, REQ-013]
+- [x] **TRD-005**: Implement confidence detection and deterministic fallback for weak or malformed AI scoring output (5h) [satisfies REQ-005, REQ-013]
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-005-3, AC-013-2
   - Implementation ACs:
     - Given fewer than two scoreable dimensions, when analysis completes, then confidence is low and missing details are listed.
     - Given malformed AI output and enough structural detail, when fallback runs, then a conservative route is selected and marked as fallback.
     - Given malformed output and insufficient detail, when fallback runs, then it halts safely.
-- [ ] **TRD-005-TEST**: Add low-confidence and fallback tests for interactive and Foreman modes (3h) [verifies TRD-005] [satisfies REQ-005, REQ-012, REQ-013] [depends: TRD-005]
+- [x] **TRD-005-TEST**: Add low-confidence and fallback tests for interactive and Foreman modes (3h) [verifies TRD-005] [satisfies REQ-005, REQ-012, REQ-013] [depends: TRD-005]
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-005-3, AC-012-2, AC-013-2
   - Implementation ACs:
     - Given low-confidence interactive input, when tested, then the command requires confirmation or clarification before dispatch.
@@ -236,32 +236,32 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 3: User Control, Config, and Backward Compatibility
 **Shippable State:** Users can override or disable adaptive routing, and existing direct commands continue to work unchanged.
 
-- [ ] **TRD-006**: Add pre-planning disclosure output before any route execution begins (2h) [satisfies REQ-006, REQ-011]
+- [x] **TRD-006**: Add pre-planning disclosure output before any route execution begins (2h) [satisfies REQ-006, REQ-011]
   - Validates PRD ACs: AC-006-1, AC-006-2, AC-011-1
   - Implementation ACs:
     - Given a successful recommendation, when command output is rendered, then score, route, confidence, and top rationale appear before dispatch text.
     - Given interactive mode without confirmation or override, when disclosure is shown, then no route side effect occurs.
-- [ ] **TRD-006-TEST**: Add output-order tests proving disclosure precedes dispatch markers (2h) [verifies TRD-006] [satisfies REQ-006, REQ-011, REQ-012] [depends: TRD-006]
+- [x] **TRD-006-TEST**: Add output-order tests proving disclosure precedes dispatch markers (2h) [verifies TRD-006] [satisfies REQ-006, REQ-011, REQ-012] [depends: TRD-006]
   - Validates PRD ACs: AC-006-1, AC-006-2, AC-011-1
   - Implementation ACs:
     - Given a captured command transcript, when assertions run, then disclosure text indexes before route invocation text.
 
-- [ ] **TRD-007**: Implement route override validation and selection for `--route simple|medium|complex` plus interactive override recording (3h) [satisfies REQ-007, REQ-010, REQ-011]
+- [x] **TRD-007**: Implement route override validation and selection for `--route simple|medium|complex` plus interactive override recording (3h) [satisfies REQ-007, REQ-010, REQ-011]
   - Validates PRD ACs: AC-007-1, AC-007-2, AC-007-3, AC-010-4, AC-011-1
   - Implementation ACs:
     - Given a valid override, when route selection runs, then selected route equals the override and recommended route is preserved.
     - Given an invalid override, when route selection runs, then the command lists valid choices and performs no route side effect.
-- [ ] **TRD-007-TEST**: Add override tests for valid, invalid, and recommended-route preservation cases (2h) [verifies TRD-007] [satisfies REQ-007, REQ-012] [depends: TRD-007]
+- [x] **TRD-007-TEST**: Add override tests for valid, invalid, and recommended-route preservation cases (2h) [verifies TRD-007] [satisfies REQ-007, REQ-012] [depends: TRD-007]
   - Validates PRD ACs: AC-007-1, AC-007-2, AC-007-3, AC-012-4
   - Implementation ACs:
     - Given override fixtures, when tests run, then selected and recommended routes match expected values and invalid input halts.
 
-- [ ] **TRD-008**: Add adaptive-planning disable resolution with config lookup and `--no-adaptive-planning` precedence (3h) [satisfies REQ-008, REQ-009]
+- [x] **TRD-008**: Add adaptive-planning disable resolution with config lookup and `--no-adaptive-planning` precedence (3h) [satisfies REQ-009, REQ-008]
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-009-1, AC-009-2
   - Implementation ACs:
     - Given config disables adaptive planning, when an existing direct command is invoked, then no analyzer requirement is introduced.
     - Given `--no-adaptive-planning`, when config enables adaptive planning, then the invocation flag wins.
-- [ ] **TRD-008-TEST**: Add config precedence and direct-command compatibility tests (2h) [verifies TRD-008] [satisfies REQ-008, REQ-009, REQ-012] [depends: TRD-008]
+- [x] **TRD-008-TEST**: Add config precedence and direct-command compatibility tests (2h) [verifies TRD-008] [satisfies REQ-008, REQ-009, REQ-012] [depends: TRD-008]
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-009-1, AC-009-2
   - Implementation ACs:
     - Given direct command fixtures, when tests run, then existing command behavior snapshots are unchanged.
@@ -270,33 +270,33 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 4: Route Dispatch and Foreman Audit Artifacts
 **Shippable State:** Selected routes receive preserved work metadata and Foreman runs record human-readable and machine-readable classification artifacts.
 
-- [ ] **TRD-009**: Implement route dispatch contract for Simple, Medium, and Complex routes while preserving approval stop points (4h) [satisfies REQ-010]
+- [x] **TRD-009**: Implement route dispatch contract for Simple, Medium, and Complex routes while preserving approval stop points (4h) [satisfies REQ-010]
   - Validates PRD ACs: AC-010-1, AC-010-2, AC-010-3, AC-010-4
   - Implementation ACs:
     - Given Simple route selection, when dispatch is prepared, then it targets `/ensemble:fix-issue` with the original work description.
     - Given Medium route selection, when dispatch is prepared, then it creates PRD/TRD planning artifacts only and stops before implementation.
     - Given Complex route selection, when dispatch is prepared, then it includes refine/review gates before implementation approval.
-- [ ] **TRD-009-TEST**: Add dispatch-plan tests for Simple, Medium, and Complex route stop points (3h) [verifies TRD-009] [satisfies REQ-010, REQ-012] [depends: TRD-009]
+- [x] **TRD-009-TEST**: Add dispatch-plan tests for Simple, Medium, and Complex route stop points (3h) [verifies TRD-009] [satisfies REQ-010, REQ-012] [depends: TRD-009]
   - Validates PRD ACs: AC-010-1, AC-010-2, AC-010-3, AC-010-4
   - Implementation ACs:
     - Given route fixtures, when dispatch plans are generated, then command sequence and final stop state match the PRD.
 
-- [ ] **TRD-010**: Add Foreman phase report and deterministic `<artifact>.classification.json` sidecar output with safe path handling (4h) [satisfies REQ-011]
+- [x] **TRD-010**: Add Foreman phase report and deterministic `<artifact>.classification.json` sidecar output with safe path handling (4h) [satisfies REQ-011]
   - Validates PRD ACs: AC-011-1, AC-011-2
   - Implementation ACs:
     - Given `FOREMAN_ARTIFACT_PATH` is set, when classification completes, then a phase report is written to that exact path.
     - Given Foreman mode is active, when classification completes, then a linked JSON sidecar named from the phase artifact basename contains score, route, confidence, override status, and rationale.
-- [ ] **TRD-010-TEST**: Add Foreman artifact path and sidecar JSON tests (2h) [verifies TRD-010] [satisfies REQ-011, REQ-012] [depends: TRD-010]
+- [x] **TRD-010-TEST**: Add Foreman artifact path and sidecar JSON tests (2h) [verifies TRD-010] [satisfies REQ-011, REQ-012] [depends: TRD-010]
   - Validates PRD ACs: AC-011-1, AC-011-2
   - Implementation ACs:
     - Given a temp artifact path, when tests run, then the report is written exactly there and JSON parses successfully.
 
-- [ ] **TRD-011**: Implement secret redaction for rationale, disclosure, and audit output (3h) [satisfies REQ-015]
+- [x] **TRD-011**: Implement secret redaction for rationale, disclosure, and audit output (3h) [satisfies REQ-015]
   - Validates PRD ACs: AC-015-1, AC-015-2
   - Implementation ACs:
     - Given likely tokens, keys, or bearer credentials in input, when rationale is rendered, then secret values are replaced with `[REDACTED]`.
     - Given clarification is needed, when prompts are generated, then they request non-secret structural details only.
-- [ ] **TRD-011-TEST**: Add redaction and non-secret clarification prompt tests (2h) [verifies TRD-011] [satisfies REQ-015, REQ-012] [depends: TRD-011]
+- [x] **TRD-011-TEST**: Add redaction and non-secret clarification prompt tests (2h) [verifies TRD-011] [satisfies REQ-015, REQ-012] [depends: TRD-011]
   - Validates PRD ACs: AC-015-1, AC-015-2
   - Implementation ACs:
     - Given secret-like fixtures, when output is captured, then raw values are absent and redaction markers are present.
@@ -304,52 +304,52 @@ User/Foreman input flows into `/ensemble:analyze-complexity`, then into input no
 ### PR 5: Documentation, Generation, and Validation
 **Shippable State:** The feature is documented, generated artifacts are in sync, and the validation/test suite proves route scoring and command behavior.
 
-- [ ] **TRD-012**: Add or update user/operator documentation for score bands, route sequence, overrides, disable controls, and Foreman metadata (3h) [satisfies REQ-016, REQ-011]
+- [x] **TRD-012**: Add or update user/operator documentation for score bands, route sequence, overrides, disable controls, and Foreman metadata (3h) [satisfies REQ-016, REQ-011]
   - Validates PRD ACs: AC-016-1, AC-016-2, AC-011-1, AC-011-2
   - Implementation ACs:
     - Given command help/docs are read, then they include bands 1-3, 4-6, 7-10 and valid override values.
     - Given Foreman operator docs are read, then they describe task title/description usage and artifact outputs.
-- [ ] **TRD-012-TEST**: Add documentation presence checks for route bands, overrides, disable controls, and Foreman metadata (1h) [verifies TRD-012] [satisfies REQ-016, REQ-012] [depends: TRD-012]
+- [x] **TRD-012-TEST**: Add documentation presence checks for route bands, overrides, disable controls, and Foreman metadata (1h) [verifies TRD-012] [satisfies REQ-016, REQ-012] [depends: TRD-012]
   - Validates PRD ACs: AC-016-1, AC-016-2
   - Implementation ACs:
     - Given docs files, when tests or validation scripts scan them, then required terms are present.
 
-- [ ] **TRD-013**: Run `npm run generate` to regenerate command markdown from YAML sources (1h) [satisfies REQ-014]
+- [x] **TRD-013**: Run `npm run generate` to regenerate command markdown from YAML sources (1h) [satisfies REQ-014]
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation ACs:
     - Given YAML command sources changed, when generation runs, then generated command markdown updates from source.
     - Given generated output is checked, then no manual-only generated edits are required.
-- [ ] **TRD-013-TEST**: Validate generated artifacts and command schema sync (1h) [verifies TRD-013] [satisfies REQ-014, REQ-012] [depends: TRD-013]
+- [x] **TRD-013-TEST**: Validate generated artifacts and command schema sync (1h) [verifies TRD-013] [satisfies REQ-014, REQ-012] [depends: TRD-013]
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation ACs:
     - Given `npm run generate` and `npm run validate`, when they run after implementation, then both complete successfully.
 
-- [ ] **TRD-014**: Add comprehensive Jest coverage for scoring fixtures, boundary bands, overrides, fallback, config precedence, Foreman artifacts, and redaction (4h) [satisfies REQ-012]
+- [x] **TRD-014**: Add comprehensive Jest coverage for scoring fixtures, boundary bands, overrides, fallback, config precedence, Foreman artifacts, and redaction (4h) [satisfies REQ-012]
   - Validates PRD ACs: AC-012-1, AC-012-2, AC-012-3, AC-012-4
   - Implementation ACs:
     - Given all required fixture categories, when Jest runs, then each PRD AC has at least one assertion.
     - Given boundary fixtures for 3, 4, 6, and 7, then mappings match documented bands.
-- [ ] **TRD-014-TEST**: Run the focused adaptive-planning Jest tests and record validation output (1h) [verifies TRD-014] [satisfies REQ-012] [depends: TRD-014]
+- [x] **TRD-014-TEST**: Run the focused adaptive-planning Jest tests and record validation output (1h) [verifies TRD-014] [satisfies REQ-012] [depends: TRD-014]
   - Validates PRD ACs: AC-012-1, AC-012-2, AC-012-3, AC-012-4
   - Implementation ACs:
     - Given focused tests are run, when they finish, then output shows pass/fail status for every adaptive-planning fixture group.
 
-- [ ] **TRD-015**: Run repo validation gates for generated markdown, version sync, and model IDs (2h) [satisfies REQ-014]
+- [x] **TRD-015**: Run repo validation gates for generated markdown, version sync, and model IDs (2h) [satisfies REQ-014]
   - Validates PRD ACs: AC-014-2
   - Implementation ACs:
     - Given implementation is complete, when `npm run validate` runs, then command schemas, generated artifacts, version sync, and model IDs pass.
     - Given validation fails, then failure output identifies a source file to fix rather than generated-only edits.
-- [ ] **TRD-015-TEST**: Record final validation evidence for `npm run generate` and `npm run validate` (1h) [verifies TRD-015] [satisfies REQ-014, REQ-012] [depends: TRD-015]
+- [x] **TRD-015-TEST**: Record final validation evidence for `npm run generate` and `npm run validate` (1h) [verifies TRD-015] [satisfies REQ-014, REQ-012] [depends: TRD-015]
   - Validates PRD ACs: AC-014-2
   - Implementation ACs:
     - Given final gates are run, then reports include command exit status and relevant validation output.
 
-- [ ] **TRD-016**: Add final implementation notes and next-step handoff that no implementation starts without explicit approval (1h) [satisfies REQ-010, REQ-016]
+- [x] **TRD-016**: Add final implementation notes and next-step handoff that no implementation starts without explicit approval (1h) [satisfies REQ-010, REQ-016]
   - Validates PRD ACs: AC-010-2, AC-010-3, AC-016-1, AC-016-2
   - Implementation ACs:
     - Given the feature plan is complete, when the handoff is read, then it states Medium/Complex stop before implementation approval.
     - Given docs mention next steps, then they do not imply automatic implementation from TRD creation.
-- [ ] **TRD-016-TEST**: Verify handoff text preserves approval-gate language (1h) [verifies TRD-016] [satisfies REQ-010, REQ-016] [depends: TRD-016]
+- [x] **TRD-016-TEST**: Verify handoff text preserves approval-gate language (1h) [verifies TRD-016] [satisfies REQ-010, REQ-016] [depends: TRD-016]
   - Validates PRD ACs: AC-010-2, AC-010-3, AC-016-1, AC-016-2
   - Implementation ACs:
     - Given handoff/docs text, when scanned, then approval-gate language is present and automatic implementation is not promised.
@@ -452,7 +452,7 @@ MCP enhancement: skipped (no MCP tools detected).
 
 | Issue | Impact | Resolution |
 |-------|--------|------------|
-| Draft task parser can miss tasks if checkbox prefixes are omitted. | `implement-trd-beads` would create zero or partial beads. | Every implementation and test task line starts with `- [ ] **TRD-...**`; parser validation was run. |
+| Draft task parser can miss tasks if checkbox prefixes are omitted. | `implement-trd-beads` would create zero or partial beads. | Every implementation and test task line starts with `- [x] **TRD-...**`; parser validation was run. |
 | REQ-012 is broad and could be under-covered by only one aggregate test task. | Test fixture coverage may miss route-specific edge cases. | Paired tests are attached to each implementation task, with TRD-014 aggregating full fixture coverage. |
 | PR boundaries can become infrastructure-only if command skeleton ships without visible behavior. | PR shippability would be weak. | PR 1 shippable state explicitly exposes invocation and missing-input/normalized-input disclosure behavior. |
 
