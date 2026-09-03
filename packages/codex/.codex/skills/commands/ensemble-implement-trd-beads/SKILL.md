@@ -36,6 +36,7 @@ Key behaviors:
 - Quality gates: phase completion triggers test delegation; results recorded as br comments
 - Sync: br sync --flush-only exports JSONL before every bv call
 - Hard requirement: bv is required. There is no graceful-degradation path — if bv is missing, installation is a precondition. br ready is never a fallback dispatcher; bv --robot-plan is the only scheduler.
+- Quickstart generation: beads-backed quickstart.md generation is unsupported in v1; use standard /ensemble:implement-trd when a v1 quickstart.md validation artifact is required.
 - --foreman forces non-interactive mode without changing safety HALT behavior (branch-intent-required, PR-backend-unresolved, and completion-verification-failed still HALT unchanged).
 - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
@@ -509,6 +510,7 @@ manual instructions, never automated).
 
 
    - Print completion report: TRD file, branch, strategy, epic ID, task counts, coverage summary
+   - Quickstart generation note: beads-backed quickstart.md generation is intentionally unsupported in v1. If a quickstart.md validation artifact is required, rerun the completed TRD through standard /ensemble:implement-trd (not /ensemble:implement-trd-beads) so the parser-backed quickstart completion hook can write and report it.
    - Print 'Completion verification report (authoritative): <COMPLETION_REPORT_PATH>' — the Requirement Satisfaction Table below is informational/supplementary; the completion-verification skill's report is the authoritative record of gaps.
    - Requirement Satisfaction Table: scan ROOT_EPIC_ID comments for req-verified: tokens
    -   Run: br comment list <ROOT_EPIC_ID>
@@ -548,7 +550,7 @@ manual instructions, never automated).
 - **TRD Checkboxes**: TRD Master Task List updated with completed checkboxes synced to bead closure state
 - **Wheel Instructions**: Printed agentic coding flywheel instructions with NTM spawn commands, agent self-selection loop, mail coordination, and progress monitoring commands
 - **BV Analysis**: Captured bv --robot-plan parallel execution tracks and bv --robot-triage scored recommendations (when bv available)
-- **Completion Report**: Summary with epic ID, coverage metrics, and PR creation reminder
+- **Completion Report**: Summary with epic ID, coverage metrics, PR creation reminder, and v1 unsupported quickstart.md note pointing to standard implement-trd
 - **Requirement Satisfaction Report**: Table of PRD REQ-NNN requirements with SATISFIED/NOT VERIFIED status, test task references, and proven AC sub-IDs (generated from root epic req-verified comments)
 
 ## Usage

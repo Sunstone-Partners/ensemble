@@ -26,6 +26,7 @@
  *   create-workstream-trd <trd-path...> [--out path]
  *   workstream-plan <trd-path...> [--stacked]
  *   workstream-status [--workstream slug] [--issues-json path]
+ *   quickstart <trd-path> --out <path> [--json]
  *   resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>
  */
 
@@ -57,6 +58,7 @@ const {
   resolvePrBackend,
   buildConsolidatedResolutionMessage,
 } = require('./pr-strategy');
+const { buildQuickstart } = require('./quickstart-generator');
 
 // ---------------------------------------------------------------------------
 // Small utilities
@@ -338,6 +340,33 @@ const VALID_GIT_TOWN_EXIT_CODES = new Set([0, 1, 2, 3, 4]);
  * param rather than process.env directly, matching runPrPlan/runNextTask's
  * pattern for testability.
  */
+function runQuickstart(argv) {
+  const { positionals, flags } = parseArgs(argv, new Set(['out']));
+  const trdPath = positionals[0];
+  if (!trdPath) throw new Error('Missing required <trd-path> argument');
+  const outPath = flags.out;
+  if (!outPath) throw new Error('Missing required --out path');
+
+  const { parsed, prdContext } = loadParsed(trdPath);
+  const result = buildQuickstart(Object.assign({}, parsed, { prdContext }), {
+    trdPath,
+    outPath,
+  });
+
+  try {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, result.markdown, 'utf8');
+  } catch (err) {
+    throw new Error(`Failed to write quickstart artifact '${outPath}': ${err.message}`);
+  }
+
+  return {
+    ok: true,
+    quickstartPath: outPath,
+    coverage: result.coverage,
+  };
+}
+
 function runResolveSdlc(argv, env) {
   const { flags } = parseArgs(argv, new Set(['git-town-exit-code', 'remote-url']));
 
@@ -920,6 +949,7 @@ const HANDLERS = {
   'create-workstream-trd': (argv) => runCreateWorkstreamTrd(argv),
   'workstream-plan': (argv) => runWorkstreamPlan(argv, process.env),
   'workstream-status': (argv) => runWorkstreamStatus(argv),
+  quickstart: (argv) => runQuickstart(argv),
   'choices-read': (argv) => runChoicesRead(argv),
   'choices-write': (argv) => runChoicesWrite(argv),
   list: (argv) => runList(argv),
@@ -944,7 +974,7 @@ function main(argv) {
     process.stdout.write(
       JSON.stringify({
         error:
-          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|resolve-sdlc|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|list|status|migrate-frontmatter|choices-read|choices-write> <trd-path> [...]',
+          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|phase-status|next-task|pr-plan|resolve-sdlc|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|quickstart|list|status|migrate-frontmatter|choices-read|choices-write> <trd-path> [...]',
       }) + '\n'
     );
     return 1;
@@ -981,6 +1011,7 @@ module.exports = {
   runNextTask,
   runPrPlan,
   runResolveSdlc,
+  runQuickstart,
   runValidateWorkstream,
   runCreateWorkstreamTrd,
   runWorkstreamPlan,

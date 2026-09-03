@@ -99,8 +99,13 @@ variables are absent and behavior is unchanged.
    - Scan all REQ-NNN requirements for technical domain keywords (API, UI, database, infrastructure, security, etc.)
    - Identify architectural patterns needed (API layer, data model, UI components, integrations)
    - Map requirements to technical domains for coverage tracking
+   - Classify companion artifact domains and record the result once as COMPANION_DOMAINS for later output steps: add `data-model` when requirements mention persistence changes such as entities, schemas, database tables, migrations, backfills, relationships, records, validation rules, ownership, privacy/security for stored data, or durable state changes.
+   - Do NOT add `data-model` for incidental data mentions, read-only display data, analytics labels, report fields, request/response examples, or documentation-only references unless another persistence/schema signal is present.
+   - Add `research` when requirements require comparative technology decisions, vendor/tool selection, integration options, architecture alternatives, dependency tradeoffs, or external service evaluation that should be reviewable independently from the TRD.
+   - Do NOT add `research` for routine brownfield architecture description, straightforward use of an already-selected stack, or implementation notes that do not compare options or justify a technology/integration decision.
+   - If no companion domains are detected, record COMPANION_DOMAINS as empty; later steps must not create empty companion placeholder files.
    - Determine if project is greenfield or brownfield (check for existing codebase)
-   - Summarize domain coverage and gaps
+   - Summarize domain coverage, COMPANION_DOMAINS, and gaps
 
 **2. Capability Reuse Check**
    Reuse existing foundational work instead of duplicating it (dedup-by-reference)
@@ -257,24 +262,51 @@ variables are absent and behavior is unchanged.
    - Score dependency clarity (1-5): are dependencies explicit and acyclic?
    - Score estimate confidence (1-5): are estimates consistent, reasonable, and granular enough?
    - Compute overall score: average of all four dimensions
-   - PASS (4.0+): proceed to output
-   - CONCERNS (3.0-3.9): list specific concerns, ask user whether to proceed or loop back. If --foreman is set, skip the ask -- log the concerns and proceed to output automatically.
+   - PASS (4.0+): proceed to the Constitution Gate before output
+   - CONCERNS (3.0-3.9): list specific concerns, ask user whether to proceed or loop back. If --foreman is set, skip the ask -- log the concerns and proceed to the Constitution Gate before output automatically.
    - FAIL (<3.0): identify weakest dimensions and loop back to fix before output (this HALT/loop-back is unaffected by --foreman)
    - Present the Design Readiness Scorecard to the user
 
-### Phase 6: Output Management
+### Phase 6: Constitution Gate
+
+**1. Constitution Gate Contract**
+   Non-bypassable pre-save constitution validation
+
+   - Run this gate after architecture, task draft generation, traceability/design readiness evaluation, and Design Readiness Gate scoring exist in memory, and before creating docs/TRD/, writing any repo-local TRD artifact, printing success, or printing /ensemble:configure-team or /ensemble:implement-trd-beads next steps.
+   - Resolve the constitution source with strict precedence: use docs/standards/constitution.md as canonical when present; otherwise fall back to .specify/memory/constitution.md.
+   - If both docs/standards/constitution.md and .specify/memory/constitution.md exist and their normalized contents differ, print a warning naming both paths, but continue with docs/standards/constitution.md as canonical.
+   - If neither constitution source exists, HALT as CONSTITUTION_CONFIG_ERROR; do not save any repo-local TRD artifact and do not print downstream next steps.
+   - Extract source article heading identifiers and titles from the canonical constitution, preserving repo-local heading text such as Article I, Article 1, or A1 and including the title when available.
+   - Every enforceable constitution check MUST map to at least one source article id. If an enforceable check has no article id, HALT as CONSTITUTION_CONFIG_ERROR; this unmapped article check is a gate configuration failure.
+   - Evaluate the in-memory TRD draft against the mapped article checks. Constitution violations are non-bypassable in every mode, including --foreman.
+   - Format each violation with article id, article title when available, failing draft section, specific finding, and remediation hint. For multiple violations, list every failing article id; never collapse them to a generic constitution failure.
+   - Do not offer any proceed anyway, override, skip, soft-confirmation, default-proceed, or Foreman auto-proceed path for constitution source errors, unmapped article checks, or article violations.
+   - Existing CONCERNS-band PRD readiness and Design Readiness Gate auto-proceed in Foreman mode is preserved only for non-constitution concerns and only when constitution compliance passes; constitution violations are excluded from CONCERNS auto-proceed.
+   - On constitution failure, do not write docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md, do not create docs/TRD/ as proof of success, do not print saved-file success output, and do not print /ensemble:configure-team or /ensemble:implement-trd-beads next-step output.
+   - If --foreman is active and FOREMAN_ARTIFACT_PATH is set and non-empty, write a failure phase report to that exact path, creating parent directories as needed; the report must identify CONSTITUTION_CONFIG_ERROR or the article-specific violations and must not claim a saved repo-local TRD artifact.
+   - If the gate passes, record `Constitution compliance: passed` in the saved TRD frontmatter, design readiness notes, or health/summary notes, then continue to Output Management save and success messaging.
+
+### Phase 7: Output Management
 
 **1. TRD Document Generation**
    Generate comprehensive TRD document with frontmatter and structured sections
 
    - Derive the TRD document micro UUID from the source PRD, so PRD/TRD artifacts share the same 8-hex correlation id. Parse the PRD filename or frontmatter Document ID for PRD-YYYY-<micro_uuid> where micro_uuid is 8 lowercase hex chars. If found, set TRD_MICRO_UUID to that value. Only if the PRD has a legacy sequence id or no parseable id, generate a new 8-hex micro UUID from a UUID/random source. Do NOT scan for highest TRD sequence number or increment NNN.
    - Derive the TRD Label from the source PRD's label so the pair reads as one effort: take the PRD's `label: prd-<stem>` (from its frontmatter, or derive prd-<stem> from the PRD title) and set TRD_LABEL = trd-<stem> (swap the prd- prefix for trd-, keep the same stem). The label is display-only and NEVER a reference key — cross-references use TRD_MICRO_UUID.
-   - Include frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), Label (trd-<stem>), PRD reference, version 1.0.0, status Draft, date, Design Readiness Score, and kind (default `trd`)
+   - Include frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), Label (trd-<stem>), PRD reference, version 1.0.0, status Draft, date, Design Readiness Score, kind (default `trd`), and Constitution compliance: passed
    - If --foundational: this is a shared/reusable TRD not tied 1:1 to a PRD. Set frontmatter `kind: foundational`; the PRD reference is optional (treat the input as a capability brief if no full PRD exists); and add a `capabilities:` frontmatter list of the machine-matchable capability tokens this TRD provides (e.g. order-domain, money-value-object) so other TRDs' Capability Reuse Check can find and reference it
    - Generate Architecture Decision section documenting the chosen approach and alternatives considered
    - Generate Master Task List with all TRD-NNN tasks and TRD-NNN-TEST tasks, organized under ### PR N: headings (not ### Phase N: or ### Sprint N:). Each ### PR N: heading must be immediately followed by a **Shippable State:** line before the first task entry. This is the machine-parsed section used by implement-trd-beads to create stacked PRs.
    - Generate a ## Sprint Planning section (H2 heading) as a separate human-readable grouping for time-boxing PRs into calendar sprints. Use ## Sprint N: sub-headings (H2) within this section. This section is informational only — implement-trd-beads does not parse it.
    - File naming: docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md where TRD_MICRO_UUID is the source PRD micro UUID when available (no sequence number)
+   - Derive companion artifact paths from the exact saved TRD path and recorded COMPANION_DOMAINS: reuse the same TRD_MICRO_UUID and slug, write beside the TRD in docs/TRD/, and append only `-research.md` and/or `-data-model.md` suffixes for detected domains. Example: TRD path `docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts.md` yields `docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts-research.md` and `docs/TRD/TRD-2026-d63594c0-standalone-trd-artifacts-data-model.md` when both domains are detected.
+   - Stable rerun rule: recomputing from the same PRD correlation id and slug must target the same companion paths; overwrite/update only the detected companion files and do not create stale placeholder artifacts for domains that are not detected.
+   - When companion artifacts exist, include a `## Companion Artifacts` section in the TRD with relative links only to files actually generated; when COMPANION_DOMAINS is empty, either omit the section or state `No companion artifacts generated.` with no broken links.
+   - When a task depends on a research or data-model decision, reference the companion artifact path and relevant REQ/AC ids instead of copying the full companion artifact body into the TRD.
+   - If `data-model` is detected, write `<trd-stem>-data-model.md` as a standalone generated artifact containing: generated-artifact note (`Generated by /ensemble:create-trd; edit source PRD/TRD inputs and regenerate rather than hand-editing when possible`), source TRD id, source PRD id, relative TRD back-link, relevant REQ/AC refs, and sections `Overview`, `Entities`, `Relationships`, `Data Ownership`, `Migration/Backfill Notes`, `Validation Rules`, `Privacy/Security Notes`, and `Open Questions`.
+   - For every required data-model section whose source detail is insufficient, write the standard placeholder `[NEEDS CLARIFICATION: specify the missing data-model detail and source REQ/AC]` rather than fabricating details.
+   - If `research` is detected, write `<trd-stem>-research.md` as a standalone generated artifact containing: generated-artifact note (`Generated by /ensemble:create-trd; edit source PRD/TRD inputs and regenerate rather than hand-editing when possible`), source TRD id, source PRD id, relative TRD back-link, relevant REQ/AC refs, and sections `Decision Context`, `Options Considered`, `Evaluation Criteria`, `Recommendation`, `Tradeoffs/Risks`, `Rejected Alternatives`, and `Open Questions`.
+   - `research.md` expands comparative rationale and links back to the TRD Architecture Decision; it must not replace, fork, or contradict the TRD's chosen Architecture Decision section. If source detail is insufficient, put specific `[NEEDS CLARIFICATION: specify the missing research/detail and source REQ/AC]` placeholders in Open Questions rather than inventing rationale.
 
 **2. Acceptance Criteria Traceability**
    Generate traceability matrix linking PRD requirements to TRD tasks
@@ -298,12 +330,15 @@ variables are absent and behavior is unchanged.
 **4. File Save and Next Steps**
    Save TRD and suggest follow-up commands
 
-   - Create docs/TRD/ directory if it doesn't exist
-   - Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md
-   - Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID)
-   - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team'
-   - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md'
-   - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path
+   - Create docs/TRD/ directory if it doesn't exist only after the Constitution Gate Contract passes
+   - Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md only after `Constitution compliance: passed` is recorded
+   - Write only the detected companion artifacts from COMPANION_DOMAINS beside the TRD using the derived `-research.md` and/or `-data-model.md` paths; do not create empty placeholder files when COMPANION_DOMAINS is empty.
+   - Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID) only after constitution compliance passes
+   - Print `Companion artifacts generated:` followed by each generated companion artifact path, or exactly `No companion artifacts generated.` when none were generated.
+   - If --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, the phase report written to that exact path must list the TRD path and every generated companion artifact path; if none were generated, it must include `No companion artifacts generated.` Preserve the existing FOREMAN_ARTIFACT_PATH write contract exactly.
+   - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team' only after constitution compliance passes
+   - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md' only after constitution compliance passes
+   - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path only after constitution compliance passes
 
 ## Expected Output
 

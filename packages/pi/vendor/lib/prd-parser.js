@@ -37,8 +37,8 @@
  * @property {string} text      full "Given...when...then..." prose
  */
 
-const REQ_RE = /^#{1,3}\s+(REQ-\d+)\s*[—–-]\s*(.+)/i;
-const AC_RE = /^\s*\*\*(AC-\d+-\d+):?\*\*:?\s*(.+)/i;
+const REQ_RE = /^#{1,4}\s+(REQ-\d+)\s*(?:[—–-]|:)\s*(.+)/i;
+const AC_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(AC-\d+-\d+):?(?:\*\*)?:?\s*(.+)/i;
 const GIVEN_RE = /\bGiven\b([^,]*)/i;
 const WHEN_RE = /\bWhen\b([^,]*)/i;
 const THEN_RE = /\bThen\b([^.]*)/i;

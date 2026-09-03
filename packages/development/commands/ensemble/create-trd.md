@@ -326,15 +326,15 @@ variables are absent and behavior is unchanged.
 **4. File Save and Next Steps**
    Save TRD and suggest follow-up commands
 
-            - Create docs/TRD/ directory if it doesn't exist only after the Constitution Gate Contract passes
-            - Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md only after `Constitution compliance: passed` is recorded
-            - Write only the detected companion artifacts from COMPANION_DOMAINS beside the TRD using the derived `-research.md` and/or `-data-model.md` paths; do not create empty placeholder files when COMPANION_DOMAINS is empty.
-            - Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID) only after constitution compliance passes
-            - Print `Companion artifacts generated:` followed by each generated companion artifact path, or exactly `No companion artifacts generated.` when none were generated.
-            - If --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, the phase report written to that exact path must list the TRD path and every generated companion artifact path; if none were generated, it must include `No companion artifacts generated.` Preserve the existing FOREMAN_ARTIFACT_PATH write contract exactly.
-            - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team' only after constitution compliance passes
-            - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md' only after constitution compliance passes
-            - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path only after constitution compliance passes
+   - Create docs/TRD/ directory if it doesn't exist only after the Constitution Gate Contract passes
+   - Save TRD to docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md only after `Constitution compliance: passed` is recorded
+   - Write only the detected companion artifacts from COMPANION_DOMAINS beside the TRD using the derived `-research.md` and/or `-data-model.md` paths; do not create empty placeholder files when COMPANION_DOMAINS is empty.
+   - Print: file path, task count, design readiness score, and source PRD correlation id (TRD_MICRO_UUID) only after constitution compliance passes
+   - Print `Companion artifacts generated:` followed by each generated companion artifact path, or exactly `No companion artifacts generated.` when none were generated.
+   - If --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, the phase report written to that exact path must list the TRD path and every generated companion artifact path; if none were generated, it must include `No companion artifacts generated.` Preserve the existing FOREMAN_ARTIFACT_PATH write contract exactly.
+   - Suggest: '/ensemble:configure-team docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md to auto-configure the team' only after constitution compliance passes
+   - Suggest: '/ensemble:implement-trd-beads docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md' only after constitution compliance passes
+   - If --team flag was passed in $ARGUMENTS, auto-run /ensemble:configure-team on the saved TRD path only after constitution compliance passes
 
 ## Expected Output
 
