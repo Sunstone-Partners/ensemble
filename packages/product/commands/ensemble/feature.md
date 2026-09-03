@@ -15,10 +15,10 @@ Orchestrate adaptive idea-to-plan routing as a single command. First runs determ
 local complexity analysis on the work description and prints score, rationale, selected
 depth, and path before any downstream planning command begins. Scores 1-3 select the
 Simple fix-issue path; scores 4-6 run create-prd then create-trd; scores 7-10 run the
-full create-prd, refine-prd, create-trd, refine-trd, implement-trd-beads --plan pipeline.
-Existing explicit manual commands remain unchanged. Refinement steps pause for user input
-unless --skip-refine is supplied or --foreman non-interactive mode requires automatic routing.
-Planning only -- no code is executed. Terminates with a handoff message showing how to start implementation.
+full create-prd, refine-prd, create-trd, refine-trd planning pipeline. Existing explicit
+manual commands remain unchanged. Interactive refinement steps may pause for user input;
+Foreman mode passes --foreman to refinement commands and never prompts. Planning only -- no code
+is executed. Terminates with a handoff message showing the produced PRD/TRD and approval block.
 
 ## Workflow
 
@@ -68,8 +68,8 @@ If FOREMAN_MODE=true and FOREMAN_ARTIFACT_PATH is set and non-empty, write this 
 **2. Select adaptive route**
    Set SELECTED_DEPTH and SELECTED_PATH from the analyzer result.
 - Simple: print the recommended manual path `/ensemble:fix-issue <FEATURE_DESCRIPTION>` and stop without creating PRD/TRD artifacts. This preserves fix-issue's explicit approval/implementation contract.
-- Medium: run create-prd then create-trd. Skip refine-prd, refine-trd, and implement-trd-beads --plan.
-- Complex: run the full existing five-step pipeline. Implementation remains blocked until the refined TRD receives explicit approval.
+- Medium: run create-prd then create-trd. Skip refine-prd and refine-trd.
+- Complex: run create-prd -> refine-prd -> create-trd -> refine-trd. Implementation remains blocked until the refined TRD receives explicit approval.
 
 Direct invocations of /ensemble:fix-issue, /ensemble:create-prd, /ensemble:create-trd, and /ensemble:refine-trd remain unchanged; only this adaptive entrypoint requires pre-planning classification.
 
@@ -77,14 +77,14 @@ Direct invocations of /ensemble:fix-issue, /ensemble:create-prd, /ensemble:creat
 ### Phase 3: Pipeline Execution
 
 **1. Step 1 - create-prd**
-   Print: [Step 1/5] create-prd...
+   Print: [Step 1/4] create-prd...
 
 Invoke /ensemble:create-prd with FEATURE_DESCRIPTION as the argument. Pass the description verbatim with no modification.
 
 After completion, use Glob to find the most recently modified .md file in docs/PRD/. Store the path as PRD_PATH.
 
 If the command fails or no PRD file is found in docs/PRD/, print the following and halt the pipeline immediately:
-[Step 1/5] create-prd failed. Pipeline halted.
+[Step 1/4] create-prd failed. Pipeline halted.
 
 Error details:
 <error output from the failed step>
@@ -96,12 +96,14 @@ To retry from this step, run:
 **2. Step 2 - refine-prd**
    Check SKIP_REFINE.
 
-If SKIP_REFINE=true: Print [Step 2/5] refine-prd... (skipped) and proceed to Step 3. Do not invoke refine-prd.
+If SKIP_REFINE=true: Print [Step 2/4] refine-prd... (skipped) and proceed to Step 3. Do not invoke refine-prd.
 
-If SKIP_REFINE=false: Print [Step 2/5] refine-prd... (pausing for your input) and invoke /ensemble:refine-prd. The refine-prd command internally uses AskUserQuestion to conduct the interview -- no special pause mechanism is needed here. Wait for refine-prd to complete before proceeding.
+If SKIP_REFINE=false and FOREMAN_MODE=false: Print [Step 2/4] refine-prd... (pausing for your input) and invoke /ensemble:refine-prd. The refine-prd command may use AskUserQuestion to conduct the interview. Wait for refine-prd to complete before proceeding.
+
+If SKIP_REFINE=false and FOREMAN_MODE=true: Print [Step 2/4] refine-prd... (--foreman) and invoke /ensemble:refine-prd --foreman. Never prompt in Foreman mode. Wait for refine-prd to complete before proceeding.
 
 If refine-prd fails, print the following and halt the pipeline immediately:
-[Step 2/5] refine-prd failed. Pipeline halted.
+[Step 2/4] refine-prd failed. Pipeline halted.
 
 Error details:
 <error output from the failed step>
@@ -111,14 +113,14 @@ To retry from this step, run:
 
 
 **3. Step 3 - create-trd**
-   Print: [Step 3/5] create-trd...
+   Print: [Step 3/4] create-trd...
 
 Invoke /ensemble:create-trd with PRD_PATH (captured from Step 1) as the argument. Passing the explicit PRD path ensures create-trd reads the correct PRD and not a stale or unrelated document in docs/PRD/.
 
 After completion, use Glob to find the most recently modified .md file in docs/TRD/. Store the path as TRD_PATH.
 
 If the command fails or no TRD file is found in docs/TRD/, print the following and halt the pipeline immediately:
-[Step 3/5] create-trd failed. Pipeline halted.
+[Step 3/4] create-trd failed. Pipeline halted.
 
 Error details:
 <error output from the failed step>
@@ -130,12 +132,14 @@ To retry from this step, run:
 **4. Step 4 - refine-trd**
    Check SKIP_REFINE.
 
-If SKIP_REFINE=true: Print [Step 4/5] refine-trd... (skipped) and proceed to Step 5. Do not invoke refine-trd.
+If SKIP_REFINE=true: Print [Step 4/4] refine-trd... (skipped) and proceed to Handoff. Do not invoke refine-trd.
 
-If SKIP_REFINE=false: Print [Step 4/5] refine-trd... (pausing for your input) and invoke /ensemble:refine-trd. The refine-trd command internally uses AskUserQuestion to conduct the interview -- no special pause mechanism is needed here. Wait for refine-trd to complete before proceeding.
+If SKIP_REFINE=false and FOREMAN_MODE=false: Print [Step 4/4] refine-trd... (pausing for your input) and invoke /ensemble:refine-trd. The refine-trd command may use AskUserQuestion to conduct the interview. Wait for refine-trd to complete before proceeding.
+
+If SKIP_REFINE=false and FOREMAN_MODE=true: Print [Step 4/4] refine-trd... (--foreman) and invoke /ensemble:refine-trd --foreman. Never prompt in Foreman mode. Wait for refine-trd to complete before proceeding.
 
 If refine-trd fails, print the following and halt the pipeline immediately:
-[Step 4/5] refine-trd failed. Pipeline halted.
+[Step 4/4] refine-trd failed. Pipeline halted.
 
 Error details:
 <error output from the failed step>
@@ -144,37 +148,23 @@ To retry from this step, run:
   /ensemble:refine-trd
 
 
-**5. Step 5 - implement-trd-beads --plan**
-   Print: [Step 5/5] implement-trd-beads --plan...
-
-Invoke /ensemble:implement-trd-beads with TRD_PATH (captured from Step 3) and the --plan flag. The --plan flag MUST be hardcoded. User arguments from $ARGUMENTS MUST NOT be forwarded to this command. Never invoke implement-trd-beads with --execute.
-
-If the command fails, print the following and halt the pipeline immediately:
-[Step 5/5] implement-trd-beads --plan failed. Pipeline halted.
-
-Error details:
-<error output from the failed step>
-
-To retry from this step, run:
-  /ensemble:implement-trd-beads --plan
-
-
 ### Phase 4: Handoff
 
 **1. Present Handoff Message**
-   This step only executes if all five pipeline steps completed without error. If any step halted the pipeline, this phase is never reached.
+   This step only executes if the selected route completed without error. If any step halted the pipeline, this phase is never reached.
 
 Print the following handoff message. Ensure a blank line appears above and below the message block for visual separation:
 
-Pipeline complete. Your implementation plan is ready.
+Pipeline complete. Your planning artifacts are ready.
 
   PRD: <PRD_PATH>
   TRD: <TRD_PATH>
 
-To start implementation:
+Implementation remains blocked until the refined TRD receives explicit approval.
 
-  In this window:    /ensemble:implement-trd-beads <TRD_PATH> --execute
-  In a new window:   ntm
+To start implementation after approval:
+
+  /ensemble:implement-trd-beads <TRD_PATH> --execute
 
 Where <PRD_PATH> and <TRD_PATH> are the actual file paths captured from Steps 1 and 3 respectively.
 
@@ -186,11 +176,10 @@ After printing the handoff message, stop. Do not proceed with any implementation
 **Format:** Pipeline orchestration result
 
 **Structure:**
-- **Progress Indicators**: Progress line printed before each of the 5 pipeline steps
+- **Progress Indicators**: Progress line printed before each selected route step
 - **PRD File**: PRD document created at docs/PRD/ by the create-prd step
 - **TRD File**: TRD document created at docs/TRD/ by the create-trd step
-- **Bead Hierarchy**: Bead hierarchy created by implement-trd-beads --plan (planning only, no code executed)
-- **Handoff Message**: Final message showing PRD path, TRD path, and execution options for starting implementation
+- **Handoff Message**: Final message showing PRD path, TRD path, and implementation approval block
 
 ## Usage
 

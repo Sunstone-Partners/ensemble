@@ -74,8 +74,15 @@ describe('adaptive feature entrypoint integration', () => {
 
   test('documents Medium and Complex route handoff details', () => {
     expect(text).toContain('Medium: run create-prd then create-trd.');
-    expect(text).toContain('Complex: run the full existing five-step pipeline.');
+    expect(text).toContain('Complex: run create-prd -> refine-prd -> create-trd -> refine-trd.');
     expect(text).toContain('Implementation remains blocked until the refined TRD receives explicit approval.');
+    expect(text).not.toContain('implement-trd-beads --plan pipeline');
+  });
+
+  test('Foreman refinement path is explicitly non-interactive', () => {
+    expect(text).toContain('invoke /ensemble:refine-prd --foreman');
+    expect(text).toContain('invoke /ensemble:refine-trd --foreman');
+    expect(text).toContain('Never prompt in Foreman mode');
   });
 
   test('includes PRD regression fixture route semantics', () => {

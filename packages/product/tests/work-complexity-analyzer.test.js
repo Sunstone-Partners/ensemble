@@ -50,7 +50,7 @@ describe('work complexity analyzer', () => {
   test('captures dependency evidence and avoids invented dependencies', () => {
     const rich = analyzeWorkComplexity('Integrate generated markdown artifacts with Foreman phases and multiple CLI commands.');
     expect(rich.factors.dependencies.level).toBe('high');
-    expect(rich.factors.dependencies.evidence.join(' ')).toMatch(/generated artifacts|Foreman phases|multiple commands/);
+    expect(rich.factors.dependencies.evidence.join(' ')).toMatch(/generated artifacts|Foreman phases|command entrypoints/);
 
     const plain = analyzeWorkComplexity('Fix a typo in a label.');
     expect(['low', 'uncertain']).toContain(plain.factors.dependencies.level);

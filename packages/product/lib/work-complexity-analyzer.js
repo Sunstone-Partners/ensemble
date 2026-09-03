@@ -63,9 +63,9 @@ function factor(level, evidence) {
 function detectScope(text) {
   const high = collectEvidence(text, [
     { label: 'multiple features', pattern: /\b(multiple|many|several)\s+(features?|capabilities|flows?|workflows?)\b/i },
-    { label: 'multiple workflows', pattern: /\b(workflows?|pipelines?|end[- ]to[- ]end|full pipeline)\b/i },
-    { label: 'multiple packages', pattern: /\b(packages?|modules?|monorepo|workspaces?)\b/i },
-    { label: 'multiple user roles', pattern: /\b(developers?|pms?|operators?|admins?|users?|roles?|stakeholders?)\b/i }
+    { label: 'multiple workflows', pattern: /\b(multiple|many|several)\s+(workflows?|pipelines?)\b|\b(end[- ]to[- ]end|full pipeline)\b/i },
+    { label: 'multiple packages', pattern: /\b(multiple|many|several)\s+(packages?|modules?|workspaces?)\b|\b(monorepo)\b/i },
+    { label: 'multiple user roles', pattern: /\b(multiple|many|several)\s+(developers?|pms?|operators?|admins?|users?|roles?|stakeholders?)\b|\b(developer,\s*PM,\s*and\s*operator|PM\s+and\s+QA)\b/i }
   ]);
   const medium = collectEvidence(text, [
     { label: 'new feature', pattern: /\b(feature|command|entrypoint|workflow|route|routing|screen|page)\b/i },
@@ -89,7 +89,7 @@ function detectDependencies(text) {
     { label: 'shared library', pattern: /\b(shared|library|lib|module|package)\b/i },
     { label: 'generated artifacts', pattern: /\b(generated|regenerate|artifact|markdown|manifest)\b/i },
     { label: 'Foreman phases', pattern: /\b(foreman|phase|phases|run artifact)\b/i },
-    { label: 'multiple commands', pattern: /\b(commands?|cli|entrypoints?)\b/i },
+    { label: 'command entrypoints', pattern: /\b(commands?|cli|entrypoints?)\b/i },
     { label: 'database/schema', pattern: /\b(database|schema|migration|queue|cache)\b/i }
   ]);
   if (high.length >= 2) return factor('high', high);
