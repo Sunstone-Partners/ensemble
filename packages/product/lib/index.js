@@ -8,6 +8,7 @@
 const path = require('path');
 const fs = require('fs');
 const yaml = require('js-yaml');
+const workComplexity = require('./work-complexity-analyzer');
 
 // Load agent configuration
 const agentPath = path.join(__dirname, '..', 'agents', 'product-management-orchestrator.yaml');
@@ -83,5 +84,6 @@ module.exports = {
   loadSkill,
   getAgentConfig,
   getDocumentTypes,
-  agentConfig
+  agentConfig,
+  ...workComplexity
 };

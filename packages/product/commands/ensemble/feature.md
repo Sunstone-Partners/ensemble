@@ -1,22 +1,24 @@
 ---
 name: "ensemble:feature"
-description: "Orchestrate the full idea-to-plan pipeline: create-prd, refine-prd, create-trd, refine-trd, implement-trd-beads --plan"
+description: "Adaptive idea-to-plan entrypoint: score complexity, then route to fix-issue, PRD→TRD, or full PRD/TRD refinement planning"
 version: "1.0.0"
 category: "planning"
 last-updated: "2026-03-15"
-argument-hint: "<description> [--skip-refine]"
+argument-hint: "<description> [--skip-refine] [--depth simple|medium|complex] [--no-auto-complexity] [--foreman]"
 model: "opus"
 ---
 <!-- DO NOT EDIT - Generated from feature.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->
 
 
-Orchestrate the complete idea-to-plan pipeline as a single command. Runs five commands
-in strict sequence: (1) create-prd, (2) refine-prd, (3) create-trd, (4) refine-trd,
-(5) implement-trd-beads --plan. Each step completes before the next begins. Refinement
-steps (2 and 4) pause for user input via AskUserQuestion. The --skip-refine flag
-bypasses both refinement steps for an uninterrupted run. Planning only -- no code
-is executed. Terminates with a handoff message showing how to start implementation.
+Orchestrate adaptive idea-to-plan routing as a single command. First runs deterministic
+local complexity analysis on the work description and prints score, rationale, selected
+depth, and path before any downstream planning command begins. Scores 1-3 select the
+Simple fix-issue path; scores 4-6 run create-prd then create-trd; scores 7-10 run the
+full create-prd, refine-prd, create-trd, refine-trd, implement-trd-beads --plan pipeline.
+Existing explicit manual commands remain unchanged. Refinement steps pause for user input
+unless --skip-refine is supplied or --foreman non-interactive mode requires automatic routing.
+Planning only -- no code is executed. Terminates with a handoff message showing how to start implementation.
 
 ## Workflow
 
@@ -26,18 +28,53 @@ is executed. Terminates with a handoff message showing how to start implementati
    Parse $ARGUMENTS and initialize pipeline variables.
 
 1. If $ARGUMENTS is empty or blank, print the following and exit without running any pipeline step:
-   Usage: /ensemble:feature <description> [--skip-refine]
+   Usage: /ensemble:feature <description> [--skip-refine] [--depth simple|medium|complex] [--no-auto-complexity] [--foreman]
 
-2. Scan $ARGUMENTS for the --skip-refine token. If found, set SKIP_REFINE=true and remove the token from the remaining text. If not found, set SKIP_REFINE=false.
+2. Scan $ARGUMENTS for supported flags and remove them from the remaining text:
+   - --skip-refine sets SKIP_REFINE=true.
+   - --depth simple|medium|complex sets DEPTH_OVERRIDE and takes precedence over global config.
+   - --no-auto-complexity sets DISABLE_AUTO_COMPLEXITY=true and takes precedence over global config.
+   - --foreman sets FOREMAN_MODE=true and INTERACTIVE=false; never prompt in Foreman mode.
 
 3. Scan the remaining text for any other tokens that begin with --. If any unknown flag is found, print the following and exit without running any pipeline step:
-   Error: Unknown flag '<flag>'. Only --skip-refine is supported.
-   Usage: /ensemble:feature <description> [--skip-refine]
+   Error: Unknown flag '<flag>'. Supported flags: --skip-refine, --depth, --no-auto-complexity, --foreman.
+   Usage: /ensemble:feature <description> [--skip-refine] [--depth simple|medium|complex] [--no-auto-complexity] [--foreman]
 
-4. Set FEATURE_DESCRIPTION to the remaining argument text after removing --skip-refine if it was present. Preserve the description verbatim -- no transformation, truncation, or summarization.
+4. Set FEATURE_DESCRIPTION to the remaining argument text after removing supported flags. Preserve the description verbatim -- no transformation, truncation, or summarization.
+
+5. If FEATURE_DESCRIPTION is empty or blank, print exactly:
+   Work description is required before complexity analysis can select a planning path.
+   Then halt before any downstream planning command.
 
 
-### Phase 2: Pipeline Execution
+### Phase 2: Adaptive Complexity Gate
+
+**1. Analyze complexity before route selection**
+   Call analyzeWorkComplexity from packages/product/lib/work-complexity-analyzer.js with FEATURE_DESCRIPTION, DEPTH_OVERRIDE, DISABLE_AUTO_COMPLEXITY, FOREMAN_MODE, and any operator config.
+
+Print score/rationale/path before planning begins:
+- Score: <score>/10
+- Depth: <Simple|Medium|Complex>
+- Path: <fix-issue OR create-prd -> create-trd OR create-prd -> refine-prd -> create-trd -> refine-trd>
+- Rationale: <scope, dependencies, risk, teamSize factor evidence>
+- Override applied: <yes|no>
+- Auto disabled: <yes|no>
+- Original classification: <score/depth/path> when an override changes the analyzer result
+- Uncertainty: <uncertainty notes when present>
+
+If FOREMAN_MODE=true and FOREMAN_ARTIFACT_PATH is set and non-empty, write this same audit block to the exact FOREMAN_ARTIFACT_PATH, creating parent directories as needed. Never treat an unset FOREMAN_ARTIFACT_PATH as an error.
+
+
+**2. Select adaptive route**
+   Set SELECTED_DEPTH and SELECTED_PATH from the analyzer result.
+- Simple: print the recommended manual path `/ensemble:fix-issue <FEATURE_DESCRIPTION>` and stop without creating PRD/TRD artifacts. This preserves fix-issue's explicit approval/implementation contract.
+- Medium: run create-prd then create-trd. Skip refine-prd, refine-trd, and implement-trd-beads --plan.
+- Complex: run the full existing five-step pipeline. Implementation remains blocked until the refined TRD receives explicit approval.
+
+Direct invocations of /ensemble:fix-issue, /ensemble:create-prd, /ensemble:create-trd, and /ensemble:refine-trd remain unchanged; only this adaptive entrypoint requires pre-planning classification.
+
+
+### Phase 3: Pipeline Execution
 
 **1. Step 1 - create-prd**
    Print: [Step 1/5] create-prd...
@@ -122,7 +159,7 @@ To retry from this step, run:
   /ensemble:implement-trd-beads --plan
 
 
-### Phase 3: Handoff
+### Phase 4: Handoff
 
 **1. Present Handoff Message**
    This step only executes if all five pipeline steps completed without error. If any step halted the pipeline, this phase is never reached.
@@ -158,5 +195,5 @@ After printing the handoff message, stop. Do not proceed with any implementation
 ## Usage
 
 ```
-/ensemble:feature <description> [--skip-refine]
+/ensemble:feature <description> [--skip-refine] [--depth simple|medium|complex] [--no-auto-complexity] [--foreman]
 ```

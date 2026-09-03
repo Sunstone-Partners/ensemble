@@ -139,48 +139,48 @@ User / Foreman work description
 
 **Shippable State:** Maintainers can call a pure local analyzer in tests or scripts and receive a deterministic score, route, and factor rationale for any work description; no command routing is changed yet.
 
-- [ ] **TRD-001** Create `packages/product/lib/work-complexity-analyzer.js` with input validation and a structured analysis result (3h) `[satisfies REQ-001, REQ-002]`
+- [x] **TRD-001** Create `packages/product/lib/work-complexity-analyzer.js` with input validation and a structured analysis result (3h) `[satisfies REQ-001, REQ-002]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2
   - Implementation AC: Given a non-empty work description, when `analyzeWorkComplexity` runs, then it returns an integer score from 1 through 10 with `depth`, `path`, `factors`, `rationale`, `uncertainty`, and `overrideApplied` fields.
   - Implementation AC: Given an empty description, when analysis runs, then it throws or returns a typed error that callers can display without selecting a path.
 
-- [ ] **TRD-002** Implement scope-size signal detection for isolated fixes, single commands, multiple features, workflows, packages, and user roles (2h) `[satisfies REQ-003] [depends: TRD-001]`
+- [x] **TRD-002** Implement scope-size signal detection for isolated fixes, single commands, multiple features, workflows, packages, and user roles (2h) `[satisfies REQ-003] [depends: TRD-001]`
   - Validates PRD ACs: AC-003-1, AC-003-2
   - Implementation AC: Given a description of one isolated bug, when scoring runs, then the scope factor is low and contributes toward Simple.
   - Implementation AC: Given a description mentioning multiple features/workflows/packages/roles, when scoring runs, then the scope factor records evidence snippets and contributes toward a higher score.
 
-- [ ] **TRD-003** Implement dependency signal detection for integrations, shared libraries, generated artifacts, Foreman phases, and multiple commands (2h) `[satisfies REQ-004] [depends: TRD-001]`
+- [x] **TRD-003** Implement dependency signal detection for integrations, shared libraries, generated artifacts, Foreman phases, and multiple commands (2h) `[satisfies REQ-004] [depends: TRD-001]`
   - Validates PRD ACs: AC-004-1, AC-004-2
   - Implementation AC: Given dependency keywords, when scoring runs, then dependency evidence appears in factor rationale.
   - Implementation AC: Given no dependency evidence, when scoring runs, then dependency factor is low or uncertain and no dependency is invented.
 
-- [ ] **TRD-004** Implement risk and team-size signal detection with uncertainty handling (2.5h) `[satisfies REQ-005, REQ-006] [depends: TRD-001]`
+- [x] **TRD-004** Implement risk and team-size signal detection with uncertainty handling (2.5h) `[satisfies REQ-005, REQ-006] [depends: TRD-001]`
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-006-1, AC-006-2
   - Implementation AC: Given security/data-loss/production/automation/user-visible workflow terms, when scoring runs, then risk increases or the rationale explicitly explains why it did not.
   - Implementation AC: Given multi-team/PM/QA/enterprise language, when scoring runs, then team-size factor increases; solo-maintainer language does not independently increase it.
 
-- [ ] **TRD-005** Implement band-to-path mapping and override/disable precedence in the analyzer module (2.5h) `[satisfies REQ-007, REQ-008, REQ-009, REQ-011, REQ-013] [depends: TRD-002, TRD-003, TRD-004]`
+- [x] **TRD-005** Implement band-to-path mapping and override/disable precedence in the analyzer module (2.5h) `[satisfies REQ-007, REQ-008, REQ-009, REQ-011, REQ-013] [depends: TRD-002, TRD-003, TRD-004]`
   - Validates PRD ACs: AC-007-1, AC-008-1, AC-009-1, AC-011-2, AC-011-3, AC-013-2
   - Implementation AC: Given score 1–3, 4–6, or 7–10, when route mapping runs, then it returns Simple/Medium/Complex with the exact command path required by the PRD.
   - Implementation AC: Given both global config and a per-invocation flag, when classification runs, then the command flag takes precedence and the result records original and final classification where applicable.
 
-- [ ] **TRD-001-TEST** Add unit tests for analyzer input validation, output schema, integer score bounds, and factor rationale fields (1.5h) `[verifies TRD-001] [satisfies REQ-001, REQ-002] [depends: TRD-001]`
+- [x] **TRD-001-TEST** Add unit tests for analyzer input validation, output schema, integer score bounds, and factor rationale fields (1.5h) `[verifies TRD-001] [satisfies REQ-001, REQ-002] [depends: TRD-001]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2
   - Implementation AC: Given valid and empty descriptions, when tests run, then valid input returns the structured result and empty input fails without a path.
 
-- [ ] **TRD-002-TEST** Add deterministic scope fixture tests for small isolated and multi-workflow descriptions (1h) `[verifies TRD-002] [satisfies REQ-003] [depends: TRD-002]`
+- [x] **TRD-002-TEST** Add deterministic scope fixture tests for small isolated and multi-workflow descriptions (1h) `[verifies TRD-002] [satisfies REQ-003] [depends: TRD-002]`
   - Validates PRD ACs: AC-003-1, AC-003-2
   - Implementation AC: Given small isolated and multi-workflow descriptions, when tests run, then scope factor levels and evidence match expectations without model calls.
 
-- [ ] **TRD-003-TEST** Add deterministic dependency fixture tests for integration and no-dependency descriptions (1h) `[verifies TRD-003] [satisfies REQ-004] [depends: TRD-003]`
+- [x] **TRD-003-TEST** Add deterministic dependency fixture tests for integration and no-dependency descriptions (1h) `[verifies TRD-003] [satisfies REQ-004] [depends: TRD-003]`
   - Validates PRD ACs: AC-004-1, AC-004-2
   - Implementation AC: Given dependency-rich and dependency-free descriptions, when tests run, then dependency evidence is captured or marked low/uncertain without invented dependencies.
 
-- [ ] **TRD-004-TEST** Add deterministic risk and team-size fixture tests (1.5h) `[verifies TRD-004] [satisfies REQ-005, REQ-006] [depends: TRD-004]`
+- [x] **TRD-004-TEST** Add deterministic risk and team-size fixture tests (1.5h) `[verifies TRD-004] [satisfies REQ-005, REQ-006] [depends: TRD-004]`
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-006-1, AC-006-2
   - Implementation AC: Given risk-heavy, ambiguous-risk, multi-team, and solo-maintainer descriptions, when tests run, then factor levels and uncertainty notes match the scoring contract.
 
-- [ ] **TRD-005-TEST** Add mapping and override tests for Simple, Medium, Complex, non-interactive default, and precedence rules (2h) `[verifies TRD-005] [satisfies REQ-007, REQ-008, REQ-009, REQ-011, REQ-013] [depends: TRD-005]`
+- [x] **TRD-005-TEST** Add mapping and override tests for Simple, Medium, Complex, non-interactive default, and precedence rules (2h) `[verifies TRD-005] [satisfies REQ-007, REQ-008, REQ-009, REQ-011, REQ-013] [depends: TRD-005]`
   - Validates PRD ACs: AC-007-1, AC-008-1, AC-009-1, AC-011-2, AC-011-3, AC-013-2
   - Implementation AC: Given forced scores and override combinations, when tests run, then paths and recorded original/final classifications match the PRD contract.
 
@@ -188,37 +188,37 @@ User / Foreman work description
 
 **Shippable State:** Users and Foreman can run `/ensemble:analyze-complexity` to see a score, rationale, selected planning depth, and exact recommended command path before any downstream planning begins.
 
-- [ ] **TRD-006** Add `packages/product/commands/analyze-complexity.yaml` command source with argument parsing, empty-input halt, score display, and route output (3h) `[satisfies REQ-001, REQ-002, REQ-010] [depends: TRD-005]`
+- [x] **TRD-006** Add `packages/product/commands/analyze-complexity.yaml` command source with argument parsing, empty-input halt, score display, and route output (3h) `[satisfies REQ-001, REQ-002, REQ-010] [depends: TRD-005]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-010-1
   - Implementation AC: Given a valid description, when the command runs, then it prints score, depth, path, and factor rationale before any downstream command is invoked.
   - Implementation AC: Given no description, when the command runs, then it halts with the empty-input error.
 
-- [ ] **TRD-007** Add interactive and non-interactive override flags to the command (`--depth`, `--no-auto-complexity`, and `--foreman`) (2.5h) `[satisfies REQ-011, REQ-013] [depends: TRD-006]`
+- [x] **TRD-007** Add interactive and non-interactive override flags to the command (`--depth`, `--no-auto-complexity`, and `--foreman`) (2.5h) `[satisfies REQ-011, REQ-013] [depends: TRD-006]`
   - Validates PRD ACs: AC-011-1, AC-011-2, AC-011-3, AC-013-1, AC-013-2
   - Implementation AC: Given an interactive override, when selected, then the final depth changes and the original AI classification remains printed.
   - Implementation AC: Given `--foreman` or non-interactive use, when no override is provided, then no prompt appears and the AI-selected route is used.
 
-- [ ] **TRD-008** Add Foreman phase report block and artifact-path write instructions to `analyze-complexity.yaml` (2h) `[satisfies REQ-010, REQ-011] [depends: TRD-006, TRD-007]`
+- [x] **TRD-008** Add Foreman phase report block and artifact-path write instructions to `analyze-complexity.yaml` (2h) `[satisfies REQ-010, REQ-011] [depends: TRD-006, TRD-007]`
   - Validates PRD ACs: AC-010-2, AC-011-3
   - Implementation AC: Given `--foreman` and `FOREMAN_ARTIFACT_PATH`, when the command completes, then the phase report includes score/rationale/path/override state and is written exactly to that path in addition to any repo-local report.
 
-- [ ] **TRD-009** Regenerate command markdown and plugin manifests via `npm run generate` (1h) `[satisfies REQ-014] [depends: TRD-006, TRD-007, TRD-008]`
+- [x] **TRD-009** Regenerate command markdown and plugin manifests via `npm run generate` (1h) `[satisfies REQ-014] [depends: TRD-006, TRD-007, TRD-008]`
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation AC: Given source YAML changes, when `npm run generate` runs, then `packages/product/commands/ensemble/analyze-complexity.md` exists and generated command docs match the source.
 
-- [ ] **TRD-006-TEST** Add command-source tests for required score/rationale/path output and empty-input halt wording (1.5h) `[verifies TRD-006] [satisfies REQ-001, REQ-002, REQ-010] [depends: TRD-006]`
+- [x] **TRD-006-TEST** Add command-source tests for required score/rationale/path output and empty-input halt wording (1.5h) `[verifies TRD-006] [satisfies REQ-001, REQ-002, REQ-010] [depends: TRD-006]`
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-002-1, AC-002-2, AC-010-1
   - Implementation AC: Given the command YAML, when tests scan it, then output and halt instructions are present before downstream planning steps.
 
-- [ ] **TRD-007-TEST** Add command-source tests for override flags, Foreman non-prompt behavior, and backward-compatible manual paths (1.5h) `[verifies TRD-007] [satisfies REQ-011, REQ-013] [depends: TRD-007]`
+- [x] **TRD-007-TEST** Add command-source tests for override flags, Foreman non-prompt behavior, and backward-compatible manual paths (1.5h) `[verifies TRD-007] [satisfies REQ-011, REQ-013] [depends: TRD-007]`
   - Validates PRD ACs: AC-011-1, AC-011-2, AC-011-3, AC-013-1, AC-013-2
   - Implementation AC: Given the command YAML, when tests scan it, then `--depth`, `--no-auto-complexity`, and `--foreman` semantics are documented and no Foreman prompt path exists.
 
-- [ ] **TRD-008-TEST** Add command-source tests for Foreman report and exact `FOREMAN_ARTIFACT_PATH` contract wording (1h) `[verifies TRD-008] [satisfies REQ-010, REQ-011] [depends: TRD-008]`
+- [x] **TRD-008-TEST** Add command-source tests for Foreman report and exact `FOREMAN_ARTIFACT_PATH` contract wording (1h) `[verifies TRD-008] [satisfies REQ-010, REQ-011] [depends: TRD-008]`
   - Validates PRD ACs: AC-010-2, AC-011-3
   - Implementation AC: Given the command YAML, when tests scan it, then it requires writing the phase report to the exact Foreman artifact path when set and never treating an unset path as an error.
 
-- [ ] **TRD-009-TEST** Verify generated markdown is clean and package validation passes (1h) `[verifies TRD-009] [satisfies REQ-014] [depends: TRD-009]`
+- [x] **TRD-009-TEST** Verify generated markdown is clean and package validation passes (1h) `[verifies TRD-009] [satisfies REQ-014] [depends: TRD-009]`
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation AC: Given the implementation branch, when `npm run generate` and `npm run validate` run, then generated files are clean and validation exits zero.
 
@@ -226,38 +226,38 @@ User / Foreman work description
 
 **Shippable State:** Operators can use the adaptive entrypoint to select Simple, Medium, or Complex planning depth from the work description while existing explicit manual commands still behave as before.
 
-- [ ] **TRD-010** Integrate adaptive classification into the appropriate product planning entrypoint without changing explicit `fix-issue`, `create-prd`, or `create-trd` invocations (3h) `[satisfies REQ-001, REQ-007, REQ-008, REQ-009, REQ-013] [depends: TRD-009]`
+- [x] **TRD-010** Integrate adaptive classification into the appropriate product planning entrypoint without changing explicit `fix-issue`, `create-prd`, or `create-trd` invocations (3h) `[satisfies REQ-001, REQ-007, REQ-008, REQ-009, REQ-013] [depends: TRD-009]`
   - Validates PRD ACs: AC-001-1, AC-007-1, AC-008-1, AC-009-1, AC-013-1
   - Implementation AC: Given the adaptive entrypoint receives a description, when planning starts, then classification runs before downstream route selection.
   - Implementation AC: Given explicit legacy commands are invoked directly, when they run, then they retain prior documented behavior and do not require analyzer input.
 
-- [ ] **TRD-011** Implement Medium and Complex route handoff semantics, including implementation block after refined TRD for Complex (2.5h) `[satisfies REQ-008, REQ-009, REQ-010] [depends: TRD-010]`
+- [x] **TRD-011** Implement Medium and Complex route handoff semantics, including implementation block after refined TRD for Complex (2.5h) `[satisfies REQ-008, REQ-009, REQ-010] [depends: TRD-010]`
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-009-1, AC-009-2, AC-010-1
   - Implementation AC: Given Medium classification, when routing is reported, then the path is PRD→TRD.
   - Implementation AC: Given Complex classification, when routing is reported, then the path is create-prd → refine-prd → create-trd → refine-trd and implementation remains blocked pending approval.
 
-- [ ] **TRD-012** Add deterministic end-to-end route fixtures for simple bug, medium feature, and complex initiative descriptions (2.5h) `[satisfies REQ-007, REQ-008, REQ-009, REQ-012] [depends: TRD-010, TRD-011]`
+- [x] **TRD-012** Add deterministic end-to-end route fixtures for simple bug, medium feature, and complex initiative descriptions (2.5h) `[satisfies REQ-007, REQ-008, REQ-009, REQ-012] [depends: TRD-010, TRD-011]`
   - Validates PRD ACs: AC-007-2, AC-008-2, AC-009-2, AC-012-1, AC-012-2
   - Implementation AC: Given the simple bug fixture, when tests evaluate the analyzer/route selector, then score is `<=3` and path is Simple/fix-issue.
   - Implementation AC: Given the complex initiative fixture, when tests evaluate the analyzer/route selector, then score is `>=7` and path is Complex/full pipeline.
 
-- [ ] **TRD-013** Update operator docs for scoring scale, route mapping, override mechanism, disable precedence, Foreman behavior, and generated-artifact workflow (2h) `[satisfies REQ-014, REQ-013] [depends: TRD-009, TRD-010, TRD-011]`
+- [x] **TRD-013** Update operator docs for scoring scale, route mapping, override mechanism, disable precedence, Foreman behavior, and generated-artifact workflow (2h) `[satisfies REQ-014, REQ-013] [depends: TRD-009, TRD-010, TRD-011]`
   - Validates PRD ACs: AC-014-1, AC-014-2, AC-013-1, AC-013-2
   - Implementation AC: Given README or generated command help is reviewed, when docs are read, then they explain score bands, paths, overrides, disable config, and Foreman non-interactive behavior.
 
-- [ ] **TRD-010-TEST** Add integration tests proving adaptive classification precedes route selection and manual commands remain backward compatible (2h) `[verifies TRD-010] [satisfies REQ-001, REQ-007, REQ-008, REQ-009, REQ-013] [depends: TRD-010]`
+- [x] **TRD-010-TEST** Add integration tests proving adaptive classification precedes route selection and manual commands remain backward compatible (2h) `[verifies TRD-010] [satisfies REQ-001, REQ-007, REQ-008, REQ-009, REQ-013] [depends: TRD-010]`
   - Validates PRD ACs: AC-001-1, AC-007-1, AC-008-1, AC-009-1, AC-013-1
   - Implementation AC: Given adaptive and explicit command paths, when tests run, then only adaptive path requires pre-planning classification.
 
-- [ ] **TRD-011-TEST** Add route-output tests for Medium and Complex handoff details and implementation block wording (1.5h) `[verifies TRD-011] [satisfies REQ-008, REQ-009, REQ-010] [depends: TRD-011]`
+- [x] **TRD-011-TEST** Add route-output tests for Medium and Complex handoff details and implementation block wording (1.5h) `[verifies TRD-011] [satisfies REQ-008, REQ-009, REQ-010] [depends: TRD-011]`
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-009-1, AC-009-2, AC-010-1
   - Implementation AC: Given Medium/Complex fixtures, when output is rendered, then exact path wording and Complex implementation block are present.
 
-- [ ] **TRD-012-TEST** Add regression fixtures required by the PRD verification section (1.5h) `[verifies TRD-012] [satisfies REQ-012, REQ-007, REQ-009] [depends: TRD-012]`
+- [x] **TRD-012-TEST** Add regression fixtures required by the PRD verification section (1.5h) `[verifies TRD-012] [satisfies REQ-012, REQ-007, REQ-009] [depends: TRD-012]`
   - Validates PRD ACs: AC-012-1, AC-012-2, AC-007-2, AC-009-2
   - Implementation AC: Given the PRD's simple and complex descriptions, when the test suite runs, then expected score bands and paths are asserted.
 
-- [ ] **TRD-013-TEST** Verify documentation and generated artifacts are current (1h) `[verifies TRD-013] [satisfies REQ-014] [depends: TRD-013]`
+- [x] **TRD-013-TEST** Verify documentation and generated artifacts are current (1h) `[verifies TRD-013] [satisfies REQ-014] [depends: TRD-013]`
   - Validates PRD ACs: AC-014-1, AC-014-2
   - Implementation AC: Given docs and generated markdown, when `npm run generate -- --validate` or equivalent validation runs, then docs are synchronized with command sources.
 

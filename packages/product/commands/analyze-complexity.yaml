@@ -1,0 +1,142 @@
+metadata:
+  name: ensemble:analyze-complexity
+  description: "Score a work description and select Simple, Medium, or Complex planning depth before planning begins"
+  version: 1.0.0
+  lastUpdated: "2026-09-02"
+  category: planning
+  output_path: ensemble/analyze-complexity.md
+  source: sunstone
+  model: high
+  argument_hint: "<description> [--depth simple|medium|complex] [--no-auto-complexity] [--foreman]"
+
+constraints:
+  - Analyze the work description before invoking any downstream planning command.
+  - Use the deterministic local analyzer in packages/product/lib/work-complexity-analyzer.js; do not call a remote model for v1 complexity scoring.
+  - "Empty descriptions HALT with: Work description is required before complexity analysis can select a planning path."
+  - Print score, selected depth, selected path, factor rationale, override state, disable state, and uncertainty before any downstream planning command begins.
+  - "Existing explicit manual commands remain available and unchanged: ensemble:fix-issue, ensemble:create-prd, ensemble:create-trd, and ensemble:refine-trd."
+  - Foreman mode is non-interactive; never ask_user or prompt when --foreman is present.
+  - When FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path, creating parent directories as needed, in addition to any repo-local report.
+  - Never alter, invent, relocate, or treat an unset FOREMAN_ARTIFACT_PATH as an error.
+
+mission:
+  summary: |
+    Run deterministic local work-complexity analysis on a free-text work description,
+    display the numeric score and route rationale, then report the recommended
+    planning command path. Score bands are fixed: 1-3 Simple -> fix-issue,
+    4-6 Medium -> create-prd -> create-trd, and 7-10 Complex -> create-prd
+    -> refine-prd -> create-trd -> refine-trd. Complex output explicitly says
+    implementation remains blocked until the refined TRD is approved.
+
+workflow:
+  phases:
+    - name: Argument Parsing
+      order: 1
+      steps:
+        - order: 1
+          title: Parse description and flags
+          description: |
+            Parse $ARGUMENTS.
+
+            Supported flags:
+            - --depth simple|medium|complex: per-invocation override. This flag takes precedence over global config defaults and records both original AI classification and final selected classification.
+            - --no-auto-complexity: disable auto-complexity for this invocation. This flag takes precedence over global config autoComplexity settings and uses --depth when provided, else config.defaultDepth, else Medium.
+            - --foreman: non-interactive Foreman mode. Never prompt; use analyzer result or supplied override automatically.
+
+            Remove recognized flags from the remaining text. The remaining text is WORK_DESCRIPTION and must be preserved verbatim.
+            If WORK_DESCRIPTION is empty or blank, print exactly:
+            Work description is required before complexity analysis can select a planning path.
+            Then HALT without selecting a path and without invoking any downstream planning command.
+
+    - name: Complexity Analysis
+      order: 2
+      steps:
+        - order: 1
+          title: Run local analyzer
+          description: |
+            Call analyzeWorkComplexity from packages/product/lib/work-complexity-analyzer.js with:
+            {
+              description: WORK_DESCRIPTION,
+              overrideDepth: DEPTH_OVERRIDE when --depth is present,
+              disableAuto: true when --no-auto-complexity is present,
+              nonInteractive: true when --foreman is present,
+              config: operator config when available
+            }
+
+            The analyzer output must include score, depth, path, factors, rationale,
+            uncertainty, overrideApplied, disabled, and originalClassification when
+            an override changes an automatic classification.
+
+        - order: 2
+          title: Print score before planning begins
+          description: |
+            Before invoking or recommending any downstream planning command, print a block containing all of:
+            - Score: <score>/10
+            - Depth: <Simple|Medium|Complex>
+            - Path: <fix-issue OR create-prd -> create-trd OR create-prd -> refine-prd -> create-trd -> refine-trd>
+            - Rationale: <factor-level scope, dependencies, risk, teamSize evidence>
+            - Override applied: <yes|no>
+            - Auto disabled: <yes|no>
+            - Original classification: <score/depth/path> when an override is applied
+            - Uncertainty: <notes> when any factor is uncertain
+
+            This score/rationale/path output must appear before any downstream planning command begins.
+
+    - name: Route Selection
+      order: 3
+      steps:
+        - order: 1
+          title: Map score bands to planning paths
+          description: |
+            Use these exact score bands and route names:
+            - Scores 1, 2, or 3 -> Simple -> fix-issue path.
+            - Scores 4, 5, or 6 -> Medium -> create-prd -> create-trd path.
+            - Scores 7, 8, 9, or 10 -> Complex -> create-prd -> refine-prd -> create-trd -> refine-trd path.
+
+            For Complex, print this implementation block wording:
+            Implementation remains blocked until the refined TRD receives explicit approval.
+
+        - order: 2
+          title: Preserve explicit manual paths
+          description: |
+            This adaptive entrypoint does not change direct invocations of:
+            - /ensemble:fix-issue
+            - /ensemble:create-prd
+            - /ensemble:create-trd
+            - /ensemble:refine-trd
+
+            Operators who want a manual path may call those commands directly or use --depth / --no-auto-complexity here.
+
+    - name: Foreman Report
+      order: 4
+      steps:
+        - order: 1
+          title: Write audit report in Foreman mode
+          description: |
+            If --foreman is present, produce a phase report containing:
+            - work description summary
+            - score
+            - rationale
+            - selected depth
+            - selected path
+            - override state
+            - disable state
+            - uncertainty
+            - original classification when present
+            - the route selected before planning begins
+
+            If FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path, creating parent directories as needed, in addition to any repo-local report. Never invent, alter, or relocate the path. Never treat an unset FOREMAN_ARTIFACT_PATH as an error outside Foreman dispatch.
+
+expectedOutput:
+  format: Complexity analysis and route recommendation
+  structure:
+    - name: Score
+      description: Integer 1-10 complexity score
+    - name: Depth
+      description: Simple, Medium, or Complex planning depth
+    - name: Path
+      description: Exact downstream command path selected by the score band or override
+    - name: Rationale
+      description: Factor-level scope, dependencies, risk, and team-size evidence
+    - name: Foreman Audit
+      description: Non-interactive phase report written to exact FOREMAN_ARTIFACT_PATH when set
