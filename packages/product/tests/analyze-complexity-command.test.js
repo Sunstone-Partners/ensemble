@@ -79,10 +79,17 @@ describe('adaptive feature entrypoint integration', () => {
     expect(text).not.toContain('implement-trd-beads --plan pipeline');
   });
 
-  test('Foreman refinement path is explicitly non-interactive', () => {
+  test('Foreman path passes --foreman to downstream planning commands', () => {
+    expect(text).toContain('invoke /ensemble:create-prd with FEATURE_DESCRIPTION and --foreman');
+    expect(text).toContain('invoke /ensemble:create-trd with PRD_PATH and --foreman');
     expect(text).toContain('invoke /ensemble:refine-prd --foreman');
     expect(text).toContain('invoke /ensemble:refine-trd --foreman');
     expect(text).toContain('Never prompt in Foreman mode');
+  });
+
+  test('Medium route skips refinement phases by selected depth', () => {
+    expect(text).toContain('If SELECTED_DEPTH=Medium: Print [Step 2/4] refine-prd... (skipped for Medium route)');
+    expect(text).toContain('If SELECTED_DEPTH=Medium: Print [Step 4/4] refine-trd... (skipped for Medium route)');
   });
 
   test('includes PRD regression fixture route semantics', () => {

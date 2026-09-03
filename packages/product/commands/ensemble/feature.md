@@ -79,7 +79,9 @@ Direct invocations of /ensemble:fix-issue, /ensemble:create-prd, /ensemble:creat
 **1. Step 1 - create-prd**
    Print: [Step 1/4] create-prd...
 
-Invoke /ensemble:create-prd with FEATURE_DESCRIPTION as the argument. Pass the description verbatim with no modification.
+If FOREMAN_MODE=false: invoke /ensemble:create-prd with FEATURE_DESCRIPTION as the argument. Pass the description verbatim with no modification.
+
+If FOREMAN_MODE=true: invoke /ensemble:create-prd with FEATURE_DESCRIPTION and --foreman. Pass the description verbatim with no modification, and never prompt in Foreman mode.
 
 After completion, use Glob to find the most recently modified .md file in docs/PRD/. Store the path as PRD_PATH.
 
@@ -94,13 +96,15 @@ To retry from this step, run:
 
 
 **2. Step 2 - refine-prd**
-   Check SKIP_REFINE.
+   Check SELECTED_DEPTH and SKIP_REFINE.
 
-If SKIP_REFINE=true: Print [Step 2/4] refine-prd... (skipped) and proceed to Step 3. Do not invoke refine-prd.
+If SELECTED_DEPTH=Medium: Print [Step 2/4] refine-prd... (skipped for Medium route) and proceed to Step 3. Do not invoke refine-prd.
 
-If SKIP_REFINE=false and FOREMAN_MODE=false: Print [Step 2/4] refine-prd... (pausing for your input) and invoke /ensemble:refine-prd. The refine-prd command may use AskUserQuestion to conduct the interview. Wait for refine-prd to complete before proceeding.
+If SELECTED_DEPTH=Complex and SKIP_REFINE=true: Print [Step 2/4] refine-prd... (skipped) and proceed to Step 3. Do not invoke refine-prd.
 
-If SKIP_REFINE=false and FOREMAN_MODE=true: Print [Step 2/4] refine-prd... (--foreman) and invoke /ensemble:refine-prd --foreman. Never prompt in Foreman mode. Wait for refine-prd to complete before proceeding.
+If SELECTED_DEPTH=Complex and SKIP_REFINE=false and FOREMAN_MODE=false: Print [Step 2/4] refine-prd... (pausing for your input) and invoke /ensemble:refine-prd. The refine-prd command may use AskUserQuestion to conduct the interview. Wait for refine-prd to complete before proceeding.
+
+If SELECTED_DEPTH=Complex and SKIP_REFINE=false and FOREMAN_MODE=true: Print [Step 2/4] refine-prd... (--foreman) and invoke /ensemble:refine-prd --foreman. Never prompt in Foreman mode. Wait for refine-prd to complete before proceeding.
 
 If refine-prd fails, print the following and halt the pipeline immediately:
 [Step 2/4] refine-prd failed. Pipeline halted.
@@ -115,7 +119,9 @@ To retry from this step, run:
 **3. Step 3 - create-trd**
    Print: [Step 3/4] create-trd...
 
-Invoke /ensemble:create-trd with PRD_PATH (captured from Step 1) as the argument. Passing the explicit PRD path ensures create-trd reads the correct PRD and not a stale or unrelated document in docs/PRD/.
+If FOREMAN_MODE=false: invoke /ensemble:create-trd with PRD_PATH (captured from Step 1) as the argument. Passing the explicit PRD path ensures create-trd reads the correct PRD and not a stale or unrelated document in docs/PRD/.
+
+If FOREMAN_MODE=true: invoke /ensemble:create-trd with PRD_PATH and --foreman. Passing the explicit PRD path ensures create-trd reads the correct PRD and not a stale or unrelated document in docs/PRD/, and --foreman preserves non-interactive behavior.
 
 After completion, use Glob to find the most recently modified .md file in docs/TRD/. Store the path as TRD_PATH.
 
@@ -130,13 +136,15 @@ To retry from this step, run:
 
 
 **4. Step 4 - refine-trd**
-   Check SKIP_REFINE.
+   Check SELECTED_DEPTH and SKIP_REFINE.
 
-If SKIP_REFINE=true: Print [Step 4/4] refine-trd... (skipped) and proceed to Handoff. Do not invoke refine-trd.
+If SELECTED_DEPTH=Medium: Print [Step 4/4] refine-trd... (skipped for Medium route) and proceed to Handoff. Do not invoke refine-trd.
 
-If SKIP_REFINE=false and FOREMAN_MODE=false: Print [Step 4/4] refine-trd... (pausing for your input) and invoke /ensemble:refine-trd. The refine-trd command may use AskUserQuestion to conduct the interview. Wait for refine-trd to complete before proceeding.
+If SELECTED_DEPTH=Complex and SKIP_REFINE=true: Print [Step 4/4] refine-trd... (skipped) and proceed to Handoff. Do not invoke refine-trd.
 
-If SKIP_REFINE=false and FOREMAN_MODE=true: Print [Step 4/4] refine-trd... (--foreman) and invoke /ensemble:refine-trd --foreman. Never prompt in Foreman mode. Wait for refine-trd to complete before proceeding.
+If SELECTED_DEPTH=Complex and SKIP_REFINE=false and FOREMAN_MODE=false: Print [Step 4/4] refine-trd... (pausing for your input) and invoke /ensemble:refine-trd. The refine-trd command may use AskUserQuestion to conduct the interview. Wait for refine-trd to complete before proceeding.
+
+If SELECTED_DEPTH=Complex and SKIP_REFINE=false and FOREMAN_MODE=true: Print [Step 4/4] refine-trd... (--foreman) and invoke /ensemble:refine-trd --foreman. Never prompt in Foreman mode. Wait for refine-trd to complete before proceeding.
 
 If refine-trd fails, print the following and halt the pipeline immediately:
 [Step 4/4] refine-trd failed. Pipeline halted.
