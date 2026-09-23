@@ -47,3 +47,14 @@ hand-copies are belt-and-braces, not authoritative).
 `tunnel-readiness-probe.js`) into branch history twice during this run (spurious commit
 `4f32e0a`, reset; second probe SIGTERMed before exit). Disable that extension or run any
 `pi --print` probe in a dedicated worktree, never in the shared checkout.
+
+## Follow-up (same day): auto-commit sweep source pinned
+
+- Renamed `~/.pi/agent/extensions/auto-commit-on-exit.ts` → `.disabled`; a worktree probe
+  still auto-swept — proving that extension was a contributor, not the source.
+- **Authoritative answer: run `pi` probes from an isolated worktree** (`git worktree add`),
+  never the shared checkout, regardless of config state. Probe-4 (worktree, extension
+  disabled) exited clean: worktree log unchanged, zero dirty files; main checkout untouched.
+- The `session_shutdown` sweeper itself remains unidentified across
+  `~/.pi/agent/extensions` + `pi-yaml-hooks` + the four registered packages; hunt deferred
+  (worktree isolation renders it moot for br-zp8/c6d/rmw).
