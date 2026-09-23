@@ -71,3 +71,25 @@ Regardless of config state, treat every pi session in this repo as able to sweep
 - **Belt-and-braces for later pi probes (zp8/c6d/rmw)**: run from a dedicated
   `git worktree` regardless; launch with a PTY (no-TTY `pi --print` hangs); verify
   `git log`/`git status` after every exit.
+
+## Claude Code + OpenCode surfaces (br-zp8, br-c6d — same-day follow-up)
+
+`scripts/functional-matrix-core.js [claude|opencode]` extends the pi matrix to both
+remaining runtimes. Results (all checks registry/descriptions/router/observer +
+surface-specific):
+
+- **claude** 124/124 after two fixes: (a) matrix harness bug — `fs.statSync` follows
+  symlinks so mirror links misreported as broken; corrected to `fs.lstatSync`;
+  (b) real gap — `packages/full/skills/` mirrored only 4 of the 6 behavior skills
+  (git-town, merging-a-pr absent). Closed by `scripts/sync-full-mirror.js`, which
+  links every SKILL.md that declares `phrases:` into the full mirror; the two new
+  links are committed alongside.
+- **opencode** 92/92. Surface = router-suggestion layer only (no native skill
+  auto-activation by design); `dist/opencode` regenerates clean via
+  `npm run generate:opencode` (62 files, behaviors emitted through the SkillCopier
+  package-scan path, not framework-skill cache).
+
+Matrix totals across all three runtimes: 336 checks, 0 failed. pi 120, claude 124,
+opencode 92. No runtime-regression discrepancies opened: D1-D3 (above) remain the
+complete discrepancy ledger; the router phrase-hint + observer layers are shared
+code, verified identical on all three surfaces.

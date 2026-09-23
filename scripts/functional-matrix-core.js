@@ -110,10 +110,17 @@ if (runtime === 'pi') {
       check('pi-surface', `${skill}: pi command /${stem} resolvable`, promptStems.includes(stem), 'no such prompt stem');
       check('pi-surface', `${skill}: mirror command field`, (src.match(/^command:\s*['"]?([^\s'"]+)/m) || [])[1] === `/${stem}`, `got ${(src.match(/^command:\s*['"]?([^\s'"]+)/m) || [])[1]}`);
     }
-    // activation semantics: every phrase must appear quoted in the synced description
-    const m = src.match(/^description:\s*(.*)$/m);
-    const all = info.phrases.every((p) => m && m[1].toLowerCase().includes(p));
-    check('pi-surface', `${skill}: description lists all phrases`, all);
+    // activation semantics: every phrase must appear in the synced description.
+    // Handles both quoted single-line and YAML folded (>- / |) scalars.
+    let desc = (src.match(/^description:\s*(.*)$/m) || [])[1] || '';
+    if (/^\s*[|>][-+]?\s*$/.test(desc)) {
+      desc = (src.match(/^description:\s*[|>][-+]?\n((?:[ \t]+\S.*\n?)+)/m) || ['', ''])[1]
+        .split('\n').map((l) => l.trim()).join(' ');
+    }
+    const norm = (s) => s.toLowerCase().replace(/[\s"]+/g, ' ').trim();
+    const d = norm(desc);
+    const all = info.phrases.every((p) => d.includes(norm(p)));
+    check('pi-surface', `${skill}: description lists all phrases`, all, all ? '' : `desc: ${desc.slice(0, 70)}`);
   }
   check('pi-surface', 'pi package ships no hooks dir', !fs.existsSync(path.join(piRoot, 'hooks')), 'D2: phrase hints + observer NOT wired for pi sessions');
   const home = path.join(process.env.HOME, '.pi/agent/skills');
@@ -133,17 +140,18 @@ if (runtime === 'claude') {
   const flat = JSON.stringify(hooks);
   check('claude-surface', 'router hook registered', flat.includes('router.js'));
   check('claude-surface', 'observer hook registered', flat.includes('test-failure-observer.js'));
-  const cmdDir = path.join(pluginRoot, 'commands/ensemble');
-  const cmds = fs.existsSync(cmdDir) ? fs.readdirSync(cmdDir).filter((f) => f.endsWith('.md')) : [];
-  check('claude-surface', 'slash commands present', cmds.length > 40, `${cmds.length}`);
+  const cmdFiles = cp.execSync(`cd ${JSON.stringify(ROOT)} && git ls-files 'packages/*/commands/**/*.md' 'packages/*/commands/*.md'`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  const stems = cmdFiles.filter((f) => !f.includes('/full/')).map((f) => path.basename(f, '.md'));
+  check('claude-surface', 'slash commands present', stems.length > 40, `${stems.length}`);
   for (const b of Object.values(reg.phrases).flat()) {
     if (!b.command) continue;
-    const stem = b.command.slice('/ensemble:'.length);
-    check('claude-surface', `${b.skill}: /ensemble:${stem} exists`, cmds.includes(`${stem}.md`), 'MISSING');
+    const stem = b.command.replace(/^\/ensemble:/, '');
+    check('claude-surface', `${b.skill}: /ensemble:${stem} exists`, stems.includes(stem), `got ${stem} in ${stems.length} cmds`);
   }
   for (const skill of Object.keys(srcSkills)) {
     const link = path.join(pluginRoot, 'skills', skill);
-    check('claude-surface', `${skill}: reachable from full mirror`, fs.existsSync(link) || fs.existsSync(path.join(pluginRoot, 'skills', path.relative(ROOT, Object.entries(srcSkills).length ? `packages` : ''))), '');
+    const ok = fs.existsSync(link) && fs.lstatSync(link).isSymbolicLink() && fs.existsSync(path.join(link, 'SKILL.md'));
+    check('claude-surface', `${skill}: reachable from full mirror`, ok, ok ? '' : 'missing/broken symlink');
   }
 }
 if (runtime === 'opencode') {
