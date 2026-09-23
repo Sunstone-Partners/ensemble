@@ -1,0 +1,290 @@
+{
+  "description": "Compiled from phrases in packages/*/skills/**/SKILL.md frontmatter. Generated file - do not edit by hand.",
+  "phrases": {
+    "address review comments": [
+      {
+        "skill": "merging-a-pr",
+        "command": "/ensemble:pr-merge",
+        "source": "packages/git/skills/merging-a-pr/SKILL.md"
+      }
+    ],
+    "build the trd": [
+      {
+        "skill": "implementing-a-trd",
+        "command": "/ensemble:implement-trd",
+        "source": "packages/development/skills/implementing-a-trd/SKILL.md"
+      }
+    ],
+    "configure git-town": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "create a feature branch": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "create a pr": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "create a prd": [
+      {
+        "skill": "creating-a-prd",
+        "command": "/ensemble:create-prd",
+        "source": "packages/product/skills/creating-a-prd/SKILL.md"
+      }
+    ],
+    "create a pull request": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "create a trd": [
+      {
+        "skill": "creating-a-trd",
+        "command": "/ensemble:create-trd",
+        "source": "packages/development/skills/creating-a-trd/SKILL.md"
+      }
+    ],
+    "create stacked branches": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "draft requirements": [
+      {
+        "skill": "creating-a-prd",
+        "command": "/ensemble:create-prd",
+        "source": "packages/product/skills/creating-a-prd/SKILL.md"
+      }
+    ],
+    "execute the plan": [
+      {
+        "skill": "implementing-a-trd",
+        "command": "/ensemble:implement-trd",
+        "source": "packages/development/skills/implementing-a-trd/SKILL.md"
+      }
+    ],
+    "fix ci": [
+      {
+        "skill": "merging-a-pr",
+        "command": "/ensemble:pr-merge",
+        "source": "packages/git/skills/merging-a-pr/SKILL.md"
+      }
+    ],
+    "get this pr green": [
+      {
+        "skill": "merging-a-pr",
+        "command": "/ensemble:pr-merge",
+        "source": "packages/git/skills/merging-a-pr/SKILL.md"
+      }
+    ],
+    "handle merge conflicts": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "how should we build this": [
+      {
+        "skill": "creating-a-trd",
+        "command": "/ensemble:create-trd",
+        "source": "packages/development/skills/creating-a-trd/SKILL.md"
+      }
+    ],
+    "implement the trd": [
+      {
+        "skill": "implementing-a-trd",
+        "command": "/ensemble:implement-trd",
+        "source": "packages/development/skills/implementing-a-trd/SKILL.md"
+      }
+    ],
+    "iterate on requirements": [
+      {
+        "skill": "refining-a-prd",
+        "command": "/ensemble:refine-prd",
+        "source": "packages/product/skills/refining-a-prd/SKILL.md"
+      }
+    ],
+    "land the pr": [
+      {
+        "skill": "merging-a-pr",
+        "command": "/ensemble:pr-merge",
+        "source": "packages/git/skills/merging-a-pr/SKILL.md"
+      }
+    ],
+    "manage git workflow": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "merge and clean up": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "merge the pr": [
+      {
+        "skill": "merging-a-pr",
+        "command": "/ensemble:pr-merge",
+        "source": "packages/git/skills/merging-a-pr/SKILL.md"
+      }
+    ],
+    "prd feedback": [
+      {
+        "skill": "refining-a-prd",
+        "command": "/ensemble:refine-prd",
+        "source": "packages/product/skills/refining-a-prd/SKILL.md"
+      }
+    ],
+    "product requirements document": [
+      {
+        "skill": "creating-a-prd",
+        "command": "/ensemble:create-prd",
+        "source": "packages/product/skills/creating-a-prd/SKILL.md"
+      }
+    ],
+    "refine the prd": [
+      {
+        "skill": "refining-a-prd",
+        "command": "/ensemble:refine-prd",
+        "source": "packages/product/skills/refining-a-prd/SKILL.md"
+      }
+    ],
+    "resolve conflicts in git-town": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "review the prd": [
+      {
+        "skill": "refining-a-prd",
+        "command": "/ensemble:refine-prd",
+        "source": "packages/product/skills/refining-a-prd/SKILL.md"
+      }
+    ],
+    "set up git-town": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "ship a feature": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "spec out a feature": [
+      {
+        "skill": "creating-a-prd",
+        "command": "/ensemble:create-prd",
+        "source": "packages/product/skills/creating-a-prd/SKILL.md"
+      }
+    ],
+    "start a new feature": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "start implementation": [
+      {
+        "skill": "implementing-a-trd",
+        "command": "/ensemble:implement-trd",
+        "source": "packages/development/skills/implementing-a-trd/SKILL.md"
+      }
+    ],
+    "sync my branch": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "sync with main": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "technical design doc": [
+      {
+        "skill": "creating-a-trd",
+        "command": "/ensemble:create-trd",
+        "source": "packages/development/skills/creating-a-trd/SKILL.md"
+      }
+    ],
+    "technical requirements document": [
+      {
+        "skill": "creating-a-trd",
+        "command": "/ensemble:create-trd",
+        "source": "packages/development/skills/creating-a-trd/SKILL.md"
+      }
+    ],
+    "the pr is failing": [
+      {
+        "skill": "merging-a-pr",
+        "command": "/ensemble:pr-merge",
+        "source": "packages/git/skills/merging-a-pr/SKILL.md"
+      }
+    ],
+    "update from main": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "update the prd": [
+      {
+        "skill": "refining-a-prd",
+        "command": "/ensemble:refine-prd",
+        "source": "packages/product/skills/refining-a-prd/SKILL.md"
+      }
+    ],
+    "use git-town offline": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "work on dependent features": [
+      {
+        "skill": "git-town",
+        "source": "packages/git/skills/git-town/SKILL.md"
+      }
+    ],
+    "write a prd": [
+      {
+        "skill": "creating-a-prd",
+        "command": "/ensemble:create-prd",
+        "source": "packages/product/skills/creating-a-prd/SKILL.md"
+      }
+    ],
+    "write a trd": [
+      {
+        "skill": "creating-a-trd",
+        "command": "/ensemble:create-trd",
+        "source": "packages/development/skills/creating-a-trd/SKILL.md"
+      }
+    ],
+    "write product requirements": [
+      {
+        "skill": "creating-a-prd",
+        "command": "/ensemble:create-prd",
+        "source": "packages/product/skills/creating-a-prd/SKILL.md"
+      }
+    ]
+  },
+  "version": "1.0.0"
+}

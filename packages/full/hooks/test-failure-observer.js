@@ -1,0 +1,1 @@
+../../core/hooks/test-failure-observer.js

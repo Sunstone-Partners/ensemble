@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/router.py",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/router.js",
             "timeout": 3
           }
         ]
@@ -19,6 +19,18 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/permitter.js",
             "timeout": 100
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/test-failure-observer.js",
+            "timeout": 5
           }
         ]
       }

@@ -146,7 +146,7 @@ describe('OC-S2-HK-002: HookBridgeGenerator - hooks.json parsing', () => {
     const hooksJson = {
       hooks: {
         UserPromptSubmit: [{
-          hooks: [{ type: 'command', command: 'router.py' }],
+          hooks: [{ type: 'command', command: 'router.js' }],
         }],
         PermissionRequest: [{
           matcher: 'Bash',
@@ -168,7 +168,7 @@ describe('OC-S2-HK-002: HookBridgeGenerator - hooks.json parsing', () => {
     const hooksJson = {
       hooks: {
         UserPromptSubmit: [{
-          hooks: [{ type: 'command', command: 'router.py' }],
+          hooks: [{ type: 'command', command: 'router.js' }],
         }],
       },
     };
@@ -510,7 +510,7 @@ describe('OC-S2-TEST-007: Comprehensive hook parsing and environment bridging', 
       expect(result.length).toBe(0);
     });
 
-    it('should return empty for full package hooks (no PreToolUse/PostToolUse)', () => {
+    it('should extract only the PostToolUse hook from full package hooks', () => {
       const hooksJson = JSON.parse(
         fs.readFileSync(
           path.join(ROOT, 'packages/full/hooks/hooks.json'),
@@ -521,8 +521,12 @@ describe('OC-S2-TEST-007: Comprehensive hook parsing and environment bridging', 
         hooksJson,
         path.join(ROOT, 'packages/full')
       );
-      // full only has UserPromptSubmit and PermissionRequest — not bridgeable
-      expect(result.length).toBe(0);
+      // full has UserPromptSubmit (not bridgeable), PermissionRequest (not
+      // bridgeable), and exactly one PostToolUse command (bridgeable).
+      expect(result.length).toBe(1);
+      expect(result[0].point).toBe('PostToolUse');
+      expect(result[0].matcher).toBe('Bash');
+      expect(result[0].command).toContain('test-failure-observer.js');
     });
 
     it('should not extract hooks from router package (UserPromptSubmit only)', () => {

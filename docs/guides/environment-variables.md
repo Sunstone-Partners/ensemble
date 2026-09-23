@@ -26,7 +26,7 @@ Claude Code sets these automatically when a plugin loads or when a hook is invok
 
 | Variable | Purpose | Notes |
 |---|---|---|
-| `CLAUDE_PLUGIN_ROOT` | Absolute path to the installed plugin directory. Used in all hook `command` fields to locate hook scripts. | Referenced as `${CLAUDE_PLUGIN_ROOT}/hooks/router.py` in `hooks.json`. |
+| `CLAUDE_PLUGIN_ROOT` | Absolute path to the installed plugin directory. Used in all hook `command` fields to locate hook scripts. | Referenced as `${CLAUDE_PLUGIN_ROOT}/hooks/router.js` in `hooks.json`. |
 | `TOOL_NAME` | Name of the tool being invoked (e.g., `Bash`, `Read`, `Task`). | Injected into every hook process at invocation time. |
 | `TOOL_INPUT` | JSON-encoded parameters for the current tool call. | Parse with `JSON.parse(process.env.TOOL_INPUT \|\| '{}')` inside hook scripts. |
 | `CLAUDE_SESSION_ID` | Claude Code session identifier. | Read by the metrics hook to tag events with the originating session. |

@@ -27,7 +27,7 @@
     "ensemble"
   ],
   "engines": {
-    "python": ">=3.8"
+    "node": ">=18.0.0"
   },
   "peerDependencies": {
     "@sunstone-partners/ensemble-full": ">=5.0.0"
@@ -38,9 +38,8 @@
     }
   },
   "scripts": {
-    "test": "if [ \"$CI\" = \"true\" ]; then echo 'Skipping Python tests in CI (pytest not available)'; exit 0; else python3 -m pytest tests/test_router.py -v; fi",
-    "test:local": "python3 -m pytest tests/test_router.py -v",
-    "test:coverage": "python3 -m pytest tests/test_router.py -v --cov=hooks --cov-report=term-missing"
+    "test": "node --expose-gc ../../node_modules/jest/bin/jest.js --runInBand",
+    "test:coverage": "jest --coverage"
   },
   "files": [
     ".claude-plugin/",
@@ -49,5 +48,8 @@
     "lib/",
     "README.md",
     "CHANGELOG.md"
-  ]
+  ],
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
 }
