@@ -18,10 +18,13 @@ for (const f of cp.execSync(`cd ${JSON.stringify(ROOT)} && git ls-files 'package
   const pkg = f.split('/')[1];
   if (pkg === 'full' || pkg === 'pi') continue;
   const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
-  const name = (src.match(/^name:\s*(\S+)/m) || [])[1];
+  const name = (src.match(/^name:\s*['"]?(\S+?)['"]?\s*$/m) || [])[1];
   const phBlock = src.match(/^phrases:\n((?:\s+- .*\n?)+)/m);
   const cmd = (src.match(/^command:\s*['"]?([^\s'"]+)/m) || [])[1];
-  if (name && phBlock) srcSkills[name] = { phrases: phBlock[1].split('\n').map((l) => l.replace(/^\s+-\s+/, '').trim().toLowerCase()), command: cmd || null };
+  if (name && phBlock) {
+    const clean = (l) => l.replace(/^\s+-\s+/, '').trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+    srcSkills[name] = { phrases: phBlock[1].split('\n').map(clean).filter(Boolean), command: cmd || null };
+  }
 }
 
 const results = [];
@@ -34,14 +37,13 @@ for (const [skill, info] of Object.entries(srcSkills)) {
   const inReg = Object.entries(reg.phrases).filter(([, bs]) => bs.some((b) => b.skill === skill)).map(([p]) => p).sort();
   check('registry', `${skill}: phrases match source`, JSON.stringify(inReg) === JSON.stringify([...info.phrases].sort()),
     inReg.length !== info.phrases.length ? `reg:${inReg.length} src:${info.phrases.length}` : '');
-  const md = fs.readFileSync(path.join(ROOT, `packages/*/skills/${skill}/SKILL.md`.replace('*', '*')), 'utf8'); // placeholder replaced below
 }
 // locate source files properly (the loop above knows pkg via git path — redo cleanly)
 for (const f of cp.execSync(`cd ${JSON.stringify(ROOT)} && git ls-files 'packages/*/skills/*/SKILL.md'`, { encoding: 'utf8' }).trim().split('\n')) {
   const pkg = f.split('/')[1];
   if (pkg === 'full' || pkg === 'pi') continue;
   const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
-  const name = (src.match(/^name:\s*(\S+)/m) || [])[1];
+  const name = (src.match(/^name:\s*['"]?(\S+?)['"]?\s*$/m) || [])[1];
   if (!srcSkills[name]) continue;
   const m = src.match(/^description:\s*(.*)$/m);
   check('descriptions', `${name}: activation sentence synced`, m && m[1].includes('Use when the user says'), m ? '' : 'no description line');
