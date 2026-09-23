@@ -85,6 +85,12 @@ function emit(hookData, cwd) {
     ts: new Date().toISOString(),
     kind: 'test_failure',
     command,
+    exit_code:
+      hookData.tool_input && typeof hookData.tool_input.exit_code === 'number'
+        ? hookData.tool_input.exit_code
+        : typeof hookData.exit_code === 'number'
+          ? hookData.exit_code
+          : null,
     excerpt,
     session_id: hookData.session_id || null,
     cwd,
