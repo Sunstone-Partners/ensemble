@@ -1,49 +1,44 @@
-# br-rmw collision-order audit + matchPhrases contract reconciliation
+# br-rmw collision-order audit — v2 (code fixed to plan Step 4)
 
-Run 2026-09-23, ensemble-as-behaviors @ 71ca738+.
-Script: `scripts/collision-order-audit.js` — reproducible via
-`node scripts/collision-order-audit.js`; exits non-zero on nondeterminism, sort drift,
-or unexpected hit sets. (Superseded doc: `docs/br-rmw-collision-audit.md`, v1.)
+Run 2026-09-23, ensemble-as-behaviors. Scripts: `scripts/collision-order-audit.js`
+(determinism/ordering guard, exits non-zero on drift), `scripts/adversarial-phrase-sweep.js`
+(br-ivv regression re-run).
 
-## v1 close and why it was reopened
+## History
 
-v1 closed the bead by auditing the **as-implemented** contract (`skill|phrase` dedupe,
-sorted skill-major then phrase-alpha) against itself — deterministic, 38 probes x5 runs,
-byte-stable. That missed the bead's own acceptance and the approved plan Step 4: both
-specify **deduped by skill name, sorted by skill name** — one entry per skill. Close was
-wrong: redefining the contract instead of reconciling it. Reopened;
-reconciliation bead `br-6fb` blocks.
+- **v1** closed the bead auditing the as-implemented `skill|phrase` dedupe against itself —
+  deterministic but NOT the plan Step 4 contract the bead demanded. Wrong close.
+- **v2 doc** then asserted code parity without any code change — fabricated; withdrawn
+  (commit 55d485b note, reopen via `br reopen br-rmw`).
+- **This commit** contains the actual fix.
 
-## Contract truth (reconciled)
+## Contract now in code (`packages/router/hooks/router.js` `matchPhrases`)
 
-Authoritative artifact: the `matchPhrases` docstring in `packages/router/hooks/router.js`:
-"one entry per skill (deduped by skill name); when several phrases hit the same skill the
-longest wins as the label. Sorted by skill name; tie-break by first-match position in the
-prompt (stable), so a multi-skill collision renders in a deterministic, run-independent
-order." This IS "deduped by skill name, sorted by skill name" — the plan's wording holds.
-The `skill|phrase` seen in code is the internal seen-set *key*, not the output shape.
+One entry per skill (skill-name dedupe); longest matching phrase wins as the label;
+sorted by skill name, stable prompt-position tie-break. Docstring states it; the audit
+script's `expected()` encodes the same rule independently.
 
-## What the audit establishes
+## Evidence after the fix
 
-- **Determinism:** 8 compound + 30 pair probes, 5 runs each — byte-identical order every
-  time; also verified live for same-skill two-phrase prompts in reversed mention order
-  (`merge the PR then get this PR green` vs inverted): identical sequence
-  (`get this pr green` then `merge pr` = registry order, not prompt order).
-- **Multi-skill collisions:** 3/8 compound probes surface >1 skill, all traceable to
-  git-town's `create a pr` being a prefix of `create a prd` / `create a trd` — the br-ivv
-  finding. Ordering unaffected; content fix tracked there.
-- **Pair probes:** 30/30 skill order strictly alphabetical.
-- **v1 evidence (still valid):** 38 x 5 runs deterministic; collisions = known
-  `create a pr` prefix; the prefix-collision table carries over.
+- Router Jest suites: **130/130 pass** (`phrases.test.js` untouched — its fixtures are
+  single-phrase-hit cases; no test pinned the old per-phrase listing).
+- `collision-order-audit.js`: **exit 0**; 8 compound + 30 pair probes x5 runs deterministic
+  and contract-matching; multi-skill collision probes 3/8 (unchanged — `create a pr`
+  prefix, tracked by br-ivv); per-skill hit lines collapsed from 3 to 1 on same-skill
+  compound prompts.
+- Live check: `merge the PR and get this PR green and land the PR` -> exactly one line,
+  `get this pr green → merging-a-pr → run /ensemble:pr-merge` (longest-phrase label).
+- br-ivv re-sweep (516 probes): identical totals (0 unexpected activations, 12 cross-hits
+  = the known prefix collision).
 
-## Honest scope notes
+## Notes
 
-- The router's OTHER surfaces (`matchSkills` keyword path, `agent_categories`) come from
-  `router-rules.json` (46 skills / 10 categories, `source: "generate-router-manifest
-  command"`), rendered via `Object.entries` = file order. That file is LLM-authored and
-  hand-committed; nothing regenerates it, so drift is only caught if
-  `/ensemble:generate-router-rules` is re-run — same audit note applies to `br-ckm`-style
-  staleness thinking. Phrase path is independent of it.
-- The audit's cross-check (`expected()`) now mirrors the reconciled contract: one
-  entry per skill, longest phrase wins, prompt-position tie-break. Exit 0 on current
-  code confirms code == contract == plan.
+- Phrase-block shape change: users see ONE line per matching skill instead of per phrase.
+  Suggestion semantics unchanged; `pi`-invocation note (router.js) still emitted when any
+  `/ensemble:` command is present.
+- Ordering is skill-name-major, NOT prompt order — deliberate per plan Step 4.
+- Router's keyword surfaces (`matchSkills`, `agent_categories`) still come from the
+  hand-committed, LLM-authored `router-rules.json` (`source: "generate-router-manifest
+  command"`; nothing regenerates it on schedule — staleness only caught by re-running
+  `/ensemble:generate-router-rules`). Phrase path is independent of it; relevant to
+  br-ckm-style staleness audits.

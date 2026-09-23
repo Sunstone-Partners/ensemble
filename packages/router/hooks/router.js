@@ -619,21 +619,26 @@ function loadPhrases(config) {
 }
 
 function matchPhrases(prompt, registry) {
+  // One entry per skill (deduped by skill name); when several phrases hit the
+  // same skill the longest wins as the label. Sorted by skill name, tie-break
+  // by first-match position in the prompt (stable) — the plan Step 4 contract.
   if (!registry || !registry.phrases) return [];
   const norm = normalizeText(prompt);
-  const seen = new Set();
-  const out = [];
+  const best = new Map(); // skill -> { phrase, command, source, pos }
   for (const [phrase, bindingsFor] of Object.entries(registry.phrases)) {
-    if (!norm.includes(phrase)) continue;
+    const pos = norm.indexOf(phrase);
+    if (pos === -1) continue;
     for (const b of bindingsFor || []) {
-      const dedupKey = `${b.skill}|${phrase}`;
-      if (seen.has(dedupKey)) continue;
-      seen.add(dedupKey);
-      out.push({ phrase, skill: b.skill, command: b.command, source: b.source });
+      const cur = best.get(b.skill);
+      if (!cur || phrase.length > cur.phrase.length ||
+          (phrase.length === cur.phrase.length && pos < cur.pos)) {
+        best.set(b.skill, { phrase, command: b.command, source: b.source, pos });
+      }
     }
   }
-  out.sort((a, b) => a.skill.localeCompare(b.skill) || a.phrase.localeCompare(b.phrase));
-  return out;
+  return [...best.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]) || a[1].pos - b[1].pos)
+    .map(([skill, m]) => ({ phrase: m.phrase, skill, command: m.command, source: m.source }));
 }
 
 function buildPhraseBlock(matches) {

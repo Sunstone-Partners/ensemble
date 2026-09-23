@@ -26,11 +26,19 @@ function order(prompt) {
 }
 
 function expected(prompt) {
+  // plan Step 4: one entry per skill (skill-name dedupe), longest phrase wins as the
+  // label, sorted by skill name with stable prompt-position tie-break.
   const n = prompt.toLowerCase();
-  const hits = [];
-  for (const s of skills) for (const p of bySkill[s]) if (n.includes(p)) hits.push({ phrase: p, skill: s });
-  hits.sort((x, y) => x.skill.localeCompare(y.skill) || x.phrase.localeCompare(y.phrase));
-  return hits;
+  const best = new Map();
+  for (const s of skills) for (const p of bySkill[s]) {
+    const pos = n.indexOf(p);
+    if (pos === -1) continue;
+    const cur = best.get(s);
+    if (!cur || p.length > cur.phrase.length || (p.length === cur.phrase.length && pos < cur.pos)) best.set(s, { phrase: p, pos });
+  }
+  return [...best.entries()]
+    .sort((x, y) => x[0].localeCompare(y[0]) || x[1].pos - y[1].pos)
+    .map(([skill, m]) => ({ phrase: m.phrase, skill }));
 }
 
 function assertDeterministic(prompt) {
