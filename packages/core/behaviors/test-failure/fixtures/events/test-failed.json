@@ -1,0 +1,19 @@
+{
+  "api_version": "ensemble.sunstone.dev/v1",
+  "kind": "Event",
+  "event_type": "test.failed",
+  "occurred_at": "2026-09-23T14:30:00Z",
+  "source": { "runtime": "claude-code", "hook": "PostToolUse", "session_id": "sess-fixture-01" },
+  "cwd": "/repo",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": { "command": "npm test -- --runInBand" },
+    "tool_response": "Tests: 2 failed, 40 passed\nFAIL packages/router/tests/router.test.js",
+    "exit_code": 1
+  },
+  "identity": {
+    "failure_id": "sha256:router.test.js:2f3c9a",
+    "test_command": "npm test",
+    "test_target": "packages/router/tests/router.test.js"
+  }
+}

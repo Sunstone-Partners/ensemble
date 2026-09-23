@@ -1,0 +1,43 @@
+api_version: ensemble.sunstone.dev/v1
+kind: Behavior
+metadata:
+  name: investigate-test-failure
+  version: 0.1.0
+  description: >-
+    Investigate repeated test failures and propose durable prevention.
+    Seed of the pilot behavior from the runtime plan §3.1; the predicate
+    mirrors packages/core/hooks/test-failure-observer.js TEST_COMMAND_RE so
+    the event path and the deterministic hook agree on what a test command is.
+
+trigger:
+  event_type: test.failed
+  predicate:
+    # byte-identical to observer TEST_COMMAND_RE.source (see README)
+    command: { matches: "(npm|pnpm|yarn)\\s+(run\\s+)?test\\b|\\bjest\\b|\\bvitest\\b|\\bpytest\\b|\\bgo test\\b|\\bcargo test\\b|\\bmvn test\\b|\\bdotnet test\\b|\\brspec\\b|\\bmix test\\b" }
+    # observer's FAILURE_RE is the in-band proxy for exit_code (PostToolUse
+    # payloads carry no exit status); the behavior schema gets the real signal.
+    exit_code: { not: 0 }
+
+policy:
+  mode: propose
+  max_concurrent: 1
+  cooldown: 24h
+  max_causal_depth: 2
+  max_children: 3
+  timeout: 30m
+  retry:
+    max_attempts: 2
+    retryable: [agent_error_retryable, worker_timeout]
+
+capabilities:
+  # tool grants only; mutation authority is policy-side (§3.1 rule:
+  # bash.test != license for every mutation reachable through bash).
+  tools: [read, grep, glob, bash.test, git.diff]
+  mutation_classes: [artifact.write, pr.open, constitution.propose]
+
+execution:
+  graph: investigate-test-failure
+
+outcomes:
+  - test.failure.investigated
+  - constitution.change.proposed
