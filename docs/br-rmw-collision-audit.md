@@ -6,9 +6,11 @@ violation, or unexpected hit set).
 
 ## Contract under audit
 
-`matchPhrases` output must be: deduped by `skill|phrase`, sorted by skill name, then
-phrase-alphabetical within a skill (longest-phrase-first is NOT the contract —
-`localeCompare` on phrase is). `buildPhraseBlock` renders in that array order.
+`matchPhrases` as implemented: dedupe key `skill|phrase`, output sorted by skill name then
+phrase-alphabetical. The approved plan Step 4 and this bead's original acceptance instead
+specify **dedupe by skill name, sorted by skill name** — one entry per skill. This
+spec-vs-implementation drift is why the bead is reopened; the audit below is valid for the
+implemented contract and must be re-run against whichever side wins reconciliation.
 
 ## Method
 
