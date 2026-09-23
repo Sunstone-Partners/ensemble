@@ -188,19 +188,19 @@ class SkillCopier {
     let skillsCopied = 0;
     let referencesConverted = 0;
 
-    // Step 1: Discover packages
-    const packageDirs = this._discoverPackages();
+    // Step 1: Discover per-skill directories (each <pkg>/skills/<skill>/ or legacy flat)
+    const skillDirs = this._discoverSkillDirs();
 
     if (this.verbose) {
-      console.log(`Discovered ${packageDirs.length} packages with skills`);
+      console.log(`Discovered ${skillDirs.length} skill directories`);
     }
 
     // Step 2: Process SKILL.md files
-    for (const { packageName, skillPath } of packageDirs) {
+    for (const { packageName, skillName, skillPath } of skillDirs) {
       const skillFile = path.join(skillPath, 'SKILL.md');
       if (fs.existsSync(skillFile)) {
         try {
-          this._processSkillFile(packageName, skillFile);
+          this._processSkillFile(packageName, skillFile, skillName);
           skillsCopied++;
         } catch (err) {
           errors.push({
@@ -212,11 +212,11 @@ class SkillCopier {
     }
 
     // Step 3: Process REFERENCE.md files
-    for (const { packageName, skillPath } of packageDirs) {
+    for (const { packageName, skillName, skillPath } of skillDirs) {
       const refFile = path.join(skillPath, 'REFERENCE.md');
       if (fs.existsSync(refFile)) {
         try {
-          this._processReferenceFile(packageName, refFile);
+          this._processReferenceFile(packageName, refFile, skillName);
           referencesConverted++;
         } catch (err) {
           errors.push({
@@ -273,10 +273,50 @@ class SkillCopier {
   }
 
   /**
+   * Discover every <pkg>/skills/<skill>/ directory holding a SKILL.md or
+   * REFERENCE.md, plus legacy flat <pkg>/skills/SKILL.md layouts. Replaces the
+   * old package-level discovery, which only saw packages that put SKILL.md
+   * directly in skills/ (framework mirrors) and silently skipped per-skill
+   * directories such as the behavior skills (product, development, git).
+   * @returns {Array<{packageName: string, skillName: string, skillPath: string}>}
+   */
+  _discoverSkillDirs() {
+    const results = [];
+    if (!fs.existsSync(this.packagesDir)) return results;
+
+    for (const pkg of fs.readdirSync(this.packagesDir, { withFileTypes: true })) {
+      if (!pkg.isDirectory() || pkg.name === 'full' || pkg.name === 'pi') continue;
+      const skillsRoot = path.join(this.packagesDir, pkg.name, 'skills');
+      if (!fs.existsSync(skillsRoot) || !fs.statSync(skillsRoot).isDirectory()) continue;
+
+      if (fs.existsSync(path.join(skillsRoot, 'SKILL.md')) || fs.existsSync(path.join(skillsRoot, 'REFERENCE.md'))) {
+        results.push({ packageName: pkg.name, skillName: pkg.name, skillPath: skillsRoot });
+      }
+
+      for (const skill of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
+        if (!skill.isDirectory()) continue;
+        const skillPath = path.join(skillsRoot, skill.name);
+        if (fs.existsSync(path.join(skillPath, 'SKILL.md')) || fs.existsSync(path.join(skillPath, 'REFERENCE.md'))) {
+          results.push({ packageName: pkg.name, skillName: skill.name, skillPath });
+        }
+      }
+    }
+
+    const seen = new Set();
+    return results.filter((r) => {
+      let key;
+      try { key = fs.realpathSync(r.skillPath); } catch { key = r.skillPath; }
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /**
    * Process a SKILL.md file: read, inject frontmatter if needed, write to output.
    * NEVER modifies the source file.
    */
-  _processSkillFile(packageName, sourcePath) {
+  _processSkillFile(packageName, sourcePath, skillName) {
     const rawContent = fs.readFileSync(sourcePath, 'utf-8');
     let outputContent;
 
@@ -287,7 +327,7 @@ class SkillCopier {
     }
 
     if (!this.dryRun) {
-      const outDir = path.join(this.outputDir, packageName);
+      const outDir = path.join(this.outputDir, skillName || packageName);
       fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(path.join(outDir, 'SKILL.md'), outputContent, 'utf-8');
     }
@@ -302,7 +342,7 @@ class SkillCopier {
    * write to output as <framework>/reference/SKILL.md.
    * NEVER modifies the source file.
    */
-  _processReferenceFile(packageName, sourcePath) {
+  _processReferenceFile(packageName, sourcePath, skillName) {
     const rawContent = fs.readFileSync(sourcePath, 'utf-8');
     let outputContent;
 
@@ -313,7 +353,7 @@ class SkillCopier {
     }
 
     if (!this.dryRun) {
-      const outDir = path.join(this.outputDir, packageName, 'reference');
+      const outDir = path.join(this.outputDir, skillName || packageName, 'reference');
       fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(path.join(outDir, 'SKILL.md'), outputContent, 'utf-8');
     }
