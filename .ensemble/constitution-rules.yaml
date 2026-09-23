@@ -1,0 +1,39 @@
+# constitution-rules.yaml — candidate guardrail rules observed from recurring
+# test failures recorded in .ensemble/learning-log.jsonl (plan §3.1).
+#
+# Shape is DERIVED from the learning-log record fields, one rule per recurring
+# failure pattern:
+#   - the observed test command (record.command) that kept failing
+#   - the failure excerpt that recurred (record.excerpt, truncated)
+#   - the non-zero exit code seen (record.exit_code)
+#   - sessions it was observed in (record.session_id) for evidence counting
+#
+# This file is a PROPOSAL input to constitution folding (ensemble:fold-prompt /
+# the constitution.change.proposed outcome of the test-failure behavior). A
+# rule only graduates into docs/standards/constitution.md after human review;
+# the runtime never edits the constitution on its own.
+api_version: ensemble.sunstone.dev/v1
+kind: ConstitutionRules
+
+rules:
+  - id: rule-001
+    # Derived from: records where kind == "test_failure" and the same
+    # normalized command signature recurred across >= N sessions.
+    derived_from:
+      log: .ensemble/learning-log.jsonl
+      filter:
+        kind: test_failure
+        exit_code: { not: 0 } # null (unknown) never counts as evidence
+      recurrence:
+        min_sessions: 2 # distinct session_id values
+        window_days: 14
+    # What the guardrail asks future agents/sessions to do, phrased from the
+    # recurring excerpt (first sentence, <= 200 chars).
+    statement: "<derived: one imperative guardrail sentence>"
+    evidence:
+      commands: [] # distinct record.command values that matched
+      excerpts: [] # up to 3 representative record.excerpt snippets
+      sessions: [] # record.session_id values observed
+    status: proposed # proposed | accepted | rejected | expired
+    proposed_at: null # ts of the first matching record
+    decided_at: null # when a human moved it out of proposed
