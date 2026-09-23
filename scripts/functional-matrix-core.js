@@ -14,7 +14,7 @@ const reg = JSON.parse(fs.readFileSync(path.join(ROOT, 'packages/router/lib/beha
 
 // per-skill phrase ground truth from source SKILL.md (excludes mirrors)
 const srcSkills = {};
-for (const f of cp.execSync(`cd ${JSON.stringify(ROOT)} && git ls-files 'packages/*/skills/*/SKILL.md'`, { encoding: 'utf8' }).trim().split('\n')) {
+for (const f of cp.execSync(`cd ${JSON.stringify(ROOT)} && find packages -path 'packages/*/skills/*/SKILL.md' -not -path 'packages/full/*' -not -path 'packages/pi/*'`, { encoding: 'utf8' }).trim().split('\n')) {
   const pkg = f.split('/')[1];
   if (pkg === 'full' || pkg === 'pi') continue;
   const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -39,7 +39,7 @@ for (const [skill, info] of Object.entries(srcSkills)) {
     inReg.length !== info.phrases.length ? `reg:${inReg.length} src:${info.phrases.length}` : '');
 }
 // locate source files properly (the loop above knows pkg via git path — redo cleanly)
-for (const f of cp.execSync(`cd ${JSON.stringify(ROOT)} && git ls-files 'packages/*/skills/*/SKILL.md'`, { encoding: 'utf8' }).trim().split('\n')) {
+for (const f of cp.execSync(`cd ${JSON.stringify(ROOT)} && find packages -path 'packages/*/skills/*/SKILL.md' -not -path 'packages/full/*' -not -path 'packages/pi/*'`, { encoding: 'utf8' }).trim().split('\n')) {
   const pkg = f.split('/')[1];
   if (pkg === 'full' || pkg === 'pi') continue;
   const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -159,8 +159,20 @@ if (runtime === 'opencode') {
   const has = fs.existsSync(dist);
   check('opencode-surface', 'generated output present (run generate:opencode first)', has);
   if (has) {
-    const cmds = cp.execSync(`cd ${JSON.stringify(dist)} && find . -name "*.md" -path "*command*" | head -80`, { encoding: 'utf8' });
-    check('opencode-surface', 'commands emitted', cmds.trim().length > 0, `${cmds.trim().split('\n').length} files`);
+    const all = cp.execSync(`cd ${JSON.stringify(dist)} && find . -type f | sed 's|^\./||'`, { encoding: 'utf8' }).trim().split('\n');
+    const cmds = all.filter((f) => f.includes('command') && f.endsWith('.md'));
+    check('opencode-surface', 'commands emitted', cmds.length > 40, `${cmds.length} files`);
+    for (const b of Object.values(reg.phrases).flat()) {
+      if (!b.command) continue;
+      const stem = b.command.replace(/^\/ensemble:/, '');
+      check('opencode-surface', `command ${stem} emitted`, cmds.some((f) => path.basename(f) === `${stem}.md`), 'MISSING');
+    }
+    for (const skill of Object.keys(srcSkills)) {
+      check('opencode-surface', `skill ${skill} emitted`,
+        all.some((f) => f.includes(`skill/${skill}/SKILL.md`) || f.includes(`skills/${skill}/SKILL.md`)), 'MISSING');
+    }
+    const agentFiles = all.filter((f) => f.includes('agent') && f.endsWith('.md'));
+    check('opencode-surface', 'agents emitted', agentFiles.length > 5, `${agentFiles.length}`);
   }
   const hb = path.join(ROOT, 'packages/opencode/src/hooks/bridge.js');
   check('opencode-surface', 'bridge discovers hooks.json', fs.readFileSync(hb, 'utf8').includes('hooks.json'));
