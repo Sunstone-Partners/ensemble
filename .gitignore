@@ -41,5 +41,3 @@ __pycache__/
 
 # Fork-local operating notes, loaded by Claude Code alongside CLAUDE.md
 CLAUDE.local.md
-# runtime-generated: the learning log is per-machine telemetry
-.ensemble/learning-log.jsonl
