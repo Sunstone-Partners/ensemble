@@ -641,6 +641,12 @@ function buildPhraseBlock(matches) {
   for (const m of matches) {
     lines.push(`- "${m.phrase}" \u2192 skill ${m.skill}` + (m.command ? ` \u2192 run ${m.command}` : ''));
   }
+  if (matches.some((m) => /^\/ensemble:/.test(m.command || ''))) {
+    lines.push('');
+    lines.push(
+      'In pi/omp runtimes, invoke these as /ensemble-<cmd> (hyphen form) — the colon form above is for Claude-family runtimes.',
+    );
+  }
   lines.push('');
   lines.push('These are suggestions. Act on one only if it fits what the user actually asked for.');
   return lines.join('\n');

@@ -28,6 +28,10 @@ hand-copies are belt-and-braces, not authoritative).
 - Router exits 0 on no-match; hooks present: router `UserPromptSubmit`, core `PostToolUse`, full all three.
 
 ## Discrepancies
+- **D1 mechanism (corrected)**: pi loads skills from the live package path registered in
+  `~/.pi/agent/settings.json` (`…/ensemble/packages/pi`) — there is no cache pi refreshes,
+  so `pi update` cannot fix staleness; `~/.pi/agent/skills` (a real dir of per-skill copies,
+  not a symlink target) holds duplicate copies that go stale silently.
 - **D1 — pi install staleness — RESOLVED**: hand-synced `~/.pi/agent/skills` copies are NOT
   authoritative; the pi package is registered from the live repo path, so fresh sessions see
   branch state (probe confirmed). The stale copies predate this workstream.
@@ -35,26 +39,35 @@ hand-copies are belt-and-braces, not authoritative).
   never run in a pi session. Whether pi gets hooks natively or Foreman's PiOmpAdapter injects
   behavior activation (runtime plan Sprint 4) is the open question; br-fnf evidence: pi sessions
   currently see neither phrase hints nor the learning log.
-- **D3 — pi command naming — OPEN (transformer)**: `packages/pi/skills/*/SKILL.md` carry
-  `command: '/ensemble-<cmd>'` (hyphen) vs source/registry `/ensemble:<cmd>` (colon). Generated
-  files; fix belongs in the pi transformer (or its command naming), not the SKILL.md copies.
+- **D3 — pi command naming — BY DESIGN (documentation gap only)**: `packages/pi/skills/*`
+  carry `command: /ensemble-<cmd>` because pi's runnable invocation IS `/ensemble-<cmd>` —
+  prompts are emitted as `prompts/ensemble-<cmd>.md` (`:` illegal on NTFS), and the
+  blanket `ensemble:`→`ensemble-` rewrite in `skill-copier.ts`/`command-transformer.ts` is
+  deliberate so a skill never points at a non-resolving name. The colon form in the compiled
+  registry is equally correct for Claude-family runtimes. Dual-path holds per runtime: pi →
+  `/ensemble-<cmd>`, Claude → `/ensemble:<cmd>`, same underlying command. The only gap was
+  the registry hint being literal in Claude form — closed in router.js: `buildPhraseBlock`
+  appends a one-line pi-invocation note, guarded by `packages/router/tests/pi-runtime.test.js`.
 - Probe artifact: "I need a PRD…" (no literal "create a") matches **zero** phrases — substring
   contract as designed; logged for `br-ivv` (false-negative complement of its false-positive sweep).
 
 ## Operator hazard (must respect for later matrix tasks: zp8, c6d, rmw)
 `~/.pi/agent/extensions/auto-commit-on-exit.ts` runs `git add -A && git commit` on
-`session_shutdown` — it swept unrelated WIP (`tunnel.js`, `tunnel.test.js`,
-`tunnel-readiness-probe.js`) into branch history twice during this run (spurious commit
-`4f32e0a`, reset; second probe SIGTERMed before exit). Disable that extension or run any
-`pi --print` probe in a dedicated worktree, never in the shared checkout.
+`session_shutdown` — globally, any repo; produced spurious sweep commit `4f32e0a` in this
+checkout (reset+re-committed clean). Renamed → `.disabled` during this work; restore with
+`mv` (check `pi config` for a scoped toggle before trusting a rename across pi versions).
+Regardless of config state, treat every pi session in this repo as able to sweep: re-check
+`git log`/`git status` immediately after each exit; prefer dedicated-worktree probes.
 
-## Follow-up (same day): auto-commit sweep source pinned
+## Follow-up (same day): sweep source pinned — then corrected
 
-- Renamed `~/.pi/agent/extensions/auto-commit-on-exit.ts` → `.disabled`; a worktree probe
-  still auto-swept — proving that extension was a contributor, not the source.
-- **Authoritative answer: run `pi` probes from an isolated worktree** (`git worktree add`),
-  never the shared checkout, regardless of config state. Probe-4 (worktree, extension
-  disabled) exited clean: worktree log unchanged, zero dirty files; main checkout untouched.
-- The `session_shutdown` sweeper itself remains unidentified across
-  `~/.pi/agent/extensions` + `pi-yaml-hooks` + the four registered packages; hunt deferred
-  (worktree isolation renders it moot for br-zp8/c6d/rmw).
+- **Source: `auto-commit-on-exit.ts` itself** (per above). The interim note claiming a
+  second, unidentified sweeper was a forensic error: an early commit made with `git add -A`
+  swept pi's mid-run `tunnel-readiness-probe.js` into the tree; that file being present in
+  a later shutdown commit was mistaken for fresh sweeping after the rename. Post-disable,
+  every clean-exit probe (including one in the shared checkout) has left log and tree
+  untouched. The SIGTERMed probes (exit 143) never ran shutdown handlers — they hung
+  stdin-bound without a PTY, they did not sweep.
+- **Belt-and-braces for later pi probes (zp8/c6d/rmw)**: run from a dedicated
+  `git worktree` regardless; launch with a PTY (no-TTY `pi --print` hangs); verify
+  `git log`/`git status` after every exit.
