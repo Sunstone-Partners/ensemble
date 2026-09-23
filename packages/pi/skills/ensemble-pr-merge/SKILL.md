@@ -15,15 +15,21 @@ description: >-
   self-report -- and loops, bounded by --max-rounds, until every check is green
   and every review thread is resolved, then merges. Hard constraint: no finding
   may be resolved by deleting, skipping, or weakening a test; only real fixes to
-  source, test, build, or config code count as resolution.
+  source, test, build, or config code count as resolution. Immediately before
+  merging, distills every finding resolved this run into durable guardrails and
+  appends them to the target repo's existing constitution
+  (docs/standards/constitution.md, or .specify/memory/constitution.md when that
+  is the only one present) -- never creates one -- so create-prd, create-trd,
+  refine-prd, and future pr-merge runs are less likely to reproduce the same
+  class of failure.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble-pr-merge | Version: 1.0.0 -->
+<!-- Command: ensemble-pr-merge | Version: 1.1.0 -->
 <!-- Description: Drive an open PR to green and merged by dispatching one subagent per failing CI check and unresolved review thread, routed through the correct orchestrator -->
 
 # ensemble-pr-merge
 
-> **Mission:** Take an open pull request from red to merged with the minimum number of round-trips. Discovers every failing/pending CI check and every unresolved review change-request as a distinct finding, classifies each by root cause (implementation code, tests, build/CI pipeline, infrastructure/deployment, or PR mechanics), and dispatches one subagent per finding in parallel through the orchestrator that owns that domain: the tech-lead-orchestrator for implementation code, qa-orchestrator for test failures and test-related review comments, build-orchestrator for CI/build-pipeline checks, infrastructure-orchestrator for infra/deployment checks, and github-specialist for PR mechanics (conflicts, branch state, approvals, merge). Re-verifies against live CI/review state after every round -- never trusts a subagent's self-report -- and loops, bounded by --max-rounds, until every check is green and every review thread is resolved, then merges. Hard constraint: no finding may be resolved by deleting, skipping, or weakening a test; only real fixes to source, test, build, or config code count as resolution.
+> **Mission:** Take an open pull request from red to merged with the minimum number of round-trips. Discovers every failing/pending CI check and every unresolved review change-request as a distinct finding, classifies each by root cause (implementation code, tests, build/CI pipeline, infrastructure/deployment, or PR mechanics), and dispatches one subagent per finding in parallel through the orchestrator that owns that domain: the tech-lead-orchestrator for implementation code, qa-orchestrator for test failures and test-related review comments, build-orchestrator for CI/build-pipeline checks, infrastructure-orchestrator for infra/deployment checks, and github-specialist for PR mechanics (conflicts, branch state, approvals, merge). Re-verifies against live CI/review state after every round -- never trusts a subagent's self-report -- and loops, bounded by --max-rounds, until every check is green and every review thread is resolved, then merges. Hard constraint: no finding may be resolved by deleting, skipping, or weakening a test; only real fixes to source, test, build, or config code count as resolution. Immediately before merging, distills every finding resolved this run into durable guardrails and appends them to the target repo's existing constitution (docs/standards/constitution.md, or .specify/memory/constitution.md when that is the only one present) -- never creates one -- so create-prd, create-trd, refine-prd, and future pr-merge runs are less likely to reproduce the same class of failure.
 
 > **Constraints:**
 > - NEVER delete, skip, xfail, disable, weaken an assertion in, or otherwise water down a test in order to make a CI check pass. Every dispatched subagent inherits this constraint verbatim in its payload. A failing test, compiler warning, or build failure MUST be fixed at its root cause in source or test code. If a test is genuinely obsolete because the behavior it covers was intentionally removed, the subagent MUST HALT that finding and escalate it in the round report for explicit human confirmation instead of deleting it unilaterally.
@@ -32,6 +38,7 @@ disable-model-invocation: true
 > - Bound remediation to --max-rounds (default 5) verification rounds. Exceeding the bound is a HALT-and-escalate outcome, not a silent stop; the final report MUST list every still-open finding and its last known owner/orchestrator.
 > - Each remediation round dispatches ALL findings from that round's manifest concurrently (one subagent per finding) and waits for every dispatch to settle before re-checking CI/review state -- never dispatch findings one at a time in serial.
 > - A finding is only marked resolved after the fix is pushed to the PR branch AND the corresponding CI check/review thread is independently re-verified as passing/resolved in the next round's fresh gh pr checks / gh pr view read -- never trust a subagent's own self-report of success.
+> - Constitution capture (Constitution Learning Capture phase) is best-effort and non-blocking: it MUST NEVER create docs/standards/constitution.md or .specify/memory/constitution.md if neither already exists in the target repo -- creating one is /ensemble-init-project's job, not pr-merge's -- MUST NEVER block, delay, or HALT the merge on its own failure, and MUST NEVER append a guardrail that duplicates or narrows existing constitution content.
 
 ## Phase 1: PR Discovery
 
@@ -110,7 +117,30 @@ step 2.
 4. If findings remain and round_number < --max-rounds: increment round_number, re-classify the new manifest (Classification and Routing phase), and re-dispatch (Parallel Remediation Dispatch phase).
 5. If findings remain and round_number == --max-rounds: HALT. Do not merge. Produce the final report (Reporting step) with every still-open finding, its last owning orchestrator, and its most recent log/comment state, and stop for human escalation.
 
-## Phase 5: Merge and Report
+## Phase 5: Constitution Learning Capture
+
+### Step 1: Aggregate Guardrails and Update Constitution
+
+Once the Findings Manifest is empty and merge is imminent, distill the findings
+resolved across every round this run into zero or more durable, generalizable
+guardrails and append them to the target repo's existing constitution, so the
+same class of failure is less likely to recur on a future PR or a future
+create-prd/create-trd/refine-prd run. This step never blocks or reverses a merge
+decision -- any failure inside it is logged and swallowed, not escalated.
+
+**Actions:**
+1. Skip this entire phase when --dry-run is set, or when the Findings Manifest was empty at round 0 (nothing was actually remediated this run) -- there is nothing to learn.
+2. Resolve the canonical constitution the same way create-prd/create-trd do: docs/standards/constitution.md when present, else .specify/memory/constitution.md, else skip this phase entirely and proceed straight to Merge and Report. This command NEVER creates a constitution file -- that is /ensemble-init-project's job, not pr-merge's.
+3. For each finding resolved this run (across all rounds), classify it as PATTERN (a systemic, preventable mistake a future author or agent could plausibly repeat -- e.g. a test pinning an exact version/date string instead of an invariant, a stale text anchor left behind by a rename, a missing codegen step before commit, a previously-banned pattern reintroduced) or ONE-OFF (a unique bug or typo with no generalizable rule). Only PATTERN findings produce a candidate guardrail; ONE-OFF findings produce none.
+4. For each PATTERN finding, draft exactly one guardrail: a short imperative rule plus a one-clause reason, stated as the general lesson -- never as a restatement of the specific bug or a reference to this PR/file (e.g. 'NEVER assert an exact version or date string in a test as proof a change shipped; assert the underlying invariant instead' rather than 'fix the version check in implement-trd-command.test.js').
+5. Read the full canonical constitution before finalizing any draft. Drop any candidate guardrail whose rule is already covered, equaled, or subsumed by existing constitution content anywhere in the document -- never append a near-duplicate rule.
+6. If zero guardrails survive classification and deduplication, stop here without touching the constitution file or creating a commit.
+7. Otherwise append each surviving guardrail as a new numbered item under the constitution's non-negotiable-rules list inside its Core Principles section when that section and list exist in the recognizable init-project format; if the canonical constitution predates that structure (a migrated/legacy .specify constitution, or one hand-edited into an incompatible shape), append a new top-level `## CI/Review Remediation Guardrails` section instead rather than guessing at foreign structure. Add one Changelog row per guardrail using the constitution's existing Date/Change/Author table columns: `| <ISO date> | Guardrail: <one-line summary> | /ensemble-pr-merge (PR #<PR_NUMBER>) |`.
+8. Commit the constitution update by itself, never bundled into a remediation subagent's commit, with message `docs(constitution): capture guardrail(s) from PR #<PR_NUMBER> remediation`, and push to HEAD_REF so it lands as part of this PR and is subject to the same CI/review as everything else in it.
+9. After pushing, wait for this new commit's required checks to reach a terminal state (poll gh pr checks) before proceeding to Merge and Report -- treat this as a final verification pass, not a new remediation round; there are no findings to dispatch, only CI to wait out.
+10. Any error in this phase (resolution, parse, write, or push failure) is non-fatal: log it once, do not retry, and proceed straight to Merge and Report -- a constitution-update failure must never HALT or block the merge.
+
+## Phase 6: Merge and Report
 
 ### Step 1: Merge
 
@@ -127,5 +157,5 @@ Merge only once every required check is green and every review thread is resolve
 Emit a single machine-readable summary line as the last line of output.
 
 **Actions:**
-1. Schema (one line, valid JSON): { pr_number, pr_url, rounds_executed, findings_total, findings_resolved, findings_escalated, merged (bool), halted_reason (string|null) }.
+1. Schema (one line, valid JSON): { pr_number, pr_url, rounds_executed, findings_total, findings_resolved, findings_escalated, constitution_guardrails_added (number), merged (bool), halted_reason (string|null) }.
 2. Print the JSON summary as the LAST line of stdout. Do not print further prose after it.
