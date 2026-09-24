@@ -30,11 +30,29 @@ export interface BehaviorProtocolAdapter {
 
 /**
  * Cross-repository provider-neutral invocation contract (source:
- * docs/architecture/ensemble-behavior-runtime-plan.md §6). Versioned
- * because it is consumed outside this repository (Foreman); never add
- * a raw Pi/OMP session object to any of these types.
+ * docs/architecture/ensemble-behavior-runtime-plan.md §6). Versioned as
+ * one contract because InvocationRequest/InvocationEvent/InvocationResult
+ * are consumed together outside this repository (Foreman); never add a
+ * raw Pi/OMP session object to any of these types.
+ *
+ * AC-010-2: bump this string on any breaking change to the three types
+ * below. assertInvocationContractVersion() makes an out-of-date consumer
+ * fail loudly (throw) instead of silently misreading renamed/removed
+ * fields.
  */
-export const INVOCATION_RESULT_SCHEMA_VERSION = "ensemble.sunstone.dev/invocation-result/v1";
+export const INVOCATION_CONTRACT_SCHEMA_VERSION = "ensemble.sunstone.dev/invocation-contract/v1";
+
+export function assertInvocationContractVersion(value: {
+  schemaVersion: string;
+}): asserts value is { schemaVersion: typeof INVOCATION_CONTRACT_SCHEMA_VERSION } {
+  if (value.schemaVersion !== INVOCATION_CONTRACT_SCHEMA_VERSION) {
+    throw new Error(
+      `Invocation contract version mismatch: got "${value.schemaVersion}", ` +
+        `expected "${INVOCATION_CONTRACT_SCHEMA_VERSION}". Refusing to interpret ` +
+        `fields from an incompatible schema version.`,
+    );
+  }
+}
 
 export interface WorktreeSpec {
   path: string;
@@ -47,6 +65,7 @@ export interface InvocationToolGrant {
 }
 
 export interface InvocationRequest {
+  schemaVersion: typeof INVOCATION_CONTRACT_SCHEMA_VERSION;
   executionId: string;
   prompt: string;
   context: Record<string, unknown>;
@@ -55,6 +74,12 @@ export interface InvocationRequest {
   model?: string;
   timeoutMs: number;
   attempt: number;
+}
+
+export function toInvocationRequest(
+  request: Omit<InvocationRequest, "schemaVersion">,
+): InvocationRequest {
+  return { schemaVersion: INVOCATION_CONTRACT_SCHEMA_VERSION, ...request };
 }
 
 export type InvocationEventKind =
@@ -67,10 +92,15 @@ export type InvocationEventKind =
   | "completed";
 
 export interface InvocationEvent {
+  schemaVersion: typeof INVOCATION_CONTRACT_SCHEMA_VERSION;
   executionId: string;
   kind: InvocationEventKind;
   occurredAt: string;
   payload: Record<string, unknown>;
+}
+
+export function toInvocationEvent(event: Omit<InvocationEvent, "schemaVersion">): InvocationEvent {
+  return { schemaVersion: INVOCATION_CONTRACT_SCHEMA_VERSION, ...event };
 }
 
 export interface Usage {
@@ -95,7 +125,7 @@ export interface NormalizedFailure {
 export type InvocationStatus = "completed" | "failed" | "timeout" | "cancelled";
 
 export interface InvocationResult {
-  schemaVersion: typeof INVOCATION_RESULT_SCHEMA_VERSION;
+  schemaVersion: typeof INVOCATION_CONTRACT_SCHEMA_VERSION;
   executionId: string;
   status: InvocationStatus;
   output: string;
@@ -125,7 +155,7 @@ export function toInvocationResult(executionId: string, outcome: InvocationOutco
   }
 
   return {
-    schemaVersion: INVOCATION_RESULT_SCHEMA_VERSION,
+    schemaVersion: INVOCATION_CONTRACT_SCHEMA_VERSION,
     executionId,
     status: outcome.status,
     output: outcome.output,
