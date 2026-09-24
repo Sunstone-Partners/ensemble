@@ -1,0 +1,8 @@
+{
+  "type": "test.failed",
+  "source": "ci",
+  "payload": {
+    "command": "pytest tests/",
+    "exit_code": 1
+  }
+}

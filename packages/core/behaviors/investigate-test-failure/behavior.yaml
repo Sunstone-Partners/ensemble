@@ -1,0 +1,22 @@
+api_version: ensemble.sunstone.dev/v1
+kind: Behavior
+metadata:
+  name: investigate-test-failure
+  version: 1.0.0
+  digest: c194c8483be384b17be9296cd87f416ae99fe3a5ca8a53b4843b5c303adf9ce5
+trigger:
+  event_type: test.failed
+  predicate:
+    command: { matches: "npm test|mix test|pytest|go test" }
+    exit_code: { not: 0 }
+policy:
+  mode: propose
+  timeout: 30m
+capabilities:
+  tools: [read, grep, glob, bash.test, git.diff]
+  mutation_classes: [artifact.write, pr.open, constitution.propose]
+execution:
+  graph: investigate-test-failure
+outcomes:
+  - test.failure.investigated
+  - constitution.change.proposed
