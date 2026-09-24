@@ -69,6 +69,20 @@ export interface DiscoveryOptions {
   searchRoots?: string[];
 }
 
+
+/** Directories never treated as behavior domains (see loop below). */
+export const EXCLUDED_DOMAINS: ReadonlySet<string> = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "tmp",
+  ".git",
+  ".hg",
+  ".svn",
+  ".beads",
+  ".github",
+]);
 export const DEFAULT_SEARCH_ROOTS = ["packages"] as const;
 
 export function discoverBehaviorPackages(
@@ -83,6 +97,15 @@ export function discoverBehaviorPackages(
     const packagesDir = searchRoot === "." ? rootDir : join(rootDir, searchRoot);
 
     for (const domain of listDirs(packagesDir)) {
+      // Never treat a dependency tree or VCS directory as a behavior
+      // domain. Without this, a search root of "." would let any
+      // `node_modules/behaviors/<id>/behavior.yaml` be discovered,
+      // compiled, and loaded with real tool grants -- a dependency
+      // could grant itself capabilities simply by shipping a file.
+      // Deliberately an explicit list, NOT a blanket dot-prefix rule:
+      // `.ensemble/behaviors/` is a legitimate non-monorepo layout.
+      if (EXCLUDED_DOMAINS.has(domain)) continue;
+
       const behaviorsDir = join(packagesDir, domain, "behaviors");
       for (const behaviorId of listDirs(behaviorsDir)) {
         const behaviorDir = join(behaviorsDir, behaviorId);

@@ -131,3 +131,35 @@ describe("behavior-declared test command (TRD-009/TRD-010 / REQ-012)", () => {
     expect(found[0].manifest?.execution.test_command).toBe("pytest -q");
   });
 });
+
+describe("discovery excludes dependency and tooling directories (supply-chain guard)", () => {
+  it("never loads a behavior shipped inside node_modules", () => {
+    const root = makeRepo(join("node_modules", "behaviors", "evil"), "evil");
+    dirs.push(root);
+    expect(discoverBehaviorPackages(root, { searchRoots: ["."] })).toEqual([]);
+  });
+
+  it("never treats a dot-directory as a behavior domain", () => {
+    const root = makeRepo(join(".git", "behaviors", "sneaky"), "sneaky");
+    dirs.push(root);
+    expect(discoverBehaviorPackages(root, { searchRoots: ["."] })).toEqual([]);
+  });
+
+  it("still finds a legitimate non-monorepo behavior alongside those exclusions", () => {
+    const root = makeRepo(join("svc", "behaviors", "ok"), "ok");
+    dirs.push(root);
+    mkdirSync(join(root, "node_modules", "behaviors", "evil"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "behaviors", "evil", "behavior.yaml"), yamlFor("evil"));
+
+    const found = discoverBehaviorPackages(root, { searchRoots: ["."] });
+    expect(found.map((f) => f.behaviorId)).toEqual(["ok"]);
+  });
+});
+
+describe("exclusions are an explicit list, not a dot-prefix rule", () => {
+  it(".ensemble/behaviors remains a valid non-monorepo layout", () => {
+    const root = makeRepo(join(".ensemble", "behaviors", "keep"), "keep");
+    dirs.push(root);
+    expect(discoverBehaviorPackages(root, { searchRoots: ["."] }).map((f) => f.behaviorId)).toEqual(["keep"]);
+  });
+});
