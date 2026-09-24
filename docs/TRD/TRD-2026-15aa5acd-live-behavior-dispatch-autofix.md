@@ -73,7 +73,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a normalized event whose type is absent from the catalog, when `normalizeEvent` is called, then it throws rather than returning an event.
 - [ ] **TRD-001-TEST** Catalog-rejection and renamed-type regression tests (2h) [verifies TRD-001] [satisfies INFRA] [depends: TRD-001]
-  - Target Files: `packages/pi-extension/test/pi-events.test.ts`
+  - Target Files: `packages/pi-extension/tests/pi-events.test.ts`
   - Implementation AC:
     - [ ] Given each of the four previously-uncatalogued type strings, when normalized, then each is either catalogued or rejected — no silent pass-through remains.
 - [ ] **TRD-002** Implement `MutationGuard` in agent-core with mutation-class authorization via `hasMutationAuthority()` and an `enforcementActive` flag (6h) [satisfies REQ-011]
@@ -83,7 +83,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a compiled manifest whose `mutation_classes` omits `artifact.write`, when `authorize({mutationClass:"artifact.write"})` is called, then the decision is `allowed: false` with a reason naming the missing class.
 - [ ] **TRD-002-TEST** MutationGuard authorization tests incl. tool-vs-mutation separation (3h) [verifies TRD-002] [satisfies REQ-011] [depends: TRD-002]
   - Validates PRD ACs: AC-011-1, AC-011-3
-  - Target Files: `packages/agent-core/test/mutation-guard.test.ts`
+  - Target Files: `packages/agent-core/tests/mutation-guard.test.ts`
   - Implementation AC:
     - [ ] Given a behavior granted `bash` but not `artifact.write`, when a write is attempted through a bash invocation, then `authorize()` denies it.
 - [ ] **TRD-003** Route behavior tool execution through `MutationGuard` at the loader boundary and remove the unconditional `registry.grant()` in `behavior-loader.ts` (5h) [satisfies REQ-011] [depends: TRD-002]
@@ -92,7 +92,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a governed tool invocation, when it executes, then its grant derives from the compiled manifest rather than being issued unconditionally at call time.
 - [ ] **TRD-003-TEST** Loader-boundary enforcement tests, including the removed rubber-stamp path (3h) [verifies TRD-003] [satisfies REQ-011] [depends: TRD-003]
-  - Target Files: `packages/pi-extension/test/behavior-loader.test.ts`
+  - Target Files: `packages/pi-extension/tests/behavior-loader.test.ts`
   - Implementation AC:
     - [ ] Given a tool absent from `capabilities.tools`, when invoked through the loader, then the result is `unauthorized`.
 - [ ] **TRD-004** Loader fails closed: refuse to load a `mode: auto` manifest when `enforcementActive` is false (3h) [satisfies REQ-011] [depends: TRD-002]
@@ -101,7 +101,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given `enforcementActive === false` and a `mode: auto` manifest, when loading is attempted, then it is refused with a diagnostic naming the manifest.
 - [ ] **TRD-004-TEST** Fail-closed load-refusal tests (2h) [verifies TRD-004] [satisfies REQ-011] [depends: TRD-004]
-  - Target Files: `packages/pi-extension/test/behavior-loader.test.ts`
+  - Target Files: `packages/pi-extension/tests/behavior-loader.test.ts`
   - Implementation AC:
     - [ ] Given the same manifest with `mode: propose`, when loaded with enforcement inactive, then it loads (proving the refusal is mode-specific, not blanket).
 - [ ] **TRD-005** Wire discovery → compile → load into `extension.ts` `activate()` (5h) [satisfies REQ-009] [depends: TRD-003]
@@ -111,7 +111,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a repo with one valid behavior package, when the production `activate()` runs, then `discoverBehaviorPackages`, `compileBehaviorToArtifacts`, and `loadCompiledBehavior` are each reached without a test harness.
 - [ ] **TRD-005-TEST** Activation-path tests driven through `activate()`, not direct loader calls (4h) [verifies TRD-005] [satisfies REQ-009] [depends: TRD-005]
   - Validates PRD ACs: AC-009-1, AC-009-2
-  - Target Files: `packages/pi-extension/test/extension.test.ts`
+  - Target Files: `packages/pi-extension/tests/extension.test.ts`
   - Implementation AC:
     - [ ] Given a manifest that does not grant `bash`, when a native bash call is attempted in a session created via `activate()`, then it is blocked — the assertion path must fail if the wiring is removed.
 - [ ] **TRD-006** Graceful activation when the repo contains no behavior packages (2h) [satisfies REQ-009] [depends: TRD-005]
@@ -120,7 +120,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a repo with zero behavior packages, when `activate()` runs, then tool registration completes and no error is raised.
 - [ ] **TRD-006-TEST** Empty-repo activation test (2h) [verifies TRD-006] [satisfies REQ-009] [depends: TRD-006]
-  - Target Files: `packages/pi-extension/test/extension.test.ts`
+  - Target Files: `packages/pi-extension/tests/extension.test.ts`
   - Implementation AC:
     - [ ] Given zero packages, when `activate()` runs, then `echoTool` is still registered.
 - [ ] **TRD-007** Add the fixture-constructibility conformance rule (5h) [satisfies REQ-010]
@@ -130,7 +130,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a fixture event containing a field no translator can emit, when conformance runs, then that fixture fails with a message naming the offending field.
 - [ ] **TRD-007-TEST** Conformance-rule tests, including the negative proof against today's `exit_code` fixture (3h) [verifies TRD-007] [satisfies REQ-010] [depends: TRD-007]
   - Validates PRD ACs: AC-010-3
-  - Target Files: `packages/agent-core/test/fixture-conformance.test.ts`
+  - Target Files: `packages/agent-core/tests/fixture-conformance.test.ts`
   - Implementation AC:
     - [ ] Given the pre-existing `exit_code` fixture, when the rule runs, then it fails — proving detection rather than passing on corrected inputs.
 
@@ -145,7 +145,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given no configuration, when discovery runs in this monorepo, then the same package set is found as before the change.
 - [ ] **TRD-008-TEST** Discovery-root tests for default and non-monorepo layouts (3h) [verifies TRD-008] [satisfies REQ-013] [depends: TRD-008]
   - Validates PRD ACs: AC-013-2
-  - Target Files: `packages/agent-core/test/package-discovery.test.ts`
+  - Target Files: `packages/agent-core/tests/package-discovery.test.ts`
   - Implementation AC:
     - [ ] Given a fixture repo with behaviors outside `packages/` and no `packages/` directory, when discovery runs with that root configured, then the behaviors are found.
 - [ ] **TRD-009** Add `execution.test_command` to the schema and plumb it through the compiler (3h) [satisfies REQ-012]
@@ -154,7 +154,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a package declaring a test command, when compiled, then the command is present on the compiled artifact with no `npm test` fallback anywhere in the path.
 - [ ] **TRD-009-TEST** Schema and compiler plumbing tests (2h) [verifies TRD-009] [satisfies REQ-012] [depends: TRD-009]
-  - Target Files: `packages/agent-core/test/schema.test.ts`
+  - Target Files: `packages/agent-core/tests/schema.test.ts`
   - Implementation AC:
     - [ ] Given a non-npm command such as `mix test`, when compiled, then it round-trips unaltered.
 - [ ] **TRD-010** Validation: a `mode: auto` manifest without a test command fails validation (2h) [satisfies REQ-012] [depends: TRD-009]
@@ -163,7 +163,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given `mode: auto` and no `execution.test_command`, when validated, then validation fails rather than defaulting to a package-manager guess.
 - [ ] **TRD-010-TEST** Auto-mode test-command validation tests (2h) [verifies TRD-010] [satisfies REQ-012] [depends: TRD-010]
-  - Target Files: `packages/agent-core/test/compiler.test.ts`
+  - Target Files: `packages/agent-core/tests/compiler.test.ts`
   - Implementation AC:
     - [ ] Given `mode: propose` and no test command, when validated, then it passes — proving the rule is scoped to `auto`.
 
@@ -178,7 +178,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a failing native bash call, when its result event fires, then the normalized payload contains the command string and `isError: true`.
 - [ ] **TRD-011-TEST** Normalization payload tests for pass and fail (2h) [verifies TRD-011] [satisfies REQ-001] [depends: TRD-011]
   - Validates PRD ACs: AC-001-1, AC-001-2
-  - Target Files: `packages/pi-extension/test/pi-events.test.ts`
+  - Target Files: `packages/pi-extension/tests/pi-events.test.ts`
   - Implementation AC:
     - [ ] Given a succeeding bash call, when normalized, then `isError` is `false`.
 - [ ] **TRD-012** Implement `EventTranslator` producing catalog-validated `test.failure.observed`, appended to the outbox (6h) [satisfies REQ-002] [depends: TRD-011]
@@ -187,7 +187,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a bash result with `isError: true` and a command matching the configured test-runner pattern, when translated, then a valid `test.failure.observed` is appended with status `accepted_locally`.
 - [ ] **TRD-012-TEST** Translator tests incl. non-matching commands and successful runs (4h) [verifies TRD-012] [satisfies REQ-002] [depends: TRD-012]
-  - Target Files: `packages/pi-extension/test/event-translator.test.ts`
+  - Target Files: `packages/pi-extension/tests/event-translator.test.ts`
   - Implementation AC:
     - [ ] Given a failing bash call whose command does not match the test-runner pattern, when translated, then no event is produced.
 - [ ] **TRD-013** Change the example behavior's trigger predicate to `isError`, recompute its digest, and update both fixtures (3h) [satisfies REQ-010] [depends: TRD-012]
@@ -197,7 +197,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given an event produced by `EventTranslator` from a real failing bash result, when matched against the example's trigger, then it matches; the digest is recomputed by `computeManifestDigest()`, never hand-written.
 - [ ] **TRD-013-TEST** Example-behavior trigger and fixture-conformance tests (2h) [verifies TRD-013] [satisfies REQ-010] [depends: TRD-013]
   - Validates PRD ACs: AC-010-1, AC-010-2
-  - Target Files: `packages/agent-core/test/behavior.test.ts`
+  - Target Files: `packages/agent-core/tests/behavior.test.ts`
   - Implementation AC:
     - [ ] Given the updated fixtures, when the TRD-007 constructibility rule runs, then they pass.
 - [ ] **TRD-014** Confirm translator portability: no `packages/`-relative assumptions on any path (2h) [satisfies REQ-002] [depends: TRD-008, TRD-012]
@@ -207,7 +207,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a checkout with no `packages/` directory, when a matching bash failure occurs, then the same event is produced.
 - [ ] **TRD-014-TEST** Non-monorepo translator test (2h) [verifies TRD-014] [satisfies REQ-002] [depends: TRD-014]
   - Validates PRD ACs: AC-002-2
-  - Target Files: `packages/pi-extension/test/event-translator.test.ts`
+  - Target Files: `packages/pi-extension/tests/event-translator.test.ts`
   - Implementation AC:
     - [ ] Given the non-monorepo fixture repo, when a test failure occurs, then the outbox receives the identical event shape as in this monorepo.
 
@@ -220,10 +220,10 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Target Files: `packages/pi-extension/src/local-event-matcher.ts`
   - Implementation AC:
     - [ ] Given a behavior whose trigger matches an appended event, when the append occurs, then its compiled artifact executes in the current session
-    - [ ] Given no match, then nothing is invoked and no error is raised.
+    - [ ] Given an appended event matching no behavior trigger, when the matcher runs, then nothing is invoked and no error is raised.
 - [ ] **TRD-015-TEST** Matcher invocation and no-match tests (4h) [verifies TRD-015] [satisfies REQ-003] [depends: TRD-015]
   - Validates PRD ACs: AC-003-1, AC-003-2
-  - Target Files: `packages/pi-extension/test/local-event-matcher.test.ts`
+  - Target Files: `packages/pi-extension/tests/local-event-matcher.test.ts`
   - Implementation AC:
     - [ ] Given two behaviors where only one matches, when the event is appended, then exactly one invocation occurs.
 - [ ] **TRD-016** Guarantee non-durability: no event-to-behavior correlation is written to disk or any external store (4h) [satisfies REQ-003] [depends: TRD-015]
@@ -233,7 +233,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a completed match-and-invoke cycle, when the process exits, then no correlation record is recoverable from disk.
 - [ ] **TRD-016-TEST** Cross-process non-durability proof (4h) [verifies TRD-016] [satisfies REQ-003] [depends: TRD-016]
   - Validates PRD ACs: AC-003-3, AC-003-4
-  - Target Files: `packages/pi-extension/test/local-event-matcher.test.ts`
+  - Target Files: `packages/pi-extension/tests/local-event-matcher.test.ts`
   - Implementation AC:
     - [ ] Given a correlation created in process A, when process A exits and process B starts against the same repo, then process B can recover no trace of it — asserted independently of `LocalRunner`'s existing non-orphan proof.
 - [ ] **TRD-017** Add mode branching to `MutationGuard`: `auto` permits within mutation classes, `propose` denies direct writes, `shadow` denies all (6h) [satisfies REQ-004] [depends: TRD-002]
@@ -243,7 +243,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given `mode: shadow` and `mutation_classes: [artifact.write]`, when a write is attempted, then it is denied — mode outranks declared classes.
 - [ ] **TRD-017-TEST** Mode-branching matrix tests across all three modes (4h) [verifies TRD-017] [satisfies REQ-004] [depends: TRD-017]
   - Validates PRD ACs: AC-004-1, AC-004-2, AC-004-3
-  - Target Files: `packages/agent-core/test/mutation-guard.test.ts`
+  - Target Files: `packages/agent-core/tests/mutation-guard.test.ts`
   - Implementation AC:
     - [ ] Given each of the three modes paired with an identical write attempt, when authorized, then the decisions are permit / deny / deny respectively.
 - [ ] **TRD-018** Implement the proposal-artifact path used by `mode: propose` (4h) [satisfies REQ-004] [depends: TRD-017]
@@ -252,7 +252,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given `mode: propose` and an attempted write, when the behavior completes, then a proposal artifact exists and the target file is unmodified.
 - [ ] **TRD-018-TEST** Proposal-artifact tests (3h) [verifies TRD-018] [satisfies REQ-004] [depends: TRD-018]
-  - Target Files: `packages/agent-core/test/mutation-guard.test.ts`
+  - Target Files: `packages/agent-core/tests/mutation-guard.test.ts`
   - Implementation AC:
     - [ ] Given a proposal artifact, when inspected, then it contains the intended diff and the target file's on-disk content is byte-identical to its pre-attempt state.
 
@@ -266,7 +266,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given each of the four protected categories, when classified, then each returns its category rather than `ordinary`.
 - [ ] **TRD-019-TEST** Path-classification tests including near-miss ordinary paths (4h) [verifies TRD-019] [satisfies REQ-015] [depends: TRD-019]
-  - Target Files: `packages/agent-core/test/protected-paths.test.ts`
+  - Target Files: `packages/agent-core/tests/protected-paths.test.ts`
   - Implementation AC:
     - [ ] Given a source file whose name merely contains the substring `test`, when classified, then it is not misclassified as a test file.
 - [ ] **TRD-020** Enforce protected-path refusal inside `MutationGuard` (4h) [satisfies REQ-015] [depends: TRD-019]
@@ -276,7 +276,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a candidate write to any protected path under `mode: auto`, when authorized, then the decision is `allowed: false` with `escalate: true`.
 - [ ] **TRD-020-TEST** Adversarial protected-path tests that bypass the model entirely (4h) [verifies TRD-020] [satisfies REQ-015] [depends: TRD-020]
   - Validates PRD ACs: AC-015-4
-  - Target Files: `packages/agent-core/test/mutation-guard.test.ts`
+  - Target Files: `packages/agent-core/tests/mutation-guard.test.ts`
   - Implementation AC:
     - [ ] Given a hand-constructed candidate diff targeting `tool-grant-enforcement.ts`, when passed directly to `authorize()` with no model involved, then it is refused.
 - [ ] **TRD-021** Implement `WorkspaceSnapshot` capture and exact restore (6h) [satisfies REQ-015]
@@ -286,7 +286,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a set of files modified during an attempt, when `restore()` runs, then every file's content and mode is byte-identical to capture time, and files created during the attempt are removed.
 - [ ] **TRD-021-TEST** Snapshot round-trip and partial-failure restore tests (4h) [verifies TRD-021] [satisfies REQ-015] [depends: TRD-021]
   - Validates PRD ACs: AC-015-3
-  - Target Files: `packages/agent-core/test/workspace-snapshot.test.ts`
+  - Target Files: `packages/agent-core/tests/workspace-snapshot.test.ts`
   - Implementation AC:
     - [ ] Given an attempt that writes three files then fails on the fourth, when restore runs, then all three writes are reverted.
 - [ ] **TRD-022** Implement `ApprovalGate` on `ui.confirm`, failing closed when `hasUI === false` (4h) [satisfies REQ-014]
@@ -296,7 +296,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given `hasUI === false`, when confirmation is requested, then no PR is opened, no file is written, and `ensemble.request_approval` is invoked instead.
 - [ ] **TRD-022-TEST** Fail-closed gate tests across `hasUI` true/false (3h) [verifies TRD-022] [satisfies REQ-014] [depends: TRD-022]
   - Validates PRD ACs: AC-014-2
-  - Target Files: `packages/pi-extension/test/approval-gate.test.ts`
+  - Target Files: `packages/pi-extension/tests/approval-gate.test.ts`
   - Implementation AC:
     - [ ] Given `hasUI === false`, when the gate is evaluated, then no code path returns a truthy confirmation.
 - [ ] **TRD-023** Implement `CommitPolicy`: refuse default/`main`/`master`, require attribution in the message (5h) [satisfies REQ-016]
@@ -306,7 +306,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given the current branch is the repository default, when a commit is attempted, then it is refused or redirected to a dedicated branch — never committed in place.
 - [ ] **TRD-023-TEST** Branch-policy and attribution tests (3h) [verifies TRD-023] [satisfies REQ-016] [depends: TRD-023]
   - Validates PRD ACs: AC-016-2, AC-016-3
-  - Target Files: `packages/pi-extension/test/commit-policy.test.ts`
+  - Target Files: `packages/pi-extension/tests/commit-policy.test.ts`
   - Implementation AC:
     - [ ] Given an accepted fix, when committed, then the message contains behavior name, source event id, and attempt number.
 
@@ -319,9 +319,9 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Target Files: `packages/pi-extension/src/issue-identity.ts`
   - Implementation AC:
     - [ ] Given two failures of the same test with identical normalized signatures, when keyed, then the keys are equal
-    - [ ] Given a different failure signature, then the keys differ.
+    - [ ] Given two failures with different normalized signatures, when keyed, then the keys differ.
 - [ ] **TRD-024-TEST** Identity-stability tests incl. volatile-content normalization (3h) [verifies TRD-024] [satisfies REQ-006] [depends: TRD-024]
-  - Target Files: `packages/pi-extension/test/issue-identity.test.ts`
+  - Target Files: `packages/pi-extension/tests/issue-identity.test.ts`
   - Implementation AC:
     - [ ] Given two runs whose failure output differs only by timestamps and absolute paths, when keyed, then the keys are equal.
 - [ ] **TRD-025** Apply a candidate fix through `MutationGuard` (staged apply, every write authorized) (5h) [satisfies REQ-005] [depends: TRD-017, TRD-021, TRD-015]
@@ -330,7 +330,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a candidate touching an unauthorized path, when applied, then the attempt aborts at the first denial with no partial write surviving.
 - [ ] **TRD-025-TEST** Staged-apply authorization tests (4h) [verifies TRD-025] [satisfies REQ-005] [depends: TRD-025]
-  - Target Files: `packages/pi-extension/test/autofix-loop.test.ts`
+  - Target Files: `packages/pi-extension/tests/autofix-loop.test.ts`
   - Implementation AC:
     - [ ] Given a candidate whose third write is denied, when applied, then writes one and two are reverted.
 - [ ] **TRD-026** Re-verify with the behavior-declared test command over the full suite; accept only on zero failures (5h) [satisfies REQ-005] [depends: TRD-025, TRD-009]
@@ -340,7 +340,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a candidate that fixes the target test, when the full declared suite reports zero failures, then the fix is accepted and a fix-applied outcome is recorded.
 - [ ] **TRD-026-TEST** Full-suite verification tests (4h) [verifies TRD-026] [satisfies REQ-005] [depends: TRD-026]
   - Validates PRD ACs: AC-005-2
-  - Target Files: `packages/pi-extension/test/autofix-loop.test.ts`
+  - Target Files: `packages/pi-extension/tests/autofix-loop.test.ts`
   - Implementation AC:
     - [ ] Given the target test passes but the suite reports one unrelated failure, when evaluated, then the fix is not accepted.
 - [ ] **TRD-027** Reject on regression or protected-path violation and restore the tree (4h) [satisfies REQ-005] [depends: TRD-026, TRD-021]
@@ -350,7 +350,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given a rejected candidate, when rejection completes, then the working tree is byte-identical to its pre-attempt state and the attempt counts toward the retry budget.
 - [ ] **TRD-027-TEST** Adversarial rejection tests, including the gut-the-assertion candidate (4h) [verifies TRD-027] [satisfies REQ-005] [depends: TRD-027]
   - Validates PRD ACs: AC-005-1, AC-005-4
-  - Target Files: `packages/pi-extension/test/autofix-loop.test.ts`
+  - Target Files: `packages/pi-extension/tests/autofix-loop.test.ts`
   - Implementation AC:
     - [ ] Given a candidate whose only change deletes the failing assertion, when evaluated, then it is rejected by the TRD-020 write boundary without relying on model judgment.
 - [ ] **TRD-028** Enforce the 3-attempt retry budget and escalate via `ensemble.request_approval` (5h) [satisfies REQ-006] [depends: TRD-024, TRD-027]
@@ -360,7 +360,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
     - [ ] Given two rejected attempts for one issue key, when a third is rejected, then no further attempt occurs and an approval request is recorded.
 - [ ] **TRD-028-TEST** Retry-budget and counter-reset tests (4h) [verifies TRD-028] [satisfies REQ-006] [depends: TRD-028]
   - Validates PRD ACs: AC-006-2
-  - Target Files: `packages/pi-extension/test/autofix-loop.test.ts`
+  - Target Files: `packages/pi-extension/tests/autofix-loop.test.ts`
   - Implementation AC:
     - [ ] Given success on attempt two, when the suite passes, then no third attempt occurs and that issue's counter resets.
 - [ ] **TRD-029** Gate constitution-change proposals behind the inline confirmation; open a PR only on "yes" (6h) [satisfies REQ-007] [depends: TRD-022, TRD-018]
@@ -368,10 +368,10 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Target Files: `packages/pi-extension/src/approval-gate.ts`
   - Implementation AC:
     - [ ] Given a "no" answer, when the gate resolves, then no PR is opened and `constitution.md` is unchanged
-    - [ ] Given "yes", then a PR is opened and `constitution.md` remains unmodified until merge.
+    - [ ] Given a "yes" answer, when the gate resolves, then a PR is opened and `constitution.md` remains unmodified until that PR merges.
 - [ ] **TRD-029-TEST** Approval-gate tests across yes / no / no-UI (4h) [verifies TRD-029] [satisfies REQ-007] [depends: TRD-029]
   - Validates PRD ACs: AC-007-1, AC-007-2, AC-007-3
-  - Target Files: `packages/pi-extension/test/approval-gate.test.ts`
+  - Target Files: `packages/pi-extension/tests/approval-gate.test.ts`
   - Implementation AC:
     - [ ] Given `hasUI === false`, when a constitution change is proposed, then the outcome matches the "no" branch exactly.
 - [ ] **TRD-030** Bound total verification time within the behavior's declared `policy.timeout` across attempts (3h) [satisfies NFR-4] [depends: TRD-026]
@@ -379,16 +379,16 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given a suite whose runtime would exceed the declared timeout, when the budget is exhausted, then the attempt is treated as failed and escalates rather than running unbounded.
 - [ ] **TRD-030-TEST** Timeout-budget tests (2h) [verifies TRD-030] [satisfies NFR-4] [depends: TRD-030]
-  - Target Files: `packages/pi-extension/test/autofix-loop.test.ts`
+  - Target Files: `packages/pi-extension/tests/autofix-loop.test.ts`
   - Implementation AC:
     - [ ] Given an artificially slow suite, when the budget elapses, then the run is terminated with no orphaned process.
 - [ ] **TRD-031** End-to-end portability proof on a non-monorepo fixture repo with a non-npm test command (6h) [satisfies REQ-008] [depends: TRD-014, TRD-028, TRD-023]
   - Validates PRD ACs: AC-008-1
-  - Target Files: `packages/pi-extension/test/portability.e2e.test.ts`
+  - Target Files: `packages/pi-extension/tests/portability.e2e.test.ts`
   - Implementation AC:
     - [ ] Given the fixture repo with no `packages/` directory and a non-npm declared test command, when a real test fails, then translate → match → auto-fix → full-suite reverify → commit-or-escalate completes with no code modification.
 - [ ] **TRD-031-TEST** Portability happy-path and escalation-path tests (5h) [verifies TRD-031] [satisfies REQ-008] [depends: TRD-031]
-  - Target Files: `packages/agent-core/test/portability.e2e.test.test.ts`
+  - Target Files: `packages/agent-core/tests/portability.e2e.test.test.ts`
   - Implementation AC:
     - [ ] Given the same fixture repo where no fix succeeds within three attempts, when the loop ends, then it escalates rather than committing — covering the edge case PRD REQ-008's single AC omits.
 
