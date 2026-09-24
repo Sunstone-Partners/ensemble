@@ -74,11 +74,11 @@ describe("behavior package schema/compiler (TRD-011)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("rejects a manifest with no trigger.event_type", () => {
+  it("AC-012-2: rejects a manifest missing a required field with a specific field-level error", () => {
     const invalid = fixtureManifest({ trigger: { event_type: "" } });
     const result = compile({ behaviors: [invalid] });
     expect(result.ok).toBe(false);
-    expect(result.errors[0].message).toMatch(/no trigger.event_type/);
+    expect(result.errors[0].message).toBe("field 'trigger.event_type' is required");
   });
 
   it("matches an event against a compiled behavior's trigger and predicate", () => {

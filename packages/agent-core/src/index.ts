@@ -8,3 +8,4 @@ export * from "./behavior/schema";
 export * from "./behavior/compiler";
 export * from "./behavior/discovery";
 export * from "./behavior/conformance";
+export * from "./behavior/package-discovery";

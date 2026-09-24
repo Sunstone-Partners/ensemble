@@ -56,17 +56,37 @@ function compileOne(manifest: BehaviorManifest): { errors: CompileError[]; compi
   const errors: CompileError[] = [];
   const name = manifest.metadata?.name ?? "<unnamed>";
 
+  // AC-012-2: each failure names its specific field path, not a generic
+  // "invalid manifest" message.
+  if (!manifest.api_version) {
+    errors.push({ behaviorName: name, message: "field 'api_version' is required" });
+  }
   if (manifest.kind !== "Behavior") {
-    errors.push({ behaviorName: name, message: `unsupported kind: ${String(manifest.kind)}` });
+    errors.push({ behaviorName: name, message: `field 'kind' must be "Behavior", got: ${String(manifest.kind)}` });
+  }
+  if (!manifest.metadata?.name) {
+    errors.push({ behaviorName: name, message: "field 'metadata.name' is required" });
+  }
+  if (!manifest.metadata?.version) {
+    errors.push({ behaviorName: name, message: "field 'metadata.version' is required" });
   }
   if (!manifest.trigger?.event_type) {
-    errors.push({ behaviorName: name, message: "behavior has no trigger.event_type" });
+    errors.push({ behaviorName: name, message: "field 'trigger.event_type' is required" });
+  }
+  if (!manifest.policy?.mode) {
+    errors.push({ behaviorName: name, message: "field 'policy.mode' is required" });
+  }
+  if (!manifest.execution?.graph) {
+    errors.push({ behaviorName: name, message: "field 'execution.graph' is required" });
   }
   if (!Array.isArray(manifest.capabilities?.tools)) {
-    errors.push({ behaviorName: name, message: "capabilities.tools must be an array" });
+    errors.push({ behaviorName: name, message: "field 'capabilities.tools' must be an array" });
   }
   if (!Array.isArray(manifest.capabilities?.mutation_classes)) {
-    errors.push({ behaviorName: name, message: "capabilities.mutation_classes must be an array" });
+    errors.push({ behaviorName: name, message: "field 'capabilities.mutation_classes' must be an array" });
+  }
+  if (!Array.isArray(manifest.outcomes)) {
+    errors.push({ behaviorName: name, message: "field 'outcomes' must be an array" });
   }
 
   const digest = computeManifestDigest(manifest);
