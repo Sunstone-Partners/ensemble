@@ -180,3 +180,26 @@ describe("the reachable denial path in production (TRD-003 scope, honestly state
     expect(tools.has(echoTool.name)).toBe(false);
   });
 });
+
+describe("portability of activation (TRD-008 reachability)", () => {
+  const mine: string[] = [];
+  afterAll(() => mine.forEach((d) => rmSync(d, { recursive: true, force: true })));
+
+  it("loads a behavior from a repo with no packages/ directory", () => {
+    // TRD-008 made discovery configurable; this asserts activation
+    // actually passes that configuration through, rather than leaving
+    // the new capability reachable only from unit tests.
+    const root = mkdtempSync(join(tmpdir(), "portable-"));
+    mine.push(root);
+    const dir = join(root, ".ensemble", "behaviors", "investigate-test-failure");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "behavior.yaml"), GRANTS_READ_ONLY);
+
+    const { pi, commands, fireToolCall } = fakePi();
+    const result = activateBehaviorPipeline(pi, root, [echoTool]);
+
+    expect(result.loaded).toEqual(["investigate-test-failure"]);
+    expect(commands.has("investigate-test-failure")).toBe(true);
+    expect(fireToolCall("bash")?.block).toBe(true);
+  });
+});

@@ -62,12 +62,13 @@ export function activateBehaviorPipeline(
   pi: ExtensionAPI,
   rootDir: string,
   availableTools: readonly ToolDescriptor<Record<string, unknown>, unknown>[] = [],
+  searchRoots: string[] = ["packages", "."],
 ): BehaviorActivationResult {
   const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [] };
 
   let discovered;
   try {
-    discovered = discoverBehaviorPackages(rootDir);
+    discovered = discoverBehaviorPackages(rootDir, { searchRoots });
   } catch {
     // A repo with no discoverable layout at all is not an error —
     // the extension must still activate normally (AC-009-3).

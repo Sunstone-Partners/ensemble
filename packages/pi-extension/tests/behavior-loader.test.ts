@@ -226,6 +226,7 @@ describe("fail-closed load refusal (TRD-004 / AC-011-2)", () => {
   const autoManifest: BehaviorManifest = {
     ...manifest,
     policy: { mode: "auto", timeout: "30m" },
+    execution: { graph: "investigate-test-failure", test_command: "npm test" },
     capabilities: { tools: ["echo"], mutation_classes: ["artifact.write"] },
   };
 

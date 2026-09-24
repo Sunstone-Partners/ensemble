@@ -79,6 +79,16 @@ function compileOne(manifest: BehaviorManifest): { errors: CompileError[]; compi
   if (!manifest.execution?.graph) {
     errors.push({ behaviorName: name, message: "field 'execution.graph' is required" });
   }
+  // TRD-010/AC-012-2: an auto-applying behavior must declare how to
+  // re-verify its own fix. Falling back to a package-manager guess
+  // would silently run the wrong suite (or none) in a non-npm repo
+  // and report a fix as verified when nothing was verified.
+  if (manifest.policy?.mode === "auto" && !manifest.execution?.test_command) {
+    errors.push({
+      behaviorName: name,
+      message: "field 'execution.test_command' is required when policy.mode is \"auto\"",
+    });
+  }
   if (!Array.isArray(manifest.capabilities?.tools)) {
     errors.push({ behaviorName: name, message: "field 'capabilities.tools' must be an array" });
   }

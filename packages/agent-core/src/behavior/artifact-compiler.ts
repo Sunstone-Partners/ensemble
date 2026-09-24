@@ -15,6 +15,8 @@ export interface CompiledBehaviorArtifacts {
   promptMarkdown: string;
   skillMarkdown: string;
   toolNames: string[];
+  /** TRD-009/AC-012-1: the behavior's own declared test command, never an npm guess. */
+  testCommand?: string;
 }
 
 export function compileBehaviorToArtifacts(
@@ -52,5 +54,5 @@ export function compileBehaviorToArtifacts(
   const availableToolNames = new Set(availableTools.map((tool) => tool.name));
   const toolNames = manifest.capabilities.tools.filter((tool) => availableToolNames.has(tool));
 
-  return { behaviorName, commandName, promptMarkdown, skillMarkdown, toolNames };
+  return { behaviorName, commandName, promptMarkdown, skillMarkdown, toolNames, testCommand: manifest.execution.test_command };
 }

@@ -29,6 +29,17 @@ export interface BehaviorCapabilities {
 
 export interface BehaviorExecution {
   graph: string;
+  /**
+   * The command this package's own repository uses to run its full
+   * test suite (e.g. `npm test`, `mix test`, `pytest`).
+   *
+   * Required for `mode: auto` (TRD-010): an auto-applying behavior
+   * re-verifies its own fix, and guessing the command from the
+   * ambient package manager would silently do the wrong thing in any
+   * non-npm repository. Optional for `propose`/`shadow`, which never
+   * apply a fix themselves.
+   */
+  test_command?: string;
 }
 
 export interface BehaviorMetadata {
