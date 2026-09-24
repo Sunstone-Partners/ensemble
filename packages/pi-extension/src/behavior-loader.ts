@@ -1,6 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { CompiledBehaviorArtifacts, ToolDescriptor, ToolRegistry } from "@sunstone-partners/ensemble-agent-core";
+import {
+  CompiledBehaviorArtifacts,
+  CompiledBehaviorPackage,
+  ToolDescriptor,
+  ToolRegistry,
+} from "@sunstone-partners/ensemble-agent-core";
+import { wireToolGrantEnforcement } from "./tool-grant-enforcement";
 
 /**
  * Loads one compiled behavior's artifacts into a live Pi session
@@ -19,6 +25,12 @@ import { CompiledBehaviorArtifacts, ToolDescriptor, ToolRegistry } from "@sunsto
  *   with a real descriptor in `availableTools`) are registered via
  *   `pi.registerTool`, reusing the same ToolRegistry grant boundary
  *   established in TRD-005 (grant applies per session, per tool name).
+ * - the compiled behavior's full `capabilities.tools` grant (including
+ *   Pi's own native tools, not just governed custom ones) is enforced
+ *   at the `tool_call` boundary via `wireToolGrantEnforcement`
+ *   (TRD-018) — independent of `availableTools`/`artifacts.toolNames`,
+ *   which only control what gets *registered*, not what Pi is allowed
+ *   to *execute*.
  *
  * Reuses `packages/pi`'s existing generator output *shape* conceptually
  * (name/description/content) without importing from or modifying
@@ -28,9 +40,12 @@ import { CompiledBehaviorArtifacts, ToolDescriptor, ToolRegistry } from "@sunsto
  */
 export function loadCompiledBehavior(
   pi: ExtensionAPI,
+  compiled: CompiledBehaviorPackage,
   artifacts: CompiledBehaviorArtifacts,
   availableTools: readonly ToolDescriptor<Record<string, unknown>, unknown>[],
 ): void {
+  wireToolGrantEnforcement(pi, compiled);
+
   pi.registerCommand(artifacts.commandName, {
     description: `Behavior: ${artifacts.behaviorName}`,
     async handler(args, ctx) {
