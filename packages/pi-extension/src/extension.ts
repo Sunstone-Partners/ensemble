@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { InMemoryEventSink, echoTool } from "@sunstone-partners/ensemble-agent-core";
+import { ToolRegistry, InMemoryEventSink, echoTool } from "@sunstone-partners/ensemble-agent-core";
 import { wireSessionLifecycle } from "./session";
+import { handleEchoToolCall } from "./echo-tool-handler";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -42,11 +43,22 @@ const activate = (pi: ExtensionAPI): void => {
   const sink = new InMemoryEventSink();
   wireSessionLifecycle(pi, sink);
 
-  // Pi's own tool-authorization surface (getActiveTools/setActiveTools,
-  // tool_call event blocking) is the runtime boundary a caller cannot
-  // bypass with prompt text — that boundary is Pi's, not re-implemented
-  // here. agent-core's ToolRegistry grant model is exercised separately
-  // by callers that go through it directly (see agent-core's own tests).
+  // agent-core's ToolRegistry is the enforced grant-denial boundary
+  // (AC-005-2: "prompt text cannot bypass this"). The grant source here
+  // is a registered CLI flag (`--ensemble-tool-grant`), set only at Pi
+  // startup outside the LLM's control — not something the agent's own
+  // tool-call arguments or prompt content can flip at call time. Default
+  // is false (ungranted), so the deny path is genuinely reachable, not
+  // an always-true rubber stamp.
+  pi.registerFlag("ensemble-tool-grant", {
+    description: "Grant the ensemble-managed governed tools for this session",
+    type: "boolean",
+    default: false,
+  });
+
+  const registry = new ToolRegistry();
+  registry.register(echoTool);
+
   pi.registerTool({
     name: echoTool.name,
     label: "Ensemble Echo",
@@ -56,15 +68,9 @@ const activate = (pi: ExtensionAPI): void => {
       if (signal?.aborted) {
         throw new Error("cancelled");
       }
-      const result = await echoTool.execute(
-        { message: params.message ?? "" },
-        {
-          toolName: echoTool.name,
-          args: params,
-          requestedBy: ctx.sessionManager.getSessionId() ?? "pi-session",
-        },
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      const sessionId = ctx.sessionManager.getSessionId() ?? "pi-session";
+      const granted = pi.getFlag("ensemble-tool-grant") === true;
+      return handleEchoToolCall(registry, sessionId, granted, params.message ?? "");
     },
   });
 };
