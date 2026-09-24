@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc",
     "test": "jest",
-    "test:smoke": "node scripts/smoke-activate.mjs"
+    "test:smoke": "node scripts/smoke-activate.mjs",
+    "test:e2e": "node scripts/e2e-proof.mjs"
   },
   "keywords": [
     "ensemble",

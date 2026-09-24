@@ -32,47 +32,56 @@ function assertRequiredCapabilities(pi: ExtensionAPI): void {
 }
 
 /**
- * Extension entry point. Loaded into a live Pi session via Pi's
- * native extension mechanism (see docs/extensions.md): auto-discovered
- * from `.pi/agent/extensions/` or a project's `.pi/extensions/`, no
- * fork or patch of Pi's agent loop.
+ * Builds one extension activation instance with its own event sink,
+ * exposed for scripted end-to-end proofs (TRD-009) and tests. Pi itself
+ * only ever calls the default-exported `activate` below, which is a
+ * single instance's `activate` function — Pi loads this module once per
+ * extension activation, so binding one instance here is exactly the
+ * production shape, not a test-only shortcut.
  */
-const activate = (pi: ExtensionAPI): void => {
-  assertRequiredCapabilities(pi);
-
+export function createActivate(): { activate: (pi: ExtensionAPI) => void; sink: InMemoryEventSink } {
   const sink = new InMemoryEventSink();
-  wireSessionLifecycle(pi, sink);
 
-  // agent-core's ToolRegistry is the enforced grant-denial boundary
-  // (AC-005-2: "prompt text cannot bypass this"). The grant source here
-  // is a registered CLI flag (`--ensemble-tool-grant`), set only at Pi
-  // startup outside the LLM's control — not something the agent's own
-  // tool-call arguments or prompt content can flip at call time. Default
-  // is false (ungranted), so the deny path is genuinely reachable, not
-  // an always-true rubber stamp.
-  pi.registerFlag("ensemble-tool-grant", {
-    description: "Grant the ensemble-managed governed tools for this session",
-    type: "boolean",
-    default: false,
-  });
+  const activate = (pi: ExtensionAPI): void => {
+    assertRequiredCapabilities(pi);
 
-  const registry = new ToolRegistry();
-  registry.register(echoTool);
+    wireSessionLifecycle(pi, sink);
 
-  pi.registerTool({
-    name: echoTool.name,
-    label: "Ensemble Echo",
-    description: echoTool.description,
-    parameters: Type.Object({ message: Type.String({ description: "Message to echo back" }) }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (signal?.aborted) {
-        throw new Error("cancelled");
-      }
-      const sessionId = ctx.sessionManager.getSessionId() ?? "pi-session";
-      const granted = pi.getFlag("ensemble-tool-grant") === true;
-      return handleEchoToolCall(registry, sessionId, granted, params.message ?? "");
-    },
-  });
-};
+    // agent-core's ToolRegistry is the enforced grant-denial boundary
+    // (AC-005-2: "prompt text cannot bypass this"). The grant source
+    // here is a registered CLI flag (`--ensemble-tool-grant`), set only
+    // at Pi startup outside the LLM's control — not something the
+    // agent's own tool-call arguments or prompt content can flip at
+    // call time. Default is false (ungranted), so the deny path is
+    // genuinely reachable, not an always-true rubber stamp.
+    pi.registerFlag("ensemble-tool-grant", {
+      description: "Grant the ensemble-managed governed tools for this session",
+      type: "boolean",
+      default: false,
+    });
+
+    const registry = new ToolRegistry();
+    registry.register(echoTool);
+
+    pi.registerTool({
+      name: echoTool.name,
+      label: "Ensemble Echo",
+      description: echoTool.description,
+      parameters: Type.Object({ message: Type.String({ description: "Message to echo back" }) }),
+      async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+        if (signal?.aborted) {
+          throw new Error("cancelled");
+        }
+        const sessionId = ctx.sessionManager.getSessionId() ?? "pi-session";
+        const granted = pi.getFlag("ensemble-tool-grant") === true;
+        return handleEchoToolCall(registry, sessionId, granted, params.message ?? "");
+      },
+    });
+  };
+
+  return { activate, sink };
+}
+
+const activate: (pi: ExtensionAPI) => void = createActivate().activate;
 
 export default activate;
