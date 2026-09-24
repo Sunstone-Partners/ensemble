@@ -3,12 +3,12 @@ kind: Behavior
 metadata:
   name: investigate-test-failure
   version: 1.0.0
-  digest: e0b5f51706e820c605332a565a277981eadea29d635fa6d4424462eb4fec2062
+  digest: fb1ed6114d817b0000b2acd44c8d8b9c8d693c5a03c4bf16934d2a55c60326b6
 trigger:
   event_type: test.failure.observed
   predicate:
     command: { matches: "npm test|mix test|pytest|go test" }
-    exit_code: { not: 0 }
+    isError: { equals: true }
 policy:
   mode: propose
   timeout: 30m

@@ -125,3 +125,100 @@ describe("wireSessionLifecycle (TRD-007)", () => {
     expect(call.event.payload.custom).toBe(false);
   });
 });
+
+describe("tool_result payload enrichment (TRD-011 / REQ-001)", () => {
+  it("AC-001-1: carries command, isError and output from a bash tool result", async () => {
+    const sink = new InMemoryEventSink();
+    const { pi, fire } = fakePi();
+    wireSessionLifecycle(pi, sink);
+
+    await fire("tool_result", {
+      type: "tool_result",
+      toolCallId: "t1",
+      toolName: "bash",
+      input: { command: "npm test" },
+      content: [{ type: "text", text: "1 failing" }],
+      isError: true,
+    });
+
+    const completed = sink.drain().find((e) => e.event.type === "runtime.tool_call.completed")!;
+    expect(completed.event.payload).toMatchObject({
+      toolCallId: "t1",
+      toolName: "bash",
+      command: "npm test",
+      isError: true,
+      output: "1 failing",
+    });
+  });
+
+  it("both emitters of runtime.tool_call.completed agree on isError and custom", async () => {
+    const sink = new InMemoryEventSink();
+    const { pi, fire } = fakePi();
+    wireSessionLifecycle(pi, sink);
+
+    await fire("tool_execution_end", { type: "tool_execution_end", toolCallId: "t2", toolName: "bash", result: {}, isError: true });
+    await fire("tool_result", { type: "tool_result", toolCallId: "t2", toolName: "bash", input: {}, content: [], isError: true });
+
+    const completed = sink.drain().filter((e) => e.event.type === "runtime.tool_call.completed");
+    expect(completed).toHaveLength(2);
+    for (const e of completed) {
+      expect(e.event.payload).toMatchObject({ isError: true, custom: false });
+    }
+  });
+});
+
+describe("live semantic translation through the real wiring (TRD-012/TRD-014)", () => {
+  it("a failing test command produces test.failure.observed on the session bus", async () => {
+    const sink = new InMemoryEventSink();
+    const { pi, fire } = fakePi();
+    wireSessionLifecycle(pi, sink);
+
+    await fire("tool_result", {
+      type: "tool_result",
+      toolCallId: "t3",
+      toolName: "bash",
+      input: { command: "pytest tests/" },
+      content: [{ type: "text", text: "FAILED" }],
+      isError: true,
+    });
+
+    expect(sink.drain().map((e) => e.event.type)).toEqual([
+      "runtime.tool_call.completed",
+      "test.failure.observed",
+    ]);
+  });
+
+  it("a passing test command produces no semantic event", async () => {
+    const sink = new InMemoryEventSink();
+    const { pi, fire } = fakePi();
+    wireSessionLifecycle(pi, sink);
+
+    await fire("tool_result", {
+      type: "tool_result",
+      toolCallId: "t4",
+      toolName: "bash",
+      input: { command: "pytest tests/" },
+      content: [],
+      isError: false,
+    });
+
+    expect(sink.drain().map((e) => e.event.type)).toEqual(["runtime.tool_call.completed"]);
+  });
+
+  it("a behavior-declared test command is honoured by the session wiring", async () => {
+    const sink = new InMemoryEventSink();
+    const { pi, fire } = fakePi();
+    wireSessionLifecycle(pi, sink, { testCommand: "./run-suite.sh" });
+
+    await fire("tool_result", {
+      type: "tool_result",
+      toolCallId: "t5",
+      toolName: "bash",
+      input: { command: "./run-suite.sh" },
+      content: [],
+      isError: true,
+    });
+
+    expect(sink.drain().map((e) => e.event.type)).toContain("test.failure.observed");
+  });
+});

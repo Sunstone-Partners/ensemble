@@ -64,7 +64,12 @@ export function fromToolExecutionEnd(event: ToolExecutionEndEvent) {
   return normalizeEvent({
     type: "runtime.tool_call.completed",
     source: "pi",
-    payload: { toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError === true },
+    payload: {
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      custom: !NATIVE_PI_TOOL_NAMES.has(event.toolName),
+      isError: event.isError === true,
+    },
   });
 }
 
@@ -91,11 +96,48 @@ export function fromToolCall(event: ToolCallEvent) {
   });
 }
 
+/**
+ * Extracts the shell command from a bash tool result.
+ *
+ * Pi has no numeric exit code anywhere in its event surface -- only a
+ * boolean `isError` -- so the command text plus that flag is the whole
+ * of the failure signal available to a behavior predicate (REQ-001).
+ */
+function bashCommandOf(event: ToolResultEvent): string | undefined {
+  // Structural check rather than Pi's isBashToolResult type guard: the
+  // guard is a runtime export, and importing a value from
+  // @earendil-works/pi-coding-agent turns this module's type-only
+  // dependency into a real require that is not resolvable in every
+  // consumer (it broke three test suites). Types stay import type.
+  const command = (event.input as Record<string, unknown> | undefined)?.command;
+  return typeof command === "string" ? command : undefined;
+}
+
+/** Concatenates the textual parts of a tool result, ignoring images. */
+function outputTextOf(event: ToolResultEvent): string {
+  return (event.content ?? [])
+    .filter((part): part is { type: "text"; text: string } => part?.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
+
 export function fromToolResult(event: ToolResultEvent) {
   const custom = !NATIVE_PI_TOOL_NAMES.has(event.toolName);
+  // `isError` is carried here and on fromToolExecutionEnd so that both
+  // emitters of runtime.tool_call.completed agree on the failure field;
+  // a predicate must not have to know which Pi event produced the
+  // envelope. `command`/`output` are additionally present here because
+  // only tool_result exposes the tool's input and content (REQ-001).
   return normalizeEvent({
     type: "runtime.tool_call.completed",
     source: "pi",
-    payload: { toolCallId: event.toolCallId, toolName: event.toolName, custom },
+    payload: {
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      custom,
+      isError: event.isError === true,
+      command: bashCommandOf(event),
+      output: outputTextOf(event),
+    },
   });
 }

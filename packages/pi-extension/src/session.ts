@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BehaviorEvent, EventSink } from "@sunstone-partners/ensemble-agent-core";
+import { BehaviorEvent, EventSink, withTranslation } from "@sunstone-partners/ensemble-agent-core";
 import {
   fromSessionStart,
   fromBeforeAgentStart,
@@ -24,10 +24,21 @@ import {
  * — with a shared `toolCallId` correlating the pair, and are
  * distinguished custom-vs-native in pi-events.ts.
  */
-export function wireSessionLifecycle(pi: ExtensionAPI, sink: EventSink): void {
-  const publish = (event: BehaviorEvent) => {
+export function wireSessionLifecycle(
+  pi: ExtensionAPI,
+  sink: EventSink,
+  options: { testCommand?: string } = {},
+): void {
+  const emit = (event: BehaviorEvent) => {
     void sink.publish({ event, receivedAt: new Date().toISOString() });
   };
+
+  // Every raw event is forwarded, and any semantic event it implies is
+  // published straight after it. Without this the runtime emits only
+  // runtime.* events and a behavior triggering on test.failure.observed
+  // can never fire in production, however correct its manifest is
+  // (TRD-012 / REQ-002).
+  const publish = withTranslation(emit, { testCommand: options.testCommand });
 
   pi.on("session_start", async (event) => publish(fromSessionStart(event)));
   pi.on("before_agent_start", async (event) => publish(fromBeforeAgentStart(event)));

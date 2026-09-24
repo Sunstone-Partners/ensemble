@@ -3,6 +3,6 @@
   "source": "ci",
   "payload": {
     "command": "pytest tests/",
-    "exit_code": 0
+    "isError": false
   }
 }
