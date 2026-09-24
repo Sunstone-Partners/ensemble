@@ -4,7 +4,7 @@ import {
   compile,
   compileBehaviorToArtifacts,
   discoverBehaviorPackages,
-  DEFAULT_SEARCH_ROOTS,
+  ACTIVATION_SEARCH_ROOTS,
 } from "@sunstone-partners/ensemble-agent-core";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -63,7 +63,7 @@ export function activateBehaviorPipeline(
   pi: ExtensionAPI,
   rootDir: string,
   availableTools: readonly ToolDescriptor<Record<string, unknown>, unknown>[] = [],
-  searchRoots: string[] = [...DEFAULT_SEARCH_ROOTS],
+  searchRoots: string[] = [...ACTIVATION_SEARCH_ROOTS],
 ): BehaviorActivationResult {
   const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [] };
 

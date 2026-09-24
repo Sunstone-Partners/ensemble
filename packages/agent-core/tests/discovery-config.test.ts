@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverBehaviorPackages, DEFAULT_SEARCH_ROOTS } from "../src/behavior/package-discovery";
+import { discoverBehaviorPackages, DEFAULT_SEARCH_ROOTS, ACTIVATION_SEARCH_ROOTS } from "../src/behavior/package-discovery";
 import { compile } from "../src/behavior/compiler";
 import { compileBehaviorToArtifacts } from "../src/behavior/artifact-compiler";
 import { BehaviorManifest } from "../src/behavior/schema";
@@ -46,7 +46,7 @@ describe("configurable discovery roots (TRD-008 / REQ-013)", () => {
 
     const found = discoverBehaviorPackages(root);
     expect(found.map((f) => f.behaviorId)).toEqual(["b1"]);
-    expect(DEFAULT_SEARCH_ROOTS).toContain("packages");
+    expect(DEFAULT_SEARCH_ROOTS).toEqual(["packages"]);
   });
 
   it("AC-013-2: finds behaviors in a repo with no packages/ directory at all", () => {
@@ -57,8 +57,11 @@ describe("configurable discovery roots (TRD-008 / REQ-013)", () => {
     // Proves the old hardcoded join(rootDir, "packages") could not have worked.
     expect(discoverBehaviorPackages(root, { searchRoots: ["packages"] })).toEqual([]);
 
-    // ...and that the shipped default now covers this layout.
-    const found = discoverBehaviorPackages(root);
+    // The library default must NOT silently broaden for every caller;
+    // portability is opted into, and activation is what opts in.
+    expect(discoverBehaviorPackages(root)).toEqual([]);
+
+    const found = discoverBehaviorPackages(root, { searchRoots: [...ACTIVATION_SEARCH_ROOTS] });
     expect(found.map((f) => f.behaviorId)).toEqual(["b2"]);
     expect(found[0].manifest?.metadata.name).toBe("b2");
   });

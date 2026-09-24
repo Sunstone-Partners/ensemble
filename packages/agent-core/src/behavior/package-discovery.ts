@@ -60,18 +60,16 @@ function loadManifest(manifestPath: string): { manifest?: BehaviorManifest; pars
  * structurally unusable outside this monorepo despite being published
  * as a reusable library (TRD-008 / REQ-013).
  *
- * `searchRoots` are resolved relative to `rootDir`. The default covers
- * both supported layouts: `"packages"` for this monorepo and `"."` for
- * `<rootDir>/<domain>/behaviors/<id>/`, the shape a non-monorepo
- * consumer wants.
+ * `searchRoots` are resolved relative to `rootDir`. The library default
+ * is `"packages"` only: every existing caller (CLIs, tools, tests) keeps
+ * exactly today's behavior and never scans top-level directories.
  *
- * `"."` is in the default deliberately. It does mean every top-level
- * directory is considered a domain, so this is not a pure no-op for
- * existing checkouts; measured against this repo it returns an
- * identical result in ~1ms, and EXCLUDED_DOMAINS keeps dependency and
- * VCS trees out. The alternative -- making portability opt-in -- was
- * rejected because nothing in the product would have passed the opt in,
- * leaving REQ-013 reachable only from unit tests.
+ * Portability is opted into by passing `"."`, which makes
+ * `<rootDir>/<domain>/behaviors/<id>/` work -- the shape a non-monorepo
+ * consumer wants. The product entry point opts in via
+ * ACTIVATION_SEARCH_ROOTS so REQ-013 is reachable from the real
+ * activate(); the broadened scan is scoped to that one caller rather
+ * than imposed on the whole library.
  */
 export interface DiscoveryOptions {
   searchRoots?: string[];
@@ -91,7 +89,16 @@ export const EXCLUDED_DOMAINS: ReadonlySet<string> = new Set([
   ".beads",
   ".github",
 ]);
-export const DEFAULT_SEARCH_ROOTS = ["packages", "."] as const;
+export const DEFAULT_SEARCH_ROOTS = ["packages"] as const;
+
+/**
+ * Search roots used by the pi-extension activation path. Distinct from
+ * DEFAULT_SEARCH_ROOTS on purpose: `"."` costs a scan of every
+ * top-level directory (measured at ~1ms here, bounded by
+ * EXCLUDED_DOMAINS), and that cost belongs to the one caller that needs
+ * to support non-monorepo consumers -- not to every library caller.
+ */
+export const ACTIVATION_SEARCH_ROOTS = ["packages", "."] as const;
 
 export function discoverBehaviorPackages(
   rootDir: string,
