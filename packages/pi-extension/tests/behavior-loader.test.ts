@@ -11,7 +11,7 @@ const manifest: BehaviorManifest = {
   api_version: "ensemble.sunstone.dev/v1",
   kind: "Behavior",
   metadata: { name: "investigate-test-failure", version: "1.0.0" },
-  trigger: { event_type: "test.failed" },
+  trigger: { event_type: "test.failure.observed" },
   policy: { mode: "propose", timeout: "30m" },
   capabilities: { tools: ["echo", "read"], mutation_classes: [] },
   execution: { graph: "investigate-test-failure" },
@@ -178,5 +178,84 @@ describe("wireToolGrantEnforcement (TRD-018)", () => {
     // honor even if the model was fooled into calling the ungranted tool.
     const blocked = await fireToolCall("bash.write");
     expect(blocked?.block).toBe(true);
+  });
+});
+
+describe("manifest-derived tool grant (TRD-003 / REQ-011)", () => {
+  it("returns unauthorized for a tool absent from capabilities.tools", async () => {
+    // `echo` is registered as an available tool but the manifest does
+    // NOT grant it. Before TRD-003, execute() called registry.grant()
+    // unconditionally immediately before invoke(), so this path could
+    // never return unauthorized -- the grant boundary was a rubber
+    // stamp for every behavior-governed tool.
+    const ungranted: BehaviorManifest = {
+      ...manifest,
+      capabilities: { tools: ["read"], mutation_classes: [] },
+    };
+    const { compiled } = compile({ behaviors: [ungranted] });
+    // Force-register echo as an artifact tool even though it is ungranted.
+    const artifacts = { ...compileBehaviorToArtifacts(compiled[0], [echoTool]), toolNames: [echoTool.name] };
+
+    const { pi, tools } = fakePi();
+    loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool]);
+
+    const tool = tools.get(echoTool.name)!;
+    await expect(
+      tool.execute("call-1", { message: "hi" }, undefined, undefined, {
+        sessionManager: { getSessionId: () => "s1" },
+      }),
+    ).rejects.toThrow(/unauthorized/);
+  });
+
+  it("executes normally when the manifest does grant the tool", async () => {
+    const { compiled } = compile({ behaviors: [manifest] });
+    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
+
+    const { pi, tools } = fakePi();
+    loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool]);
+
+    const tool = tools.get(echoTool.name)!;
+    const result = await tool.execute("call-1", { message: "hi" }, undefined, undefined, {
+      sessionManager: { getSessionId: () => "s1" },
+    });
+    expect(result).toBeDefined();
+  });
+});
+
+describe("fail-closed load refusal (TRD-004 / AC-011-2)", () => {
+  const autoManifest: BehaviorManifest = {
+    ...manifest,
+    policy: { mode: "auto", timeout: "30m" },
+    capabilities: { tools: ["echo"], mutation_classes: ["artifact.write"] },
+  };
+
+  it("refuses to load a mode:auto manifest when mutation enforcement is inactive", () => {
+    const { compiled } = compile({ behaviors: [autoManifest] });
+    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
+    const { pi } = fakePi();
+
+    const inactiveGuard = { enforcementActive: false, authorize: () => ({ allowed: true as const }) };
+
+    expect(() => loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool], inactiveGuard)).toThrow(
+      /refusing to load .* policy\.mode is "auto"/s,
+    );
+  });
+
+  it("loads the same manifest when enforcement is active", () => {
+    const { compiled } = compile({ behaviors: [autoManifest] });
+    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
+    const { pi, commands } = fakePi();
+
+    expect(() => loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool])).not.toThrow();
+    expect(commands.size).toBeGreaterThan(0);
+  });
+
+  it("the refusal is mode-specific: propose still loads with enforcement inactive", () => {
+    const { compiled } = compile({ behaviors: [manifest] });
+    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
+    const { pi } = fakePi();
+    const inactiveGuard = { enforcementActive: false, authorize: () => ({ allowed: true as const }) };
+
+    expect(() => loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool], inactiveGuard)).not.toThrow();
   });
 });

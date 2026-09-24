@@ -5,15 +5,15 @@ import { InMemoryEventSink } from "../src/event-sinks";
 
 describe("agent-core", () => {
   it("normalizes a raw event into the provider-neutral shape", () => {
-    const event = normalizeEvent({ type: "issue.opened", source: "github" });
-    expect(event.type).toBe("issue.opened");
+    const event = normalizeEvent({ type: "repository.changed", source: "github" });
+    expect(event.type).toBe("repository.changed");
     expect(event.payload).toEqual({});
     expect(typeof event.id).toBe("string");
   });
 
   it("publishes events through an in-memory sink", async () => {
     const sink = new InMemoryEventSink();
-    const event = normalizeEvent({ type: "issue.opened", source: "github" });
+    const event = normalizeEvent({ type: "repository.changed", source: "github" });
     await sink.publish({ event, receivedAt: new Date().toISOString() });
     expect(sink.drain()).toHaveLength(1);
     expect(sink.peek()).toHaveLength(0);

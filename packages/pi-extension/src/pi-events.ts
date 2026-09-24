@@ -8,7 +8,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { normalizeEvent, RawEventInput } from "@sunstone-partners/ensemble-agent-core";
+import { normalizeEvent } from "@sunstone-partners/ensemble-agent-core";
 
 /**
  * Native Pi tool names (as opposed to a governed custom tool registered
@@ -50,17 +50,21 @@ export function fromBeforeAgentStart(event: BeforeAgentStartEvent) {
 
 export function fromToolExecutionStart(event: ToolExecutionStartEvent) {
   return normalizeEvent({
-    type: "runtime.tool.called",
+    type: "runtime.tool_call.started",
     source: "pi",
     payload: { toolCallId: event.toolCallId, toolName: event.toolName },
   });
 }
 
 export function fromToolExecutionEnd(event: ToolExecutionEndEvent) {
+  // Previously emitted "runtime.tool.failed"/"runtime.tool.completed",
+  // neither of which exists in HARNESS_EVENT_TYPES. The pass/fail
+  // signal now rides on the payload instead of on an uncatalogued
+  // type name (TRD-001).
   return normalizeEvent({
-    type: event.isError ? "runtime.tool.failed" : "runtime.tool.completed",
+    type: "runtime.tool_call.completed",
     source: "pi",
-    payload: { toolCallId: event.toolCallId, toolName: event.toolName },
+    payload: { toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError === true },
   });
 }
 
@@ -81,7 +85,7 @@ export function fromSessionShutdown(_event: SessionShutdownEvent) {
 export function fromToolCall(event: ToolCallEvent) {
   const custom = !NATIVE_PI_TOOL_NAMES.has(event.toolName);
   return normalizeEvent({
-    type: "runtime.tool_call",
+    type: "runtime.tool_call.started",
     source: "pi",
     payload: { toolCallId: event.toolCallId, toolName: event.toolName, custom },
   });
@@ -90,7 +94,7 @@ export function fromToolCall(event: ToolCallEvent) {
 export function fromToolResult(event: ToolResultEvent) {
   const custom = !NATIVE_PI_TOOL_NAMES.has(event.toolName);
   return normalizeEvent({
-    type: "runtime.tool_result",
+    type: "runtime.tool_call.completed",
     source: "pi",
     payload: { toolCallId: event.toolCallId, toolName: event.toolName, custom },
   });

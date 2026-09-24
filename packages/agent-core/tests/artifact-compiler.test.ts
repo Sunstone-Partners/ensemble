@@ -7,7 +7,7 @@ const manifest: BehaviorManifest = {
   api_version: "ensemble.sunstone.dev/v1",
   kind: "Behavior",
   metadata: { name: "investigate-test-failure", version: "1.0.0" },
-  trigger: { event_type: "test.failed" },
+  trigger: { event_type: "test.failure.observed" },
   policy: { mode: "propose", timeout: "30m" },
   capabilities: { tools: ["echo", "bash.test"], mutation_classes: [] },
   execution: { graph: "investigate-test-failure" },
@@ -23,7 +23,7 @@ describe("compileBehaviorToArtifacts (TRD-014)", () => {
 
     expect(artifacts.behaviorName).toBe("investigate-test-failure");
     expect(artifacts.commandName).toBe("investigate-test-failure");
-    expect(artifacts.promptMarkdown).toContain("Trigger: `test.failed`");
+    expect(artifacts.promptMarkdown).toContain("Trigger: `test.failure.observed`");
     expect(artifacts.promptMarkdown).toContain("test.failure.investigated");
     expect(artifacts.skillMarkdown).toContain("name: investigate-test-failure");
     expect(artifacts.skillMarkdown).toContain("`echo`");

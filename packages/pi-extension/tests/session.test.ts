@@ -62,9 +62,9 @@ describe("wireSessionLifecycle (TRD-006)", () => {
     expect(captured).toEqual([
       "runtime.session.started",
       "runtime.prompt.submitted",
-      "runtime.tool.called",
-      "runtime.tool.completed",
-      "runtime.tool.failed",
+      "runtime.tool_call.started",
+      "runtime.tool_call.completed",
+      "runtime.tool_call.completed",
       "runtime.session.completed",
       "runtime.process.exited",
     ]);
@@ -99,8 +99,8 @@ describe("wireSessionLifecycle (TRD-007)", () => {
     });
 
     const [call, result] = sink.drain();
-    expect(call.event.type).toBe("runtime.tool_call");
-    expect(result.event.type).toBe("runtime.tool_result");
+    expect(call.event.type).toBe("runtime.tool_call.started");
+    expect(result.event.type).toBe("runtime.tool_call.completed");
     expect(call.event.payload.toolCallId).toBe("call-echo-1");
     expect(result.event.payload.toolCallId).toBe("call-echo-1");
     expect(call.event.payload.custom).toBe(true);
@@ -120,7 +120,7 @@ describe("wireSessionLifecycle (TRD-007)", () => {
     });
 
     const [call] = sink.drain();
-    expect(call.event.type).toBe("runtime.tool_call");
+    expect(call.event.type).toBe("runtime.tool_call.started");
     expect(call.event.payload.toolName).toBe("bash");
     expect(call.event.payload.custom).toBe(false);
   });

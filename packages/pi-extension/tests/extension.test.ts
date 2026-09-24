@@ -16,3 +16,99 @@ describe("pi-extension activation (AC-004-1/AC-004-2)", () => {
     expect(() => activate(brokenPi)).toThrow(/BLOCKING GAP/);
   });
 });
+
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const READ_ONLY_BEHAVIOR = `api_version: ensemble.sunstone.dev/v1
+kind: Behavior
+metadata:
+  name: investigate-test-failure
+  version: 1.0.0
+trigger:
+  event_type: test.failure.observed
+policy:
+  mode: propose
+  timeout: 30m
+capabilities:
+  tools:
+    - read
+  mutation_classes: []
+execution:
+  graph: investigate-test-failure
+outcomes:
+  - test.failure.investigated
+`;
+
+describe("production activate() wires the behavior pipeline (TRD-005 / AC-009-1, AC-009-2)", () => {
+  const dirs: string[] = [];
+  const originalCwd = process.cwd();
+  afterAll(() => {
+    process.chdir(originalCwd);
+    dirs.forEach((d) => rmSync(d, { recursive: true, force: true }));
+  });
+
+  function fakePi() {
+    const commands = new Map<string, unknown>();
+    const handlers: ((e: { type: string; toolCallId: string; toolName: string }) =>
+      | { block?: boolean; reason?: string }
+      | undefined)[] = [];
+    const pi = {
+      registerCommand: (name: string, o: unknown) => commands.set(name, o),
+      registerTool: () => undefined,
+      registerFlag: () => undefined,
+      getFlag: () => false,
+      sendUserMessage: () => undefined,
+      on: (name: string, h: (e: { type: string; toolCallId: string; toolName: string }) =>
+        | { block?: boolean; reason?: string }
+        | undefined) => {
+        if (name === "tool_call") handlers.push(h);
+        return () => undefined;
+      },
+    } as unknown as ExtensionAPI;
+    return {
+      pi,
+      commands,
+      fireToolCall: (toolName: string) => {
+        for (const h of handlers) {
+          const r = h({ type: "tool_call", toolCallId: "c1", toolName });
+          if (r?.block) return r;
+        }
+        return undefined;
+      },
+    };
+  }
+
+  it("AC-009-2: an ungranted native bash call is blocked in a session created by the real activate()", () => {
+    // Deliberately routed through the default-exported activate() that
+    // Pi itself calls -- not through activateBehaviorPipeline. If the
+    // wiring is removed from extension.ts, this test fails even though
+    // the pipeline modules still work in isolation. That distinction is
+    // the entire point of REQ-009.
+    const root = mkdtempSync(join(tmpdir(), "activate-e2e-"));
+    dirs.push(root);
+    const dir = join(root, "packages", "agent-core", "behaviors", "investigate-test-failure");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "behavior.yaml"), READ_ONLY_BEHAVIOR);
+
+    process.chdir(root);
+    const { pi, commands, fireToolCall } = fakePi();
+    activate(pi);
+
+    expect(commands.has("investigate-test-failure")).toBe(true);
+
+    const blocked = fireToolCall("bash");
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason).toMatch(/not granted/);
+    expect(fireToolCall("read")).toBeUndefined();
+  });
+
+  it("AC-009-3: activate() succeeds in a repo with no behavior packages", () => {
+    const empty = mkdtempSync(join(tmpdir(), "activate-empty-"));
+    dirs.push(empty);
+    process.chdir(empty);
+    const { pi } = fakePi();
+    expect(() => activate(pi)).not.toThrow();
+  });
+});

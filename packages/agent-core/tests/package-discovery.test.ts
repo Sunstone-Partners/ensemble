@@ -10,7 +10,7 @@ function validManifest(name: string): BehaviorManifest {
     api_version: "ensemble.sunstone.dev/v1",
     kind: "Behavior",
     metadata: { name, version: "1.0.0" },
-    trigger: { event_type: "test.failed" },
+    trigger: { event_type: "test.failure.observed" },
     policy: { mode: "propose", timeout: "30m" },
     capabilities: { tools: ["read"], mutation_classes: [] },
     execution: { graph: name },

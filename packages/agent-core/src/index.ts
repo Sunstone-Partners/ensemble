@@ -6,6 +6,7 @@ export * from "./domain-tools";
 export * from "./normalize";
 export * from "./behavior/schema";
 export * from "./behavior/compiler";
+export * from "./behavior/mutation-guard";
 export * from "./behavior/discovery";
 export * from "./behavior/conformance";
 export * from "./behavior/package-discovery";

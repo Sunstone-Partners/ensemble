@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { ToolRegistry, InMemoryEventSink, echoTool } from "@sunstone-partners/ensemble-agent-core";
 import { wireSessionLifecycle } from "./session";
 import { handleEchoToolCall } from "./echo-tool-handler";
+import { activateBehaviorPipeline, BehaviorActivationResult } from "./behavior-activation";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -39,8 +40,13 @@ function assertRequiredCapabilities(pi: ExtensionAPI): void {
  * extension activation, so binding one instance here is exactly the
  * production shape, not a test-only shortcut.
  */
-export function createActivate(): { activate: (pi: ExtensionAPI) => void; sink: InMemoryEventSink } {
+export function createActivate(): {
+  activate: (pi: ExtensionAPI) => void;
+  sink: InMemoryEventSink;
+  lastActivation: () => BehaviorActivationResult | null;
+} {
   const sink = new InMemoryEventSink();
+  let lastActivation: BehaviorActivationResult | null = null;
 
   const activate = (pi: ExtensionAPI): void => {
     assertRequiredCapabilities(pi);
@@ -77,9 +83,16 @@ export function createActivate(): { activate: (pi: ExtensionAPI) => void; sink: 
         return handleEchoToolCall(registry, sessionId, granted, params.message ?? "");
       },
     });
+
+    // TRD-005/AC-009-1: discover, compile and load this repo's
+    // behavior packages from the real production activate(). Until
+    // this call existed, the entire behavior pipeline — including the
+    // manifest-driven native-tool grant enforcement wired inside
+    // loadCompiledBehavior — was reachable only from tests.
+    lastActivation = activateBehaviorPipeline(pi, process.cwd(), [echoTool]);
   };
 
-  return { activate, sink };
+  return { activate, sink, lastActivation: () => lastActivation };
 }
 
 const activate: (pi: ExtensionAPI) => void = createActivate().activate;

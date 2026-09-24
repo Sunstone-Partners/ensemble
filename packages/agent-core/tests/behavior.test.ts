@@ -10,7 +10,7 @@ function fixtureManifest(overrides: Partial<BehaviorManifest> = {}): BehaviorMan
     kind: "Behavior",
     metadata: { name: "investigate-test-failure", version: "1.0.0" },
     trigger: {
-      event_type: "test.failed",
+      event_type: "test.failure.observed",
       predicate: { exit_code: { not: 0 } },
     },
     policy: { mode: "propose", timeout: "30m" },
@@ -84,12 +84,12 @@ describe("behavior package schema/compiler (TRD-011)", () => {
   it("matches an event against a compiled behavior's trigger and predicate", () => {
     const pkg: BehaviorPackage = { behaviors: [fixtureManifest()] };
     const matchingEvent = normalizeEvent({
-      type: "test.failed",
+      type: "test.failure.observed",
       source: "ci",
       payload: { exit_code: 1 },
     });
     const nonMatchingEvent = normalizeEvent({
-      type: "test.failed",
+      type: "test.failure.observed",
       source: "ci",
       payload: { exit_code: 0 },
     });
@@ -102,7 +102,7 @@ describe("behavior package schema/compiler (TRD-011)", () => {
 
   it("simulates and reports missing tool grants without any live adapter", () => {
     const pkg: BehaviorPackage = { behaviors: [fixtureManifest()] };
-    const event = normalizeEvent({ type: "test.failed", source: "ci", payload: { exit_code: 1 } });
+    const event = normalizeEvent({ type: "test.failure.observed", source: "ci", payload: { exit_code: 1 } });
     const result = simulate(pkg, event, ["read"]);
     expect(result.matchedBehaviors.map((b) => b.metadata.name)).toEqual([
       "investigate-test-failure",
@@ -112,7 +112,7 @@ describe("behavior package schema/compiler (TRD-011)", () => {
 
   it("runs conformance fixtures and reports pass/fail per behavior", () => {
     const pkg: BehaviorPackage = { behaviors: [fixtureManifest()] };
-    const event = normalizeEvent({ type: "test.failed", source: "ci", payload: { exit_code: 1 } });
+    const event = normalizeEvent({ type: "test.failure.observed", source: "ci", payload: { exit_code: 1 } });
     const reports = conformance_run(pkg, [
       { event, expectedBehaviorNames: ["investigate-test-failure"] },
     ]);

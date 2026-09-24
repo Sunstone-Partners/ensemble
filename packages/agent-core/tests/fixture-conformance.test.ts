@@ -1,14 +1,14 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFixtureConformance } from "../src/behavior/fixture-conformance";
+import { runFixtureConformance, checkFixtureConstructibility } from "../src/behavior/fixture-conformance";
 import { BehaviorManifest, BehaviorPackage } from "../src/behavior/schema";
 
 const manifest: BehaviorManifest = {
   api_version: "ensemble.sunstone.dev/v1",
   kind: "Behavior",
   metadata: { name: "investigate-test-failure", version: "1.0.0" },
-  trigger: { event_type: "test.failed", predicate: { exit_code: { not: 0 } } },
+  trigger: { event_type: "test.failure.observed", predicate: { exit_code: { not: 0 } } },
   policy: { mode: "propose", timeout: "30m" },
   capabilities: { tools: ["read", "bash.test"], mutation_classes: [] },
   execution: { graph: "investigate-test-failure" },
@@ -36,7 +36,7 @@ describe("runFixtureConformance (TRD-013)", () => {
     writeFileSync(
       join(behaviorDir, "fixtures", "events", "test-failed-nonzero.json"),
       JSON.stringify({
-        type: "test.failed",
+        type: "test.failure.observed",
         source: "ci",
         payload: { exit_code: 1 },
       }),
@@ -61,7 +61,7 @@ describe("runFixtureConformance (TRD-013)", () => {
   it("AC-013-1: a non-matching event (exit_code 0) produces no matches/outcomes, equal to empty expected fixtures", () => {
     writeFileSync(
       join(behaviorDir, "fixtures", "events", "test-failed-zero.json"),
-      JSON.stringify({ type: "test.failed", source: "ci", payload: { exit_code: 0 } }),
+      JSON.stringify({ type: "test.failure.observed", source: "ci", payload: { exit_code: 0 } }),
     );
     writeFileSync(join(behaviorDir, "fixtures", "expected-matches", "test-failed-zero.json"), "[]");
     writeFileSync(join(behaviorDir, "fixtures", "expected-outcomes", "test-failed-zero.json"), "[]");
@@ -76,7 +76,7 @@ describe("runFixtureConformance (TRD-013)", () => {
   it("detects a real conformance failure when the fixture expects something the package does not produce", () => {
     writeFileSync(
       join(behaviorDir, "fixtures", "events", "wrong-expectation.json"),
-      JSON.stringify({ type: "test.failed", source: "ci", payload: { exit_code: 1 } }),
+      JSON.stringify({ type: "test.failure.observed", source: "ci", payload: { exit_code: 1 } }),
     );
     writeFileSync(
       join(behaviorDir, "fixtures", "expected-matches", "wrong-expectation.json"),
@@ -85,5 +85,53 @@ describe("runFixtureConformance (TRD-013)", () => {
 
     const [result] = runFixtureConformance(behaviorDir, pkg);
     expect(result.matchesEqual).toBe(false);
+  });
+});
+
+describe("fixture constructibility rule (TRD-007 / REQ-010)", () => {
+  it("AC-010-3: fails against the pre-existing exit_code-shaped fixture", () => {
+    // This is the negative proof the rule exists for. Before TRD-007,
+    // `investigate-test-failure`'s fixtures asserted on `exit_code` --
+    // a field no translator can ever emit, because Pi exposes only a
+    // boolean `isError`. The fixtures passed anyway, so the suite was
+    // validating the system against events it cannot produce.
+    const issue = checkFixtureConstructibility("test-failed.json", {
+      type: "test.failure.observed",
+      source: "ci",
+      payload: { exit_code: 1 },
+    });
+
+    expect(issue).not.toBeNull();
+    expect(issue!.unconstructibleFields).toEqual(["exit_code"]);
+    expect(issue!.reason).toContain("no translator can emit");
+  });
+
+  it("AC-010-2: passes for a fixture built only from emittable fields", () => {
+    expect(
+      checkFixtureConstructibility("ok.json", {
+        type: "test.failure.observed",
+        source: "pi",
+        payload: { command: "npm test", isError: true },
+      }),
+    ).toBeNull();
+  });
+
+  it("AC-010-2: rejects an event type no translator declares at all", () => {
+    const issue = checkFixtureConstructibility("weird.json", {
+      type: "prd.approved",
+      source: "fixture",
+      payload: {},
+    });
+    expect(issue).not.toBeNull();
+    expect(issue!.reason).toContain("no translator declares emittable payload fields");
+  });
+
+  it("names every offending field, not just the first", () => {
+    const issue = checkFixtureConstructibility("multi.json", {
+      type: "test.failure.observed",
+      source: "ci",
+      payload: { exit_code: 1, stack_trace: "x", command: "npm test" },
+    });
+    expect(issue!.unconstructibleFields.sort()).toEqual(["exit_code", "stack_trace"]);
   });
 });

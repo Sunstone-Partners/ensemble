@@ -3,8 +3,10 @@ import { Type } from "@sinclair/typebox";
 import {
   CompiledBehaviorArtifacts,
   CompiledBehaviorPackage,
+  MutationGuard,
   ToolDescriptor,
   ToolRegistry,
+  createMutationGuard,
 } from "@sunstone-partners/ensemble-agent-core";
 import { wireToolGrantEnforcement } from "./tool-grant-enforcement";
 
@@ -43,7 +45,21 @@ export function loadCompiledBehavior(
   compiled: CompiledBehaviorPackage,
   artifacts: CompiledBehaviorArtifacts,
   availableTools: readonly ToolDescriptor<Record<string, unknown>, unknown>[],
+  guard: MutationGuard = createMutationGuard(compiled),
 ): void {
+  // TRD-004 / AC-011-2: fail closed. A manifest asking for `auto`
+  // (direct, unreviewed mutation authority) must never load into a
+  // harness where mutation-class enforcement is not actually wired —
+  // degrading silently to unenforced auto-apply is strictly worse
+  // than refusing to load.
+  if (compiled.manifest.policy.mode === "auto" && !guard.enforcementActive) {
+    throw new Error(
+      `refusing to load behavior "${compiled.manifest.metadata.name}": policy.mode is "auto" ` +
+        `but mutation-class enforcement is not active in this harness. ` +
+        `Unenforced auto-apply is not a supported degraded mode.`,
+    );
+  }
+
   wireToolGrantEnforcement(pi, compiled);
 
   pi.registerCommand(artifacts.commandName, {
@@ -66,6 +82,15 @@ export function loadCompiledBehavior(
 
     registry.register(descriptor);
 
+    // TRD-003: whether this tool is granted at all is decided by the
+    // compiled manifest, not by the call site. Previously execute()
+    // issued `registry.grant(...)` unconditionally immediately before
+    // invoke(), so the ToolRegistry authorization check could never
+    // fail on this path — the grant boundary was a rubber stamp for
+    // every behavior-governed tool. An ungranted tool now falls
+    // through to invoke() with no grant and returns `unauthorized`.
+    const grantedByManifest = compiled.hasTool(descriptor.name);
+
     pi.registerTool({
       name: descriptor.name,
       label: descriptor.name,
@@ -76,7 +101,9 @@ export function loadCompiledBehavior(
           throw new Error("cancelled");
         }
         const sessionId = ctx.sessionManager.getSessionId() ?? "pi-session";
-        registry.grant({ toolName: descriptor.name, grantedTo: sessionId });
+        if (grantedByManifest) {
+          registry.grant({ toolName: descriptor.name, grantedTo: sessionId });
+        }
         const result = await registry.invoke({
           toolName: descriptor.name,
           args: params,
