@@ -1,0 +1,23 @@
+{
+  "tools": [
+    "ensemble.behavior.propose",
+    "ensemble.audit.append",
+    "ensemble.notify.dispatch",
+    "ensemble.beads.comment",
+    "ensemble.beads.close",
+    "ensemble.beads.create",
+    "ensemble.jira.transition",
+    "ensemble.jira.comment",
+    "ensemble.github.pr_merge",
+    "ensemble.github.pr_comment",
+    "ensemble.github.pr_create",
+    "ensemble.gitlab.mr_merge",
+    "ensemble.gitlab.mr_comment",
+    "ensemble.gitlab.mr_create",
+    "ensemble.slack.post",
+    "ensemble.linear.issue_update",
+    "ensemble.linear.issue_comment",
+    "ensemble.pagerduty.ack",
+    "ensemble.pagerduty.resolve"
+  ]
+}

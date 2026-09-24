@@ -1,0 +1,31 @@
+{
+  "mutation_classes": {
+    "none": [],
+    "comment": [
+      "ensemble.jira.comment",
+      "ensemble.github.pr_comment",
+      "ensemble.gitlab.mr_comment",
+      "ensemble.linear.issue_comment",
+      "ensemble.slack.post",
+      "ensemble.beads.comment"
+    ],
+    "merge": [
+      "ensemble.github.pr_merge",
+      "ensemble.gitlab.mr_merge"
+    ],
+    "status": [
+      "ensemble.jira.transition",
+      "ensemble.pagerduty.ack",
+      "ensemble.pagerduty.resolve"
+    ],
+    "data_write": [
+      "ensemble.beads.create",
+      "ensemble.beads.close",
+      "ensemble.linear.issue_update"
+    ],
+    "irreversible": [
+      "ensemble.slack.post",
+      "ensemble.notify.dispatch"
+    ]
+  }
+}
