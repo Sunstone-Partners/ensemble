@@ -1,32 +1,65 @@
-import { normalizeEvent } from "../normalize";
+import { randomUUID, createHash } from "node:crypto";
 import { ToolDescriptor } from "../tools";
-import { BehaviorEvent } from "../events";
+import { ToolCallRequest } from "../protocol";
+import { RuntimeStampedEvent, stripRuntimeOwnedFields } from "../events";
 import { DOMAIN_TOOL_EVENT_MAPPING, DomainToolName, HARNESS_EVENT_TYPES } from "./event-catalog";
 
-export interface DomainToolInput {
-  eventType: string;
-  payload: Record<string, unknown>;
-  evidence: string[];
+export interface DomainToolAccepted {
+  status: "accepted";
+  event: RuntimeStampedEvent;
 }
 
 /**
- * Result of a typed domain tool call: an accepted, runtime-stamped
- * BehaviorEvent. The agent supplies eventType/payload/evidence only —
- * event_id, occurred_at, and source are stamped by normalizeEvent, not
- * chosen by the agent (§5 "Event metadata").
+ * Stamps the full runtime-owned metadata set from
+ * docs/architecture/ensemble-behavior-runtime-plan.md §5 ("Event
+ * metadata"). `payload` is agent-provided semantic content only — any
+ * reserved field name the agent tried to smuggle in (event_id,
+ * occurred_at, session_id, ...) is stripped before merging, and every
+ * runtime-owned field below comes from the request/tool call context,
+ * never from the agent's payload (TRD-016/AC-016-1).
  */
-export interface DomainToolAccepted {
-  status: "accepted";
-  event: BehaviorEvent;
+function stampRuntimeEvent(
+  toolName: DomainToolName,
+  eventType: string,
+  rawPayload: Record<string, unknown>,
+  request: ToolCallRequest,
+): RuntimeStampedEvent {
+  const payload = stripRuntimeOwnedFields(rawPayload);
+  const executionId = request.executionId ?? randomUUID();
+  const occurredAt = new Date().toISOString();
+  const deduplicationKey = createHash("sha256")
+    .update(`${executionId}:${eventType}:${JSON.stringify(payload)}`)
+    .digest("hex");
+
+  return {
+    id: randomUUID(),
+    type: eventType,
+    source: toolName,
+    occurredAt,
+    payload,
+    executionId,
+    // AC-016-2: sessionId is always request.requestedBy, the same
+    // runtime-derived session identity TRD-005's grant flow already
+    // uses — never a value read from the agent's tool-call args.
+    sessionId: request.requestedBy,
+    behaviorId: request.behaviorId,
+    behaviorDigest: request.behaviorDigest,
+    correlationId: executionId,
+    causationId: request.causationId,
+    deduplicationKey,
+  };
 }
 
-function buildDomainTool(name: DomainToolName, description: string): ToolDescriptor<Record<string, unknown>, DomainToolAccepted> {
+function buildDomainTool(
+  name: DomainToolName,
+  description: string,
+): ToolDescriptor<Record<string, unknown>, DomainToolAccepted> {
   const permitted = DOMAIN_TOOL_EVENT_MAPPING[name];
 
   return {
     name,
     description,
-    async execute(args) {
+    async execute(args, request) {
       const eventType = typeof args.eventType === "string" ? args.eventType : "";
       const payload =
         args.payload && typeof args.payload === "object" ? (args.payload as Record<string, unknown>) : {};
@@ -45,19 +78,11 @@ function buildDomainTool(name: DomainToolName, description: string): ToolDescrip
         );
       }
 
-      // Required evidence (§5: "Agent-provided fields are limited to
-      // validated semantic payload, summary, evidence references, and
-      // requested transition").
       if (evidence.length === 0) {
         throw new Error(`malformed: ${name} requires at least one evidence reference`);
       }
 
-      const event = normalizeEvent({
-        type: eventType,
-        source: name,
-        payload: { ...payload, evidence },
-      });
-
+      const event = stampRuntimeEvent(name, eventType, { ...payload, evidence }, request);
       return { status: "accepted", event };
     },
   };

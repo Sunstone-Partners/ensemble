@@ -10,7 +10,13 @@ import { BehaviorEvent } from "./events";
 export interface ToolCallRequest {
   toolName: string;
   args: Record<string, unknown>;
+  /** Runtime-derived session identity — never agent-chosen (TRD-016). */
   requestedBy: string;
+  /** Runtime-derived per-invocation execution id (TRD-016/AC-016-2). */
+  executionId?: string;
+  behaviorId?: string;
+  behaviorDigest?: string;
+  causationId?: string;
 }
 
 export type ToolCallResult =
