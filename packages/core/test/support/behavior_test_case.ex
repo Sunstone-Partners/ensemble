@@ -26,7 +26,7 @@ defmodule Ensemble.Behavior.TestCase do
         "description" => "Nudges reviewers when a PR sits unreviewed."
       },
       "trigger" => %{
-        "event_type" => "github.pull_request.opened",
+        "event_type" => "ensemble.run.completed",
         "predicate" => %{
           "payload.repository.visibility" => %{"equals" => "public"},
           "payload.pull_request.draft" => %{"not" => true}
@@ -47,7 +47,7 @@ defmodule Ensemble.Behavior.TestCase do
         "mutation_classes" => ["comment"]
       },
       "execution" => %{"graph" => "ensemble.review-pr", "params" => %{"channel" => "#eng"}},
-      "outcomes" => ["ensemble.behavior.executed", "ensemble.notify.dispatch"],
+      "outcomes" => ["ensemble.behavior.executed", "ensemble.run.completed"],
       "constitution_rules" => [%{"id" => "rule:two-reviewers"}]
     }
 
@@ -61,26 +61,28 @@ defmodule Ensemble.Behavior.TestCase do
       event_id: "e-001",
       event_type: "github.pull_request.opened",
       occurred_at: System.system_time(:millisecond),
-      source: "github",
-      causal_depth: 0,
-      parent_run_id: nil,
-      idempotency_key: "e-001",
+      emitted_at: System.system_time(:millisecond),
+      source: :github,
       payload: %{
         "repository" => %{"visibility" => "public"},
         "pull_request" => %{"draft" => false, "number" => 42}
-      }
+      },
+      actor: %{type: :user, id: "u-1"},
+      causal_parent: nil,
+      depth: 0,
+      dedup_key: "dk-001"
     }
 
     Map.merge(base, Map.new(overrides))
   end
 
-  defp deep_merge(left, right) do
-    Map.merge(left, right, fn _k, l, r ->
-      if is_map(l) and is_map(r), do: deep_merge(l, r), else: r
+  defp deep_merge(base, over) do
+    Map.merge(base, over, fn _k, v1, v2 ->
+      if is_map(v1) and is_map(v2), do: deep_merge(v1, v2), else: v2
     end)
   end
 
-  @doc "YAML encoder — uses the project's yamerl-backed writer (no yaml_extras needed)."
+  @doc "YAML encoder — emits block maps; empty collections as flow."
   def encode_yaml(map) do
     map
     |> Map.to_list()
@@ -92,10 +94,13 @@ defmodule Ensemble.Behavior.TestCase do
   defp encode_kv({k, v}), do: "#{k}: #{encode_val(v, 0)}"
 
   defp encode_val(v, _indent) when is_binary(v), do: inspect(v)
-  defp encode_val(v, _indent) when is_integer(v) or is_float(v), do: to_string(v)
+  defp encode_val(v, _indent) when is_integer(v), do: to_string(v)
+  defp encode_val(v, _indent) when is_float(v), do: to_string(v)
   defp encode_val(true, _), do: "true"
   defp encode_val(false, _), do: "false"
   defp encode_val(nil, _), do: "null"
+  defp encode_val([], _indent), do: " []"
+  defp encode_val(%{} = v, _indent) when map_size(v) == 0, do: " {}"
 
   defp encode_val(v, indent) when is_map(v) do
     pad = String.duplicate("  ", indent + 1)
@@ -124,10 +129,12 @@ defmodule Ensemble.Behavior.TestCase do
     v
     |> Map.to_list()
     |> Enum.map(fn {k, val} ->
+      pad = String.duplicate("  ", indent + 1)
+
       cond do
         is_map(val) and map_size(val) > 0 -> encode_val(%{k => val}, indent)
-        is_list(val) and val != [] -> "\n#{String.duplicate("  ", indent + 1)}#{k}: #{encode_list(val, indent + 1)}"
-        true -> "\n#{String.duplicate("  ", indent + 1)}#{k}: #{encode_val(val, indent + 1)}"
+        is_list(val) and val != [] -> "\n#{pad}#{k}:#{encode_list(val, indent + 1)}"
+        true -> "\n#{pad}#{k}: #{encode_val(val, indent + 1)}"
       end
     end)
     |> Enum.join("")
@@ -141,5 +148,20 @@ defmodule Ensemble.Behavior.TestCase do
 
   defp encode_inline(item) when is_binary(item), do: inspect(item)
   defp encode_inline(item) when is_atom(item), do: inspect(Atom.to_string(item))
+
+  defp encode_inline(item) when is_map(item) do
+    inner =
+      item
+      |> Enum.map(fn {k, v} -> "#{k}: #{encode_flow(v)}" end)
+      |> Enum.join(", ")
+
+    "{" <> inner <> "}"
+  end
+
   defp encode_inline(item), do: to_string(item)
+
+  defp encode_flow(v) when is_binary(v), do: inspect(v)
+  defp encode_flow(v) when is_map(v), do: encode_inline(v)
+  defp encode_flow(v) when is_list(v), do: "[" <> Enum.map_join(v, ", ", &encode_flow/1) <> "]"
+  defp encode_flow(v), do: to_string(v)
 end

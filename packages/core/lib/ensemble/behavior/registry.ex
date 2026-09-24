@@ -63,7 +63,7 @@ defmodule Ensemble.Behavior.Registry do
           {:digest_conflict,
            "#{defn.name} #{defn.version} already registered with a different digest " <>
              "(#{Base.encode16(other, case: :lower)} != #{Base.encode16(digest, case: :lower)})"}},
-        state}
+         state}
     end
   end
 

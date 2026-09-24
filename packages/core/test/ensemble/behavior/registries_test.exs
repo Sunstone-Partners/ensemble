@@ -32,7 +32,16 @@ defmodule Ensemble.Behavior.RegistriesTest do
   end
 
   test "reload re-reads from disk", %{pid: pid} do
-    :ok = Agent.update(pid, fn _ -> %{tools: MapSet.new(), mutation_classes: %{}, events: MapSet.new(), workflows: MapSet.new()} end)
+    :ok =
+      Agent.update(pid, fn _ ->
+        %{
+          tools: MapSet.new(),
+          mutation_classes: %{},
+          events: MapSet.new(),
+          workflows: MapSet.new()
+        }
+      end)
+
     assert Registries.all().tools == MapSet.new()
     Registries.reload()
     assert MapSet.size(Registries.all().tools) > 0

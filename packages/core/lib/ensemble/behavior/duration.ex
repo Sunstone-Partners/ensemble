@@ -8,7 +8,6 @@ defmodule Ensemble.Behavior.Duration do
 
   @units %{"s" => 1_000, "m" => 60_000, "h" => 3_600_000, "d" => 86_400_000}
 
-
   @doc "Milliseconds per duration unit — exposed for property tests."
   def __unit_ms__(unit), do: Map.fetch!(@units, unit)
   def parse(ms) when is_integer(ms) and ms >= 0, do: {:ok, ms}

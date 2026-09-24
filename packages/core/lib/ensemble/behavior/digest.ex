@@ -48,7 +48,11 @@ defmodule Ensemble.Behavior.Digest do
         "graph" => d.execution.graph,
         "params" => d.execution.params
       },
-      "outcomes" => Enum.sort(d.outcomes)
+      "outcomes" => Enum.sort(d.outcomes),
+      "constitution_rules" =>
+        d.constitution_rules
+        |> Enum.map(&Map.take(&1, [:id, :approval_required, :approvers]))
+        |> Enum.sort_by(& &1.id)
     }
   end
 

@@ -16,7 +16,17 @@ defmodule Ensemble.Behavior.Compiler do
   grant set (AC-033).
   """
 
-  alias Ensemble.Behavior.{Definition, Trigger, PolicySpec, Capabilities, ExecutionSpec, Duration, Predicate, Registries}
+  alias Ensemble.Behavior.{
+    Constitution,
+    Definition,
+    Trigger,
+    PolicySpec,
+    Capabilities,
+    ExecutionSpec,
+    Duration,
+    Predicate,
+    Registries
+  }
 
   @schema_path "schemas/behavior-v1.schema.json"
 
@@ -43,15 +53,19 @@ defmodule Ensemble.Behavior.Compiler do
   behavior-v1 schema + registry cross-checks. On success returns a compiled
   immutable `Definition` carrying sha256 digest of canonical form.
   """
-  @spec validate(binary() | map(), keyword()) :: {:ok, Definition.t()} | {:error, [ValidationError.t()]}
+  @spec validate(binary() | map(), keyword()) ::
+          {:ok, Definition.t()} | {:error, [ValidationError.t()]}
   def validate(input, opts \\ []) do
     file = Keyword.get(opts, :file)
     reg = Keyword.get(opts, :registries, Registries.all())
+    constitution = Keyword.get(opts, :constitution, %{})
 
     with {:ok, decoded} <- decode(input),
          :ok <- schema_check(decoded, file),
          :ok <- registry_check(decoded, reg, file),
-         {:ok, defn} <- build(decoded, file, reg) do
+         {:ok, rules} <-
+           constitution_check(decoded["constitution_rules"] || [], constitution, file),
+         {:ok, defn} <- build(decoded, file, reg, rules) do
       {:ok, %{defn | digest: digest(defn)}}
     else
       {:error, %ValidationError{} = e} -> {:error, [e]}
@@ -84,7 +98,11 @@ defmodule Ensemble.Behavior.Compiler do
         {:error,
          Enum.map(errors, fn
            {msg, pointer} ->
-             %ValidationError{field: pointer || "/", reason: msg, location: %{file: file, line: nil}}
+             %ValidationError{
+               field: pointer || "/",
+               reason: msg,
+               location: %{file: file, line: nil}
+             }
 
            msg when is_binary(msg) ->
              %ValidationError{field: "/", reason: msg, location: %{file: file, line: nil}}
@@ -101,11 +119,26 @@ defmodule Ensemble.Behavior.Compiler do
     end
   end
 
-  defp tools_check(caps, reg, file) do
-    tools = caps && caps["tools"] || []
+  defp constitution_check(declared, ruleset, file) do
+    case Constitution.merge(declared, ruleset) do
+      {:ok, rules} ->
+        {:ok, rules}
 
-    {known, unknown} =
-      Enum.split_with(tools, &Registries.tool_known?(&1, reg))
+      {:error, ids} ->
+        {:error,
+         Enum.map(ids, fn id ->
+           %ValidationError{
+             field: "constitution_rules",
+             reason: "unknown constitution rule #{inspect(id)} (fail-closed)",
+             location: %{file: file, line: nil}
+           }
+         end)}
+    end
+  end
+
+  defp tools_check(caps, reg, file) do
+    tools = (caps && caps["tools"]) || []
+    {known, unknown} = Enum.split_with(tools, &Registries.tool_known?(&1, reg))
 
     warnings =
       Enum.map(unknown, fn t ->
@@ -123,8 +156,19 @@ defmodule Ensemble.Behavior.Compiler do
     classes = (caps && caps["mutation_classes"]) || ["none"]
 
     case Enum.reject(classes, &Registries.mutation_known?(&1, reg)) do
-      [] -> :ok
-      bad -> {:error, Enum.map(bad, &%ValidationError{field: "capabilities.mutation_classes", reason: "unknown mutation class #{inspect(&1)} (AC-034)", location: %{file: file, line: nil}})}
+      [] ->
+        :ok
+
+      bad ->
+        {:error,
+         Enum.map(
+           bad,
+           &%ValidationError{
+             field: "capabilities.mutation_classes",
+             reason: "unknown mutation class #{inspect(&1)} (AC-034)",
+             location: %{file: file, line: nil}
+           }
+         )}
     end
   end
 
@@ -134,11 +178,26 @@ defmodule Ensemble.Behavior.Compiler do
 
     cond do
       not Registries.event_known?(trig, reg) ->
-        {:error, [%ValidationError{field: "trigger.event_type", reason: "event type #{inspect(trig)} not registered (fail at validation, plan S1)", location: %{file: file, line: nil}}]}
+        {:error,
+         [
+           %ValidationError{
+             field: "trigger.event_type",
+             reason: "event type #{inspect(trig)} not registered (fail at validation, plan S1)",
+             location: %{file: file, line: nil}
+           }
+         ]}
 
       Enum.find(outcomes, &(not Registries.event_known?(&1, reg))) ->
         bad = Enum.find(outcomes, &(not Registries.event_known?(&1, reg)))
-        {:error, [%ValidationError{field: "outcomes", reason: "event type #{inspect(bad)} not registered", location: %{file: file, line: nil}}]}
+
+        {:error,
+         [
+           %ValidationError{
+             field: "outcomes",
+             reason: "event type #{inspect(bad)} not registered",
+             location: %{file: file, line: nil}
+           }
+         ]}
 
       true ->
         :ok
@@ -154,12 +213,20 @@ defmodule Ensemble.Behavior.Compiler do
         if Registries.workflow_known?(graph, reg) do
           :ok
         else
-          {:error, [%ValidationError{field: "execution.graph", reason: "workflow graph #{inspect(graph)} missing from WorkflowCatalog (REQ-011 AC-042)", location: %{file: file, line: nil}}]}
+          {:error,
+           [
+             %ValidationError{
+               field: "execution.graph",
+               reason:
+                 "workflow graph #{inspect(graph)} missing from WorkflowCatalog (REQ-011 AC-042)",
+               location: %{file: file, line: nil}
+             }
+           ]}
         end
     end
   end
 
-  defp build(map, file, reg) do
+  defp build(map, file, reg, rules) do
     meta = map["metadata"]
     trig = map["trigger"] || %{}
     pol = map["policy"] || %{}
@@ -195,7 +262,7 @@ defmodule Ensemble.Behavior.Compiler do
         },
         execution: %ExecutionSpec{graph: exec["graph"], params: exec["params"] || %{}},
         outcomes: map["outcomes"] || [],
-        constitution_rules: map["constitution_rules"] || [],
+        constitution_rules: rules,
         source: %{path: file, git_sha: nil}
       }
 
@@ -250,7 +317,13 @@ defmodule Ensemble.Behavior.Compiler do
             {:ok, defn} ->
               readme_issue =
                 unless File.exists?(Path.join(package_dir, "README.md")) do
-                  [%DiscoveryIssue{path: package_dir, kind: :missing_readme, message: "README.md recommended (AC-006)"}]
+                  [
+                    %DiscoveryIssue{
+                      path: package_dir,
+                      kind: :missing_readme,
+                      message: "README.md recommended (AC-006)"
+                    }
+                  ]
                 else
                   []
                 end
@@ -259,11 +332,18 @@ defmodule Ensemble.Behavior.Compiler do
 
             {:error, errs} ->
               reason = errs |> Enum.map(& &1.reason) |> Enum.join("; ")
-              {[], issues ++ fixture_issues ++ [%DiscoveryIssue{path: yaml_path, kind: :invalid, message: reason}]}
+
+              {[],
+               issues ++
+                 fixture_issues ++
+                 [%DiscoveryIssue{path: yaml_path, kind: :invalid, message: reason}]}
           end
 
         {:error, reason} ->
-          {[], issues ++ fixture_issues ++ [%DiscoveryIssue{path: yaml_path, kind: :unreadable, message: inspect(reason)}]}
+          {[],
+           issues ++
+             fixture_issues ++
+             [%DiscoveryIssue{path: yaml_path, kind: :unreadable, message: inspect(reason)}]}
       end
     end)
   end
@@ -276,6 +356,7 @@ defmodule Ensemble.Behavior.Compiler do
     created =
       Enum.filter(@fixtures_subdirs, fn sub ->
         full = Path.join(package_dir, sub)
+
         if File.dir?(full) do
           false
         else
@@ -285,7 +366,11 @@ defmodule Ensemble.Behavior.Compiler do
       end)
 
     Enum.map(created, fn sub ->
-      %DiscoveryIssue{path: Path.join(package_dir, sub), kind: :created_fixture_dir, message: "created missing fixture subdir on-demand (AC-005)"}
+      %DiscoveryIssue{
+        path: Path.join(package_dir, sub),
+        kind: :created_fixture_dir,
+        message: "created missing fixture subdir on-demand (AC-005)"
+      }
     end) ++
       if(base != package_dir, do: [], else: [])
   end
@@ -326,7 +411,11 @@ defmodule Ensemble.Behavior.Compiler do
           selected != nil and newer_incompatible != [] ->
             require Logger
             names = newer_incompatible |> Enum.map(&to_string(&1.version)) |> Enum.join(", ")
-            Logger.warning("deprecated: #{name} has newer incompatible version(s) #{names}; selecting #{selected.version} (AC-011)")
+
+            Logger.warning(
+              "deprecated: #{name} has newer incompatible version(s) #{names}; selecting #{selected.version} (AC-011)"
+            )
+
             {:ok, selected}
 
           selected != nil ->
@@ -346,14 +435,29 @@ defmodule Ensemble.Behavior.Compiler do
   @spec compatibility(Definition.t(), Definition.t()) :: :compatible | :breaking
   def compatibility(%Definition{} = old, %Definition{} = new) do
     cond do
-      old.name != new.name -> :breaking
-      old.api_version != new.api_version -> :breaking
-      old.version.major != new.version.major -> :breaking
-      old.trigger.event_type != new.trigger.event_type -> :breaking
-      predicate_signature(old.trigger.predicate) != predicate_signature(new.trigger.predicate) -> :breaking
-      Enum.sort(old.capabilities.tools) != Enum.sort(new.capabilities.tools) -> :breaking
-      Enum.sort(old.capabilities.mutation_classes) != Enum.sort(new.capabilities.mutation_classes) -> :breaking
-      true -> :compatible
+      old.name != new.name ->
+        :breaking
+
+      old.api_version != new.api_version ->
+        :breaking
+
+      old.version.major != new.version.major ->
+        :breaking
+
+      old.trigger.event_type != new.trigger.event_type ->
+        :breaking
+
+      predicate_signature(old.trigger.predicate) != predicate_signature(new.trigger.predicate) ->
+        :breaking
+
+      Enum.sort(old.capabilities.tools) != Enum.sort(new.capabilities.tools) ->
+        :breaking
+
+      Enum.sort(old.capabilities.mutation_classes) != Enum.sort(new.capabilities.mutation_classes) ->
+        :breaking
+
+      true ->
+        :compatible
     end
   end
 

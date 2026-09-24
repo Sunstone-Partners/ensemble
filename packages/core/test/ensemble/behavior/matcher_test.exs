@@ -53,7 +53,12 @@ defmodule Ensemble.Behavior.MatcherTest do
     end
 
     test "tie-break: more predicate constraints first, then deeper event_type" do
-      a = defn(%{"metadata" => %{"name" => "a"}, "trigger" => %{"predicate" => %{"payload.ref" => %{"equals" => "refs/heads/main"}}}})
+      a =
+        defn(%{
+          "metadata" => %{"name" => "a"},
+          "trigger" => %{"predicate" => %{"payload.ref" => %{"equals" => "refs/heads/main"}}}
+        })
+
       b = defn(%{"metadata" => %{"name" => "b"}})
 
       assert [%{definition: %{name: "a"}}, %{definition: %{name: "b"}}] =

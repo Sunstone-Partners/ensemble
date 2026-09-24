@@ -8,6 +8,7 @@ defmodule Ensemble.MixProject do
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
+      test_coverage: [summary: [threshold: 85], threshold: 85],
       deps: deps()
     ]
   end

@@ -37,9 +37,7 @@ defmodule Ensemble.Behavior.CompilerTest do
 
     test "rejects unknown mutation class" do
       assert {:error, errs} =
-               Compiler.validate(
-                 set_in(@valid, ["capabilities", "mutation_classes"], ["bogus"])
-               )
+               Compiler.validate(set_in(@valid, ["capabilities", "mutation_classes"], ["bogus"]))
 
       assert Enum.any?(errs, &String.contains?(&1.reason, "unknown mutation class"))
     end
@@ -163,6 +161,7 @@ defmodule Ensemble.Behavior.CompilerTest do
       assert Enum.any?(issues, &(&1.kind == :missing_readme))
     end
   end
+
   defp set_in(map, [k], fun) when is_function(fun, 1), do: Map.put(map, k, fun.(Map.get(map, k)))
   defp set_in(map, [k], val), do: Map.put(map, k, val)
 

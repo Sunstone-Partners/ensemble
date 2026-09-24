@@ -13,6 +13,7 @@ defmodule Ensemble.Behavior.Yaml do
     map
     |> to_ordered_map()
     |> encode_map(0)
+    |> String.trim_trailing("\n")
     |> Kernel.<>("\n")
   end
 
@@ -29,14 +30,11 @@ defmodule Ensemble.Behavior.Yaml do
     pad = String.duplicate("  ", indent)
 
     cond do
-      is_map(v) ->
-        inner = encode_map(v, indent + 1)
+      is_map(v) and map_size(v) == 0 ->
+        "#{pad}#{k}: {}\n"
 
-        if inner == "" do
-          "#{pad}#{k}: {}\n"
-        else
-          "#{pad}#{k}:\n#{inner}"
-        end
+      is_map(v) ->
+        "#{pad}#{k}:\n" <> encode_map(v, indent + 1)
 
       is_list(v) ->
         encode_list_pair(k, v, indent)
@@ -72,21 +70,26 @@ defmodule Ensemble.Behavior.Yaml do
 
   defp encode_list_map_item(item, indent) do
     pad = String.duplicate("  ", indent)
-    [first | rest] = Enum.sort_by(Map.to_list(item), fn {k, _} -> to_string(k) end)
 
-    first_line =
-      case first do
-        {k, v} when is_map(v) -> "#{pad}- #{k}:\n" <> encode_map(v, indent + 2)
-        {k, v} when is_list(v) -> encode_list_pair("- #{k}", v, indent)
-        {k, v} -> "#{pad}- #{k}: #{scalar(v)}\n"
-      end
+    case Enum.sort_by(Map.to_list(item), fn {k, _} -> to_string(k) end) do
+      [] ->
+        "#{pad}- {}\n"
 
-    rest_lines =
-      Enum.map_join(rest, "", fn {k, v} ->
-        encode_pair(k, v, indent + 1)
-      end)
+      [first | rest] ->
+        first_line =
+          case first do
+            {k, v} when is_map(v) -> "#{pad}- #{k}:\n" <> encode_map(v, indent + 2)
+            {k, v} when is_list(v) -> encode_list_pair("- #{k}", v, indent)
+            {k, v} -> "#{pad}- #{k}: #{scalar(v)}\n"
+          end
 
-    first_line <> rest_lines
+        rest_lines =
+          Enum.map_join(rest, "", fn {k, v} ->
+            encode_pair(k, v, indent + 1)
+          end)
+
+        first_line <> rest_lines
+    end
   end
 
   defp scalar_or_json(v) when is_binary(v), do: inspect(v)

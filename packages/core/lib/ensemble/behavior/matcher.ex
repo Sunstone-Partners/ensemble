@@ -64,6 +64,7 @@ defmodule Ensemble.Behavior.Matcher do
     |> candidates(defs)
     |> Enum.map(fn c ->
       d = c.definition
+
       cond do
         depth_dropped?(event, d) ->
           Map.put(c, :filtered, :causal_depth)

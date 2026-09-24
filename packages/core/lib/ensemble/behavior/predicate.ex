@@ -105,7 +105,13 @@ defmodule Ensemble.Behavior.Predicate do
         do_eval(op, expected, actual, path)
 
       :error ->
-        %{path: path, op: op, expected: expected_repr(op, expected), actual: nil, verdict: :skipped}
+        %{
+          path: path,
+          op: op,
+          expected: expected_repr(op, expected),
+          actual: nil,
+          verdict: :skipped
+        }
     end
   end
 
@@ -153,8 +159,11 @@ defmodule Ensemble.Behavior.Predicate do
     end
   end
 
-  defp result(actual, expected, path, op, true), do: %{path: path, op: op, expected: expected, actual: actual, verdict: :pass}
-  defp result(actual, expected, path, op, false), do: %{path: path, op: op, expected: expected, actual: actual, verdict: :fail}
+  defp result(actual, expected, path, op, true),
+    do: %{path: path, op: op, expected: expected, actual: actual, verdict: :pass}
+
+  defp result(actual, expected, path, op, false),
+    do: %{path: path, op: op, expected: expected, actual: actual, verdict: :fail}
 
   defp expected_repr(:matches, %Regex{} = re), do: re.source
   defp expected_repr(_op, val), do: val
@@ -167,9 +176,13 @@ defmodule Ensemble.Behavior.Predicate do
   """
   @spec fetch_path(map(), [String.t()]) :: {:ok, term()} | :error
   def fetch_path(event, path) do
-    Enum.find_value([event, Map.get(event, :payload) || Map.get(event, "payload") || %{}], :error, fn
-      root -> walk(root, path)
-    end)
+    Enum.find_value(
+      [event, Map.get(event, :payload) || Map.get(event, "payload") || %{}],
+      :error,
+      fn
+        root -> walk(root, path)
+      end
+    )
   end
 
   defp walk(map, []), do: {:ok, map}
