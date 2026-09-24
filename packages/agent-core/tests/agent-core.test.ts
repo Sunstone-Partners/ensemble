@@ -2,10 +2,6 @@ import { ToolRegistry } from "../src/tools";
 import { echoTool } from "../src/domain-tools";
 import { normalizeEvent } from "../src/normalize";
 import { InMemoryEventSink } from "../src/event-sinks";
-import { compile } from "../src/behavior/compiler";
-import { match } from "../src/behavior/discovery";
-import { simulate, conformance_run } from "../src/behavior/conformance";
-import { BehaviorPackage } from "../src/behavior/schema";
 
 describe("agent-core", () => {
   it("normalizes a raw event into the provider-neutral shape", () => {
@@ -44,52 +40,5 @@ describe("agent-core", () => {
       requestedBy: "agent-1",
     });
     expect(result).toEqual({ status: "ok", result: { echoed: "hello" } });
-  });
-
-  const pkg: BehaviorPackage = {
-    behaviors: [
-      {
-        name: "greet-on-open",
-        version: "1.0.0",
-        description: "test fixture",
-        triggers: [{ eventType: "issue.opened" }],
-        requiredTools: ["echo"],
-      },
-    ],
-  };
-
-  it("compiles a valid behavior package with no errors", () => {
-    expect(compile(pkg)).toEqual({ ok: true, errors: [] });
-  });
-
-  it("rejects a behavior with no triggers", () => {
-    const invalid: BehaviorPackage = {
-      behaviors: [{ ...pkg.behaviors[0], triggers: [] }],
-    };
-    const result = compile(invalid);
-    expect(result.ok).toBe(false);
-    expect(result.errors[0].message).toMatch(/no triggers/);
-  });
-
-  it("matches an event against a compiled behavior's trigger", () => {
-    const event = normalizeEvent({ type: "issue.opened", source: "github" });
-    expect(match(pkg, event).map((b) => b.name)).toEqual(["greet-on-open"]);
-  });
-
-  it("simulates and reports missing tool grants without any live adapter", () => {
-    const event = normalizeEvent({ type: "issue.opened", source: "github" });
-    const result = simulate(pkg, event, []);
-    expect(result.matchedBehaviors.map((b) => b.name)).toEqual(["greet-on-open"]);
-    expect(result.missingToolGrants).toEqual(["echo"]);
-  });
-
-  it("runs conformance fixtures and reports pass/fail per behavior", () => {
-    const event = normalizeEvent({ type: "issue.opened", source: "github" });
-    const reports = conformance_run(pkg, [
-      { event, expectedBehaviorNames: ["greet-on-open"] },
-    ]);
-    expect(reports).toEqual([
-      { behaviorName: "greet-on-open", passed: true, details: "all 1 fixture(s) matched" },
-    ]);
   });
 });

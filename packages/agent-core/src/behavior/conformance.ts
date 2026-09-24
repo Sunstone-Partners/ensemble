@@ -1,9 +1,9 @@
 import { BehaviorEvent } from "../events";
 import { match } from "./discovery";
-import { BehaviorDefinition, BehaviorPackage } from "./schema";
+import { BehaviorManifest, BehaviorPackage } from "./schema";
 
 export interface SimulationResult {
-  matchedBehaviors: BehaviorDefinition[];
+  matchedBehaviors: BehaviorManifest[];
   missingToolGrants: string[];
 }
 
@@ -22,7 +22,7 @@ export function simulate(
   const missingToolGrants = Array.from(
     new Set(
       matchedBehaviors
-        .flatMap((behavior) => behavior.requiredTools)
+        .flatMap((behavior) => behavior.capabilities.tools)
         .filter((tool) => !availableSet.has(tool)),
     ),
   );
@@ -45,24 +45,19 @@ export function conformance_run(
   fixtures: readonly { event: BehaviorEvent; expectedBehaviorNames: string[] }[],
 ): ConformanceReport[] {
   return pkg.behaviors.map((behavior) => {
-    const relevantFixtures = fixtures.filter((fixture) =>
-      fixture.expectedBehaviorNames.includes(behavior.name),
-    );
+    const name = behavior.metadata.name;
+    const relevantFixtures = fixtures.filter((fixture) => fixture.expectedBehaviorNames.includes(name));
 
     if (relevantFixtures.length === 0) {
-      return {
-        behaviorName: behavior.name,
-        passed: false,
-        details: "no fixtures reference this behavior",
-      };
+      return { behaviorName: name, passed: false, details: "no fixtures reference this behavior" };
     }
 
     const failures = relevantFixtures.filter(
-      (fixture) => !match(pkg, fixture.event).some((b) => b.name === behavior.name),
+      (fixture) => !match(pkg, fixture.event).some((b) => b.metadata.name === name),
     );
 
     return {
-      behaviorName: behavior.name,
+      behaviorName: name,
       passed: failures.length === 0,
       details:
         failures.length === 0
