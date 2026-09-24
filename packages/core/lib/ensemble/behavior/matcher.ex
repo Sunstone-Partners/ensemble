@@ -20,6 +20,7 @@ defmodule Ensemble.Behavior.Matcher do
   records the decision input before `Policy.evaluate` sees anything (TRD-016).
   """
 
+  require Logger
   alias Ensemble.Behavior.{Audit, Definition, Event, MatchResult, Predicate}
 
   @doc """
@@ -89,8 +90,15 @@ defmodule Ensemble.Behavior.Matcher do
     audit = Map.get(opts, :audit, :default)
 
     if audit != :none and results != [] do
-      hook = if is_function(audit, 1), do: audit, else: fn rs -> elem(Audit.log_match(event, rs), 0) end
-      hook.(results)
+      hook =
+        if is_function(audit, 1),
+          do: audit,
+          else: fn rs -> Audit.log_match(event, rs) end
+
+      case hook.(results) do
+        {:error, reason} -> Logger.error(fn -> "[behavior] audit write failed: #{inspect(reason)}" end)
+        _ -> :ok
+      end
     end
 
     results

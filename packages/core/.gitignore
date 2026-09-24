@@ -10,3 +10,5 @@ ensemble-*.tar
 
 # Node
 node_modules/
+*.jsonl
+.ensemble/
