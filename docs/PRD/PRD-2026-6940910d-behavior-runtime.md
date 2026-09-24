@@ -5,7 +5,7 @@ version: 1.0.0
 status: Draft
 date: 2026-09-23
 scale_depth: DEEP
-total_requirements: 28
+total_requirements: 26
 readiness_score: 4.2
 ---
 
