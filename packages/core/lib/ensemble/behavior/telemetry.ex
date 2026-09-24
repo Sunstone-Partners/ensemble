@@ -210,6 +210,7 @@ defmodule Ensemble.Behavior.Telemetry do
         "schema" => @schema,
         "behavior_id" => behavior_id(run),
         "event_id" => string_or_nil(fetch(run, :event_id)),
+        "event_type" => string_or_nil(fetch(run, :event_type)),
         "activation_id" => string_or_nil(fetch(run, :activation_id)),
         "causal_root" => string_or_nil(fetch(run, :causal_root)),
         "started_at" => iso(started),

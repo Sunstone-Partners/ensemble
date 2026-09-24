@@ -13,11 +13,11 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
 
   Each cluster becomes a suggestion (AC-054):
 
-      %{pattern_name: "github-pull-request-opened-read-git-diff",
-        inferred_event_type: "github.pull_request.opened",
-        tools: ["read", "git.diff"],
+      %{pattern_name: "test-failed-read-bash-test",
+        inferred_event_type: "test.failed",
+        tools: ["read", "bash.test"],
         frequency: 12,
-        confidence: 95,
+        confidence: 73,
         exploratory: false,
         recommended: true}
 
@@ -28,7 +28,7 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
 
   ## Report + approve/reject (AC-051/AC-055)
 
-  `report/2` renders the `ensemble behavior discover --report` view.
+  `report/1` renders the `ensemble behavior discover --report` view.
   `decide/3` records a maintainer decision in the tracked proposal
   artifact `.ensemble/discovery/proposals.jsonl` (append-only, one
   redacted line per decision). Approving inserts a draft package
@@ -58,12 +58,16 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
   def analyze(input \\ [])
 
   def analyze(input) do
-    cond do
-      Enum.all?(input, &is_map/1) ->
-        cluster(input, [])
+    if Keyword.keyword?(input) do
+      opts =
+        case Keyword.pop(input, :telemetry_dir) do
+          {nil, rest} -> rest
+          {d, rest} -> Keyword.put(rest, :dir, d)
+        end
 
-      Keyword.keyword?(input) ->
-        cluster(Telemetry.replay_for(input), input)
+      cluster(Telemetry.replay_for(opts), opts)
+    else
+      cluster(input, min_bigram: 1)
     end
   end
 
@@ -114,7 +118,6 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
       pattern_name: pattern_name(et, tools),
       inferred_event_type: et,
       tools: tools,
-      bigram: {a, b},
       frequency: freq,
       confidence: confidence,
       exploratory: confidence < 40,
@@ -129,16 +132,25 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
   defp confidence(freq) when freq < 30, do: min(67 + 3 * (freq - @recommended_at), 95)
   defp confidence(_), do: 95
 
-  defp pattern_name(et, tools) do
-    event_slug(et) <> "-" <> (tools |> Enum.uniq() |> Enum.map(&tool_slug/1) |> Enum.join("-"))
+  @doc """
+  Deterministic suggestion name: event segments and tool segments joined
+  with single dashes (every run of non-alphanumerics collapses to one),
+  so the name doubles as the draft package slug.
+  """
+  @spec pattern_name(String.t() | nil, [String.t()]) :: String.t()
+  def pattern_name(et, tools) do
+    [slug(et || "unknown_event") | Enum.map(tools, &slug/1)]
+    |> Enum.join("-")
+    |> String.trim("-")
   end
 
-  defp event_slug(et) when is_binary(et),
-    do: et |> String.replace(~r/[.\/_]/, "-") |> String.downcase()
-
-  defp event_slug(_), do: "unknown-event"
-
-  defp tool_slug(t), do: t |> String.replace(~r/[.\/_]/, "-") |> String.downcase()
+  defp slug(s) do
+    s
+    |> to_string()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "-")
+    |> String.trim("-")
+  end
 
   # --- report -------------------------------------------------------------
 
@@ -205,26 +217,26 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
   The decision line itself lands in `.ensemble/discovery/proposals.jsonl`
   through the shared §5.3 redaction pass.
 
-  Options: `:dir`, `:behaviors_dir`, `:feedback`, `:registries`.
+  Options: `:dir`, `:behaviors_dir`, `:feedback`.
   """
   @spec decide(map(), :approve | :reject, keyword()) :: {:ok, map()} | {:error, term()}
   def decide(suggestion, verdict, opts \\ []) when verdict in [:approve, :reject] do
     behav_dir = Keyword.get(opts, :behaviors_dir) || "behaviors"
-    yaml = draft_yaml(suggestion)
 
     case verdict do
       :reject ->
         record(suggestion, :rejected, nil, opts)
 
       :approve ->
-        case Compiler.validate(yaml, Keyword.put(opts, :file, draft_path(behav_dir, suggestion))) do
-          {:ok, _defn} ->
-            with :ok <- write_draft(behav_dir, slug_of(suggestion), yaml) do
-              record(suggestion, :approved, draft_path(behav_dir, suggestion), opts)
-            end
+        path = draft_path(behav_dir, suggestion)
 
-          {:error, errs} ->
-            {:error, {:invalid, errs}}
+        with {:ok, yaml} <- draft_yaml(suggestion),
+             {:ok, _defn} <- Compiler.validate(yaml, file: path),
+             :ok <- write_draft(behav_dir, slug_of(suggestion), yaml) do
+          record(suggestion, :approved, path, opts)
+        else
+          {:error, :unknown_event_type} = e -> e
+          {:error, errs} -> {:error, {:invalid, errs}}
         end
     end
   end
@@ -258,13 +270,19 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
 
   @doc "The catalog slug for a suggestion."
   def slug_of(suggestion) do
-    fetch(suggestion, :pattern_name)
+    suggestion
+    |> fetch(:pattern_name)
     |> Kernel.||("discovered-pattern")
     |> to_string()
     |> String.downcase()
-    |> String.replace(~r/[^a-z0-9]+/, "-")
+    |> String.replace(~r/[^a-z0-9-]+/, "-")
+    |> String.replace(~r/-+/, "-")
     |> String.trim("-")
   end
+
+  # Catalog name for the draft: the package slug, clamped to the schema's
+  # 64-char `^[a-z0-9-]{1,64}$` metadata/name pattern.
+  def draft_name(suggestion), do: suggestion |> slug_of() |> String.slice(0, 64)
 
   defp draft_path(behav_dir, suggestion),
     do: Path.join([behav_dir, slug_of(suggestion), "behavior.yaml"])
@@ -274,69 +292,74 @@ defmodule Ensemble.Behavior.DiscoveryEngine do
     File.mkdir_p!(Path.join(dir, "fixtures/events"))
     File.write!(Path.join(dir, "behavior.yaml"), yaml)
     File.write!(Path.join(dir, "README.md"), draft_readme(slug))
+    :ok
   end
 
   @doc """
   Draft behavior YAML for a suggestion: `mode: propose` (staged-rollout
-  default), registry-valid tools only, a real workflow graph. Exposed so
-  CLI/tests can preview what `decide/3` would write.
+  default), registry-valid event type and tools only, and a real
+  workflow graph. Returns `{:error, :unknown_event_type}` for patterns
+  whose inferred event type is not in the event registry or is deeper
+  than the draft schema's four-segment cap — such patterns can only be
+  rejected, never silently drafted. Every draft still goes through
+  `Compiler.validate` before insertion (`decide/3`); no bypass.
   """
-  @spec draft_yaml(map()) :: String.t()
+  @spec draft_yaml(map()) :: {:ok, String.t()} | {:error, :unknown_event_type}
   def draft_yaml(suggestion) do
-    et = fetch(suggestion, :inferred_event_type) || "local.event"
+    raw_et = fetch(suggestion, :inferred_event_type)
 
+    if is_binary(raw_et) and Registries.event_known?(raw_et) and
+         length(String.split(raw_et, ".")) <= 4 do
+      {:ok, build_draft(raw_et, suggestion)}
+    else
+      {:error, :unknown_event_type}
+    end
+  end
+
+  defp build_draft(et, suggestion) do
     registered =
       (fetch(suggestion, :tools) || [])
       |> Enum.map(&ToolGuard.canonical_tool/1)
       |> Enum.filter(&Registries.tool_known?/1)
       |> Enum.uniq()
 
-    graph = pick_graph(registered)
+    tools = if registered == [], do: ["read"], else: registered
     freq = fetch(suggestion, :frequency) || 0
 
     """
     api_version: ensemble.sunstone.dev/v1
     kind: Behavior
     metadata:
-      name: discovery.#{slug_of(suggestion)}
+      name: #{draft_name(suggestion)}
       version: 0.1.0
       description: >-
         Draft behavior proposed by the discovery engine from #{freq}
-        observed runs of #{et} using #{inspect(registered)}. Mode:
-        propose; review and add fixtures before promoting to active.
+        observed runs of #{et}. Mode: propose; review and add fixtures
+        before promoting to active.
     trigger:
       event_type: #{et}
     policy:
       mode: propose
     capabilities:
-      tools: [#{Enum.join(registered, ", ")}]
+      tools: [#{Enum.join(tools, ", ")}]
       mutation_classes: [none]
     execution:
-      graph: #{graph}
-    outcomes: []
+      graph: #{pick_graph(tools)}
+    outcomes: [ensemble.run.completed, ensemble.run.failed]
     """
   end
 
-  defp pick_graph(registered) do
-    cond do
-      known?("ensemble.review-pr") and Enum.any?(registered, &String.contains?(&1, "review")) ->
-        "ensemble.review-pr"
+  defp pick_graph(tools) do
+    review? =
+      Enum.any?(
+        tools,
+        &(ToolGuard.canonical_tool(&1) in ["code_review", "review_pr", "pr_review"])
+      )
 
-      known?("ensemble.fix") and Enum.any?(registered, &String.contains?(&1, "fix")) ->
-        "ensemble.fix"
-
-      known?("ensemble.discover") ->
-        "ensemble.discover"
-
-      true ->
-        Enum.find(workflow_candidates(), &known?/1) || "ensemble.discover"
-    end
+    if review? and Registries.workflow_known?("ensemble.review-pr"),
+      do: "ensemble.review-pr",
+      else: "ensemble.fix"
   end
-
-  defp workflow_candidates,
-    do: ["ensemble.discover", "ensemble.assess", "ensemble.plan", "ensemble.verify"]
-
-  defp known?(g), do: Registries.workflow_known?(g)
 
   defp draft_readme(slug) do
     """

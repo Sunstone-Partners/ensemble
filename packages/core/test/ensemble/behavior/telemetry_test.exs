@@ -52,6 +52,13 @@ defmodule Ensemble.Behavior.TelemetryTest do
       assert again["event_id"] == "evt-1"
     end
 
+    test "event_type round-trips to disk for discovery clustering" do
+      d = tmp()
+      {:ok, _} = Telemetry.record_run(run(%{event_type: "test.failed"}), dir: d, enabled: true)
+      [rec] = Telemetry.replay_for(dir: d)
+      assert rec["event_type"] == "test.failed"
+    end
+
     test "config enable does not leak into tests that pass no opts (read-only check)" do
       # enabled?/0 must default false when no config set; assertion is on the
       # pure default path, config is never mutated here.
