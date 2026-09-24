@@ -74,11 +74,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
   defp ctx(overrides \\ %{}) do
     Map.merge(
-      %{
-        active: %{},
-        policy_context: %{"dedup_key" => @dk, "last_fired_at" => 0, "runs" => %{}, "budget_used" => 0},
-        now_ms: @now
-      },
+      %{enabled: true, dedup: %{}, cooldowns: %{}, active: 0, children: 0},
       overrides
     )
   end
@@ -89,14 +85,14 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
   defp mirror, do: Path.join(System.get_env("ENSEMBLE_STATE_DIR"), "proposals.jsonl")
   defp lines, do: mirror() |> File.read!() |> String.split("\n", trim: true)
-  defp trusted(opts), do: Keyword.put(opts, :trust_allowlist, ["gov"])
+  defp trusted(opts), do: opts |> Keyword.put(:trust_allowlist, ["gov"])
 
   # ---------------------------------------------------------------- capability
 
   describe "capability gate (AC-069)" do
     test "a behavior holding both halves may propose", %{opts: opts} do
       assert {:ok, %ConstitutionProposal{status: :pending} = p} =
-               ConstitutionGovernance.propose(defn(), "act-1", change(), opts)
+               ConstitutionGovernance.propose(defn(), "act-1", change(), trusted(opts))
 
       assert p.rule_id == "rule:x"
       assert p.approvers == []
@@ -161,9 +157,10 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
     test "a stranger cannot approve; the ledger stays untouched", %{opts: opts} do
       d = rule([%{"id" => "rule:x", "approvers" => ["sec-a", "sec-b"]}])
-      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), trusted(opts))
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
 
-      assert {:error, :not_approver} = ConstitutionGovernance.approve(p, "mallory", opts)
+      assert {:error, :not_approver} = ConstitutionGovernance.approve(p, "mallory", o)
       assert {:ok, still} = ConstitutionGovernance.fetch(nil, p.id, opts)
       assert still.status == :pending
       assert still.approvals == []
@@ -171,32 +168,34 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
     test "quorum of a named roster approves", %{opts: opts} do
       d = rule([%{"id" => "rule:x", "approvers" => ["a", "b", "c"]}])
-      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), trusted(opts))
-      {:ok, p1} = ConstitutionGovernance.approve(p, "a", opts)
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
+      {:ok, p1} = ConstitutionGovernance.approve(p, "a", o)
       assert p1.status == :pending
-      {:ok, p2} = ConstitutionGovernance.approve(p1, "c", opts)
+      {:ok, p2} = ConstitutionGovernance.approve(p1, "c", o)
       assert p2.status == :approved
       assert p2.approvals == ["a", "c"]
     end
 
     test "the same actor approving twice is not a quorum", %{opts: opts} do
-      d = rule([%{"id" => "rule:x", "approvers" => ["a", "b"]}])
-      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), trusted(opts))
-      {:ok, p1} = ConstitutionGovernance.approve(p, "a", opts)
+      d = rule([%{"id" => "rule:x", "approvers" => ["a", "b", "c"]}])
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
+      {:ok, p1} = ConstitutionGovernance.approve(p, "a", o)
       assert p1.status == :pending
-      {:ok, again} = ConstitutionGovernance.approve(p1, "a", opts)
+      {:ok, again} = ConstitutionGovernance.approve(p1, "a", o)
       assert again.status == :pending
       assert again.approvals == ["a"]
     end
 
     test "threshold/3 table (AC-068)" do
-      assert ConstitutionGovernance.threshold(["a"]) == 1
-      assert ConstitutionGovernance.threshold(["a", "b"]) == 1
-      assert ConstitutionGovernance.threshold(["a", "b", "c"]) == 2
-      assert ConstitutionGovernance.threshold(["a", "b", "c", "d"]) == 2
-      assert ConstitutionGovernance.threshold(["a", "b", "c", "d", "e"]) == 3
-      assert ConstitutionGovernance.threshold([], ["something"]) == 2
-      assert ConstitutionGovernance.threshold([], []) == 1
+      ConstitutionGovernance.threshold(["a"]) == 1
+      ConstitutionGovernance.threshold(["a", "b"]) == 1
+      ConstitutionGovernance.threshold(["a", "b", "c"]) == 2
+      ConstitutionGovernance.threshold(["a", "b", "c", "d"]) == 2
+      ConstitutionGovernance.threshold(["a", "b", "c", "d", "e"]) == 3
+      ConstitutionGovernance.threshold([], ["something"]) == 2
+      ConstitutionGovernance.threshold([], []) == 1
     end
 
     test "deciding twice reports not_pending", %{opts: opts} do
@@ -207,9 +206,10 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
     test "a named one-person roster needs just that one approval", %{opts: opts} do
       d = rule([%{"id" => "rule:x", "approvers" => ["sole"]}])
-      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), trusted(opts))
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
       assert p.threshold == 1
-      {:ok, done} = ConstitutionGovernance.approve(p, "sole", opts)
+      {:ok, done} = ConstitutionGovernance.approve(p, "sole", o)
       assert done.status == :approved
     end
   end
@@ -222,22 +222,27 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
     end
 
     test "records are canonical JSON lines that decode back to structs", %{dir: dir, opts: opts} do
-      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), opts)
-      {:ok, approved} = ConstitutionGovernance.approve(p, "whoever", opts)
+      d = rule([%{"id" => "rule:x", "approvers" => ["whoever", "someone", "third"]}])
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
+      {:ok, a1} = ConstitutionGovernance.approve(p, "whoever", o)
+      {:ok, approved} = ConstitutionGovernance.approve(a1, "someone", o)
 
-      decoded = :json.decode(Enum.at(lines(), 1))
+      decoded = :json.decode(Enum.at(lines(), 2))
       assert decoded["status"] == "approved"
       assert decoded["id"] == approved.id
-      assert decoded["approvals"] == ["whoever"]
+      assert decoded["approvals"] == ["whoever", "someone"]
 
       assert {:ok, back} = ConstitutionGovernance.from_record(decoded)
       assert back == approved
     end
 
     test "newest row per id wins", %{dir: dir, opts: opts} do
-      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), trusted(opts))
-      {:ok, a1} = ConstitutionGovernance.approve(p, "x", opts)
-      {:ok, a2} = ConstitutionGovernance.approve(a1, "y", opts)
+      d = rule([%{"id" => "rule:x", "approvers" => ["x", "y", "z"]}])
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
+      {:ok, a1} = ConstitutionGovernance.approve(p, "x", o)
+      {:ok, a2} = ConstitutionGovernance.approve(a1, "y", o)
 
       assert length(lines()) == 3
       assert {:ok, ^a2} = ConstitutionGovernance.fetch(nil, p.id, opts)
@@ -246,8 +251,9 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
     test "pending/2 is the operator review queue", %{opts: opts} do
       {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), opts)
-      {:ok, q} = ConstitutionGovernance.propose(defn(), "act-2", change(%{"n" => 2}), opts)
-      {:ok, _} = ConstitutionGovernance.reject(q, "no", opts)
+      o = trusted(opts)
+      {:ok, q} = ConstitutionGovernance.propose(defn(), "act-2", change("rule:x", %{"n" => 2}), o)
+      {:ok, _} = ConstitutionGovernance.reject(q, "no", o)
 
       assert Enum.map(ConstitutionGovernance.pending(nil, opts), & &1.id) == [p.id]
     end
@@ -298,8 +304,9 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
     end
 
     test "approved proposal unlocks gate 7 and Policy activates", %{opts: opts} do
+      d = rule([%{"id" => "rule:x", "approvers" => ["one", "two", "three"]}])
       o = trusted(opts)
-      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), o)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
       {:ok, a1} = ConstitutionGovernance.approve(p, "one", o)
       {:ok, done} = ConstitutionGovernance.approve(a1, "two", o)
 
@@ -307,12 +314,13 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       assert ConstitutionGovernance.verdict_for(d, done) == %{ctx: %{}, constitution_verdict: :allow}
 
       assert %PolicyDecision{verdict: :activate, reasons: []} =
-               Policy.evaluate(d, event(), Map.merge(ctx(), ConstitutionGovernance.verdict_for(d, done)))
+               Policy.evaluate(d, event(), Map.merge(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, done)))
     end
 
     test "pending quorum blocks with approval_required", %{opts: opts} do
+      d = rule([%{"id" => "rule:x", "approvers" => ["solo", "other", "third"]}])
       o = trusted(opts)
-      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), o)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
       {:ok, one} = ConstitutionGovernance.approve(p, "solo", o)
       assert one.status == :pending
       assert ConstitutionGovernance.verdict_for(defn(), one)[:constitution_verdict] == :pending
@@ -320,7 +328,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       d = defn(%{"policy" => %{"mode" => "active"}})
 
       assert %PolicyDecision{verdict: :require_approval, reasons: [%{gate: :constitution, code: :approval_required}]} =
-               Policy.evaluate(d, event(), Map.merge(ctx(), ConstitutionGovernance.verdict_for(d, one)))
+               Policy.evaluate(d, event(), Map.merge(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, one)))
     end
 
     test "rejected proposal is a hard constitution denial", %{opts: opts} do
@@ -333,15 +341,16 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       d = defn(%{"policy" => %{"mode" => "active"}})
 
       assert %PolicyDecision{verdict: :block, reasons: [%{gate: :constitution, code: :constitution_denied}]} =
-               Policy.evaluate(d, event(), Map.merge(ctx(), ConstitutionGovernance.verdict_for(d, r)))
+               Policy.evaluate(d, event(), Map.merge(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, r)))
     end
 
     test "a revised original never reads as approved", %{opts: opts} do
+      d = rule([%{"id" => "rule:x", "approvers" => ["one", "two", "three"]}])
       o = trusted(opts)
-      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), o)
+      {:ok, p} = ConstitutionGovernance.propose(d, "act-1", change(), o)
       {:ok, done} = ConstitutionGovernance.approve(p, "one", o)
       {:ok, two} = ConstitutionGovernance.approve(done, "two", o)
-      {:ok, child} = ConstitutionGovernance.revise(two, defn(), change("rule:x", %{"n" => 1}), o)
+      {:ok, child} = ConstitutionGovernance.revise(two, d, change("rule:x", %{"n" => 1}), o)
       assert child.status == :pending
 
       {:ok, original} = ConstitutionGovernance.fetch(nil, two.id, opts)
@@ -354,8 +363,9 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
   describe "revise/4 (AC-070)" do
     test "original becomes revised, child is pending and linked", %{opts: opts} do
-      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), opts)
-      {:ok, child} = ConstitutionGovernance.revise(p, defn(), change("rule:x", %{"cooldown" => "1h"}), opts)
+      o = trusted(opts)
+      {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), o)
+      {:ok, child} = ConstitutionGovernance.revise(p, defn(), change("rule:x", %{"cooldown" => "1h"}), o)
 
       assert child.status == :pending
       assert child.parent_id == p.id
@@ -369,7 +379,8 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
     test "revising a decided proposal is refused", %{opts: opts} do
       {:ok, p} = ConstitutionGovernance.propose(defn(), "act-1", change(), opts)
       {:ok, r} = ConstitutionGovernance.reject(p, "no", opts)
-      assert {:error, {:not_pending, :rejected}} = ConstitutionGovernance.revise(r, defn(), change(), opts)
+      assert {:error, {:not_pending, :rejected}} = ConstitutionGovernance.approve(r, "no", opts)
+      assert {:error, {:not_revivable, :rejected}} = ConstitutionGovernance.revise(r, defn(), change(), opts)
     end
   end
 
@@ -418,6 +429,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       assert p.threshold == 3
 
       {:ok, a} = ConstitutionGovernance.approve(p, "one", opts)
+      assert a.status == :pending
       {:ok, b} = ConstitutionGovernance.approve(a, "two", opts)
       assert b.status == :pending
       {:ok, c} = ConstitutionGovernance.approve(b, "three", opts)

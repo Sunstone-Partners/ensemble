@@ -209,7 +209,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
       true ->
         case find_rule(defn, rule_id_of(change)) do
           :error -> {:error, {:unknown_rule, rule_id_of(change)}}
-          {:ok, rule} -> persist(opts, build_proposal(defn, activation_id, change, rule, opts))
+          {:ok, rule} -> persist(opts, build_proposal(defn, activation_id, change, effective_rule(rule, strip_rule_id(change)), opts))
         end
     end
   end
@@ -281,11 +281,16 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
     now = now_ms(opts)
     actor = Keyword.get(opts, :actor, actor_of(defn))
 
-    {:ok, revised} = transition(p, actor, @revise, :revised, now, p.approvals)
+    with :ok <- require_revivable(p) do
+      revised = %{
+        p
+        | status: :revised,
+          events: p.events ++ [%{actor: actor, action: @revise, ts: now, approvals: p.approvals}]
+      }
 
-    with :ok <- require_pending(p),
-         {:ok, _} <- persist(opts, revised) do
-      propose(defn, p.activation_id, change, Keyword.merge(opts, parent_id: p.id, actor: actor))
+      with {:ok, _} <- persist(opts, revised) do
+        propose(defn, p.activation_id, change, Keyword.merge(opts, parent_id: p.id, actor: actor))
+      end
     end
   end
 
@@ -402,9 +407,10 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
   def verdict_for(%Definition{}, %ConstitutionProposal{status: :rejected}, ctx),
     do: verdict_opts(ctx, :deny)
 
-  def verdict_for(%Definition{constitution_rules: rules}, %ConstitutionProposal{} = p, ctx) do
-    if satisfied?(p, rules), do: verdict_opts(ctx, :allow), else: verdict_opts(ctx, :pending)
-  end
+  # A pending proposal is judged against `rules`; the caller's runtime ctx
+  # travels through the fragment unchanged.
+  def verdict_for(%Definition{constitution_rules: rules}, %ConstitutionProposal{} = p, ctx),
+    do: verdict_opts(ctx, if(satisfied?(p, rules), do: :allow, else: :pending))
 
   def verdict_for(%Definition{}, nil, ctx), do: verdict_opts(ctx, :pending)
 
@@ -418,8 +424,8 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
   defp full_quorum?(%ConstitutionProposal{approvals: a, approvers: roster}) when roster != [],
     do: length(Enum.uniq(a)) >= length(roster)
 
-  defp full_quorum?(%ConstitutionProposal{}), do: false
-
+  # Shape-conformant Policy.evaluate/3 opts fragment: runtime evidence stays
+  # under :ctx (Policy reads opts[:ctx]); gate 7 reads :constitution_verdict.
   defp verdict_opts(ctx, verdict), do: %{ctx: ctx, constitution_verdict: verdict}
 
   @doc """
@@ -437,10 +443,10 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
   @spec threshold([actor()], term(), boolean()) :: pos_integer()
   def threshold(roster, approval_required \\ [], escalated \\ false)
 
-  def threshold([], approval_required, escalated) do
-    base = if approval_required?(approval_required), do: 2, else: 1
-    base + escalation(escalated)
-  end
+  # No roster is declared, so the constitution asks for reviews rather than
+  # named reviewers: two when the rule gates on approval, one otherwise.
+  def threshold([], approval_required, escalated),
+    do: (if approval_required?(approval_required), do: 2, else: 1) + escalation(escalated)
 
   def threshold(roster, _approval_required, escalated) when is_list(roster) do
     base = max(1, ceil(length(roster) / 2))
@@ -516,8 +522,14 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
     end
   end
 
+  # A decided proposal is closed to further approval.
   defp require_pending(%ConstitutionProposal{status: :pending}), do: :ok
   defp require_pending(%ConstitutionProposal{status: s}), do: {:error, {:not_pending, s}}
+
+  # Revision may reopen a decided proposal — that is how an approved change
+  # goes back for another round — but never one already superseded (AC-070).
+  defp require_revivable(%ConstitutionProposal{status: :revised}), do: {:error, {:not_revivable, :revised}}
+  defp require_revivable(%ConstitutionProposal{}), do: :ok
 
   # A rule that names nobody cannot veto a reviewer: any attributable actor
   # stands in for the missing roster. A named roster is an allowlist.
@@ -534,10 +546,20 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
 
   defp actor_equals?(a, b), do: to_string(a) == to_string(b)
 
+  @spec transition(ConstitutionProposal.t(), actor(), String.t(), atom(), integer() | nil, [actor()]) ::
+          {:ok, ConstitutionProposal.t()}
   defp transition(%ConstitutionProposal{} = p, actor, action, status, ts, approvals) do
-    deciding = status in [:approved, :rejected]
     approving = action == @approve
     event = %{actor: actor, action: to_string(action), ts: ts, approvals: approvals}
+
+    # For an approval the quorum of recorded names decides the verdict, not the
+    # label the caller passed; other transitions carry their own status.
+    status =
+      if approving and p.status == :pending and length(Enum.uniq(approvals)) < p.threshold,
+        do: :pending,
+        else: status
+
+    deciding = status in [:approved, :rejected]
 
     {:ok,
      %ConstitutionProposal{
@@ -591,7 +613,8 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
   end
 
   defp disk_fetch(opts, id) do
-    case disk_list(opts) |> Enum.find(&(&1.id == id)) do
+    # Newest row wins, mirroring list/2: an id's final state is its last append.
+    case disk_list(opts) |> Enum.filter(&(&1.id == id)) |> List.last() do
       nil -> :error
       p -> {:ok, p}
     end
@@ -766,7 +789,16 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
   end
 
   defp merge_change(rule, change) do
-    Enum.reduce(change, rule_record(rule), fn {k, v}, acc -> Map.put(acc, to_key(k), v) end)
+    Enum.reduce(strip_rule_id(change), rule_record(rule), fn {k, v}, acc ->
+      Map.put(acc, to_key(k), v)
+    end)
+  end
+
+  # The rule as the proposal's own change would amend it. Thresholds and
+  # rosters derive from the effective rule, so a change that introduces an
+  # approval gate demands the reviews it asks the constitution to require.
+  defp effective_rule(rule, change) do
+    merge_change(rule, strip_rule_id(change))
   end
 
   defp to_key(k) when is_atom(k), do: k
@@ -828,22 +860,26 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
 
   defp proposal_from(m, status) do
     %ConstitutionProposal{
-      id: m["id"],
-      rule_id: m["rule_id"],
+      id: present(m["id"]),
+      rule_id: present(m["rule_id"]),
       change: m["change"] || %{},
       status: status,
       approvals: List.wrap(m["approvals"] || []),
       approvers: List.wrap(m["approvers"] || []),
       threshold: m["threshold"] || 1,
       trust_escalated: m["trust_escalated"] || false,
-      created_at: m["created_at"],
-      activation_id: m["activation_id"],
-      parent_id: m["parent_id"],
-      decided_by: m["decided_by"],
-      decided_at: m["decided_at"],
+      created_at: present(m["created_at"]),
+      activation_id: present(m["activation_id"]),
+      parent_id: present(m["parent_id"]),
+      decided_by: present(m["decided_by"]),
+      decided_at: present(m["decided_at"]),
       events: Enum.map(List.wrap(m["events"] || []), &event_from_record/1)
     }
   end
+
+  # Some encoders surface JSON null as the atom :null rather than nil.
+  defp present(:null), do: nil
+  defp present(v), do: v
 
   defp event_from_record(e) when is_map(e) do
     %{actor: e["actor"], action: e["action"], ts: e["ts"], approvals: List.wrap(e["approvals"] || [])}
