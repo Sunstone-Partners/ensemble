@@ -97,5 +97,30 @@ defmodule Ensemble.Behavior.AuditTest do
       log_capture = capture_log(fn -> assert {:error, _} = Audit.log_match(event, results) end)
       assert log_capture == ""
     end
+
+    test "raising hook degrades to a logged error, never crashes propose/3" do
+      log =
+        capture_log(fn ->
+          assert [_] =
+                     Matcher.propose(%Event{event_id: "er", event_type: "vcs.push"}, [defn()], %{
+                       audit: fn _ -> raise "boom" end
+                     })
+        end)
+      assert log =~ "audit hook raised"
+    end
+  end
+
+  describe "encode_value (tuple/float clauses)" do
+    test "tuple-shaped values audit-encode as JSON arrays; floats round-trip" do
+      assert ~s({"a":["x",1,[2]]}) == Audit.canonical_json(%{a: {"x", 1, [2]}})
+      assert ~s({"f":1.5}) == Audit.canonical_json(%{"f" => 1.5})
+    end
+
+    test "real match through default hook writes without raising" do
+      results = [MatchResult.matched(defn(), [{"payload.ref", :equals, "x"}], 1_700_000_000_000)]
+      assert {:ok, 1} = Audit.log_match(%Event{event_id: "ee", event_type: "vcs.push"}, results)
+      assert [record] = Audit.stream() |> Enum.take(-1) |> then(fn [r] -> [r] end)
+      assert record["type"] == "behavior.match"
+    end
   end
 end

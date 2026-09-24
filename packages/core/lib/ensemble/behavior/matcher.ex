@@ -95,9 +95,13 @@ defmodule Ensemble.Behavior.Matcher do
           do: audit,
           else: fn rs -> Audit.log_match(event, rs) end
 
-      case hook.(results) do
-        {:error, reason} -> Logger.error(fn -> "[behavior] audit write failed: #{inspect(reason)}" end)
-        _ -> :ok
+      try do
+        case hook.(results) do
+          {:error, reason} -> Logger.error(fn -> "[behavior] audit write failed: #{inspect(reason)}" end)
+          _ -> :ok
+        end
+      rescue
+        e -> Logger.error(fn -> "[behavior] audit hook raised: #{inspect(e)}" end)
       end
     end
 

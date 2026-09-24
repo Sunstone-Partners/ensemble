@@ -125,6 +125,7 @@ defmodule Ensemble.Behavior.Audit do
   defp encode_value(v) when is_atom(v), do: [~S("), Atom.to_string(v), ~S(")]
   defp encode_value(v) when is_integer(v), do: Integer.to_string(v)
   defp encode_value(v) when is_float(v), do: Float.to_string(v)
+  defp encode_value(v) when is_tuple(v), do: encode_value(Tuple.to_list(v))
   defp encode_value(v), do: raise(ArgumentError, "cannot audit-encode: #{inspect(v)}")
 
   defp escape(s) do
