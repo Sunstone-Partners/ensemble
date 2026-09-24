@@ -132,7 +132,8 @@ defmodule Ensemble.Behavior.Audit do
            activation_id: field(inv, :activation_id),
            attempted_tool: normalize_tool(tool),
            legacy_file: "violations.jsonl",
-           digest: Map.get(inv, :digest) || digest_hex(Map.get(defn, :digest))
+           digest: Map.get(inv, :digest) || digest_hex(Map.get(defn, :digest)),
+           dir: Map.get(inv, :dir) || Keyword.get(Map.get(inv, :opts) || [], :dir) || audit_dir()
          ) do
       {:ok, _} -> :ok
       {:error, _} = e -> e
@@ -194,7 +195,8 @@ defmodule Ensemble.Behavior.Audit do
       causal_root:
         Keyword.get(opts, :causal_root) || field(ev, :causal_parent) || field(ev, :causation_id),
       occurred_at: Keyword.get(opts, :occurred_at),
-      verdict: verdict
+      verdict: verdict,
+      dir: Keyword.get(opts, :dir)
     )
   end
 
@@ -226,7 +228,8 @@ defmodule Ensemble.Behavior.Audit do
       event_id: Keyword.get(opts, :event_id),
       actor: Keyword.get(opts, :actor),
       mutation_class: Keyword.get(opts, :mutation_class),
-      occurred_at: Keyword.get(opts, :occurred_at)
+      occurred_at: Keyword.get(opts, :occurred_at),
+      dir: Keyword.get(opts, :dir)
     )
   end
 
@@ -265,7 +268,8 @@ defmodule Ensemble.Behavior.Audit do
         actor: Keyword.get(opts, :actor) || Map.get(ev, :actor),
         event_id: Keyword.get(opts, :event_id) || event_id_of(ev),
         correlation_id: Keyword.get(opts, :correlation_id) || field(ev, :correlation_id),
-        causal_root: field(ev, :causal_parent) || field(ev, :causation_id)
+        causal_root: field(ev, :causal_parent) || field(ev, :causation_id),
+        dir: Keyword.get(opts, :dir)
       )
     else
       log_activation(defn, event, dec,
@@ -302,7 +306,8 @@ defmodule Ensemble.Behavior.Audit do
       payload: payload,
       activation_id: activation_id,
       actor: Keyword.get(opts, :actor),
-      event_id: Keyword.get(opts, :event_id)
+      event_id: Keyword.get(opts, :event_id),
+      dir: Keyword.get(opts, :dir)
     )
   end
 
@@ -521,7 +526,7 @@ defmodule Ensemble.Behavior.Audit do
   """
   @spec append_kind(atom(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def append_kind(kind, opts \\ []) when is_atom(kind) do
-    dir = Keyword.get(opts, :dir, audit_dir())
+    dir = Keyword.get(opts, :dir) || audit_dir()
     ts = Keyword.get(opts, :occurred_at) || timestamp()
     iso = to_iso(ts)
     defn = Keyword.get(opts, :defn)

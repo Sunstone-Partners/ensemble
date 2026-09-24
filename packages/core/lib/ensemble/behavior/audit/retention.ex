@@ -108,6 +108,8 @@ defmodule Ensemble.Behavior.Audit.Retention do
     since = month_or_nil(Keyword.get(filter, :since))
     until = month_or_nil(Keyword.get(filter, :until))
 
+    legacy = dir |> Path.join("*.jsonl") |> Path.wildcard() |> Enum.reject(&partitioned?/1)
+
     cond do
       is_nil(since) and is_nil(until) ->
         dir |> Path.join("*.jsonl") |> Path.wildcard()
@@ -120,9 +122,13 @@ defmodule Ensemble.Behavior.Audit.Retention do
             p = Path.join(dir, "#{fam}-#{m}.jsonl"),
             File.exists?(p),
             do: p
-    end
+    end ++ legacy
     |> Enum.uniq()
     |> Enum.sort()
+  end
+
+  defp partitioned?(path) do
+    Regex.match?(~r/^(matches|activations)-[0-9]{6}\.jsonl$/, Path.basename(path))
   end
 
   defp month_or_nil(nil), do: nil
