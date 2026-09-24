@@ -85,6 +85,14 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
 
   defp mirror, do: Path.join(System.get_env("ENSEMBLE_STATE_DIR"), "proposals.jsonl")
   defp lines, do: mirror() |> File.read!() |> String.split("\n", trim: true)
+  # verdict_for returns %{ctx: _, constitution_verdict: _}; the runtime ctx
+  # must survive the merge, so the inner :ctx is combined, not clobbered.
+  defp merge_opts(base, %{ctx: inner} = frag) do
+    frag
+    |> Map.delete(:ctx)
+    |> then(&Map.merge(Map.put(base, :ctx, Map.merge(base[:ctx] || %{}, inner)), &1))
+  end
+
   defp trusted(opts), do: opts |> Keyword.put(:trust_allowlist, ["gov"])
 
   # ---------------------------------------------------------------- capability
@@ -314,7 +322,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       assert ConstitutionGovernance.verdict_for(d, done) == %{ctx: %{}, constitution_verdict: :allow}
 
       assert %PolicyDecision{verdict: :activate, reasons: []} =
-               Policy.evaluate(d, event(), Map.merge(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, done)))
+               Policy.evaluate(d, event(), merge_opts(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, done)))
     end
 
     test "pending quorum blocks with approval_required", %{opts: opts} do
@@ -328,7 +336,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       d = defn(%{"policy" => %{"mode" => "active"}})
 
       assert %PolicyDecision{verdict: :require_approval, reasons: [%{gate: :constitution, code: :approval_required}]} =
-               Policy.evaluate(d, event(), Map.merge(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, one)))
+               Policy.evaluate(d, event(), merge_opts(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, one)))
     end
 
     test "rejected proposal is a hard constitution denial", %{opts: opts} do
@@ -341,7 +349,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernanceTest do
       d = defn(%{"policy" => %{"mode" => "active"}})
 
       assert %PolicyDecision{verdict: :block, reasons: [%{gate: :constitution, code: :constitution_denied}]} =
-               Policy.evaluate(d, event(), Map.merge(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, r)))
+               Policy.evaluate(d, event(), merge_opts(%{ctx: ctx(), now_ms: @now}, ConstitutionGovernance.verdict_for(d, r)))
     end
 
     test "a revised original never reads as approved", %{opts: opts} do

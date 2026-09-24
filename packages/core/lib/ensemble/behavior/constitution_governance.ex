@@ -528,7 +528,7 @@ defmodule Ensemble.Behavior.ConstitutionGovernance do
 
   # Revision may reopen a decided proposal — that is how an approved change
   # goes back for another round — but never one already superseded (AC-070).
-  defp require_revivable(%ConstitutionProposal{status: :revised}), do: {:error, {:not_revivable, :revised}}
+    defp require_revivable(%ConstitutionProposal{status: s}) when s in [:revised, :rejected], do: {:error, {:not_revivable, s}}
   defp require_revivable(%ConstitutionProposal{}), do: :ok
 
   # A rule that names nobody cannot veto a reviewer: any attributable actor
