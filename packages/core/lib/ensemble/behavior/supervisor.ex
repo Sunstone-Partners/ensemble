@@ -2,8 +2,11 @@ defmodule Ensemble.Behavior.Supervisor do
   @moduledoc """
   Root supervisor for the Ensemble behavior runtime.
 
-  Phase 1 keeps this empty of children; later phases mount the registry,
-  policy stores, and audit writer under it.
+  Children: `ActivationSupervisor` (empty DynamicSupervisor — activation
+  children appear only on demand via `Observability.start_activation/3`)
+  and `Observability` (stateless bookkeeping server). Both are inert at
+  boot: no env reads, no spawned tail loops — supervision trees boot in
+  tests too.
   """
   use Supervisor
 
@@ -13,7 +16,11 @@ defmodule Ensemble.Behavior.Supervisor do
 
   @impl true
   def init(:ok) do
-    children = []
+    children = [
+      Ensemble.Behavior.ActivationSupervisor,
+      Ensemble.Behavior.Observability
+    ]
+
     Supervisor.init(children, strategy: :one_for_one)
   end
 end

@@ -52,10 +52,16 @@ defmodule Ensemble.Behavior.Audit do
 
   The record is a `match_recorded` entry carrying `event_id`, `dedup_key`,
   the candidate list (`name@version` + status + digest) and a per-candidate
-  `trace_ref` (TRD §5.1 required fields).
+  `trace_ref` (TRD §5.1 required fields). Options (`:dir`, `:actor`, …) are
+  merged into the underlying `append_kind/2` call so callers can route the
+  write.
   """
-  @spec log_match(term(), [MatchResult.t()]) :: {:ok, non_neg_integer()} | {:error, term()}
-  def log_match(event, results) when is_list(results) do
+  @spec log_match(term(), [MatchResult.t()], keyword() | map()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def log_match(event, results, opts \\ [])
+
+  def log_match(event, results, opts) when is_list(results) do
+    opts = normalize_opts(opts)
     ev = event || %{}
 
     payload = fn ->
@@ -78,12 +84,15 @@ defmodule Ensemble.Behavior.Audit do
     end
 
     append_kind(:match_recorded,
-      subject: event_subject(ev) || first_candidate(results),
-      payload: payload,
-      actor: Map.get(ev, :actor),
-      event_id: event_id_of(ev),
-      correlation_id: field(ev, :correlation_id),
-      causal_root: field(ev, :causal_parent) || field(ev, :causation_id)
+      Keyword.merge(opts,
+        subject: event_subject(ev) || first_candidate(results),
+        payload: payload,
+        actor: Keyword.get(opts, :actor) || Map.get(ev, :actor),
+        event_id: Keyword.get(opts, :event_id) || event_id_of(ev),
+        correlation_id: Keyword.get(opts, :correlation_id) || field(ev, :correlation_id),
+        causal_root:
+          Keyword.get(opts, :causal_root) || field(ev, :causal_parent) || field(ev, :causation_id)
+      )
     )
     |> case do
       {:ok, _id} -> {:ok, length(results)}
