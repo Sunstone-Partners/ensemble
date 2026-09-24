@@ -528,4 +528,43 @@ defmodule Ensemble.Behavior.Compiler do
     |> Enum.map(&{Enum.join(&1.path, "."), &1.op})
     |> Enum.sort()
   end
+
+  @doc """
+  Additive coverage check (TRD-030 / AC-060), used by
+  `mix behavior.test` and `Ensemble.Behavior.TestRunner`. It NEVER changes
+  the error semantics of `validate/2` — a behavior that fails `validate/2`
+  still returns `{:error, errs}`. On success it returns the definition plus
+  `:coverage` WARN `DiscoveryIssue`s for fixture-coverage shortfalls.
+  """
+  @spec validate_coverage(binary() | map(), keyword()) ::
+          {:ok, Definition.t(), [DiscoveryIssue.t()]} | {:error, [ValidationError.t()]}
+  def validate_coverage(input, opts \\ []) do
+    file = Keyword.get(opts, :file)
+
+    case validate(input, opts) do
+      {:ok, defn} ->
+        {:ok, defn, coverage_issues(defn, file)}
+
+      {:error, errs} ->
+        {:error, errs}
+    end
+  end
+
+  defp coverage_issues(%Definition{} = defn, file) do
+    n = count_event_fixtures(defn)
+    paths = Ensemble.Behavior.TestRunner.distinct_trigger_paths(defn)
+
+    Ensemble.Behavior.TestRunner.coverage_warnings(defn.name, n, paths, 3 * paths)
+    |> Enum.map(fn msg -> %DiscoveryIssue{path: file || defn.name, kind: :coverage, message: msg} end)
+  end
+
+  defp count_event_fixtures(%Definition{} = defn) do
+    root = Ensemble.Behavior.FixtureLoader.fixture_dir(defn)
+
+    if root && File.dir?(root) do
+      root |> Path.join("events/*.json") |> Path.wildcard() |> length()
+    else
+      0
+    end
+  end
 end
