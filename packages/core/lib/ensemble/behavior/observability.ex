@@ -59,6 +59,8 @@ defmodule Ensemble.Behavior.Observability do
   Returns `{:ok, %{activation_id:, shadow:, proposals:, pid:}}`; in
   shadow mode `pid` is nil and no invocation seam is touched.
   """
+  @spec start_activation(Event.t(), Definition.t() | nil, keyword()) ::
+          {:ok, map()} | {:error, term()}
   def start_activation(%Event{} = event, defn \\ nil, opts \\ []) do
     activation_id = ActivationTask.generate_id("act")
     audit_opts = Keyword.get(opts, :audit_opts, [])

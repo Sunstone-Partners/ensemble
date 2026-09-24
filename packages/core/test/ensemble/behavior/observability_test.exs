@@ -236,8 +236,11 @@ defmodule Ensemble.Behavior.ObservabilityTest do
 
     test "extracts activation ids from unstructured lines" do
       idx = Observability.correlation_index(["[act-123] hi", "noise", "x [act-456] y"])
-      assert Map.keys(idx) |> Enum.sort() == ["act-123", "act-456", "untagged"]
-      assert idx["act-123"] == [{"act-123", "[act-123] hi"}]
+      assert Enum.sort(idx) == [
+               {"act-123", [{"act-123", "[act-123] hi"}]},
+               {"act-456", [{"act-456", "x [act-456] y"}]},
+               {"untagged", [{"untagged", "noise"}]}
+             ]
     end
   end
 
