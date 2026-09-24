@@ -103,6 +103,8 @@ defmodule Ensemble.Behavior.ToolGuard do
     if Enum.all?(declared, &Registries.tool_known?(&1, snapshot)) do
       {:ok, declared}
     else
+      # AC-100: an unresolvable grant set is a tool_not_found triage event.
+      Ensemble.Behavior.Metrics.bump(:tool_not_found)
       {:error, :unknown_tool}
     end
   end
@@ -242,7 +244,9 @@ defmodule Ensemble.Behavior.ToolGuard do
     %Registries{mutation_classes: classes} = reg_all(snapshot)
 
     classes
-    |> Enum.map(fn {class, tools} -> {class, Enum.map(tools, &canonical_tool/1) |> Enum.sort()} end)
+    |> Enum.map(fn {class, tools} ->
+      {class, Enum.map(tools, &canonical_tool/1) |> Enum.sort()}
+    end)
     |> Enum.sort_by(&elem(&1, 0))
   end
 

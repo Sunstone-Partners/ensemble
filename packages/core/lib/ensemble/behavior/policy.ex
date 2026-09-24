@@ -264,7 +264,14 @@ defmodule Ensemble.Behavior.Policy do
 
   @doc false
   @spec concurrency(atom(), Definition.t(), term(), map(), map(), integer()) :: [reason()]
-  def concurrency(_gate, %Definition{policy: %{max_concurrent: max}} = _d, _event, ctx, _opts, _now) do
+  def concurrency(
+        _gate,
+        %Definition{policy: %{max_concurrent: max}} = _d,
+        _event,
+        ctx,
+        _opts,
+        _now
+      ) do
     case Map.fetch(ctx, :active) do
       :error ->
         [unresolved(:concurrency, :active)]
@@ -293,8 +300,11 @@ defmodule Ensemble.Behavior.Policy do
           unresolved(:recursion, depth)
 
         depth + 1 > p.max_causal_depth ->
-          reason!(:recursion, :depth_exceeded,
-            "depth #{depth} + 1 exceeds max_causal_depth #{p.max_causal_depth}")
+          reason!(
+            :recursion,
+            :depth_exceeded,
+            "depth #{depth} + 1 exceeds max_causal_depth #{p.max_causal_depth}"
+          )
 
         true ->
           nil
@@ -318,8 +328,11 @@ defmodule Ensemble.Behavior.Policy do
   defp children_reason(ctx, max) do
     case Map.fetch(ctx, :children) do
       # A behavior that cannot fan out needs no child counter resolved.
-      :error -> unresolved(:recursion, :children)
-      {:ok, nil} -> unresolved(:recursion, nil)
+      :error ->
+        unresolved(:recursion, :children)
+
+      {:ok, nil} ->
+        unresolved(:recursion, nil)
 
       {:ok, n} when is_integer(n) and n >= 0 ->
         if n >= max,
@@ -361,9 +374,14 @@ defmodule Ensemble.Behavior.Policy do
           end
 
         cond do
-          not is_map(limit) -> [unresolved(:budget, limit)]
-          not is_map(used) -> [unresolved(:budget, used)]
-          true -> token_reason(limit, used, structured?) ++ wall_reason(limit, used, structured?, p)
+          not is_map(limit) ->
+            [unresolved(:budget, limit)]
+
+          not is_map(used) ->
+            [unresolved(:budget, used)]
+
+          true ->
+            token_reason(limit, used, structured?) ++ wall_reason(limit, used, structured?, p)
         end
 
       other ->
@@ -378,6 +396,8 @@ defmodule Ensemble.Behavior.Policy do
          max when is_integer(max) <- Map.get(ceiling, :tokens),
          n when is_integer(n) <- Map.get(used, :tokens),
          true <- n >= max do
+      # AC-100: budget exhaustion is a triage bucket, counted at the gate.
+      Ensemble.Behavior.Metrics.bump(:budget_exhausted)
       [reason!(:budget, :token_budget_exhausted, "#{n} of #{max} tokens spent")]
     else
       _ -> []
@@ -397,6 +417,8 @@ defmodule Ensemble.Behavior.Policy do
       end
 
     if is_integer(max) and is_integer(spent) and spent >= max do
+      # AC-100: wall-clock exhaustion is budget exhaustion for triage.
+      Ensemble.Behavior.Metrics.bump(:budget_exhausted)
       [reason!(:budget, :wall_clock_exhausted, "#{spent} of #{max}ms spent")]
     else
       []
@@ -429,12 +451,29 @@ defmodule Ensemble.Behavior.Policy do
 
     if required do
       case approval_state(ctx, opts) do
-        s when s in [:satisfied, :granted] -> []
-        :pending -> [reason!(:constitution, :approval_required, "rule #{inspect(id)} pending (AC-069)")]
-        :required -> [reason!(:constitution, :approval_required, "rule #{inspect(id)} needs approval (AC-067)")]
-        :denied -> [reason!(:constitution, :constitution_denied, "rule #{inspect(id)} approval denied")]
-        nil -> [unresolved(:constitution, :approval_state)]
-        other -> [unresolved(:constitution, other)]
+        s when s in [:satisfied, :granted] ->
+          []
+
+        :pending ->
+          [reason!(:constitution, :approval_required, "rule #{inspect(id)} pending (AC-069)")]
+
+        :required ->
+          [
+            reason!(
+              :constitution,
+              :approval_required,
+              "rule #{inspect(id)} needs approval (AC-067)"
+            )
+          ]
+
+        :denied ->
+          [reason!(:constitution, :constitution_denied, "rule #{inspect(id)} approval denied")]
+
+        nil ->
+          [unresolved(:constitution, :approval_state)]
+
+        other ->
+          [unresolved(:constitution, other)]
       end
     else
       []
@@ -447,10 +486,17 @@ defmodule Ensemble.Behavior.Policy do
 
   defp approval_state(ctx, opts) do
     cond do
-      Map.has_key?(ctx, :pending_approval) -> if ctx[:pending_approval], do: :pending, else: :satisfied
-      Map.has_key?(ctx, :approval_state) -> Map.get(ctx, :approval_state)
-      Map.has_key?(opts, :approval_state) -> Map.get(opts, :approval_state)
-      true -> :required
+      Map.has_key?(ctx, :pending_approval) ->
+        if ctx[:pending_approval], do: :pending, else: :satisfied
+
+      Map.has_key?(ctx, :approval_state) ->
+        Map.get(ctx, :approval_state)
+
+      Map.has_key?(opts, :approval_state) ->
+        Map.get(opts, :approval_state)
+
+      true ->
+        :required
     end
   end
 

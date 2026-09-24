@@ -66,14 +66,14 @@ defmodule Ensemble.Behavior.Composition do
         {:ok, %{graph: exec.graph}}
 
       is_binary(exec.graph) and exec.graph != "" ->
-        {:error, :workflow_missing}
+        resolve_missing()
 
       true ->
         # No graph declared: fall back to the behavior name, which is how a
         # single-behavior workflow package is registered in the catalog.
         case defn.name do
           name when is_binary(name) -> resolve_name(name, reg)
-          _ -> {:error, :workflow_missing}
+          _ -> resolve_missing()
         end
     end
   end
@@ -82,8 +82,14 @@ defmodule Ensemble.Behavior.Composition do
     if Registries.workflow_known?(name, reg) do
       {:ok, %{graph: name}}
     else
-      {:error, :workflow_missing}
+      resolve_missing()
     end
+  end
+
+  # AC-100: workflow_missing is a triage bucket, counted where it fails.
+  defp resolve_missing do
+    Ensemble.Behavior.Metrics.bump(:workflow_missing)
+    {:error, :workflow_missing}
   end
 
   @doc """
@@ -103,6 +109,7 @@ defmodule Ensemble.Behavior.Composition do
   @spec bind_params(Definition.t() | map(), Event.t() | map()) ::
           {:ok, map()} | {:error, {:param_unresolved, String.t()}}
   def bind_params(%Definition{execution: exec}, event), do: bind_params(exec.params, event)
+
   def bind_params(params, event) when is_map(params) do
     Enum.reduce_while(params, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
       case bind_value(value, event) do

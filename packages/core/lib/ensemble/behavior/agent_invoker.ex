@@ -91,6 +91,7 @@ defmodule Ensemble.Behavior.AgentInvoker do
     Definition,
     Event,
     Invocation,
+    Metrics,
     PolicyDecision,
     Registries,
     ToolGuard
@@ -218,6 +219,12 @@ defmodule Ensemble.Behavior.AgentInvoker do
     }
   end
 
+  # AC-100: an unrecognized backend is a backend_unavailable triage event.
+  def to_launch_config(backend, request) when is_map(request) do
+    Metrics.bump(:backend_unavailable)
+    %{backend: backend, error: :backend_unavailable, tool_policy: %{allow: []}}
+  end
+
   @doc """
   Runtime interception for a single tool call (AC-038). The ONLY
   authority source is `invocation.granted` via `ToolGuard.check_access/2`
@@ -250,6 +257,9 @@ defmodule Ensemble.Behavior.AgentInvoker do
               "violation audit write failed: #{Exception.format(kind, reason, __STACKTRACE__)}"
             )
         end
+
+        # AC-100 triage bucket; counter-only, never changes the decision.
+        Metrics.bump(:policy_violation)
 
         error
     end
