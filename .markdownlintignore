@@ -1,0 +1,10 @@
+node_modules/
+.beads/
+.wiki-staging/
+.refinement-review/
+.session-backup/
+**/lib/
+**/dist/
+**/coverage/
+CHANGELOG.md
+**/CHANGELOG.md

@@ -1,0 +1,13 @@
+runner:
+  eslint:
+    cmd: npx eslint .
+    format: eslint
+    level: warning
+  markdownlint:
+    cmd: markdownlint .
+    # Same errorformat used by reviewdog/action-markdownlint's entrypoint.sh,
+    # since reviewdog has no predefined `markdownlint` format.
+    errorformat:
+      - "%f:%l:%c %m"
+      - "%f:%l %m"
+    level: warning
