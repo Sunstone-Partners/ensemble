@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { ToolRegistry, InMemoryEventSink, echoTool } from "@sunstone-partners/ensemble-agent-core";
+import { ToolRegistry, InMemoryEventSink, echoTool, EventSink } from "@sunstone-partners/ensemble-agent-core";
 import { wireSessionLifecycle } from "./session";
 import { handleEchoToolCall } from "./echo-tool-handler";
 import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } from "./behavior-activation";
@@ -51,7 +51,33 @@ export function createActivate(): {
   const activate = (pi: ExtensionAPI): void => {
     assertRequiredCapabilities(pi);
 
-    wireSessionLifecycle(pi, sink);
+    // Every published event is forwarded to the sink and then offered
+    // to the matcher, so a matching event actually invokes its behavior
+    // in a real session (TRD-015 / REQ-003). Without this the matcher
+    // is built during activation and never sees a live event --
+    // dispatch only a test could trigger.
+    //
+    // The matcher is resolved at publish time, not captured here:
+    // wireSessionLifecycle runs before activateBehaviorPipeline has
+    // produced one, so binding eagerly would capture null forever.
+    const dispatchingSink: EventSink = {
+      async publish(envelope) {
+        await sink.publish(envelope);
+        const matcher = lastActivation?.matcher;
+        if (!matcher) return;
+        try {
+          await matcher.onEvent(envelope.event);
+        } catch (error) {
+          // A behavior invocation must never break the event pipeline.
+          lastActivation?.invocationErrors.push({
+            behavior: "(dispatch)",
+            reason: (error as Error).message,
+          });
+        }
+      },
+    };
+
+    wireSessionLifecycle(pi, dispatchingSink);
 
     // agent-core's ToolRegistry is the enforced grant-denial boundary
     // (AC-005-2: "prompt text cannot bypass this"). The grant source

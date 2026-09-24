@@ -4,6 +4,9 @@ import {
   compile,
   compileBehaviorToArtifacts,
   discoverBehaviorPackages,
+  LocalEventMatcher,
+  BehaviorInvoker,
+  CompiledBehaviorPackage,
   ACTIVATION_SEARCH_ROOTS,
 } from "@sunstone-partners/ensemble-agent-core";
 import { existsSync } from "node:fs";
@@ -40,6 +43,13 @@ export interface BehaviorActivationResult {
   discovered: number;
   loaded: string[];
   skipped: { behaviorId: string; reason: string }[];
+  /**
+   * Dispatches matching events to loaded behaviors for this session
+   * only. Always present, even when nothing was discovered.
+   */
+  matcher?: LocalEventMatcher;
+  /** Invoker failures; one behavior's failure never hides its siblings. */
+  invocationErrors: { behavior: string; reason: string }[];
 }
 
 /**
@@ -64,15 +74,20 @@ export function activateBehaviorPipeline(
   rootDir: string,
   availableTools: readonly ToolDescriptor<Record<string, unknown>, unknown>[] = [],
   searchRoots: string[] = [...ACTIVATION_SEARCH_ROOTS],
+  invoke?: BehaviorInvoker,
 ): BehaviorActivationResult {
-  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [] };
+  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], invocationErrors: [] };
+  const live: CompiledBehaviorPackage[] = [];
 
   let discovered;
   try {
     discovered = discoverBehaviorPackages(rootDir, { searchRoots });
   } catch {
     // A repo with no discoverable layout at all is not an error —
-    // the extension must still activate normally (AC-009-3).
+    // the extension must still activate normally (AC-009-3). A matcher
+    // over zero behaviors is still returned so callers never have to
+    // null-check it.
+    result.matcher = new LocalEventMatcher([], { invoke: invoke ?? (() => undefined) });
     return result;
   }
 
@@ -102,6 +117,7 @@ export function activateBehaviorPipeline(
         const artifacts = compileBehaviorToArtifacts(compiled, availableTools);
         loadCompiledBehavior(pi, compiled, artifacts, availableTools);
         result.loaded.push(compiled.manifest.metadata.name);
+        live.push(compiled);
       } catch (error) {
         // Includes the TRD-004 fail-closed refusal for an unenforced
         // `mode: auto` manifest — surfaced, never swallowed into a
@@ -113,6 +129,21 @@ export function activateBehaviorPipeline(
       }
     }
   }
+
+  // Dispatch (TRD-015 / REQ-003). Without this, behaviors are
+  // discovered, compiled and loaded, and a matching event still invokes
+  // nothing — validation rather than dispatch. The matcher holds no
+  // durable state: the correlation lives only in this session object
+  // (TRD-016).
+  result.matcher = new LocalEventMatcher(live, {
+    invoke: invoke ?? (() => undefined),
+    onError: (error, invocation) => {
+      result.invocationErrors.push({
+        behavior: invocation.behavior.metadata.name,
+        reason: error.message,
+      });
+    },
+  });
 
   return result;
 }

@@ -112,3 +112,61 @@ describe("production activate() wires the behavior pipeline (TRD-005 / AC-009-1,
     expect(() => activate(pi)).not.toThrow();
   });
 });
+
+describe("live dispatch reaches a behavior through the real activate() (TRD-015 / REQ-003)", () => {
+  const dirs: string[] = [];
+  const originalCwd = process.cwd();
+  afterAll(() => {
+    process.chdir(originalCwd);
+    dirs.forEach((d) => rmSync(d, { recursive: true, force: true }));
+  });
+
+  function dispatchPi() {
+    const handlers = new Map<string, (e: unknown) => Promise<void> | void>();
+    const pi = {
+      registerCommand: () => undefined,
+      registerTool: () => undefined,
+      registerFlag: () => undefined,
+      getFlag: () => false,
+      sendUserMessage: () => undefined,
+      on: (name: string, h: (e: unknown) => Promise<void> | void) => {
+        handlers.set(name, h);
+        return () => undefined;
+      },
+    } as unknown as ExtensionAPI;
+    return { pi, fire: async (n: string, e: unknown) => { await handlers.get(n)?.(e); } };
+  }
+
+  it("a failing test command fires the behavior, with no hand-built semantic event", async () => {
+    // The full production path: real createActivate() -> session
+    // wiring -> translator -> matcher -> behavior. Only a raw Pi
+    // tool_result is injected; everything else must be real.
+    const root = mkdtempSync(join(tmpdir(), "dispatch-e2e-"));
+    dirs.push(root);
+    const dir = join(root, "packages", "agent-core", "behaviors", "investigate-test-failure");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "behavior.yaml"), READ_ONLY_BEHAVIOR);
+
+    process.chdir(root);
+    const { createActivate } = await import("../src/extension");
+    const instance = createActivate();
+    const { pi, fire } = dispatchPi();
+    instance.activate(pi);
+
+    const invoked: string[] = [];
+    instance.lastActivation()!.matcher!["options"].invoke = (i: { behavior: { metadata: { name: string } } }) => {
+      invoked.push(i.behavior.metadata.name);
+    };
+
+    await fire("tool_result", {
+      type: "tool_result",
+      toolCallId: "t1",
+      toolName: "bash",
+      input: { command: "npm test" },
+      content: [{ type: "text", text: "1 failing" }],
+      isError: true,
+    });
+
+    expect(invoked).toEqual(["investigate-test-failure"]);
+  });
+});
