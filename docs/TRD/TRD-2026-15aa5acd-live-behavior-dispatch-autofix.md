@@ -61,6 +61,22 @@ Two defects found while grounding this design are folded into PR 1 rather than l
 
 **Failure paths.** Every `authorize()` denial is terminal for that candidate (no retry-with-different-path). Translator returns `null` rather than throwing on non-matching events. `LocalEventMatcher` swallows no errors: a behavior invocation failure is recorded as a failed attempt and counts toward the retry budget.
 
+### File inventory: extend vs. create
+
+`Target Files` on each task are planning targets, verified against the working tree. **17 already exist and must be extended, not recreated** — six of these are existing test files:
+
+| Existing test file | Tasks |
+|---|---|
+| `packages/pi-extension/tests/behavior-loader.test.ts` | TRD-003-TEST, TRD-004-TEST |
+| `packages/pi-extension/tests/extension.test.ts` | TRD-005-TEST, TRD-006-TEST |
+| `packages/agent-core/tests/fixture-conformance.test.ts` | TRD-007-TEST |
+| `packages/agent-core/tests/package-discovery.test.ts` | TRD-008-TEST |
+| `packages/agent-core/tests/behavior.test.ts` | TRD-013-TEST |
+
+The remaining 11 existing targets are source files already in the tree (`pi-events.ts`, `event-catalog.ts`, `events.ts`, `compiler.ts`, `behavior-loader.ts`, `extension.ts`, `fixture-conformance.ts`, `package-discovery.ts`, `schema.ts`, `outbox.ts`, `artifact-compiler.ts`, plus the example `behavior.yaml`).
+
+The other 23 targets are new modules this TRD introduces. Test convention in both packages is `packages/<pkg>/tests/*.test.ts` (plural `tests`), matching the existing suite.
+
 ## Master Task List
 
 ### PR 1: Activation and the enforcement seam
@@ -388,7 +404,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
   - Implementation AC:
     - [ ] Given the fixture repo with no `packages/` directory and a non-npm declared test command, when a real test fails, then translate → match → auto-fix → full-suite reverify → commit-or-escalate completes with no code modification.
 - [ ] **TRD-031-TEST** Portability happy-path and escalation-path tests (5h) [verifies TRD-031] [satisfies REQ-008] [depends: TRD-031]
-  - Target Files: `packages/agent-core/tests/portability.e2e.test.test.ts`
+  - Target Files: `packages/pi-extension/tests/portability.e2e.test.ts`
   - Implementation AC:
     - [ ] Given the same fixture repo where no fix succeeds within three attempts, when the loop ends, then it escalates rather than committing — covering the edge case PRD REQ-008's single AC omits.
 
