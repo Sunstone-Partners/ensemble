@@ -1,20 +1,22 @@
 import { compile, createMutationGuard, BehaviorManifest } from "../src";
 
-function manifestWith(tools: string[], mutationClasses: string[]): BehaviorManifest {
+function manifestWith(tools: string[], mutationClasses: string[], mode: "auto" | "propose" | "shadow" = "propose"): BehaviorManifest {
   return {
     api_version: "ensemble.sunstone.dev/v1",
     kind: "Behavior",
     metadata: { name: "investigate-test-failure", version: "1.0.0" },
     trigger: { event_type: "test.failure.observed" },
-    policy: { mode: "propose", timeout: "30m" },
+    policy: { mode, timeout: "30m" },
     capabilities: { tools, mutation_classes: mutationClasses },
     execution: { graph: "investigate-test-failure" },
     outcomes: ["test.failure.investigated"],
   };
 }
 
-function guardFor(tools: string[], mutationClasses: string[]) {
-  const { compiled, errors } = compile({ behaviors: [manifestWith(tools, mutationClasses)] });
+function guardFor(tools: string[], mutationClasses: string[], mode: "auto" | "propose" | "shadow" = "propose") {
+  const m = manifestWith(tools, mutationClasses, mode);
+  if (mode === "auto") m.execution.test_command = "npm test";
+  const { compiled, errors } = compile({ behaviors: [m] });
   expect(errors).toEqual([]);
   return createMutationGuard(compiled[0]);
 }
@@ -31,7 +33,10 @@ describe("MutationGuard (TRD-002 / REQ-011)", () => {
   });
 
   it("AC-011-1: permits a mutation class the manifest does declare", () => {
-    const guard = guardFor(["read"], ["artifact.write"]);
+    // Asserted under mode:auto. Since TRD-017 a `propose` behavior is
+    // denied direct writes regardless of declared classes, so the
+    // class-grant question is only observable in auto.
+    const guard = guardFor(["read"], ["artifact.write"], "auto");
     expect(guard.authorize({ mutationClass: "artifact.write", kind: "write" }).allowed).toBe(true);
   });
 

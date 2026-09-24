@@ -1,4 +1,5 @@
 import { CompiledBehaviorPackage } from "./compiler";
+import { classifyPath } from "./protected-paths";
 
 /**
  * The single authorization chokepoint for mutations (TRD-002).
@@ -14,10 +15,10 @@ import { CompiledBehaviorPackage } from "./compiler";
  * the failure mode this replaces — one reachable chokepoint is
  * auditable; N optional wrappers are not.
  *
- * `policy.mode` branching (propose/auto/shadow) is deliberately NOT
- * handled here yet — that is TRD-017. This class answers only the
- * mutation-class question, and reports via `enforcementActive` that it
- * is in fact wired, so the loader can fail closed (TRD-004).
+ * `policy.mode` branching (propose/auto/shadow) is handled here as of
+ * TRD-017, and the protected-path write boundary as of TRD-020. Both
+ * live at this one chokepoint on purpose: a second enforcement site
+ * would be a second thing to forget.
  */
 
 export type MutationKind = "write" | "delete" | "commit";
@@ -41,15 +42,29 @@ export interface MutationGuard {
    * false rather than degrading to unenforced auto-apply (TRD-004).
    */
   readonly enforcementActive: boolean;
+  /** The policy mode this guard enforces. */
+  readonly mode: PolicyMode;
   authorize(request: MutationRequest): MutationDecision;
 }
 
-export function createMutationGuard(compiled: CompiledBehaviorPackage): MutationGuard {
+export type PolicyMode = "auto" | "propose" | "shadow";
+
+export interface MutationGuardOptions {
+  /** Overrides the manifest mode; used by the auto-fix loop's dry runs. */
+  mode?: PolicyMode;
+}
+
+export function createMutationGuard(
+  compiled: CompiledBehaviorPackage,
+  options: MutationGuardOptions = {},
+): MutationGuard {
   const behaviorName = compiled.manifest.metadata.name;
   const declared = compiled.manifest.capabilities.mutation_classes;
+  const mode: PolicyMode = options.mode ?? (compiled.manifest.policy.mode as PolicyMode);
 
   return {
     enforcementActive: true,
+    mode,
     authorize(request: MutationRequest): MutationDecision {
       if (!request.mutationClass) {
         return {
@@ -71,6 +86,45 @@ export function createMutationGuard(compiled: CompiledBehaviorPackage): Mutation
           reason:
             `mutation class "${request.mutationClass}" is not granted to behavior "${behaviorName}" ` +
             `(capabilities.mutation_classes: [${declared.join(", ")}])`,
+          escalate: true,
+        };
+      }
+
+      // The write boundary is checked BEFORE mode. A protected path is
+      // refused even in `mode: auto` with every class granted: the
+      // cheapest way to make a failing test pass is to edit the test,
+      // and no amount of declared authority should buy that (TRD-020 /
+      // AC-015-2). Mechanical path check, no model involvement.
+      if (request.path) {
+        const verdict = classifyPath(request.path);
+        if (verdict.protected) {
+          return {
+            allowed: false,
+            reason:
+              `write to protected path refused for behavior "${behaviorName}": ` +
+              `${request.path} is a ${verdict.reason}`,
+            escalate: true,
+          };
+        }
+      }
+
+      // Mode semantics (TRD-017). Previously `policy.mode` was parsed,
+      // validated and then never consulted at a mutation boundary, so
+      // `propose` and `auto` behaved identically at runtime.
+      if (mode === "shadow") {
+        return {
+          allowed: false,
+          reason: `behavior "${behaviorName}" runs in mode: shadow; all mutations are observed and denied`,
+          escalate: false,
+        };
+      }
+
+      if (mode === "propose") {
+        return {
+          allowed: false,
+          reason:
+            `behavior "${behaviorName}" runs in mode: propose; direct ${request.kind} to ` +
+            `${request.path ?? "(no path)"} is denied — emit a proposal artifact instead`,
           escalate: true,
         };
       }
