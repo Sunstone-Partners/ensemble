@@ -75,3 +75,53 @@ describe("wireSessionLifecycle (TRD-006)", () => {
     expect(sourceOfWiring).not.toMatch(/hook/i);
   });
 });
+
+describe("wireSessionLifecycle (TRD-007)", () => {
+  it("AC-007-1: a custom tool call/result pair is captured with matching correlation", async () => {
+    const { pi, fire } = fakePi();
+    const sink = new InMemoryEventSink();
+    wireSessionLifecycle(pi, sink);
+
+    await fire("tool_call", {
+      type: "tool_call",
+      toolCallId: "call-echo-1",
+      toolName: "echo",
+      input: { message: "hi" },
+    });
+    await fire("tool_result", {
+      type: "tool_result",
+      toolCallId: "call-echo-1",
+      toolName: "echo",
+      input: { message: "hi" },
+      content: [],
+      isError: false,
+      details: {},
+    });
+
+    const [call, result] = sink.drain();
+    expect(call.event.type).toBe("runtime.tool_call");
+    expect(result.event.type).toBe("runtime.tool_result");
+    expect(call.event.payload.toolCallId).toBe("call-echo-1");
+    expect(result.event.payload.toolCallId).toBe("call-echo-1");
+    expect(call.event.payload.custom).toBe(true);
+    expect(result.event.payload.custom).toBe(true);
+  });
+
+  it("AC-007-2: a native Pi tool call (bash) is captured and distinguished from a custom tool call", async () => {
+    const { pi, fire } = fakePi();
+    const sink = new InMemoryEventSink();
+    wireSessionLifecycle(pi, sink);
+
+    await fire("tool_call", {
+      type: "tool_call",
+      toolCallId: "call-bash-1",
+      toolName: "bash",
+      input: { command: "ls" },
+    });
+
+    const [call] = sink.drain();
+    expect(call.event.type).toBe("runtime.tool_call");
+    expect(call.event.payload.toolName).toBe("bash");
+    expect(call.event.payload.custom).toBe(false);
+  });
+});

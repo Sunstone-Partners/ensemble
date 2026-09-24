@@ -5,8 +5,26 @@ import type {
   AgentEndEvent,
   ToolExecutionStartEvent,
   ToolExecutionEndEvent,
+  ToolCallEvent,
+  ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { normalizeEvent, RawEventInput } from "@sunstone-partners/ensemble-agent-core";
+
+/**
+ * Native Pi tool names (as opposed to a governed custom tool registered
+ * via `pi.registerTool`). Anything outside this set on a ToolCallEvent/
+ * ToolResultEvent is a custom tool call (REQ-007/AC-007-2).
+ */
+const NATIVE_PI_TOOL_NAMES = new Set([
+  "bash",
+  "powershell",
+  "read",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+]);
 
 /**
  * Translates Pi's native lifecycle events into the provider-neutral
@@ -58,4 +76,22 @@ export function fromAgentEnd(_event: AgentEndEvent) {
 
 export function fromSessionShutdown(_event: SessionShutdownEvent) {
   return normalizeEvent({ type: "runtime.process.exited", source: "pi" });
+}
+
+export function fromToolCall(event: ToolCallEvent) {
+  const custom = !NATIVE_PI_TOOL_NAMES.has(event.toolName);
+  return normalizeEvent({
+    type: "runtime.tool_call",
+    source: "pi",
+    payload: { toolCallId: event.toolCallId, toolName: event.toolName, custom },
+  });
+}
+
+export function fromToolResult(event: ToolResultEvent) {
+  const custom = !NATIVE_PI_TOOL_NAMES.has(event.toolName);
+  return normalizeEvent({
+    type: "runtime.tool_result",
+    source: "pi",
+    payload: { toolCallId: event.toolCallId, toolName: event.toolName, custom },
+  });
 }

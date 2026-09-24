@@ -7,6 +7,8 @@ import {
   fromToolExecutionEnd,
   fromAgentEnd,
   fromSessionShutdown,
+  fromToolCall,
+  fromToolResult,
 } from "./pi-events";
 
 /**
@@ -16,6 +18,11 @@ import {
  * mechanism is involved anywhere in this path (REQ-006/AC-006-2):
  * capture works whether or not any hook configuration exists, because
  * it is wired entirely through Pi's own native extension events.
+ *
+ * tool_call/tool_result (REQ-007) fire around every tool invocation —
+ * both governed custom tools and Pi's own native tools (bash/read/etc)
+ * — with a shared `toolCallId` correlating the pair, and are
+ * distinguished custom-vs-native in pi-events.ts.
  */
 export function wireSessionLifecycle(pi: ExtensionAPI, sink: EventSink): void {
   const publish = (event: BehaviorEvent) => {
@@ -26,6 +33,8 @@ export function wireSessionLifecycle(pi: ExtensionAPI, sink: EventSink): void {
   pi.on("before_agent_start", async (event) => publish(fromBeforeAgentStart(event)));
   pi.on("tool_execution_start", async (event) => publish(fromToolExecutionStart(event)));
   pi.on("tool_execution_end", async (event) => publish(fromToolExecutionEnd(event)));
+  pi.on("tool_call", async (event) => publish(fromToolCall(event)));
+  pi.on("tool_result", async (event) => publish(fromToolResult(event)));
   pi.on("agent_end", async (event) => publish(fromAgentEnd(event)));
   pi.on("session_shutdown", async (event) => publish(fromSessionShutdown(event)));
 }
