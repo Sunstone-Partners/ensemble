@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { echoTool } from "@sunstone-partners/ensemble-agent-core";
-import { activateBehaviorPipeline } from "../src/behavior-activation";
+import { activateBehaviorPipeline, resolveRepoRoot } from "../src/behavior-activation";
 
 type ToolCallHandler = (event: { type: "tool_call"; toolCallId: string; toolName: string }) =>
   | { block?: boolean; reason?: string }
@@ -130,5 +130,23 @@ describe("behavior pipeline activation (TRD-005 / REQ-009)", () => {
     expect(result.loaded).toEqual([]);
     expect(result.skipped).toHaveLength(1);
     expect(result.skipped[0].behaviorId).toBe("investigate-test-failure");
+  });
+});
+
+describe("resolveRepoRoot (TRD-005 robustness)", () => {
+  it("finds the repo root when started from a nested subdirectory", () => {
+    const root = mkdtempSync(join(tmpdir(), "root-"));
+    mkdirSync(join(root, ".git"), { recursive: true });
+    const nested = join(root, "packages", "deep", "nested");
+    mkdirSync(nested, { recursive: true });
+
+    expect(resolveRepoRoot(nested)).toBe(root);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("falls back to the start directory when no .git ancestor exists", () => {
+    const orphan = mkdtempSync(join(tmpdir(), "orphan-"));
+    expect(resolveRepoRoot(orphan)).toBe(orphan);
+    rmSync(orphan, { recursive: true, force: true });
   });
 });

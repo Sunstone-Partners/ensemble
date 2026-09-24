@@ -259,3 +259,23 @@ describe("fail-closed load refusal (TRD-004 / AC-011-2)", () => {
     expect(() => loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool], inactiveGuard)).not.toThrow();
   });
 });
+
+describe("ungranted tools are not exposed (TRD-003, production shape)", () => {
+  it("a tool available to the harness but absent from capabilities.tools is never registered with Pi", () => {
+    // Production shape: artifacts.toolNames is derived from
+    // capabilities.tools, so the exposure decision — not a call-time
+    // grant — is what actually keeps an ungranted tool unreachable.
+    const readOnly: BehaviorManifest = {
+      ...manifest,
+      capabilities: { tools: ["read"], mutation_classes: [] },
+    };
+    const { compiled } = compile({ behaviors: [readOnly] });
+    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
+
+    const { pi, tools } = fakePi();
+    loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool]);
+
+    expect(artifacts.toolNames).not.toContain(echoTool.name);
+    expect(tools.has(echoTool.name)).toBe(false);
+  });
+});

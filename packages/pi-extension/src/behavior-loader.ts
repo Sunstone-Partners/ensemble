@@ -76,19 +76,24 @@ export function loadCompiledBehavior(
   const registry = new ToolRegistry();
   const byName = new Map(availableTools.map((tool) => [tool.name, tool]));
 
+  // TRD-003: every available tool is registered with the registry, not
+  // only the ones this behavior is allowed to use. Registration and
+  // authorization are deliberately separated — if only granted tools
+  // were ever registered, an ungranted call would return "unknown
+  // tool" and the grant check would be unreachable by construction.
+  for (const descriptor of availableTools) {
+    registry.register(descriptor);
+  }
+
   for (const toolName of artifacts.toolNames) {
     const descriptor = byName.get(toolName);
     if (!descriptor) continue;
 
-    registry.register(descriptor);
-
-    // TRD-003: whether this tool is granted at all is decided by the
-    // compiled manifest, not by the call site. Previously execute()
-    // issued `registry.grant(...)` unconditionally immediately before
-    // invoke(), so the ToolRegistry authorization check could never
-    // fail on this path — the grant boundary was a rubber stamp for
-    // every behavior-governed tool. An ungranted tool now falls
-    // through to invoke() with no grant and returns `unauthorized`.
+    // Whether this tool is granted is decided by the compiled
+    // manifest, once, at load time. Previously execute() issued
+    // `registry.grant(...)` unconditionally immediately before
+    // invoke(), so the authorization check could never fail on this
+    // path — the grant boundary was a rubber stamp.
     const grantedByManifest = compiled.hasTool(descriptor.name);
 
     pi.registerTool({

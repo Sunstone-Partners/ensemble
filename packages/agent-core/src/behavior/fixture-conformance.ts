@@ -115,7 +115,32 @@ export function runFixtureConformance(behaviorDir: string, pkg: BehaviorPackage)
       source: "fixture",
     });
     const constructibility = checkFixtureConstructibility(eventFile, rawEvent);
-    const event = normalizeEvent(rawEvent);
+
+    // normalizeEvent throws on an uncatalogued type (TRD-001). A
+    // fixture still referencing a pre-rename type must fail as one
+    // reported fixture, not crash the entire conformance run and
+    // obscure every other result.
+    let event;
+    try {
+      event = normalizeEvent(rawEvent);
+    } catch (error) {
+      return {
+        eventFile,
+        matchesEqual: false,
+        outcomesEqual: false,
+        actualMatches: [],
+        expectedMatches: readJson<string[]>(join(expectedMatchesDir, `${stem}.json`), []).slice().sort(),
+        actualOutcomes: [],
+        expectedOutcomes: readJson<string[]>(join(expectedOutcomesDir, `${stem}.json`), []).slice().sort(),
+        constructibility:
+          constructibility ?? {
+            eventFile,
+            eventType: rawEvent.type,
+            unconstructibleFields: [],
+            reason: (error as Error).message,
+          },
+      };
+    }
 
     const matched = match(pkg, event);
     const actualMatches = matched.map((b) => b.metadata.name).sort();

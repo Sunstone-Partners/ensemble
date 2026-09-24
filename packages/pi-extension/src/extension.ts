@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { ToolRegistry, InMemoryEventSink, echoTool } from "@sunstone-partners/ensemble-agent-core";
 import { wireSessionLifecycle } from "./session";
 import { handleEchoToolCall } from "./echo-tool-handler";
-import { activateBehaviorPipeline, BehaviorActivationResult } from "./behavior-activation";
+import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } from "./behavior-activation";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -89,7 +89,7 @@ export function createActivate(): {
     // this call existed, the entire behavior pipeline — including the
     // manifest-driven native-tool grant enforcement wired inside
     // loadCompiledBehavior — was reachable only from tests.
-    lastActivation = activateBehaviorPipeline(pi, process.cwd(), [echoTool]);
+    lastActivation = activateBehaviorPipeline(pi, resolveRepoRoot(process.cwd()), [echoTool]);
   };
 
   return { activate, sink, lastActivation: () => lastActivation };

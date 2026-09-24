@@ -135,3 +135,30 @@ describe("fixture constructibility rule (TRD-007 / REQ-010)", () => {
     expect(issue!.unconstructibleFields.sort()).toEqual(["exit_code", "stack_trace"]);
   });
 });
+
+describe("uncatalogued fixture does not crash the run (TRD-001 + TRD-007)", () => {
+  it("reports a stale-typed fixture as one failed fixture instead of throwing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "stale-fixture-"));
+    const behaviorDir = join(dir, "investigate-test-failure");
+    for (const sub of ["events", "expected-matches", "expected-outcomes"]) {
+      mkdirSync(join(behaviorDir, "fixtures", sub), { recursive: true });
+    }
+    writeFileSync(
+      join(behaviorDir, "fixtures", "events", "stale.json"),
+      JSON.stringify({ type: "runtime.tool.failed", source: "ci", payload: {} }),
+    );
+    writeFileSync(join(behaviorDir, "fixtures", "expected-matches", "stale.json"), "[]");
+    writeFileSync(join(behaviorDir, "fixtures", "expected-outcomes", "stale.json"), "[]");
+
+    const pkg: BehaviorPackage = { behaviors: [manifest] };
+    let results;
+    expect(() => {
+      results = runFixtureConformance(behaviorDir, pkg);
+    }).not.toThrow();
+
+    expect(results).toHaveLength(1);
+    expect(results![0].matchesEqual).toBe(false);
+    expect(results![0].constructibility!.reason).toMatch(/closed event catalog|no translator/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

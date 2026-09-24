@@ -5,7 +5,35 @@ import {
   compileBehaviorToArtifacts,
   discoverBehaviorPackages,
 } from "@sunstone-partners/ensemble-agent-core";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { loadCompiledBehavior } from "./behavior-loader";
+
+/**
+ * Resolves the repository root by walking up from `startDir` to the
+ * nearest ancestor containing a `.git` entry.
+ *
+ * Pi's `ExtensionAPI` exposes no workspace-root accessor at activation
+ * time (`cwd` lives on the per-call `ExtensionContext`), so activation
+ * would otherwise trust the process launch directory. If Pi were
+ * launched from a subdirectory, discovery would silently find zero
+ * packages and every governance guarantee would quietly stop applying
+ * — structurally present but unreachable, the exact failure this
+ * package exists to eliminate. Failing to find a root falls back to
+ * `startDir` rather than throwing, so a non-git checkout still
+ * activates.
+ *
+ * TRD-013 (PR 2) makes the search root explicitly configurable.
+ */
+export function resolveRepoRoot(startDir: string): string {
+  let current = startDir;
+  for (;;) {
+    if (existsSync(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return startDir;
+    current = parent;
+  }
+}
 
 /**
  * Activates the behavior pipeline for a live Pi session (TRD-005).
