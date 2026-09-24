@@ -48,6 +48,52 @@ defmodule Ensemble.Behavior.Audit do
     end
   end
 
+  @doc """
+  Append a tool-grant violation record (TRD §4.2 lines 552-554; AC-038,
+  AC-040). Additive entry point used by `AgentInvoker.authorize/2`; reuses
+  the same `append/4` primitive as `log_match/2`. Sink errors are surfaced
+  to the caller, which logs them without letting the write failure change
+  the deny/allow decision.
+  """
+  @spec log_violation(Ensemble.Behavior.Invocation.t(), term(), [term()]) ::
+          :ok | {:error, term()}
+  def log_violation(invocation, tool, declared) do
+    with :ok <- File.mkdir_p(audit_dir()) do
+      file = Path.join(audit_dir(), "violations.jsonl")
+      defn = Map.get(invocation, :behavior) || %{}
+
+      payload = %{
+        "behavior" => Map.get(invocation, :name) || Map.get(defn, :name),
+        "version" =>
+          Map.get(invocation, :version) || (Map.get(defn, :version) |> to_string_or_nil()),
+        "digest" => Map.get(invocation, :digest) || (Map.get(defn, :digest) |> digest_field()),
+        "activation_id" => Map.get(invocation, :activation_id),
+        "invocation_id" => Map.get(invocation, :invocation_id),
+        "attempted_tool" => normalize_tool(tool),
+        "declared" => Enum.map(List.wrap(declared), &normalize_tool/1),
+        "actor" => encodeable_actor(Map.get(invocation, :actor))
+      }
+
+      append(file, "behavior.violation", payload["behavior"] || "unknown", payload)
+    end
+  end
+
+  defp to_string_or_nil(nil), do: nil
+  defp to_string_or_nil(v), do: to_string(v)
+
+  # An `%Invocation{}` already stores the digest hex-encoded; only the raw
+  # `%Definition{}` fallback needs encoding.
+  defp digest_field(<<_::256>> = raw), do: Base.encode16(raw, case: :lower)
+  defp digest_field(other), do: other
+
+  defp normalize_tool(t) when is_binary(t), do: t
+  defp normalize_tool(t) when is_atom(t) and not is_nil(t), do: Atom.to_string(t)
+  defp normalize_tool(_), do: nil
+
+  defp encodeable_actor(%{} = a), do: a
+  defp encodeable_actor(a) when is_binary(a) or is_atom(a) or is_nil(a), do: a
+  defp encodeable_actor(a), do: inspect(a)
+
   @doc "Stream all audit records, sorted by audit_id."
   def stream do
     audit_dir()
