@@ -26,6 +26,17 @@
     "irreversible": [
       "ensemble.slack.post",
       "ensemble.notify.dispatch"
+    ],
+    "artifact.write": [
+      "write",
+      "edit"
+    ],
+    "pr.open": [
+      "gh.pr_create",
+      "git.push"
+    ],
+    "constitution.propose": [
+      "constitution.propose"
     ]
   }
 }
