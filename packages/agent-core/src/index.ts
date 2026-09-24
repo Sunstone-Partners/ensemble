@@ -10,3 +10,4 @@ export * from "./behavior/discovery";
 export * from "./behavior/conformance";
 export * from "./behavior/package-discovery";
 export * from "./behavior/fixture-conformance";
+export * from "./behavior/artifact-compiler";
