@@ -25,7 +25,8 @@ defmodule Ensemble.Behavior.Compiler do
     ExecutionSpec,
     Duration,
     Predicate,
-    Registries
+    Registries,
+    SkillCatalog
   }
 
   @schema_path "schemas/behavior-v1.schema.json"
@@ -114,8 +115,35 @@ defmodule Ensemble.Behavior.Compiler do
     with {:ok, _warnings} <- tools_check(map["capabilities"], reg, file),
          :ok <- mutation_check(map["capabilities"], reg, file),
          :ok <- event_check(map, reg, file),
-         :ok <- graph_check(map, reg, file) do
+         :ok <- graph_check(map, reg, file),
+         :ok <- skills_check(map["execution"], file) do
       :ok
+    end
+  end
+
+  # An unknown `@skill:` reference cannot be honored at runtime, so it fails
+  # closed (AC-045). A *known* skill that is deprecated/revoked resolves fine
+  # and only produces a warning — the behavior keeps running and can be
+  # bumped in place without redeploy (AC-047).
+  defp skills_check(exec, file) do
+    exec
+    |> Kernel.||(%{})
+    |> SkillCatalog.skills_from_raw()
+    |> Enum.split_with(&SkillCatalog.known?/1)
+    |> case do
+      {_, []} ->
+        :ok
+
+      {_, unknown} ->
+        {:error,
+         Enum.map(
+           unknown,
+           &%ValidationError{
+             field: "execution.skills",
+             reason: "skill #{inspect(&1)} missing from SkillCatalog (REQ-012 AC-045)",
+             location: %{file: file, line: nil}
+           }
+         )}
     end
   end
 
@@ -263,11 +291,45 @@ defmodule Ensemble.Behavior.Compiler do
         execution: %ExecutionSpec{graph: exec["graph"], params: exec["params"] || %{}},
         outcomes: map["outcomes"] || [],
         constitution_rules: rules,
-        source: %{path: file, git_sha: nil}
+        source: composition_source(map, file)
       }
 
       {:ok, defn}
     end
+  end
+
+  # Skill refs + composition strategy are composition metadata, not behavior
+  # data: they ride on `source` so `Digest.canonical_map/1` stays unchanged
+  # (a catalog edit must not silently re-version a behavior) while
+  # `Composition` can still read the declared pins off the compiled
+  # definition. Keys are atoms, matching the pre-existing `:path`/`:git_sha`
+  # shape; nothing is added when the behavior declares no composition data,
+  # so such a definition's `source` is byte-identical to the pre-T024 form.
+  defp composition_source(map, file) do
+    exec = map["execution"] || %{}
+
+    extras =
+      %{}
+      |> then(fn m ->
+        case SkillCatalog.skills_from_raw(exec) do
+          [] -> m
+          skills -> Map.put(m, :skills, skills)
+        end
+      end)
+      |> then(fn m ->
+        case exec["strategy"] do
+          nil -> m
+          s -> Map.put(m, :strategy, s)
+        end
+      end)
+      |> then(fn m ->
+        case exec["prompt"] do
+          nil -> m
+          pr -> Map.put(m, :prompt, pr)
+        end
+      end)
+
+    Map.merge(%{path: file, git_sha: nil}, extras)
   end
 
   defp tools_granted(caps, reg) do

@@ -126,6 +126,22 @@
               { "type": "array" }
             ]
           }
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^@skill:[a-z0-9-]{1,64}$"
+          },
+          "maxItems": 8,
+          "uniqueItems": true
+        },
+        "strategy": {
+          "enum": ["sequential", "parallel"]
+        },
+        "prompt": {
+          "type": "string",
+          "maxLength": 4000
         }
       }
     },
