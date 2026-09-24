@@ -8,6 +8,10 @@ version: 1.0.0
 status: Draft
 date: 2026-09-24
 design_readiness_score: 4.25
+ensemble_implement_trd_beads:
+  branch_name: feature/trd-2026-0fc1c1d0-behavior-runtime-pi-harness
+  use_proposed: false
+  stacked_prs: false
 ---
 
 # TRD-2026-15aa5acd: Live Behavior Dispatch and Bounded Auto-Fix Loop
