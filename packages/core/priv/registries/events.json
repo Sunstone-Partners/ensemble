@@ -1,5 +1,6 @@
 {
   "event_types": [
+    "agent.completed",
     "azure.build.completed",
     "azure.pr.created",
     "azure.pr.updated",
@@ -43,6 +44,7 @@
     "gitlab.merge_request.opened",
     "gitlab.merge_request.update",
     "gitlab.pipeline.completed",
+    "issue.status_changed",
     "jira.issue.comment.added",
     "jira.issue.created",
     "jira.issue.transitioned",
@@ -60,6 +62,7 @@
     "slack.message.received",
     "slack.reaction.added",
     "test.failed",
-    "test.failure.investigated"
+    "test.failure.investigated",
+    "vcs.push"
   ]
 }

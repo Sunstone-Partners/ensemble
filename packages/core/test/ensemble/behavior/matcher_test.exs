@@ -73,20 +73,47 @@ defmodule Ensemble.Behavior.MatcherTest do
     end
   end
 
-  describe "propose/3 filters" do
-    test "dedup window suppresses repeat fire (AC-013)" do
+  describe "propose/3 filters (AC-013/AC-014/AC-026/AC-027)" do
+    alias Ensemble.Behavior.MatchResult
+
+    test "dedup window reports :suppressed, does not hide candidate" do
       d = defn(%{"policy" => %{"dedup_window" => "24h"}})
       store = Matcher.record_fire(%{}, event(), d, 1_000)
-      assert [] = Matcher.propose(event(), [d], %{dedup_store: store, now_ms: 2_000})
 
-      # past the window -> allowed again
-      assert [_] = Matcher.propose(event(), [d], %{dedup_store: store, now_ms: 86_402_000})
+      assert [%MatchResult{status: :suppressed}] =
+               Matcher.propose(event(), [d], %{dedup_store: store, now_ms: 2_000, audit: :none})
+
+      # past the window -> matched again
+      assert [%MatchResult{status: :matched}] =
+               Matcher.propose(event(), [d], %{dedup_store: store, now_ms: 86_402_000, audit: :none})
     end
 
-    test "causal-depth filter drops when depth+1 > cap (AC-014)" do
+    test "causal-depth reports :depth_dropped with reason" do
       d = defn(%{"policy" => %{"max_causal_depth" => 2}})
-      assert [_] = Matcher.propose(event(%{causal_depth: 1}), [d], %{})
-      assert [] = Matcher.propose(event(%{causal_depth: 2}), [d], %{})
+
+      assert [%MatchResult{status: :matched}] =
+               Matcher.propose(event(%{causal_depth: 1}), [d], %{audit: :none})
+
+      assert [%MatchResult{status: :depth_dropped}] =
+               Matcher.propose(event(%{causal_depth: 2}), [d], %{audit: :none})
+    end
+
+    test "predicate mismatch reports :predicate_failed (AC-026, no silent miss)" do
+      d = defn(%{"trigger" => %{"predicate" => %{"payload.ref" => %{"equals" => "dev"}}}})
+
+      assert [%MatchResult{status: :predicate_failed}] = Matcher.propose(event(), [d], %{audit: :none})
+    end
+
+    test "matched results sort deterministically; rejected sink to end" do
+      a = defn(%{"metadata" => %{"name" => "a", "version" => "1.0.0"}})
+      b = defn(%{"metadata" => %{"name" => "b", "version" => "1.0.0"}})
+      c = defn(%{"metadata" => %{"name" => "c", "version" => "1.0.0"},
+                 "trigger" => %{"predicate" => %{"payload.ref" => %{"equals" => "no"}}}})
+
+      assert [%MatchResult{definition: %{name: "a"}, status: :matched},
+              %MatchResult{definition: %{name: "b"}, status: :matched},
+              %MatchResult{definition: %{name: "c"}, status: :predicate_failed}] =
+               Matcher.propose(event(), [c, b, a], %{audit: :none})
     end
   end
 end

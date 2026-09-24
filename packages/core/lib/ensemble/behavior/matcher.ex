@@ -1,37 +1,32 @@
 defmodule Ensemble.Behavior.Matcher do
   @moduledoc """
-  Deterministic event-to-behavior matcher (TRD §1.6, REQ-005).
+  Deterministic event-to-behavior matcher (TRD §1.6, REQ-005/REQ-007).
 
   On each event:
 
-  1. Index lookup by `trigger.event_type` (exact registered type or
-     `x-<project>.*` extension match).
+  1. Index lookup by `trigger.event_type` (exact registered type).
   2. Predicate evaluation against the event payload + envelope
      (`Predicate.eval/2`); skip-not-fail on missing fields (AC-015-S).
   3. Dedup-window filter (AC-013): suppress if the same
-     `{event.idempotency_key, behavior.name}` fired inside `policy.dedup_window`.
-  4. Causal-depth filter (AC-014): drop if `event.causal_depth + 1 >
+     dedup key fired inside `behavior.policy.dedup_window`.
+  4. Causal-depth filter (AC-014): drop if `event.depth + 1 >
      behavior.policy.max_causal_depth`.
-  5. Tie-break order: most specific trigger (predicate constraint count, then
-     event-type segment count), then name (AC-016).
+  5. Tie-break: most specific trigger (predicate constraint count, then
+     event-type segment count), then `{name, version}` (AC-016/AC-027).
 
-  `propose/2` is a pure query; `propose/3` with a dedup store performs the
-  AC-013 suppression and records last-fired timestamps for the caller.
+  `propose/3` returns `[MatchResult.t()]` — every same-event_type candidate,
+  matched or annotated with a rejection reason (AC-026: no silent misses) —
+  and calls the audit hook synchronously before returning, so the ledger
+  records the decision input before `Policy.evaluate` sees anything (TRD-016).
   """
 
-  alias Ensemble.Behavior.{Definition, Predicate}
-
-  @type dedup_state :: :ets.tab() | {atom(), reference()}
+  alias Ensemble.Behavior.{Audit, Definition, Event, MatchResult, Predicate}
 
   @doc """
   Returns all definitions whose trigger matches `event`, in tie-break order,
-  each annotated with its predicate trace.
-
-      candidates(event, defs) :: [
-        %{definition: Definition.t(), trace: [...], specificity: {non_neg_integer(), non_neg_integer()}}
-      ]
+  each annotated with its predicate trace (maps accepted for convenience).
   """
-  @spec candidates(map(), [Definition.t()]) :: [map()]
+  @spec candidates(map() | Event.t(), [Definition.t()]) :: [map()]
   def candidates(event, defs) do
     event_type = event_type_of(event)
 
@@ -48,40 +43,65 @@ defmodule Ensemble.Behavior.Matcher do
   end
 
   @doc """
-  Like `candidates/2` but applies dedup-window (AC-013) and causal-depth
-  (AC-014) filters. `store` is an `:ets` table (or map-backed ETS-equivalent
-  process) holding `{event_key, behavior_name} -> last_fired_ms`; the caller
-  owns it and records `record_fire/3` matches.
+  Full proposal with dedup/depth filters, deterministic ordering, and the
+  synchronous match-before-decide audit hook (AC-026/AC-027, TRD-016).
 
-  Returns candidates annotated with `:suppressed` (dedup) or `:depth_dropped`.
+  `opts`: `:now_ms`, `:dedup_store`, `:audit` (fun/1; default
+  `&Audit.log_match(event, &1)`; pass `:none` to skip for pure tests).
   """
-  @spec propose(map(), [Definition.t()], map()) :: [map()]
+  @spec propose(map() | Event.t(), [Definition.t()], map()) :: [MatchResult.t()]
   def propose(event, defs, opts \\ %{}) do
     now = Map.get(opts, :now_ms, System.system_time(:millisecond))
     store = Map.get(opts, :dedup_store, %{})
+    event_type = event_type_of(event)
 
-    event
-    |> candidates(defs)
-    |> Enum.map(fn c ->
-      d = c.definition
+    results =
+      defs
+      |> Enum.filter(fn d -> d.trigger.event_type == event_type end)
+      |> Enum.map(fn d ->
+        {verdict, trace} = Predicate.eval(d.trigger.predicate, event)
 
-      cond do
-        depth_dropped?(event, d) ->
-          Map.put(c, :filtered, :causal_depth)
+        cond do
+          verdict != :match ->
+            MatchResult.rejected(d, :predicate_failed)
 
-        dedup_suppressed?(event, d, store, now) ->
-          Map.put(c, :filtered, :dedup)
+          depth_dropped?(event, d) ->
+            MatchResult.rejected(d, :depth_dropped)
 
-        true ->
-          Map.put(c, :filtered, nil)
-      end
-    end)
-    |> Enum.reject(fn c -> c.filtered == :causal_depth or c.filtered == :dedup end)
+          dedup_suppressed?(event, d, store, now) ->
+            MatchResult.rejected(d, :suppressed)
+
+          true ->
+            MatchResult.matched(d, trace, now)
+        end
+      end)
+      |> Enum.sort_by(fn r ->
+        case r.status do
+          :matched ->
+            {0, -elem(specificity(r.definition), 0), -elem(specificity(r.definition), 1),
+             r.definition.name, to_string(r.definition.version)}
+
+          _ ->
+            {1, 0, 0, r.definition.name, to_string(r.definition.version)}
+        end
+      end)
+
+    audit = Map.get(opts, :audit, :default)
+
+    if audit != :none and results != [] do
+      hook = if is_function(audit, 1), do: audit, else: fn rs -> elem(Audit.log_match(event, rs), 0) end
+      hook.(results)
+    end
+
+    results
+  end
+
+  defp depth_dropped?(%Event{depth: d}, %Definition{policy: %{max_causal_depth: cap}}) do
+    d + 1 > cap
   end
 
   defp depth_dropped?(event, %Definition{policy: %{max_causal_depth: cap}}) do
-    depth = event[:causal_depth] || event["causal_depth"] || 0
-    depth + 1 > cap
+    (event[:causal_depth] || event["causal_depth"] || 0) + 1 > cap
   end
 
   @doc "True when `store` holds a fire for `{event_key, name}` within the dedup window."
@@ -99,11 +119,17 @@ defmodule Ensemble.Behavior.Matcher do
     Map.put(store, {event_key(event), d.name}, now || System.system_time(:millisecond))
   end
 
+  defp event_key(%Event{dedup_key: dk, event_id: id, event_type: t, source: s}) do
+    dk || id || {t, s}
+  end
+
   defp event_key(event) do
     event[:idempotency_key] || event["idempotency_key"] ||
       (event[:event_id] || event["event_id"]) ||
       {event_type_of(event), event[:source] || event["source"]}
   end
+
+  defp event_type_of(%Event{event_type: t}), do: t
 
   defp event_type_of(event) do
     event[:event_type] || event["event_type"]

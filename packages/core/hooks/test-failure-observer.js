@@ -21,9 +21,12 @@ Debug output goes to stderr only when ENSEMBLE_BEHAVIORS_DEBUG === '1'.
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const LOG_DIR = '.ensemble';
 const LOG_FILE = 'learning-log.jsonl';
+const ENVELOPE_DIR = '.ensemble/events';
+const ENVELOPE_FILE = 'incoming.jsonl';
 
 const TEST_COMMAND_RE =
   /(npm|pnpm|yarn)\s+(run\s+)?test\b|\bjest\b|\bvitest\b|\bpytest\b|\bgo test\b|\bcargo test\b|\bmvn test\b|\bdotnet test\b|\brspec\b|\bmix test\b/;
@@ -63,6 +66,38 @@ function appendRecord(record, cwd) {
   fs.mkdirSync(dir, { recursive: true });
   fs.appendFileSync(file, JSON.stringify(record) + '\n');
   return file;
+}
+
+// AC-023 (TRD-013): alongside the learning-log record, emit a normalized
+// envelope to the behavior event bus (append-only JSONL). The observer stays
+// as transport; Events.Local / Matcher can now consume canonical envelopes.
+function appendEnvelope(event, cwd) {
+  const dir = path.join(cwd, ENVELOPE_DIR);
+  const file = path.join(dir, ENVELOPE_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(file, JSON.stringify(event) + '\n');
+  return file;
+}
+
+function toEnvelope(record) {
+  return {
+    schema_version: 1,
+    event_id: crypto.randomUUID(),
+    event_type: 'test.failed',
+    source: 'local',
+    subject_id: record.command,
+    actor: { type: 'ci', id: record.session_id },
+    payload: {
+      command: record.command,
+      exit_code: record.exit_code,
+      excerpt: record.excerpt,
+      session_id: record.session_id,
+      cwd: record.cwd,
+    },
+    occurred_at: record.ts,
+    emitted_at: new Date().toISOString(),
+    causal_parent: null,
+  };
 }
 
 function emit(hookData, cwd) {
@@ -105,6 +140,11 @@ function emit(hookData, cwd) {
     debug('duplicate record, skipping append');
   } else {
     appendRecord(record, cwd);
+    try {
+      appendEnvelope(toEnvelope(record), cwd);
+    } catch (e) {
+      debug(`envelope emit failed: ${e.message}`);
+    }
     appended = true;
   }
 
