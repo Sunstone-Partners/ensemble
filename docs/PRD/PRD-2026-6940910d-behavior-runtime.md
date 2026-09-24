@@ -351,10 +351,10 @@ Behavior execution MUST enforce security boundaries:
 
 ## Acceptance Criteria Summary
 
-- **Total ACs:** 112
-- **Must (M):** 65
-- **Should (S):** 35
-- **Could (C):** 12
+- **Total ACs:** 100
+- **Must (M):** 44
+- **Should (S):** 46
+- **Could (C):** 10
 - **Ambiguities marked:** 10
 
 ## Dependency Map
@@ -382,10 +382,10 @@ Behavior execution MUST enforce security boundaries:
 **Status:** ✅ PASS — This PRD is the source document; generated artifacts (if any) derive from it.
 
 ### Article II — Requirements Describe Observable Behavior
-**Status:** ✅ PASS — All 112 ACs describe observable outcomes (e.g., "audit log entry is created", "tool call is rejected") rather than implementation schema. Fixed ACs: AC-003-M, AC-040-M, AC-049-S, AC-062-S, AC-081-M, AC-082-M, AC-085-S, AC-086-S, AC-097-S, AC-098-S, AC-099-S.
+**Status:** ✅ PASS — All 100 ACs describe observable outcomes (e.g., "audit log entry is created", "tool call is rejected") rather than implementation schema. Fixed ACs: AC-003-M, AC-040-M, AC-049-S, AC-062-S, AC-081-M, AC-082-M, AC-085-S, AC-086-S, AC-097-S, AC-098-S, AC-099-S.
 
 ### Article III — Every Requirement Is Independently Verifiable
-**Status:** ✅ PASS — All 28 requirements and 112 ACs are in Given/When/Then format and independently testable via fixtures, conformance tests, and integration scenarios.
+**Status:** ✅ PASS — All 26 requirements and 100 ACs are in Given/When/Then format and independently testable via fixtures, conformance tests, and integration scenarios.
 
 ### Article IV — Authority Fails Closed and Never Self-Expanding
 **Status:** ✅ PASS — REQ-010 (Non-Bypassability) and REQ-018 (Constitution Mutations) explicitly enforce that tool access and mutation authority cannot be expanded by prompts; policy violations are blocked and logged.
@@ -414,7 +414,7 @@ Behavior execution MUST enforce security boundaries:
 | Dimension | Score | Notes |
 |---|---|---|
 | Requirements clarity | 4.5/5.0 | 10 ambiguities marked for refinement phase; otherwise clear GWT format |
-| Acceptance criteria rigor | 4.3/5.0 | All 112 ACs observable and testable; edge cases covered |
+| Acceptance criteria rigor | 4.3/5.0 | All 100 ACs observable and testable; edge cases covered |
 | Non-functional completeness | 4.1/5.0 | Performance, observability, security defined; not all edge cases specified |
 | Risk flag coverage | 3.8/5.0 | 3 flagged risks (REQ-007, REQ-015, REQ-021); others inherit from dependencies |
 | Constitution compliance | 4.5/5.0 | All 9 articles addressed; Article IX deferred (expected) |
