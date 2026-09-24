@@ -63,7 +63,7 @@ Two defects found while grounding this design are folded into PR 1 rather than l
 
 ### File inventory: extend vs. create
 
-`Target Files` on each task are planning targets, verified against the working tree. **17 already exist and must be extended, not recreated** — six of these are existing test files:
+`Target Files` on each task are planning targets, verified against the working tree. **17 already exist and must be extended, not recreated** — five of these are existing test files:
 
 | Existing test file | Tasks |
 |---|---|
@@ -73,9 +73,9 @@ Two defects found while grounding this design are folded into PR 1 rather than l
 | `packages/agent-core/tests/package-discovery.test.ts` | TRD-008-TEST |
 | `packages/agent-core/tests/behavior.test.ts` | TRD-013-TEST |
 
-The remaining 11 existing targets are source files already in the tree (`pi-events.ts`, `event-catalog.ts`, `events.ts`, `compiler.ts`, `behavior-loader.ts`, `extension.ts`, `fixture-conformance.ts`, `package-discovery.ts`, `schema.ts`, `outbox.ts`, `artifact-compiler.ts`, plus the example `behavior.yaml`).
+The remaining 12 existing targets are source files already in the tree (`pi-events.ts`, `event-catalog.ts`, `events.ts`, `compiler.ts`, `behavior-loader.ts`, `extension.ts`, `fixture-conformance.ts`, `package-discovery.ts`, `schema.ts`, `outbox.ts`, `artifact-compiler.ts`, plus the example `behavior.yaml`).
 
-The other 23 targets are new modules this TRD introduces. Test convention in both packages is `packages/<pkg>/tests/*.test.ts` (plural `tests`), matching the existing suite.
+The other 22 targets are new modules this TRD introduces (39 distinct target files in total). Test convention in both packages is `packages/<pkg>/tests/*.test.ts` (plural `tests`), matching the existing suite.
 
 ## Master Task List
 
