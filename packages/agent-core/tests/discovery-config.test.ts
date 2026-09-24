@@ -46,7 +46,7 @@ describe("configurable discovery roots (TRD-008 / REQ-013)", () => {
 
     const found = discoverBehaviorPackages(root);
     expect(found.map((f) => f.behaviorId)).toEqual(["b1"]);
-    expect(DEFAULT_SEARCH_ROOTS).toEqual(["packages"]);
+    expect(DEFAULT_SEARCH_ROOTS).toContain("packages");
   });
 
   it("AC-013-2: finds behaviors in a repo with no packages/ directory at all", () => {
@@ -55,9 +55,10 @@ describe("configurable discovery roots (TRD-008 / REQ-013)", () => {
     dirs.push(root);
 
     // Proves the old hardcoded join(rootDir, "packages") could not have worked.
-    expect(discoverBehaviorPackages(root)).toEqual([]);
+    expect(discoverBehaviorPackages(root, { searchRoots: ["packages"] })).toEqual([]);
 
-    const found = discoverBehaviorPackages(root, { searchRoots: ["."] });
+    // ...and that the shipped default now covers this layout.
+    const found = discoverBehaviorPackages(root);
     expect(found.map((f) => f.behaviorId)).toEqual(["b2"]);
     expect(found[0].manifest?.metadata.name).toBe("b2");
   });
