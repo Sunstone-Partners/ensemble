@@ -62,7 +62,6 @@ defmodule Ensemble.Behavior.RegistryTest do
     Registry.register(defn("a.b", "1.2.0"), s)
     Registry.register(defn("a.b", "2.0.0"), s)
     assert {:ok, d} = Registry.lookup("a.b", s)
-    # 2.0.0 is :breaking vs the 1.x cohort, so latest fully-compatible is 1.2.0
     assert d.version == Version.parse!("1.2.0")
   end
 
