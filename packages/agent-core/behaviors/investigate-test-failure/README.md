@@ -24,7 +24,7 @@ const discovered = discoverBehaviorPackages("<repo root>");
 const mine = discovered.find((d) => d.behaviorId === "investigate-test-failure");
 const { compiled } = compile({ behaviors: [mine.manifest] });
 const results = runFixtureConformance(
-  "<repo root>/packages/core/behaviors/investigate-test-failure",
+  "<repo root>/packages/agent-core/behaviors/investigate-test-failure",
   { behaviors: [mine.manifest] },
 );
 ```
