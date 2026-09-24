@@ -482,6 +482,38 @@
         "name": "Sunstone Partners",
         "email": "info@sunstonepartners.com"
       }
+    },
+    {
+      "name": "ensemble-agent-core",
+      "version": "0.1.0",
+      "source": "./packages/agent-core",
+      "description": "Provider-neutral event/tool/protocol/behavior-compiler code shared by Pi/OMP adapters",
+      "category": "core",
+      "tags": [
+        "agent-core",
+        "behavior-runtime",
+        "library"
+      ],
+      "author": {
+        "name": "Sunstone Partners",
+        "url": "https://github.com/Sunstone-Partners"
+      }
+    },
+    {
+      "name": "ensemble-pi-extension",
+      "version": "0.1.0",
+      "source": "./packages/pi-extension",
+      "description": "Thin Pi-specific extension loading the behavior runtime into a live Pi session via Pi's native extension mechanism",
+      "category": "core",
+      "tags": [
+        "pi-extension",
+        "behavior-runtime",
+        "library"
+      ],
+      "author": {
+        "name": "Sunstone Partners",
+        "url": "https://github.com/Sunstone-Partners"
+      }
     }
   ]
 }
