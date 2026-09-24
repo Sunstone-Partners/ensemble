@@ -76,11 +76,21 @@ export function loadCompiledBehavior(
   const registry = new ToolRegistry();
   const byName = new Map(availableTools.map((tool) => [tool.name, tool]));
 
-  // TRD-003: every available tool is registered with the registry, not
-  // only the ones this behavior is allowed to use. Registration and
-  // authorization are deliberately separated — if only granted tools
-  // were ever registered, an ungranted call would return "unknown
-  // tool" and the grant check would be unreachable by construction.
+  // All available descriptors are registered so the registry's
+  // authorization check is not structurally unreachable. Stated
+  // honestly: this alone does NOT create a reachable denial path for
+  // ungranted tools, because `pi.registerTool` below is only called
+  // for `artifacts.toolNames` — Pi can never dispatch to a tool it was
+  // never told about. It is defence-in-depth for direct registry use,
+  // not the enforcement boundary.
+  //
+  // The two mechanisms that actually keep an ungranted tool
+  // unreachable in production are:
+  //   1. exposure — `artifacts.toolNames` derives from
+  //      `capabilities.tools`, so an ungranted tool is never
+  //      registered with Pi at all; and
+  //   2. `wireToolGrantEnforcement` above, which blocks ungranted
+  //      *native* tools (bash/read/write) at the `tool_call` boundary.
   for (const descriptor of availableTools) {
     registry.register(descriptor);
   }
@@ -89,11 +99,8 @@ export function loadCompiledBehavior(
     const descriptor = byName.get(toolName);
     if (!descriptor) continue;
 
-    // Whether this tool is granted is decided by the compiled
-    // manifest, once, at load time. Previously execute() issued
-    // `registry.grant(...)` unconditionally immediately before
-    // invoke(), so the authorization check could never fail on this
-    // path — the grant boundary was a rubber stamp.
+    // TRD-003: the grant is derived from the compiled manifest rather
+    // than issued unconditionally at call time, as it previously was.
     const grantedByManifest = compiled.hasTool(descriptor.name);
 
     pi.registerTool({

@@ -150,3 +150,33 @@ describe("resolveRepoRoot (TRD-005 robustness)", () => {
     rmSync(orphan, { recursive: true, force: true });
   });
 });
+
+describe("the reachable denial path in production (TRD-003 scope, honestly stated)", () => {
+  const mine: string[] = [];
+  afterAll(() => mine.forEach((d) => rmSync(d, { recursive: true, force: true })));
+  it("ungranted NATIVE tools are denied at the tool_call boundary, which Pi does dispatch", () => {
+    const root = repoWithBehavior(GRANTS_READ_ONLY);
+    mine.push(root);
+    const { pi, fireToolCall } = fakePi();
+    activateBehaviorPipeline(pi, root, [echoTool]);
+
+    // bash/write/edit are Pi's own tools -- the extension never
+    // registers them, so exposure cannot gate them. This boundary is
+    // the only thing that can, and it is now live.
+    for (const native of ["bash", "write", "edit"]) {
+      expect(fireToolCall(native)?.block).toBe(true);
+    }
+    expect(fireToolCall("read")).toBeUndefined();
+  });
+
+  it("ungranted CUSTOM tools are unreachable by exposure, not by a runtime denial", () => {
+    const root = repoWithBehavior(GRANTS_READ_ONLY);
+    mine.push(root);
+    const { pi, tools } = fakePi();
+    activateBehaviorPipeline(pi, root, [echoTool]);
+
+    // echo is available to the harness but ungranted: Pi is never told
+    // it exists, so no execute() closure can ever run for it.
+    expect(tools.has(echoTool.name)).toBe(false);
+  });
+});

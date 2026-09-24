@@ -35,6 +35,12 @@ export function resolveRepoRoot(startDir: string): string {
   }
 }
 
+export interface BehaviorActivationResult {
+  discovered: number;
+  loaded: string[];
+  skipped: { behaviorId: string; reason: string }[];
+}
+
 /**
  * Activates the behavior pipeline for a live Pi session (TRD-005).
  *
@@ -51,12 +57,6 @@ export function resolveRepoRoot(startDir: string): string {
  * every skipped package is reported so the failure is visible rather
  * than silent.
  */
-
-export interface BehaviorActivationResult {
-  discovered: number;
-  loaded: string[];
-  skipped: { behaviorId: string; reason: string }[];
-}
 
 export function activateBehaviorPipeline(
   pi: ExtensionAPI,
