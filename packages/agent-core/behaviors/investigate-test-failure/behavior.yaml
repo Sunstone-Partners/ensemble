@@ -3,9 +3,9 @@ kind: Behavior
 metadata:
   name: investigate-test-failure
   version: 1.0.0
-  digest: c194c8483be384b17be9296cd87f416ae99fe3a5ca8a53b4843b5c303adf9ce5
+  digest: e0b5f51706e820c605332a565a277981eadea29d635fa6d4424462eb4fec2062
 trigger:
-  event_type: test.failed
+  event_type: test.failure.observed
   predicate:
     command: { matches: "npm test|mix test|pytest|go test" }
     exit_code: { not: 0 }
