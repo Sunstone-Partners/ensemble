@@ -58,6 +58,19 @@ export class LocalEventMatcher {
   }
 
   /**
+   * Names of behaviors this event would invoke, WITHOUT invoking them.
+   *
+   * onEvent() awaits each behavior, and a behavior that proposes a fix
+   * spawns an agent subprocess -- so anything gated behind onEvent()
+   * completing is lost when the host exits the process at the end of a
+   * one-shot run. Callers that only need to know "does this event matter"
+   * must be able to ask without paying invocation latency.
+   */
+  matchNames(event: BehaviorEvent): string[] {
+    return match(this.pkg, event).map((b) => b.metadata.name);
+  }
+
+  /**
    * Matches one event and invokes every matching behavior.
    * Returns the behaviors invoked, in order.
    */

@@ -11,7 +11,7 @@ import { logRuntime, runtimeLogPath } from "./runtime-log";
 import { createAgentFixProvider } from "./agent-fix-provider";
 import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -119,16 +119,44 @@ export function createActivate(options: ActivateOptions = {}): {
         const matcher = lastActivation?.matcher;
         if (!matcher) return;
 
-        // NOT awaited. Pi kills an extension handler after 30s, and this
-        // publish runs inside the tool_call handler. A real fix provider
-        // spawns an agent subprocess, so awaiting here guaranteed the whole
-        // autofix chain was aborted mid-flight -- observed as
-        // "handler timed out after 30000ms" with a dispatched event, no
-        // invocation record, and the source unchanged.
+        // Queue the repair turn BEFORE invoking anything.
         //
-        // This is deliberately NOT fire-and-forget: the promise is tracked
-        // so the run is visible in status, its outcome is always logged, and
-        // a rejection can never become an unhandled rejection.
+        // This ordering is load-bearing, and getting it wrong was observed
+        // live: onEvent() awaits every matching behavior, and a behavior
+        // that proposes a fix spawns an agent subprocess. In a one-shot run
+        // the host exits the process as soon as the turn settles, so the
+        // await never finished -- test.failure.observed was logged, and the
+        // dispatch record, the continuation, and the fix were all lost.
+        // matchNames() answers "does this event matter" synchronously.
+        const payload = envelope.event.payload as Record<string, unknown> | undefined;
+        if (envelope.event.type === "test.failure.observed") {
+          // No testId in the real payload -- the failure is identified by the
+          // command that produced it. Keying on a field that does not exist
+          // silently disables the queue, which is exactly what happened.
+          const key =
+            typeof payload?.command === "string" ? payload.command : envelope.event.type;
+          if (matcher.matchNames(envelope.event).length > 0) {
+            const failure = typeof payload?.output === "string" ? payload.output : "";
+            enqueueContinuation(
+              key,
+              [
+                `A test is failing. It was run as: ${key}`,
+                failure ? `Reported failure output:\n${failure}` : "",
+                "Fix the SOURCE so the test passes. Do not edit the test itself,",
+                "and do not edit anything under docs/standards or the behavior guardrails.",
+                "Re-run that exact command to confirm, then state plainly whether it passes.",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            );
+          }
+        }
+
+        // NOT awaited. The host stops waiting on a handler after 30s and
+        // blocks the tool as a fail-safe; the handler keeps running, so a
+        // slow dispatch costs the user their tool call. Tracked rather than
+        // fire-and-forget so the run is visible in status, its outcome is
+        // always logged, and a rejection cannot become an unhandled one.
         const run = (async () => {
           try {
             const invoked = await matcher.onEvent(envelope.event);
@@ -156,6 +184,115 @@ export function createActivate(options: ActivateOptions = {}): {
         void run.finally(() => pendingDispatches.delete(run));
       },
     };
+
+    // --- Autofix continuation (br-9hv6) ---------------------------------
+    //
+    // A fix needs a model and tools. Two host mechanisms constrain where it
+    // can run, and they are NOT the same thing (both reproduced):
+    //
+    //   1. Handler wait deadline (30s tool_call / 2s session_shutdown).
+    //      The host stops AWAITING the handler and blocks the tool as a
+    //      fail-safe; the handler itself keeps running. So a slow handler
+    //      costs the user their tool call, not the work.
+    //   2. Process exit. In one-shot `omp -p` the host calls process.exit()
+    //      once the run settles; unawaited background work is hard-killed
+    //      even with a pending timer holding the event loop open. No
+    //      promise tracking, unref, or out-of-band scheduling survives it.
+    //
+    // Mechanism 2 is why the fix cannot merely be backgrounded. The way out
+    // is to stop trying to outlive the session and instead give it more work
+    // to do: pi.sendUserMessage() queues a REAL next turn, so the fix runs as
+    // ordinary agent work -- inside the process lifetime, with the user's
+    // tools, in the user's transcript. Verified in headless and interactive
+    // modes; a 40s continuation completed with no handler error.
+    //
+    // sendUserMessage resolves in ~0ms (it enqueues, it does not await the
+    // turn), so the handler never approaches deadline 1.
+    const continuationQueue: { key: string; instruction: string }[] = [];
+    const continuationAttempts = new Map<string, number>();
+    // Injected turns are currently indistinguishable from real user input
+    // (br-x85k): in a live PTY session the model treated injected content as
+    // carrying user authority and ran a command on that basis. This marker
+    // is a LABEL FOR HUMANS reading the transcript. It is NOT verified to
+    // change how the model weighs the instruction, and must not be mistaken
+    // for a solved safety property.
+    const AUTOFIX_MARKER = "[ensemble:autofix]";
+    const MAX_CONTINUATIONS_PER_ISSUE = 1;
+
+    const enqueueContinuation = (key: string, instruction: string): boolean => {
+      const used = continuationAttempts.get(key) ?? 0;
+      // Without this cap the fix turn's own events re-enter dispatch and
+      // queue another turn, forever. Every probe needed this guard.
+      if (used >= MAX_CONTINUATIONS_PER_ISSUE) return false;
+      if (continuationQueue.some((q) => q.key === key)) return false;
+      continuationAttempts.set(key, used + 1);
+      continuationQueue.push({ key, instruction });
+      return true;
+    };
+
+    /**
+     * Re-runs the failing command ourselves.
+     *
+     * The continuation turn ends with the model ASSERTING the test passes.
+     * Accepting that assertion is the exact failure this project exists to
+     * prevent, so the claim is never the evidence.
+     *
+     * The payload carries no working directory, and re-running from the repo
+     * root is NOT equivalent: `npx jest live-e2e` there matches zero tests
+     * and exits 0 -- a false pass that would rubber-stamp any fix, including
+     * no fix at all. So an exit code alone is never sufficient: a run that
+     * executed no tests is reported "inconclusive", never "passed".
+     */
+    const verifyCommand = (command: string): { status: string; detail: string } => {
+      const out = spawnSync("bash", ["-lc", command], {
+        cwd: resolveRepoRoot(process.cwd()),
+        encoding: "utf8",
+        timeout: 300000,
+      });
+      const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
+      const totals = /Tests:\s+(.*)/.exec(text)?.[1] ?? "";
+      const ranSomething = /\b([1-9]\d*)\s+(passed|failed|total)/.test(totals);
+      if (!ranSomething) {
+        return {
+          status: "inconclusive",
+          detail: `re-run executed no tests (cwd unknown); totals=${JSON.stringify(totals)}`,
+        };
+      }
+      return {
+        status: out.status === 0 ? "passed" : "failed",
+        detail: totals.trim(),
+      };
+    };
+
+    // key of a continuation whose turn has been injected and whose result
+    // has not yet been independently checked.
+    let awaitingVerification: string | undefined;
+
+    pi.on("turn_end", async () => {
+      // Verify the PREVIOUS continuation before considering a new one, so
+      // the model's own claim is never what closes the loop.
+      if (awaitingVerification) {
+        const command = awaitingVerification;
+        awaitingVerification = undefined;
+        const verdict = verifyCommand(command);
+        logRuntime(resolveRepoRoot(process.cwd()), {
+          kind: "verification",
+          issue: command,
+          status: verdict.status,
+          detail: verdict.detail,
+        });
+      }
+
+      const next = continuationQueue.shift();
+      if (!next) return undefined;
+      logRuntime(resolveRepoRoot(process.cwd()), {
+        kind: "continuation",
+        issue: next.key,
+      });
+      await pi.sendUserMessage(`${AUTOFIX_MARKER} ${next.instruction}`);
+      awaitingVerification = next.key;
+      return undefined;
+    });
 
     // Effect-based write boundary. Runs after every tool call, because
     // the bypass this exists for happened in an ordinary conversational
