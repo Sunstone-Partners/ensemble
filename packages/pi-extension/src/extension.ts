@@ -66,6 +66,21 @@ export interface ActivateOptions {
   runSuite?: (command: string, signal: AbortSignal) => SuiteResult | Promise<SuiteResult>;
 }
 
+/**
+ * Waits for out-of-band dispatches to settle.
+ *
+ * Dispatch cannot be awaited inside the event handler (Pi kills handlers at
+ * 30s), so tests and shutdown need an explicit join point. Loops because a
+ * settling dispatch can enqueue another.
+ */
+export async function drainDispatches(): Promise<void> {
+  while (trackedDispatches && trackedDispatches.size > 0) {
+    await Promise.allSettled([...trackedDispatches]);
+  }
+}
+
+let trackedDispatches: Set<Promise<void>> | undefined;
+let monitor: WriteBoundaryMonitor | undefined;
 export function createActivate(options: ActivateOptions = {}): {
   activate: (pi: ExtensionAPI) => void;
   sink: InMemoryEventSink;
@@ -74,7 +89,6 @@ export function createActivate(options: ActivateOptions = {}): {
 } {
   const runRecords: BehaviorRunRecord[] = [];
   const uiBridge = new SessionUiBridge();
-  let monitor: WriteBoundaryMonitor | undefined;
   const sink = new InMemoryEventSink();
   let lastActivation: BehaviorActivationResult | null = null;
 
@@ -90,6 +104,10 @@ export function createActivate(options: ActivateOptions = {}): {
     // The matcher is resolved at publish time, not captured here:
     // wireSessionLifecycle runs before activateBehaviorPipeline has
     // produced one, so binding eagerly would capture null forever.
+    // Tracked so an in-flight autofix is visible rather than invisible.
+    const pendingDispatches = new Set<Promise<void>>();
+    trackedDispatches = pendingDispatches;
+
     const dispatchingSink: EventSink = {
       async publish(envelope) {
         await sink.publish(envelope);
@@ -100,22 +118,42 @@ export function createActivate(options: ActivateOptions = {}): {
         });
         const matcher = lastActivation?.matcher;
         if (!matcher) return;
-        try {
-          const invoked = await matcher.onEvent(envelope.event);
-          if (invoked && invoked.length > 0) {
+
+        // NOT awaited. Pi kills an extension handler after 30s, and this
+        // publish runs inside the tool_call handler. A real fix provider
+        // spawns an agent subprocess, so awaiting here guaranteed the whole
+        // autofix chain was aborted mid-flight -- observed as
+        // "handler timed out after 30000ms" with a dispatched event, no
+        // invocation record, and the source unchanged.
+        //
+        // This is deliberately NOT fire-and-forget: the promise is tracked
+        // so the run is visible in status, its outcome is always logged, and
+        // a rejection can never become an unhandled rejection.
+        const run = (async () => {
+          try {
+            const invoked = await matcher.onEvent(envelope.event);
+            if (invoked && invoked.length > 0) {
+              logRuntime(resolveRepoRoot(process.cwd()), {
+                kind: "dispatch",
+                type: envelope.event.type,
+                invoked,
+              });
+            }
+          } catch (error) {
+            // A behavior invocation must never break the event pipeline.
+            lastActivation?.invocationErrors.push({
+              behavior: "(dispatch)",
+              reason: (error as Error).message,
+            });
             logRuntime(resolveRepoRoot(process.cwd()), {
-              kind: "dispatch",
-              type: envelope.event.type,
-              invoked,
+              kind: "error",
+              dispatchError: (error as Error).message,
             });
           }
-        } catch (error) {
-          // A behavior invocation must never break the event pipeline.
-          lastActivation?.invocationErrors.push({
-            behavior: "(dispatch)",
-            reason: (error as Error).message,
-          });
-        }
+        })();
+
+        pendingDispatches.add(run);
+        void run.finally(() => pendingDispatches.delete(run));
       },
     };
 
@@ -218,6 +256,16 @@ export function createActivate(options: ActivateOptions = {}): {
     // LocalEventMatcher defaulting to `() => undefined`, so a matched
     // event ran a stub and every downstream guarantee was
     // test-only reachable.
+    // Bound once so the status line reports the provider actually in use.
+    // Reading options.proposeFix reported "NOT configured" while a default
+    // provider was wired -- a status line that lies is worse than none.
+    const effectiveProposeFix =
+      options.proposeFix ??
+      createAgentFixProvider({
+        rootDir: resolveRepoRoot(process.cwd()),
+        behaviorDirFor: (name) => lastActivation?.packageDirs?.get(name),
+      });
+
     const invoker = createBehaviorInvoker({
       rootDir: resolveRepoRoot(process.cwd()),
       compiled: () => lastActivation?.compiled ?? [],
@@ -226,7 +274,7 @@ export function createActivate(options: ActivateOptions = {}): {
       // reached invocation and then stopped, so every downstream guarantee
       // (guard, snapshot, suite verification, retry budget, commit policy)
       // was reachable only from tests. Injectable so tests need not spawn.
-      proposeFix: options.proposeFix ?? createAgentFixProvider({ rootDir: resolveRepoRoot(process.cwd()) }),
+      proposeFix: effectiveProposeFix,
       proposeConstitutionChange: options.proposeConstitutionChange,
       // The bridge is the production approval channel: it answers
       // through whatever UI context Pi most recently supplied.
@@ -261,6 +309,15 @@ export function createActivate(options: ActivateOptions = {}): {
         : undefined,
     );
 
+    // A one-shot `omp -p` exits as soon as the turn ends, which would kill
+    // an in-flight autofix. Join at shutdown so background work is not
+    // silently discarded. Note this is still bounded by the host's handler
+    // timeout -- a fix slower than that cannot be rescued here, which is why
+    // long-running autofix ultimately needs a detached worker (see notes).
+    pi.on("session_shutdown", async () => {
+      await drainDispatches();
+    });
+
     lastActivation = activateBehaviorPipeline(
       pi,
       resolveRepoRoot(process.cwd()),
@@ -284,7 +341,8 @@ export function createActivate(options: ActivateOptions = {}): {
           `  events seen      : ${sink.peek().length}`,
           `  invocations      : ${runRecords.length}`,
           `  last invocation  : ${runRecords.length ? JSON.stringify(runRecords[runRecords.length - 1]) : "(none)"}`,
-          `  fix provider     : ${options.proposeFix ? "configured" : "NOT configured - no fix will ever be attempted"}`,
+          `  fix provider     : configured (${options.proposeFix ? "injected" : "agent subprocess"})`,
+          `  dispatches in flight : ${pendingDispatches.size}`,
           `  approval channel : ${uiBridge.hasUI ? "live (ui.confirm)" : "unavailable - constitution changes fail closed"}`,
           `  log              : ${runtimeLogPath(resolveRepoRoot(process.cwd()))}`,
         ];
@@ -299,7 +357,7 @@ export function createActivate(options: ActivateOptions = {}): {
       discovered: lastActivation.discovered,
       loaded: lastActivation.loaded,
       skipped: lastActivation.skipped,
-      hasFixProvider: Boolean(options.proposeFix),
+      hasFixProvider: true,
       hasApprovalHost: Boolean(options.approvalHost),
     });
   };

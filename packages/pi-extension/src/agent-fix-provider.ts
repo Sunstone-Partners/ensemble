@@ -42,6 +42,8 @@ export interface AgentFixProviderOptions {
    * beside the behavior's trigger and capabilities rather than in code.
    */
   readonly behaviorsDir?: string;
+  /** Authoritative name -> package dir, from activation's discovered manifests. */
+  readonly behaviorDirFor?: (behaviorName: string) => string | undefined;
   /** Explicit template, overriding both the behavior's file and the default. */
   readonly promptTemplate?: string;
 }
@@ -167,7 +169,7 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
     options.run ??
     ((prompt: string, signal: AbortSignal) =>
       new Promise<string>((resolve, reject) => {
-        execFile(
+        const child = execFile(
           options.command ?? "omp",
           [
             "-p",
@@ -185,6 +187,14 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
             else resolve(stdout);
           },
         );
+        // CRITICAL: execFile hands the child a pipe for stdin and never
+        // closes it. A non-TTY stdin makes the agent conclude a prompt is
+        // being piped in, so it blocks on "readPipedInput" waiting for EOF
+        // and never reads argv at all -- the call hangs until the timeout
+        // and reports "no candidate offered", which looks like a model
+        // failure but is entirely ours. Closing stdin is what makes the
+        // argv prompt take effect.
+        child.stdin?.end();
       }));
 
   return async (invocation, issue) => {
@@ -195,8 +205,11 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
       const behaviorName = invocation?.behavior?.metadata?.name;
       const template =
         options.promptTemplate ??
-        (options.behaviorsDir && behaviorName
-          ? loadFixPromptTemplate(`${options.behaviorsDir}/${behaviorName}`)
+        (behaviorName
+          ? loadFixPromptTemplate(
+              options.behaviorDirFor?.(behaviorName) ??
+                (options.behaviorsDir ? `${options.behaviorsDir}/${behaviorName}` : ""),
+            )
           : undefined);
 
       const reply = await runAgent(

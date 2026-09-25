@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ApprovalHost } from "@sunstone-partners/ensemble-agent-core";
-import { createActivate } from "../src/extension";
+import { createActivate, drainDispatches } from "../src/extension";
 
 /**
  * The falsifiable experiment: a test that asserts 1 + 1 === 3.
@@ -104,7 +104,17 @@ function fakePi() {
       return () => undefined;
     },
   } as unknown as ExtensionAPI;
-  return { pi, fire: async (n: string, e: unknown) => handlers.get(n)?.(e) };
+  return {
+    pi,
+    // Drains out-of-band dispatch: it is no longer awaited inside the
+    // handler, because Pi kills handlers at 30s and a real fix provider
+    // spawns an agent subprocess.
+    fire: async (n: string, e: unknown) => {
+      const r = await handlers.get(n)?.(e);
+      await drainDispatches();
+      return r;
+    },
+  };
 }
 
 describe("1 + 1 === 3: the system must refuse to 'fix' the assertion", () => {

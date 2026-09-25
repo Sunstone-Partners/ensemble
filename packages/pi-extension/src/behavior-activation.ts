@@ -48,6 +48,12 @@ export interface BehaviorActivationResult {
    * only. Always present, even when nothing was discovered.
    */
   matcher?: LocalEventMatcher;
+  /**
+   * behavior name -> directory holding its package files. Taken from the
+   * discovered manifest path rather than a conventional guess, so a behavior
+   * ships its own prompt/skill files wherever it actually lives.
+   */
+  packageDirs?: Map<string, string>;
   /** Invoker failures; one behavior's failure never hides its siblings. */
   invocationErrors: { behavior: string; reason: string }[];
   /** Successfully loaded compiled packages, for late-bound consumers. */
@@ -79,7 +85,8 @@ export function activateBehaviorPipeline(
   invoke?: BehaviorInvoker,
 ): BehaviorActivationResult {
   const live: CompiledBehaviorPackage[] = [];
-  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], invocationErrors: [], compiled: live };
+  const packageDirs = new Map<string, string>();
+  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], invocationErrors: [], compiled: live, packageDirs };
 
   let discovered;
   try {
@@ -119,6 +126,7 @@ export function activateBehaviorPipeline(
         const artifacts = compileBehaviorToArtifacts(compiled, availableTools);
         loadCompiledBehavior(pi, compiled, artifacts, availableTools);
         result.loaded.push(compiled.manifest.metadata.name);
+        packageDirs.set(compiled.manifest.metadata.name, dirname(pkg.manifestPath));
         live.push(compiled);
       } catch (error) {
         // Includes the TRD-004 fail-closed refusal for an unenforced
