@@ -350,6 +350,11 @@ export function createActivate(options: ActivateOptions = {}): {
       // grants of the behaviors that matched, not the user's own.
       beginBehaviorScope(pi, next.behaviors);
       await pi.sendUserMessage(`${AUTOFIX_MARKER} ${next.instruction}`);
+      // next.key is the RAW command, and must stay raw here. Normalisation
+      // exists only inside ContinuationBudget for counting attempts; if the
+      // normalised form ever became the stored command, verification would
+      // re-run something the model never ran (a different pipeline, or with
+      // redirections stripped) and grade the wrong thing.
       awaitingVerification = { command: next.key, cwd: next.cwd, snapshot: next.snapshot };
       return undefined;
     });
