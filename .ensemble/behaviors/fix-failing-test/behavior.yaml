@@ -12,7 +12,20 @@ trigger:
     command: { matches: "npm test|npx jest|jest|vitest|mix test|pytest|go test|cargo test" }
     isError: { equals: true }
 policy:
-  mode: auto
+  # Changed from `auto` to `propose` (2026-09-25): a live run produced a
+  # change to packages/agent-core/src/behavior/outbox.ts
+  # (`if (this.entries.length > 0) return;`) that landed uncommitted with no
+  # human review. `propose` makes MutationGuard.authorize() deny every
+  # direct mutation and require a human to apply the proposal instead
+  # (mutation-guard.ts:122-130) -- but ONLY on the governed dispatch path.
+  #
+  # This does NOT close the gap below: the continuation path bypasses
+  # MutationGuard regardless of `mode`, and a `bash`-granted behavior can
+  # write straight past MutationGuard/WorkspaceSnapshot via shell redirection
+  # (write-boundary-monitor.ts's docstring documents exactly this happening
+  # with a live model and `printf > file`). Both are open as br-o355. Treat
+  # `propose` as raising the bar, not as a closed loop, until br-o355 lands.
+  mode: propose
   timeout: 10m
 capabilities:
   # `edit` is the difference between this behavior and
@@ -42,8 +55,11 @@ capabilities:
   mutation_classes: [artifact.write]
 execution:
   graph: fix-failing-test
-  # Required by the loader whenever policy.mode is auto. Be precise about what
-  # it currently does: the governed path re-runs this command over the WHOLE
+  # Was required by the loader while policy.mode was auto; now optional
+  # under propose, but left in place since it's the command a human
+  # approver (or a future auto/governed run) should verify a proposal
+  # against. Be precise about what it currently does: the governed path
+  # re-runs this command over the WHOLE
   # suite before accepting a fix, so a repair that greens its target while
   # breaking three others is rejected. On the continuation path -- the one
   # observed firing -- it is never invoked, and only the narrower failing

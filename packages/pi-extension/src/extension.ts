@@ -308,7 +308,7 @@ export function createActivate(options: ActivateOptions = {}): {
     // Set when a continuation turn has been injected and its result has not
     // yet been independently checked.
     let awaitingVerification:
-      | { command: string; cwd?: string; snapshot: WorkingTreeSnapshot }
+      | { command: string; cwd?: string; snapshot: WorkingTreeSnapshot; suiteCommands: readonly string[] }
       | undefined;
 
     // The window closes at agent_end, NOT turn_end. Reproduced: an injected
@@ -326,9 +326,32 @@ export function createActivate(options: ActivateOptions = {}): {
       // the source correctly repaired and the verdict wrong. agent_end
       // fires once, after the run settles.
       if (awaitingVerification) {
-        const { command, cwd, snapshot } = awaitingVerification;
+        const { command, cwd, snapshot, suiteCommands } = awaitingVerification;
         awaitingVerification = undefined;
-        const verdict = verifyCommand(command, cwd);
+        let verdict = verifyCommand(command, cwd);
+
+        // The narrow command passing proves only that the ORIGINALLY
+        // failing test now passes -- it says nothing about other callers
+        // this same edit may have broken (br-o355). The governed
+        // AutofixLoop path already re-runs execution.test_command over the
+        // whole suite before accepting a fix; the continuation path did
+        // not, because it never reaches AutofixLoop at all. This closes
+        // that gap for the continuation path specifically: every matched
+        // behavior's whole-suite command is re-run too, and a regression
+        // there overrides an otherwise-passing narrow verdict.
+        if (verdict.status !== "failed") {
+          for (const suiteCommand of suiteCommands) {
+            if (suiteCommand === command) continue; // already ran it above
+            const suiteVerdict = verifyCommand(suiteCommand, cwd);
+            if (suiteVerdict.status === "failed") {
+              verdict = suiteVerdict;
+              break;
+            }
+            if (suiteVerdict.status === "inconclusive" && verdict.status === "passed") {
+              verdict = suiteVerdict;
+            }
+          }
+        }
 
         // Rollback happens ONLY on a definite "failed". An "inconclusive"
         // verdict means we could not tell whether the fix worked, and
@@ -378,7 +401,19 @@ ${next.instruction}`);
       // normalised form ever became the stored command, verification would
       // re-run something the model never ran (a different pipeline, or with
       // redirections stripped) and grade the wrong thing.
-      awaitingVerification = { command: next.key, cwd: next.cwd, snapshot: next.snapshot };
+      //
+      // Whole-suite commands come from the SAME compiled manifests that fed
+      // matchedBehaviors at enqueue time, deduplicated -- multiple matched
+      // behaviors sharing one test_command must not re-run it twice.
+      const suiteCommands = Array.from(
+        new Set(
+          (lastActivation?.compiled ?? [])
+            .filter((c) => next.behaviors.includes(c.manifest.metadata.name))
+            .map((c) => c.manifest.execution.test_command)
+            .filter((c): c is string => Boolean(c)),
+        ),
+      );
+      awaitingVerification = { command: next.key, cwd: next.cwd, snapshot: next.snapshot, suiteCommands };
       return undefined;
     });
 
