@@ -161,6 +161,35 @@ export function parseFixReply(reply: string, mutationClass: string): FixCandidat
   return undefined;
 }
 
+/**
+ * Tools the fixing agent may use. Its contract is to READ the repository and
+ * REPLY with a patch; AutofixLoop alone authorizes and applies writes.
+ *
+ * This is enforcement, not instruction. The child runs with
+ * `--no-extensions` (otherwise it recurses into this extension), which also
+ * means no tool grants, MutationGuard, write boundary or runtime log apply
+ * inside it. With its default tool set it is a full agent in the LIVE
+ * repository -- observed: a behavior whose manifest granted no edit tool had
+ * its source changed on disk by this child, and the governed rejection that
+ * followed "restored" the already-changed file. Probed live against omp:
+ * with this list, `edit`/`bash` are absent and `write` refuses filesystem
+ * paths ("limited to the xd:// device transport"), so a direct write leaves
+ * the tree unchanged even when the child is told to make it.
+ */
+export const FIX_AGENT_TOOLS = ["read", "grep", "glob"] as const;
+
+export function fixAgentArgs(rootDir: string, prompt: string): string[] {
+  return [
+    "-p",
+    "--no-session",
+    // Without this the child loads this extension and recurses.
+    "--no-extensions",
+    `--tools=${FIX_AGENT_TOOLS.join(",")}`,
+    `--cwd=${rootDir}`,
+    prompt,
+  ];
+}
+
 export function createAgentFixProvider(options: AgentFixProviderOptions): FixProvider {
   const mutationClass = options.mutationClass ?? "artifact.write";
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -171,14 +200,7 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
       new Promise<string>((resolve, reject) => {
         const child = execFile(
           options.command ?? "omp",
-          [
-            "-p",
-            "--no-session",
-            // Without this the child loads this extension and recurses.
-            "--no-extensions",
-            `--cwd=${options.rootDir}`,
-            prompt,
-          ],
+          fixAgentArgs(options.rootDir, prompt),
           { cwd: options.rootDir, signal, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 },
           (error, stdout) => {
             // A non-zero exit still often carries a usable reply on stdout;
