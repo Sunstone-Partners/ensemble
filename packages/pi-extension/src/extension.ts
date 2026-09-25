@@ -9,6 +9,8 @@ import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { SuiteResult } from "./autofix-loop";
 import { logRuntime, runtimeLogPath } from "./runtime-log";
 import { SessionUiBridge } from "./session-ui";
+import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
+import { execFileSync } from "node:child_process";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -71,6 +73,7 @@ export function createActivate(options: ActivateOptions = {}): {
 } {
   const runRecords: BehaviorRunRecord[] = [];
   const uiBridge = new SessionUiBridge();
+  let monitor: WriteBoundaryMonitor | undefined;
   const sink = new InMemoryEventSink();
   let lastActivation: BehaviorActivationResult | null = null;
 
@@ -114,6 +117,50 @@ export function createActivate(options: ActivateOptions = {}): {
         }
       },
     };
+
+    // Effect-based write boundary. Runs after every tool call, because
+    // the bypass this exists for happened in an ordinary conversational
+    // turn with no accept boundary to hook.
+    const repoRoot = resolveRepoRoot(process.cwd());
+    monitor = new WriteBoundaryMonitor(repoRoot);
+    try {
+      const tracked = execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean);
+      monitor.protectAll(tracked);
+    } catch {
+      // Not a git repo: the monitor degrades to detecting nothing
+      // rather than pretending to protect.
+    }
+
+    pi.on("tool_result", async () => {
+      if (!monitor) return;
+      const result = monitor.check();
+      for (const v of result.violations) {
+        logRuntime(repoRoot, { kind: "error", violation: v });
+      }
+      if (result.violations.some((v) => v.restored)) {
+        // Rewrites the tool result the model sees, so the revert is
+        // visible to it rather than silently undone behind its back.
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text:
+                "Write boundary violation: " +
+                result.violations
+                  .filter((v) => v.restored)
+                  .map((v) => `${v.path} (${v.reason}) was reverted`)
+                  .join("; ") +
+                ". Protected paths cannot be modified by any means, including shell redirects. " +
+                "Fix the source under test instead.",
+            },
+          ],
+        };
+      }
+      return undefined;
+    });
 
     wireSessionLifecycle(pi, dispatchingSink, {
       onContext: (ctx) => uiBridge.capture(ctx as never),

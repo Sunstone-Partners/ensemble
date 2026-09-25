@@ -11,6 +11,7 @@ export * from "./behavior/protected-paths";
 export * from "./behavior/workspace-snapshot";
 export * from "./behavior/approval-gate";
 export * from "./behavior/local-event-matcher";
+export * from "./behavior/write-boundary-monitor";
 export * from "./behavior/discovery";
 export * from "./behavior/conformance";
 export * from "./behavior/package-discovery";
