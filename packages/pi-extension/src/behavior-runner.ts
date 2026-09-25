@@ -39,6 +39,8 @@ export interface BehaviorRunRecord {
   behavior: string;
   issue: IssueKeyInput;
   outcome?: AttemptOutcome;
+  /** Present when a propose-mode behavior produced a reviewable patch. */
+  proposal?: { issue: string; writes: { path: string; contents: string }[]; reason: string };
   constitution?: { status: string; detail: string };
   note?: string;
 }
@@ -135,6 +137,19 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
       });
 
       record.outcome = await loop.attempt(issue, candidate);
+
+      // TRD-018: a `propose` behavior is denied direct writes by
+      // design. That is not a dead end -- it is the point. The
+      // candidate becomes a human-reviewable proposal artifact instead
+      // of being discarded, which is what "emit a proposal artifact
+      // instead" actually requires.
+      if (record.outcome.status === "rejected" && /mode: propose/.test(record.outcome.reason)) {
+        record.proposal = {
+          issue: record.outcome.issue,
+          writes: candidate.writes.map((w) => ({ path: w.path, contents: w.contents })),
+          reason: record.outcome.reason,
+        };
+      }
     } else {
       record.note = "no fix candidate offered";
     }
