@@ -275,12 +275,24 @@ export function createActivate(options: ActivateOptions = {}): {
     // has not yet been independently checked.
     let awaitingVerification: string | undefined;
 
-    pi.on("turn_end", async () => {
-      // The behavior's execution window closes when its turn ends. Done
-      // FIRST and unconditionally, so a failed or aborted fix turn cannot
-      // strand the user in a narrowed session.
+    // The window closes at agent_end, NOT turn_end. Reproduced: an injected
+    // continuation spans MULTIPLE assistant turns (four in a probe), so
+    // closing at turn_end released the scope after the first tool batch and
+    // every later call ran ungranted -- observed live as `edit` executing for
+    // a behavior that grants only read/grep/glob/ensemble.bash, with zero
+    // blocks. agent_end fires once, after the whole run settles.
+    pi.on("agent_end", async () => {
       endBehaviorScope(pi);
+      return undefined;
+    });
+    // Fail-safe: a crashed or aborted run must never strand the user in a
+    // narrowed session, which is the defect this change exists to remove.
+    pi.on("session_shutdown", async () => {
+      endBehaviorScope(pi);
+      return undefined;
+    });
 
+    pi.on("turn_end", async () => {
       // Verify the PREVIOUS continuation before considering a new one, so
       // the model's own claim is never what closes the loop.
       if (awaitingVerification) {
