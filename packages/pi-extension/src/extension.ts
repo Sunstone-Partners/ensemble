@@ -13,6 +13,7 @@ import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
 import { execFileSync, spawnSync } from "node:child_process";
 import { beginBehaviorScope, endBehaviorScope } from "./tool-grant-enforcement";
+import { verifySuite } from "./verify-suite";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -151,6 +152,7 @@ export function createActivate(options: ActivateOptions = {}): {
                 .filter(Boolean)
                 .join("\n"),
               matchedBehaviors,
+              typeof payload?.cwd === "string" ? payload.cwd : undefined,
             );
           }
         }
@@ -211,7 +213,12 @@ export function createActivate(options: ActivateOptions = {}): {
     //
     // sendUserMessage resolves in ~0ms (it enqueues, it does not await the
     // turn), so the handler never approaches deadline 1.
-    const continuationQueue: { key: string; instruction: string; behaviors: string[] }[] = [];
+    const continuationQueue: {
+      key: string;
+      instruction: string;
+      behaviors: string[];
+      cwd?: string;
+    }[] = [];
     const continuationAttempts = new Map<string, number>();
     // Injected turns are currently indistinguishable from real user input
     // (br-x85k): in a live PTY session the model treated injected content as
@@ -226,6 +233,7 @@ export function createActivate(options: ActivateOptions = {}): {
       key: string,
       instruction: string,
       behaviors: string[],
+      cwd: string | undefined,
     ): boolean => {
       const used = continuationAttempts.get(key) ?? 0;
       // Without this cap the fix turn's own events re-enter dispatch and
@@ -233,47 +241,23 @@ export function createActivate(options: ActivateOptions = {}): {
       if (used >= MAX_CONTINUATIONS_PER_ISSUE) return false;
       if (continuationQueue.some((q) => q.key === key)) return false;
       continuationAttempts.set(key, used + 1);
-      continuationQueue.push({ key, instruction, behaviors });
+      continuationQueue.push({ key, instruction, behaviors, cwd });
       return true;
     };
 
     /**
-     * Re-runs the failing command ourselves.
-     *
-     * The continuation turn ends with the model ASSERTING the test passes.
-     * Accepting that assertion is the exact failure this project exists to
-     * prevent, so the claim is never the evidence.
-     *
-     * The payload carries no working directory, and re-running from the repo
-     * root is NOT equivalent: `npx jest live-e2e` there matches zero tests
-     * and exits 0 -- a false pass that would rubber-stamp any fix, including
-     * no fix at all. So an exit code alone is never sufficient: a run that
-     * executed no tests is reported "inconclusive", never "passed".
+     * Re-runs the failing command ourselves; see verify-suite.ts for why a
+     * zero exit code alone is never accepted as a pass.
      */
-    const verifyCommand = (command: string): { status: string; detail: string } => {
-      const out = spawnSync("bash", ["-lc", command], {
-        cwd: resolveRepoRoot(process.cwd()),
-        encoding: "utf8",
-        timeout: 300000,
-      });
-      const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
-      const totals = /Tests:\s+(.*)/.exec(text)?.[1] ?? "";
-      const ranSomething = /\b([1-9]\d*)\s+(passed|failed|total)/.test(totals);
-      if (!ranSomething) {
-        return {
-          status: "inconclusive",
-          detail: `re-run executed no tests (cwd unknown); totals=${JSON.stringify(totals)}`,
-        };
-      }
-      return {
-        status: out.status === 0 ? "passed" : "failed",
-        detail: totals.trim(),
-      };
-    };
+    const verifyCommand = (command: string, cwd: string | undefined) =>
+      verifySuite(command, cwd, resolveRepoRoot(process.cwd()));
 
     // key of a continuation whose turn has been injected and whose result
     // has not yet been independently checked.
-    let awaitingVerification: string | undefined;
+
+    // Set when a continuation turn has been injected and its result has not
+    // yet been independently checked.
+    let awaitingVerification: { command: string; cwd?: string } | undefined;
 
     // The window closes at agent_end, NOT turn_end. Reproduced: an injected
     // continuation spans MULTIPLE assistant turns (four in a probe), so
@@ -283,6 +267,24 @@ export function createActivate(options: ActivateOptions = {}): {
     // blocks. agent_end fires once, after the whole run settles.
     pi.on("agent_end", async () => {
       endBehaviorScope(pi);
+      // Verification happens HERE, not at turn_end. A continuation spans
+      // multiple assistant turns (reproduced: four), so verifying at the
+      // first turn_end re-runs the suite BEFORE the fix is finished and
+      // reports "failed" for a fix that actually worked -- observed, with
+      // the source correctly repaired and the verdict wrong. agent_end
+      // fires once, after the run settles.
+      if (awaitingVerification) {
+        const { command, cwd } = awaitingVerification;
+        awaitingVerification = undefined;
+        const verdict = verifyCommand(command, cwd);
+        logRuntime(resolveRepoRoot(process.cwd()), {
+          kind: "verification",
+          issue: command,
+          cwd,
+          status: verdict.status,
+          detail: verdict.detail,
+        });
+      }
       return undefined;
     });
     // Fail-safe: a crashed or aborted run must never strand the user in a
@@ -293,20 +295,6 @@ export function createActivate(options: ActivateOptions = {}): {
     });
 
     pi.on("turn_end", async () => {
-      // Verify the PREVIOUS continuation before considering a new one, so
-      // the model's own claim is never what closes the loop.
-      if (awaitingVerification) {
-        const command = awaitingVerification;
-        awaitingVerification = undefined;
-        const verdict = verifyCommand(command);
-        logRuntime(resolveRepoRoot(process.cwd()), {
-          kind: "verification",
-          issue: command,
-          status: verdict.status,
-          detail: verdict.detail,
-        });
-      }
-
       const next = continuationQueue.shift();
       if (!next) return undefined;
       logRuntime(resolveRepoRoot(process.cwd()), {
@@ -318,7 +306,7 @@ export function createActivate(options: ActivateOptions = {}): {
       // grants of the behaviors that matched, not the user's own.
       beginBehaviorScope(pi, next.behaviors);
       await pi.sendUserMessage(`${AUTOFIX_MARKER} ${next.instruction}`);
-      awaitingVerification = next.key;
+      awaitingVerification = { command: next.key, cwd: next.cwd };
       return undefined;
     });
 

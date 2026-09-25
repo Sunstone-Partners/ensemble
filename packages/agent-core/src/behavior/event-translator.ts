@@ -124,6 +124,9 @@ export function translateEvent(
     source: event.source,
     payload: {
       command,
+      // Needed to re-run the suite where it actually failed. Verifying at
+      // the repo root silently matches zero tests and "passes".
+      cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
       isError: true,
       // How the failure was detected, so a run that only output-matched is
       // distinguishable from one the shell actually reported as failing.

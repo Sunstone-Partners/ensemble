@@ -113,6 +113,21 @@ function bashCommandOf(event: ToolResultEvent): string | undefined {
   return typeof command === "string" ? command : undefined;
 }
 
+/**
+ * The working directory the command actually ran in.
+ *
+ * Carried because re-running a failing test command is the only
+ * independent check on a proposed fix, and the directory is not
+ * recoverable afterwards. Without it the re-run happens at the repo root,
+ * where `npx jest live-e2e` matches ZERO tests and exits 0 -- a false pass
+ * that would rubber-stamp any fix. Observed: every verification verdict
+ * was "inconclusive" for exactly this reason.
+ */
+function bashCwdOf(event: ToolResultEvent): string | undefined {
+  const cwd = (event.input as Record<string, unknown> | undefined)?.cwd;
+  return typeof cwd === "string" && cwd.length > 0 ? cwd : undefined;
+}
+
 /** Concatenates the textual parts of a tool result, ignoring images. */
 function outputTextOf(event: ToolResultEvent): string {
   return (event.content ?? [])
@@ -137,6 +152,7 @@ export function fromToolResult(event: ToolResultEvent) {
       custom,
       isError: event.isError === true,
       command: bashCommandOf(event),
+      cwd: bashCwdOf(event),
       output: outputTextOf(event),
     },
   });
