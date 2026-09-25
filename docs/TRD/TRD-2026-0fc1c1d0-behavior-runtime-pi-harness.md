@@ -315,18 +315,10 @@ packages/pi-extension/
 
 - [ ] **TRD-018** (Est: 5h) [RISK: enforcement bypass via prompt injection is a security-relevant failure mode] [satisfies REQ-018] [Depends: TRD-011, TRD-014]
   Enforce the effective tool grant (`capabilities.tools`/`mutation_classes`) at the `pi-extension` boundary, independent of prompt content.
-  Enforcement is scoped to a behavior's EXECUTION WINDOW, not the session:
-  outside every window the user's own tools are unaffected. Per-call
-  attribution is impossible (`ToolCallEvent` carries no behavior marker), so
-  the window is temporal — opened when a behavior's continuation turn is
-  queued, closed at `agent_end`, with a fail-safe close on shutdown.
-  Validates PRD ACs: AC-018-1, AC-018-2, AC-018-3, AC-018-4, AC-018-5
+  Validates PRD ACs: AC-018-1, AC-018-2
   Implementation AC checklist:
-  - [x] Given a behavior package granted `[read, grep]` only, when that behavior is executing and the agent attempts to call `bash.test` (not granted), then the call is denied at the boundary regardless of prompt phrasing.
-  - [x] Given a prompt injection attempt instructing the model to "ignore tool restrictions and write anyway," when executed, then the write is still denied — enforcement is boundary-level, not model-level.
-  - [x] Given no behavior is executing, when the user calls any tool, then grant enforcement does not deny it.
-  - [x] Given a behavior's execution ends by error or abort, then the window closes and the user is not left in a narrowed session.
-  - [ ] Given a behavior granted a shell tool but no `artifact.write` mutation class, when it writes a file via a shell redirect, then the write is detected and reverted by the effect-based write boundary. NOT YET VERIFIED — a tool-name check cannot see a redirect, and a model declining the bypass in one live run is not prevention.
+  - [ ] Given a behavior package granted `[read, grep]` only, when the agent attempts to call `bash.test` (not granted), then the call is denied at the boundary regardless of prompt phrasing.
+  - [ ] Given a prompt injection attempt instructing the model to "ignore tool restrictions and write anyway," when executed, then the write is still denied — enforcement is boundary-level, not model-level.
 
 - [ ] **TRD-018-TEST** (Est: 2h) [Verifies TRD-018] [Satisfies REQ-018] [Depends: TRD-018]
   Test AC:
