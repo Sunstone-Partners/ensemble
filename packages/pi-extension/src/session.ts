@@ -27,8 +27,9 @@ import {
 export function wireSessionLifecycle(
   pi: ExtensionAPI,
   sink: EventSink,
-  options: { testCommand?: string } = {},
+  options: { testCommand?: string; onContext?: (ctx: unknown) => void } = {},
 ): void {
+  const seen = (ctx: unknown) => options.onContext?.(ctx);
   // Returns the sink's promise rather than voiding it. `void` here
   // made publication fire-and-forget: withTranslation awaited emit,
   // got undefined, and returned before the matcher had invoked
@@ -44,12 +45,12 @@ export function wireSessionLifecycle(
   // (TRD-012 / REQ-002).
   const publish = withTranslation(emit, { testCommand: options.testCommand });
 
-  pi.on("session_start", async (event) => publish(fromSessionStart(event)));
-  pi.on("before_agent_start", async (event) => publish(fromBeforeAgentStart(event)));
-  pi.on("tool_execution_start", async (event) => publish(fromToolExecutionStart(event)));
-  pi.on("tool_execution_end", async (event) => publish(fromToolExecutionEnd(event)));
-  pi.on("tool_call", async (event) => publish(fromToolCall(event)));
-  pi.on("tool_result", async (event) => publish(fromToolResult(event)));
-  pi.on("agent_end", async (event) => publish(fromAgentEnd(event)));
-  pi.on("session_shutdown", async (event) => publish(fromSessionShutdown(event)));
+  pi.on("session_start", async (event, ctx) => { seen(ctx); return publish(fromSessionStart(event)); });
+  pi.on("before_agent_start", async (event, ctx) => { seen(ctx); return publish(fromBeforeAgentStart(event)); });
+  pi.on("tool_execution_start", async (event, ctx) => { seen(ctx); return publish(fromToolExecutionStart(event)); });
+  pi.on("tool_execution_end", async (event, ctx) => { seen(ctx); return publish(fromToolExecutionEnd(event)); });
+  pi.on("tool_call", async (event, ctx) => { seen(ctx); return publish(fromToolCall(event)); });
+  pi.on("tool_result", async (event, ctx) => { seen(ctx); return publish(fromToolResult(event)); });
+  pi.on("agent_end", async (event, ctx) => { seen(ctx); return publish(fromAgentEnd(event)); });
+  pi.on("session_shutdown", async (event, ctx) => { seen(ctx); return publish(fromSessionShutdown(event)); });
 }

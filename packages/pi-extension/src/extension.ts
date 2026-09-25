@@ -7,7 +7,8 @@ import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } f
 import { createBehaviorInvoker, FixProvider, ConstitutionProvider, BehaviorRunRecord } from "./behavior-runner";
 import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { SuiteResult } from "./autofix-loop";
-import { logRuntime } from "./runtime-log";
+import { logRuntime, runtimeLogPath } from "./runtime-log";
+import { SessionUiBridge } from "./session-ui";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -69,6 +70,7 @@ export function createActivate(options: ActivateOptions = {}): {
   runRecords: BehaviorRunRecord[];
 } {
   const runRecords: BehaviorRunRecord[] = [];
+  const uiBridge = new SessionUiBridge();
   const sink = new InMemoryEventSink();
   let lastActivation: BehaviorActivationResult | null = null;
 
@@ -113,7 +115,7 @@ export function createActivate(options: ActivateOptions = {}): {
       },
     };
 
-    wireSessionLifecycle(pi, dispatchingSink);
+    wireSessionLifecycle(pi, dispatchingSink, { onContext: (ctx) => uiBridge.capture(ctx as never) });
 
     // agent-core's ToolRegistry is the enforced grant-denial boundary
     // (AC-005-2: "prompt text cannot bypass this"). The grant source
@@ -161,7 +163,9 @@ export function createActivate(options: ActivateOptions = {}): {
       compiled: () => lastActivation?.compiled ?? [],
       proposeFix: options.proposeFix,
       proposeConstitutionChange: options.proposeConstitutionChange,
-      approval: options.approvalHost ? new ApprovalGate(options.approvalHost) : undefined,
+      // The bridge is the production approval channel: it answers
+      // through whatever UI context Pi most recently supplied.
+      approval: new ApprovalGate(options.approvalHost ?? uiBridge),
       openPullRequest: options.openPullRequest,
       runSuite: options.runSuite,
       records: runRecords,
@@ -175,6 +179,31 @@ export function createActivate(options: ActivateOptions = {}): {
       undefined,
       invoker,
     );
+
+    // An operator must be able to ask whether any of this is alive.
+    // Without it, a silent fail-closed runtime is indistinguishable
+    // from one that never loaded.
+    pi.registerCommand("ensemble-status", {
+      description: "Report ensemble behavior-runtime status for this session",
+      handler: async (_args, ctx) => {
+        uiBridge.capture(ctx as never);
+        const a = lastActivation;
+        const lines = [
+          `ensemble behavior runtime`,
+          `  loaded behaviors : ${a ? a.loaded.join(", ") || "(none)" : "(not activated)"}`,
+          `  skipped          : ${a && a.skipped.length ? a.skipped.map((s) => s.behaviorId + ": " + s.reason).join("; ") : "(none)"}`,
+          `  events seen      : ${sink.peek().length}`,
+          `  invocations      : ${runRecords.length}`,
+          `  last invocation  : ${runRecords.length ? JSON.stringify(runRecords[runRecords.length - 1]) : "(none)"}`,
+          `  fix provider     : ${options.proposeFix ? "configured" : "NOT configured - no fix will ever be attempted"}`,
+          `  approval channel : ${uiBridge.hasUI ? "live (ui.confirm)" : "unavailable - constitution changes fail closed"}`,
+          `  log              : ${runtimeLogPath(resolveRepoRoot(process.cwd()))}`,
+        ];
+        const text = lines.join("\n");
+        if (ctx.hasUI && ctx.ui?.notify) ctx.ui.notify(text);
+        else console.log(text);
+      },
+    });
 
     logRuntime(resolveRepoRoot(process.cwd()), {
       kind: "activation",
