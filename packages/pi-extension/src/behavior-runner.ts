@@ -60,6 +60,8 @@ export interface BehaviorRunnerOptions {
   runSuite?: (command: string, signal: AbortSignal) => SuiteResult | Promise<SuiteResult>;
   /** Records what happened, for inspection by the session. */
   records?: BehaviorRunRecord[];
+  /** Called after a record is finalized, for observability. */
+  onRecord?: (record: BehaviorRunRecord) => void;
 }
 
 /** Parses a jest/mix/pytest-style summary into a pass/fail count. */
@@ -94,6 +96,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
   const records = options.records ?? [];
 
   return async (invocation: BehaviorInvocation) => {
+   const finish = (r: BehaviorRunRecord) => options.onRecord?.(r);
     const payload = (invocation.event.payload ?? {}) as Record<string, unknown>;
     const issue: IssueKeyInput = {
       testId: String(payload.toolName ?? "suite") + " > " + String(payload.command ?? "unknown"),
@@ -108,6 +111,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
     );
     if (!compiled) {
       record.note = "no compiled package for this behavior";
+      finish(record);
       return;
     }
 
@@ -162,6 +166,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
           status: "declined",
           detail: "constitution change implied but no approval gate or PR backend is configured",
         };
+        finish(record);
         return;
       }
       const proposal = new ConstitutionProposal({
@@ -174,5 +179,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
           ? { status: "proposed", detail: result.pr.url }
           : { status: "declined", detail: result.reason };
     }
+
+    finish(record);
   };
 }

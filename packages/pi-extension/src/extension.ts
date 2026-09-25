@@ -7,6 +7,7 @@ import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } f
 import { createBehaviorInvoker, FixProvider, ConstitutionProvider, BehaviorRunRecord } from "./behavior-runner";
 import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { SuiteResult } from "./autofix-loop";
+import { logRuntime } from "./runtime-log";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -86,10 +87,22 @@ export function createActivate(options: ActivateOptions = {}): {
     const dispatchingSink: EventSink = {
       async publish(envelope) {
         await sink.publish(envelope);
+        logRuntime(resolveRepoRoot(process.cwd()), {
+          kind: "event",
+          type: envelope.event.type,
+          payload: envelope.event.payload,
+        });
         const matcher = lastActivation?.matcher;
         if (!matcher) return;
         try {
-          await matcher.onEvent(envelope.event);
+          const invoked = await matcher.onEvent(envelope.event);
+          if (invoked && invoked.length > 0) {
+            logRuntime(resolveRepoRoot(process.cwd()), {
+              kind: "dispatch",
+              type: envelope.event.type,
+              invoked,
+            });
+          }
         } catch (error) {
           // A behavior invocation must never break the event pipeline.
           lastActivation?.invocationErrors.push({
@@ -152,6 +165,7 @@ export function createActivate(options: ActivateOptions = {}): {
       openPullRequest: options.openPullRequest,
       runSuite: options.runSuite,
       records: runRecords,
+      onRecord: (r) => logRuntime(resolveRepoRoot(process.cwd()), { kind: "invocation", record: r }),
     });
 
     lastActivation = activateBehaviorPipeline(
@@ -161,6 +175,15 @@ export function createActivate(options: ActivateOptions = {}): {
       undefined,
       invoker,
     );
+
+    logRuntime(resolveRepoRoot(process.cwd()), {
+      kind: "activation",
+      discovered: lastActivation.discovered,
+      loaded: lastActivation.loaded,
+      skipped: lastActivation.skipped,
+      hasFixProvider: Boolean(options.proposeFix),
+      hasApprovalHost: Boolean(options.approvalHost),
+    });
   };
 
   return { activate, sink, lastActivation: () => lastActivation, runRecords };
