@@ -484,31 +484,16 @@
       }
     },
     {
-      "name": "ensemble-agent-core",
-      "version": "0.1.0",
-      "source": "./packages/agent-core",
-      "description": "Provider-neutral event/tool/protocol/behavior-compiler code shared by Pi/OMP adapters",
-      "category": "core",
-      "tags": [
-        "agent-core",
-        "behavior-runtime",
-        "library"
-      ],
-      "author": {
-        "name": "Sunstone Partners",
-        "url": "https://github.com/Sunstone-Partners"
-      }
-    },
-    {
-      "name": "ensemble-pi-extension",
+      "name": "ensemble-behaviors",
       "version": "0.1.0",
       "source": "./packages/pi-extension",
-      "description": "Thin Pi-specific extension loading the behavior runtime into a live Pi session via Pi's native extension mechanism",
-      "category": "core",
+      "category": "workflow",
+      "description": "OPT-IN. Event-driven behavior runtime for Pi/OMP sessions. Observes test failures and can dispatch a fix: it injects an additional agent turn, may EDIT SOURCE FILES under the granted behavior's tool grants, re-runs the suite itself to verify, and reverts the change if verification fails. Installing this plugin activates that loop; ensemble commands are unaffected if you do not install it.",
       "tags": [
-        "pi-extension",
+        "behaviors",
+        "autofix",
         "behavior-runtime",
-        "library"
+        "opt-in"
       ],
       "author": {
         "name": "Sunstone Partners",
