@@ -1,0 +1,104 @@
+import { BehaviorEvent } from "../events";
+import { BehaviorManifest, BehaviorPackage } from "./schema";
+import { CompiledBehaviorPackage } from "./compiler";
+import { match } from "./discovery";
+
+/**
+ * Matches events to behaviors and invokes them in-session (TRD-015 / REQ-003).
+ *
+ * This is the piece that makes a behavior *dispatch* rather than merely
+ * validate: previously events were normalized and behaviors were
+ * compiled, but nothing connected the two at runtime, so a matching
+ * event produced no invocation.
+ *
+ * Non-durability is a requirement, not an omission (TRD-016 / REQ-003).
+ * No event-to-behavior correlation is written to disk or to any
+ * external store: state lives only in this object, for this session. A
+ * durable queue would imply delivery guarantees, replay semantics and
+ * crash recovery that this design does not provide, and pretending
+ * otherwise is worse than being explicitly in-memory.
+ */
+
+export interface BehaviorInvocation {
+  behavior: BehaviorManifest;
+  event: BehaviorEvent;
+}
+
+export type BehaviorInvoker = (invocation: BehaviorInvocation) => void | Promise<void>;
+
+export interface LocalEventMatcherOptions {
+  /** Called once per (event, matching behavior) pair. */
+  invoke: BehaviorInvoker;
+  /** Reports an invoker failure; defaults to rethrowing. */
+  onError?: (error: Error, invocation: BehaviorInvocation) => void;
+}
+
+export class LocalEventMatcher {
+  private readonly pkg: BehaviorPackage;
+  private invocationCount = 0;
+
+  constructor(
+    compiled: readonly CompiledBehaviorPackage[],
+    private readonly options: LocalEventMatcherOptions,
+  ) {
+    // Compile once per session and cache: matching happens on every
+    // appended event, and recompiling per event would put YAML parsing
+    // on the hot path.
+    this.pkg = { behaviors: compiled.map((c) => c.manifest) } as BehaviorPackage;
+  }
+
+  /** Behaviors known to this matcher, in registration order. */
+  get behaviorNames(): string[] {
+    return this.pkg.behaviors.map((b) => b.metadata.name);
+  }
+
+  /** Number of invocations made this session. Never persisted. */
+  get invocations(): number {
+    return this.invocationCount;
+  }
+
+  /**
+   * Names of behaviors this event would invoke, WITHOUT invoking them.
+   *
+   * onEvent() awaits each behavior, and a behavior that proposes a fix
+   * spawns an agent subprocess -- so anything gated behind onEvent()
+   * completing is lost when the host exits the process at the end of a
+   * one-shot run. Callers that only need to know "does this event matter"
+   * must be able to ask without paying invocation latency.
+   */
+  matchNames(event: BehaviorEvent): string[] {
+    return match(this.pkg, event).map((b) => b.metadata.name);
+  }
+
+  /**
+   * Matches one event and invokes every matching behavior.
+   * Returns the behaviors invoked, in order.
+   */
+  async onEvent(event: BehaviorEvent): Promise<string[]> {
+    const matched = match(this.pkg, event);
+    const invoked: string[] = [];
+    const failures: { error: Error; invocation: BehaviorInvocation }[] = [];
+
+    for (const behavior of matched) {
+      const invocation: BehaviorInvocation = { behavior, event };
+      try {
+        await this.options.invoke(invocation);
+        this.invocationCount += 1;
+        invoked.push(behavior.metadata.name);
+      } catch (error) {
+        // One behavior's failure never suppresses its siblings: the
+        // loop always continues and failures are raised after every
+        // match has had its turn. Aborting mid-loop would make
+        // invocation order silently significant.
+        failures.push({ error: error as Error, invocation });
+        if (this.options.onError) this.options.onError(error as Error, invocation);
+      }
+    }
+
+    // Without an onError handler, failures surface rather than being
+    // swallowed -- but only after every sibling has been invoked.
+    if (failures.length > 0 && !this.options.onError) throw failures[0].error;
+
+    return invoked;
+  }
+}

@@ -482,6 +482,23 @@
         "name": "Sunstone Partners",
         "email": "info@sunstonepartners.com"
       }
+    },
+    {
+      "name": "ensemble-behaviors",
+      "version": "0.1.0",
+      "source": "./packages/pi-extension",
+      "category": "workflow",
+      "description": "OPT-IN. Event-driven behavior runtime for Pi/OMP sessions. Observes test failures and can dispatch a fix: it injects an additional agent turn, may EDIT SOURCE FILES under the granted behavior's tool grants, re-runs the suite itself to verify, and reverts the change if verification fails. Installing this plugin activates that loop; ensemble commands are unaffected if you do not install it.",
+      "tags": [
+        "behaviors",
+        "autofix",
+        "behavior-runtime",
+        "opt-in"
+      ],
+      "author": {
+        "name": "Sunstone Partners",
+        "url": "https://github.com/Sunstone-Partners"
+      }
     }
   ]
 }

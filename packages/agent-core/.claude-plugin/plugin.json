@@ -1,0 +1,17 @@
+{
+  "name": "ensemble-agent-core",
+  "version": "0.1.0",
+  "description": "Provider-neutral event/tool/protocol/behavior-compiler code shared by Pi/OMP adapters (npm library, no Claude Code skills/agents/commands)",
+  "author": {
+    "name": "Sunstone Partners",
+    "email": "info@sunstonepartners.com",
+    "url": "https://github.com/Sunstone-Partners"
+  },
+  "repository": "https://github.com/Sunstone-Partners/ensemble",
+  "license": "MIT",
+  "keywords": [
+    "ensemble",
+    "agent-core",
+    "behavior-runtime"
+  ]
+}

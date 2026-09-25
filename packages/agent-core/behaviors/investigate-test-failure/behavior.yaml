@@ -1,0 +1,27 @@
+api_version: ensemble.sunstone.dev/v1
+kind: Behavior
+metadata:
+  name: investigate-test-failure
+  version: 1.0.0
+  digest: 122c8e46011b4c56827dfe36ea6b64064ad06a0ed1bd35ede077c661e1fabbff
+trigger:
+  event_type: test.failure.observed
+  predicate:
+    # Must match the runners actually used, not a plausible-looking list.
+    # The previous regex ("npm test|mix test|pytest|go test") could not match
+    # `npx jest`, which is this repo's own test command (packages/*/package.json
+    # declare "test": "jest") and the command used throughout dogfooding -- so
+    # this behavior could never have fired for a real failure here.
+    command: { matches: "npm test|npx jest|jest|vitest|mix test|pytest|go test|cargo test" }
+    isError: { equals: true }
+policy:
+  mode: propose
+  timeout: 30m
+capabilities:
+  tools: [read, grep, glob, ensemble.bash]
+  mutation_classes: [artifact.write, pr.open, constitution.propose]
+execution:
+  graph: investigate-test-failure
+outcomes:
+  - test.failure.investigated
+  - constitution.change.proposed

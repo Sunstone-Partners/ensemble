@@ -1,0 +1,81 @@
+name: reviewdog
+
+# Posts inline PR review comments from linters via reviewdog
+# (https://github.com/reviewdog/reviewdog). Every job runs `filter_mode:
+# added`, so only lines a PR actually adds/changes are annotated -- this repo
+# has ~700 pre-existing Markdown files and 100+ TypeScript files that were
+# never linted before, and we don't want day one of this workflow to dump
+# that backlog onto every open PR. `fail_level: none` keeps these jobs
+# advisory (PR comments only); they never block merge.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  eslint:
+    name: runner / eslint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: eslint
+        uses: reviewdog/action-eslint@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          filter_mode: added
+          fail_level: none
+          eslint_flags: '.'
+
+  markdownlint:
+    name: runner / markdownlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: markdownlint
+        uses: reviewdog/action-markdownlint@v0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          filter_mode: added
+          fail_level: none
+
+  actionlint:
+    name: runner / actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: actionlint
+        uses: reviewdog/action-actionlint@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          filter_mode: added
+          fail_level: none
