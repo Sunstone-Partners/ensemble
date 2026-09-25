@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyPath, isProtectedPath } from "../src/behavior/protected-paths";
@@ -225,5 +225,60 @@ describe("ApprovalGate fails closed (TRD-022 / REQ-014)", () => {
     const d = await new ApprovalGate(host(true, new Error("ipc closed"))).request({ title: "t", message: "m" });
     expect(d.approved).toBe(false);
     expect(d.reason).toMatch(/ipc closed/);
+  });
+});
+
+describe("protected paths cannot be bypassed by capitalisation", () => {
+  it("case-insensitive filesystems make Mutation-Guard.ts the same file", () => {
+    // macOS/Windows resolve these to the protected file, so a
+    // case-sensitive rule would be bypassable by pressing shift.
+    for (const p of [
+      "src/behavior/Mutation-Guard.ts",
+      "packages/agent-core/TESTS/a.ts",
+      "src/Foo.TEST.ts",
+      "DOCS/standards/Constitution.md",
+      "behaviors/x/FIXTURES/events/a.json",
+    ]) {
+      expect(isProtectedPath(p)).toBe(true);
+    }
+  });
+
+  it("the guard refuses a capitalised test path in mode:auto", () => {
+    const d = guard("auto").authorize({ mutationClass: "artifact.write", path: "Tests/Foo.Test.TS", kind: "write" });
+    expect(d.allowed).toBe(false);
+  });
+});
+
+describe("WorkspaceSnapshot preserves bytes and modes, not just text", () => {
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+
+  it("restores binary content byte-for-byte", () => {
+    // A utf8 decode/encode round-trip silently mangles these bytes.
+    const root = mkdtempSync(join(tmpdir(), "bin-"));
+    dirs.push(root);
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x80, 0x01]);
+    writeFileSync(join(root, "img.png"), bytes);
+
+    const snap = new WorkspaceSnapshot(root);
+    snap.capture("img.png");
+    writeFileSync(join(root, "img.png"), Buffer.from([0x00]));
+    snap.restore();
+
+    expect(readFileSync(join(root, "img.png")).equals(bytes)).toBe(true);
+  });
+
+  it("restores the executable bit", () => {
+    const root = mkdtempSync(join(tmpdir(), "mode-"));
+    dirs.push(root);
+    const file = join(root, "run.sh");
+    writeFileSync(file, "#!/bin/sh\necho hi\n", { mode: 0o755 });
+
+    const snap = new WorkspaceSnapshot(root);
+    snap.capture("run.sh");
+    writeFileSync(file, "clobbered", { mode: 0o644 });
+    snap.restore();
+
+    expect(statSync(file).mode & 0o777).toBe(0o755);
   });
 });

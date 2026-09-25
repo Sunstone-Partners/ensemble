@@ -142,3 +142,21 @@ describe("non-durability (TRD-016 / REQ-003)", () => {
     expect(second.invocations).toBe(0);
   });
 });
+
+describe("sibling isolation holds without an onError handler", () => {
+  it("a failing behavior does not prevent later matches from running", async () => {
+    // Previously the default path threw inside the loop, so isolation
+    // only held when onError happened to be supplied -- making
+    // invocation order silently significant.
+    const invoked: string[] = [];
+    const m = new LocalEventMatcher(compiledFor(manifest("boom"), manifest("later")), {
+      invoke: (i) => {
+        invoked.push(i.behavior.metadata.name);
+        if (i.behavior.metadata.name === "boom") throw new Error("exploded");
+      },
+    });
+
+    await expect(m.onEvent(failing())).rejects.toThrow("exploded");
+    expect(invoked).toEqual(["boom", "later"]);
+  });
+});

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, statSync, chmodSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 /**
@@ -15,12 +15,19 @@ import { dirname, resolve } from "node:path";
  * A file that does not exist at capture time is recorded as absent, and
  * restore deletes it — otherwise a rejected attempt would leave newly
  * created files behind, which is not a restore.
+ *
+ * Contents are held as a Buffer, never a utf8 string: a decode/encode
+ * round-trip silently corrupts binaries and any non-UTF8 file, so a
+ * "restore" would have quietly damaged exactly the files nobody
+ * inspects. File modes are captured and reapplied for the same reason
+ * — restoring an executable without its +x bit is not a restore.
  */
 
 interface CapturedFile {
   path: string;
   existed: boolean;
-  contents?: string;
+  contents?: Buffer;
+  mode?: number;
 }
 
 export interface RestoreReport {
@@ -47,7 +54,8 @@ export class WorkspaceSnapshot {
     this.captured.set(relPath, {
       path: relPath,
       existed: true,
-      contents: readFileSync(abs, "utf8"),
+      contents: readFileSync(abs),
+      mode: statSync(abs).mode,
     });
   }
 
@@ -79,7 +87,8 @@ export class WorkspaceSnapshot {
           continue;
         }
         mkdirSync(dirname(abs), { recursive: true });
-        writeFileSync(abs, file.contents ?? "");
+        writeFileSync(abs, file.contents ?? Buffer.alloc(0));
+        if (file.mode !== undefined) chmodSync(abs, file.mode);
         report.restored.push(file.path);
       } catch (error) {
         report.failed.push({ path: file.path, error: (error as Error).message });

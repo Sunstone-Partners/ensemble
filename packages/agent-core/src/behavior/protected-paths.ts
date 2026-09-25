@@ -24,9 +24,18 @@ export interface ProtectedPathVerdict {
   detail?: string;
 }
 
-/** Normalizes to forward slashes and strips any leading "./". */
+/**
+ * Normalizes to forward slashes, strips any leading "./", and
+ * lowercases.
+ *
+ * Lowercasing matters on macOS and Windows, whose filesystems are
+ * case-insensitive: `Mutation-Guard.ts` and `Foo.TEST.ts` resolve to
+ * the same files as their lowercase forms, so case-sensitive patterns
+ * would be trivially bypassable by changing capitalisation -- exactly
+ * the kind of mechanical bypass this policy exists to prevent.
+ */
 function normalize(path: string): string {
-  return path.replace(/\\/g, "/").replace(/^\.\//, "");
+  return path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
 }
 
 const TEST_PATTERNS: readonly RegExp[] = [

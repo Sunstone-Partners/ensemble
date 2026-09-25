@@ -64,6 +64,7 @@ export class LocalEventMatcher {
   async onEvent(event: BehaviorEvent): Promise<string[]> {
     const matched = match(this.pkg, event);
     const invoked: string[] = [];
+    const failures: { error: Error; invocation: BehaviorInvocation }[] = [];
 
     for (const behavior of matched) {
       const invocation: BehaviorInvocation = { behavior, event };
@@ -72,11 +73,18 @@ export class LocalEventMatcher {
         this.invocationCount += 1;
         invoked.push(behavior.metadata.name);
       } catch (error) {
-        // One behavior's failure must not suppress its siblings.
+        // One behavior's failure never suppresses its siblings: the
+        // loop always continues and failures are raised after every
+        // match has had its turn. Aborting mid-loop would make
+        // invocation order silently significant.
+        failures.push({ error: error as Error, invocation });
         if (this.options.onError) this.options.onError(error as Error, invocation);
-        else throw error;
       }
     }
+
+    // Without an onError handler, failures surface rather than being
+    // swallowed -- but only after every sibling has been invoked.
+    if (failures.length > 0 && !this.options.onError) throw failures[0].error;
 
     return invoked;
   }
