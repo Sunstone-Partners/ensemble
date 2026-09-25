@@ -20,6 +20,7 @@ describe("pi-extension activation (AC-004-1/AC-004-2)", () => {
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { beginBehaviorScope } from "../src/tool-grant-enforcement";
 
 const READ_ONLY_BEHAVIOR = `api_version: ensemble.sunstone.dev/v1
 kind: Behavior
@@ -97,6 +98,7 @@ describe("production activate() wires the behavior pipeline (TRD-005 / AC-009-1,
     activate(pi);
 
     expect(commands.has("investigate-test-failure")).toBe(true);
+    beginBehaviorScope(pi, ["investigate-test-failure"]);
 
     const blocked = fireToolCall("bash");
     expect(blocked?.block).toBe(true);

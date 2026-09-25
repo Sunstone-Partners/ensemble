@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { echoTool } from "@sunstone-partners/ensemble-agent-core";
 import { activateBehaviorPipeline, resolveRepoRoot } from "../src/behavior-activation";
+import { beginBehaviorScope } from "../src/tool-grant-enforcement";
 
 type ToolCallHandler = (event: { type: "tool_call"; toolCallId: string; toolName: string }) =>
   | { block?: boolean; reason?: string }
@@ -96,7 +97,9 @@ describe("behavior pipeline activation (TRD-005 / REQ-009)", () => {
     created.push(root);
 
     const { pi, fireToolCall } = fakePi();
-    activateBehaviorPipeline(pi, root, [echoTool]);
+    const activated = activateBehaviorPipeline(pi, root, [echoTool]);
+    // Grants bind to an executing behavior, not the idle session.
+    beginBehaviorScope(pi, activated.loaded);
 
     const blocked = fireToolCall("bash");
     expect(blocked?.block).toBe(true);
@@ -163,6 +166,7 @@ describe("the reachable denial path in production (TRD-003 scope, honestly state
     // bash/write/edit are Pi's own tools -- the extension never
     // registers them, so exposure cannot gate them. This boundary is
     // the only thing that can, and it is now live.
+    beginBehaviorScope(pi, ["investigate-test-failure"]);
     for (const native of ["bash", "write", "edit"]) {
       expect(fireToolCall(native)?.block).toBe(true);
     }
@@ -200,6 +204,7 @@ describe("portability of activation (TRD-008 reachability)", () => {
 
     expect(result.loaded).toEqual(["investigate-test-failure"]);
     expect(commands.has("investigate-test-failure")).toBe(true);
+    beginBehaviorScope(pi, result.loaded);
     expect(fireToolCall("bash")?.block).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import {
   BehaviorManifest,
 } from "@sunstone-partners/ensemble-agent-core";
 import { loadCompiledBehavior } from "../src/behavior-loader";
+import { beginBehaviorScope, endBehaviorScope } from "../src/tool-grant-enforcement";
 
 const manifest: BehaviorManifest = {
   api_version: "ensemble.sunstone.dev/v1",
@@ -144,13 +145,7 @@ describe("loadCompiledBehavior (TRD-014)", () => {
   });
 });
 
-describe("tool grants compose as a union across loaded behaviors", () => {
-  // Regression: Pi's emitToolCall returns on the FIRST handler that
-  // answers { block: true }. With one handler registered per behavior,
-  // the session's effective permission was the INTERSECTION of every
-  // loaded behavior -- so a behavior that granted `bash` was blocked
-  // from `bash` by an unrelated behavior that did not. Observed live:
-  // `fix-failing-test` granted bash/edit and could not use either.
+describe("tool grants scope to the executing behavior, not the session", () => {
   const restrictive: BehaviorManifest = {
     ...manifest,
     metadata: { name: "investigate-test-failure", version: "1.0.0" },
@@ -166,72 +161,104 @@ describe("tool grants compose as a union across loaded behaviors", () => {
     const { compiled } = compile({ behaviors: [restrictive, permissive] });
     const fake = fakePi();
     for (const pkg of compiled) {
-      loadCompiledBehavior(pkg === compiled[0] ? fake.pi : fake.pi, pkg, compileBehaviorToArtifacts(pkg, [echoTool]), [echoTool]);
+      loadCompiledBehavior(fake.pi, pkg, compileBehaviorToArtifacts(pkg, [echoTool]), [echoTool]);
     }
     return fake;
   }
 
-  it("a tool granted by ONE loaded behavior is allowed even though another does not grant it", async () => {
+  // The defect this design change exists to remove. Shipping one
+  // read-only behavior removed `bash` from the whole session, so the
+  // agent could not run the test suite at all -- observed live in a
+  // clean worktree of this repo (br-uavb).
+  it("does NOT restrict the user's session when no behavior is executing", async () => {
     const { fireToolCall } = loadBoth();
-    // `bash` is granted only by fix-failing-test. Under the old
-    // per-behavior wiring, investigate-test-failure's handler ran first
-    // and blocked it.
+    expect(await fireToolCall("bash")).toBeUndefined();
+    expect(await fireToolCall("write")).toBeUndefined();
+    expect(await fireToolCall("anything-at-all")).toBeUndefined();
+  });
+
+  it("enforces ONLY the executing behavior's grants, not the union", async () => {
+    const { pi, fireToolCall } = loadBoth();
+    // investigate-test-failure is executing. `bash` is granted to
+    // fix-failing-test, but that behavior is not the one running, so the
+    // union must not leak its capability into this invocation.
+    beginBehaviorScope(pi, ["investigate-test-failure"]);
+    const blocked = await fireToolCall("bash");
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason).toContain("investigate-test-failure");
+    expect(await fireToolCall("read")).toBeUndefined();
+    endBehaviorScope(pi);
+  });
+
+  it("allows a tool the executing behavior does grant", async () => {
+    const { pi, fireToolCall } = loadBoth();
+    beginBehaviorScope(pi, ["fix-failing-test"]);
     expect(await fireToolCall("bash")).toBeUndefined();
     expect(await fireToolCall("edit")).toBeUndefined();
+    endBehaviorScope(pi);
   });
 
-  it("a tool granted by NO loaded behavior is still blocked", async () => {
-    const { fireToolCall } = loadBoth();
+  it("blocks a tool no executing behavior grants", async () => {
+    const { pi, fireToolCall } = loadBoth();
+    beginBehaviorScope(pi, ["fix-failing-test"]);
     const result = await fireToolCall("write");
     expect(result?.block).toBe(true);
-    expect(result?.reason).toContain("not granted to any loaded behavior");
+    expect(result?.reason).toMatch(/not granted/);
+    endBehaviorScope(pi);
   });
 
-  it("load order does not change the effective grant", async () => {
-    const { compiled } = compile({ behaviors: [permissive, restrictive] });
-    const fake = fakePi();
-    for (const pkg of compiled) {
-      loadCompiledBehavior(fake.pi, pkg, compileBehaviorToArtifacts(pkg, [echoTool]), [echoTool]);
-    }
-    expect(await fake.fireToolCall("bash")).toBeUndefined();
-    expect((await fake.fireToolCall("write"))?.block).toBe(true);
+  // A scope left open would strand the user in a narrowed session --
+  // the original defect, merely made transient and harder to notice.
+  it("restores the user's tools when the behavior's turn ends", async () => {
+    const { pi, fireToolCall } = loadBoth();
+    beginBehaviorScope(pi, ["investigate-test-failure"]);
+    expect((await fireToolCall("bash"))?.block).toBe(true);
+    endBehaviorScope(pi);
+    expect(await fireToolCall("bash")).toBeUndefined();
+  });
+
+  it("is idempotent when the scope is ended twice", async () => {
+    const { pi, fireToolCall } = loadBoth();
+    beginBehaviorScope(pi, ["investigate-test-failure"]);
+    endBehaviorScope(pi);
+    endBehaviorScope(pi);
+    expect(await fireToolCall("bash")).toBeUndefined();
   });
 });
 
 describe("wireToolGrantEnforcement (TRD-018)", () => {
-  it("AC-018-1: a tool call for a name outside capabilities.tools is denied at the boundary regardless of prompt phrasing", async () => {
-    const { compiled } = compile({ behaviors: [manifest] }); // capabilities.tools: ["echo", "read"]
+  const scoped = () => {
+    const { compiled } = compile({ behaviors: [manifest] }); // tools: ["echo", "read"]
     const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
-    const { pi, fireToolCall } = fakePi();
-    loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool]);
+    const fake = fakePi();
+    loadCompiledBehavior(fake.pi, compiled[0], artifacts, [echoTool]);
+    beginBehaviorScope(fake.pi, [compiled[0].manifest.metadata.name]);
+    return fake;
+  };
 
+  it("AC-018-1: a tool call for a name outside capabilities.tools is denied at the boundary regardless of prompt phrasing", async () => {
+    const { pi, fireToolCall } = scoped();
     const blocked = await fireToolCall("bash.test");
     expect(blocked?.block).toBe(true);
     expect(blocked?.reason).toMatch(/not granted/);
+    endBehaviorScope(pi);
   });
 
   it("AC-018-1: a tool call for a granted name is not blocked by this handler", async () => {
-    const { compiled } = compile({ behaviors: [manifest] });
-    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
-    const { pi, fireToolCall } = fakePi();
-    loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool]);
-
-    const result = await fireToolCall("read");
-    expect(result).toBeUndefined();
+    const { pi, fireToolCall } = scoped();
+    expect(await fireToolCall("read")).toBeUndefined();
+    endBehaviorScope(pi);
   });
 
   it("AC-018-2: enforcement is boundary-level (toolName-only), so no prompt-injection-style reasoning field can bypass it", async () => {
-    const { compiled } = compile({ behaviors: [manifest] });
-    const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
-    const { pi, fireToolCall } = fakePi();
-    loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool]);
-
+    const { pi, fireToolCall } = scoped();
     // The injected instruction lives only in conversational content this
-    // handler never receives — the tool_call event carries only
+    // handler never receives -- the tool_call event carries only
     // toolCallId/toolName, so there is no "ignore restrictions" field to
     // honor even if the model was fooled into calling the ungranted tool.
     const blocked = await fireToolCall("bash.write");
     expect(blocked?.block).toBe(true);
+    endBehaviorScope(pi);
   });
 });
 

@@ -12,6 +12,7 @@ import { createAgentFixProvider } from "./agent-fix-provider";
 import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
 import { execFileSync, spawnSync } from "node:child_process";
+import { beginBehaviorScope, endBehaviorScope } from "./tool-grant-enforcement";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -135,7 +136,8 @@ export function createActivate(options: ActivateOptions = {}): {
           // silently disables the queue, which is exactly what happened.
           const key =
             typeof payload?.command === "string" ? payload.command : envelope.event.type;
-          if (matcher.matchNames(envelope.event).length > 0) {
+          const matchedBehaviors = matcher.matchNames(envelope.event);
+          if (matchedBehaviors.length > 0) {
             const failure = typeof payload?.output === "string" ? payload.output : "";
             enqueueContinuation(
               key,
@@ -148,6 +150,7 @@ export function createActivate(options: ActivateOptions = {}): {
               ]
                 .filter(Boolean)
                 .join("\n"),
+              matchedBehaviors,
             );
           }
         }
@@ -208,7 +211,7 @@ export function createActivate(options: ActivateOptions = {}): {
     //
     // sendUserMessage resolves in ~0ms (it enqueues, it does not await the
     // turn), so the handler never approaches deadline 1.
-    const continuationQueue: { key: string; instruction: string }[] = [];
+    const continuationQueue: { key: string; instruction: string; behaviors: string[] }[] = [];
     const continuationAttempts = new Map<string, number>();
     // Injected turns are currently indistinguishable from real user input
     // (br-x85k): in a live PTY session the model treated injected content as
@@ -219,14 +222,18 @@ export function createActivate(options: ActivateOptions = {}): {
     const AUTOFIX_MARKER = "[ensemble:autofix]";
     const MAX_CONTINUATIONS_PER_ISSUE = 1;
 
-    const enqueueContinuation = (key: string, instruction: string): boolean => {
+    const enqueueContinuation = (
+      key: string,
+      instruction: string,
+      behaviors: string[],
+    ): boolean => {
       const used = continuationAttempts.get(key) ?? 0;
       // Without this cap the fix turn's own events re-enter dispatch and
       // queue another turn, forever. Every probe needed this guard.
       if (used >= MAX_CONTINUATIONS_PER_ISSUE) return false;
       if (continuationQueue.some((q) => q.key === key)) return false;
       continuationAttempts.set(key, used + 1);
-      continuationQueue.push({ key, instruction });
+      continuationQueue.push({ key, instruction, behaviors });
       return true;
     };
 
@@ -269,6 +276,11 @@ export function createActivate(options: ActivateOptions = {}): {
     let awaitingVerification: string | undefined;
 
     pi.on("turn_end", async () => {
+      // The behavior's execution window closes when its turn ends. Done
+      // FIRST and unconditionally, so a failed or aborted fix turn cannot
+      // strand the user in a narrowed session.
+      endBehaviorScope(pi);
+
       // Verify the PREVIOUS continuation before considering a new one, so
       // the model's own claim is never what closes the loop.
       if (awaitingVerification) {
@@ -288,7 +300,11 @@ export function createActivate(options: ActivateOptions = {}): {
       logRuntime(resolveRepoRoot(process.cwd()), {
         kind: "continuation",
         issue: next.key,
+        behaviors: next.behaviors,
       });
+      // Opened BEFORE the turn is queued: the fix turn runs under the
+      // grants of the behaviors that matched, not the user's own.
+      beginBehaviorScope(pi, next.behaviors);
       await pi.sendUserMessage(`${AUTOFIX_MARKER} ${next.instruction}`);
       awaitingVerification = next.key;
       return undefined;
