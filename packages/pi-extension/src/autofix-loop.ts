@@ -105,7 +105,26 @@ export class AutofixLoop {
         };
       }
 
-      this.deps.applyWrite(write);
+      // An I/O failure mid-apply is not a guard denial, but it leaves
+      // the same half-written tree, so it gets the same treatment:
+      // restore, and spend budget. Letting it propagate would skip
+      // both -- partial writes surviving on disk (violating AC-005-1)
+      // and a free, uncounted retry.
+      try {
+        this.deps.applyWrite(write);
+      } catch (error) {
+        const report = snapshot.restore();
+        const n = this.budget.recordFailure(issue);
+        const reason = `write to ${write.path} failed: ${(error as Error).message}`;
+        if (n >= this.budget.limit) return this.escalate(issue, reason, n);
+        return {
+          status: "rejected",
+          attempt: attemptNumber,
+          issue,
+          reason,
+          restored: [...report.restored, ...report.deleted],
+        };
+      }
     }
 
     const suite = await this.deps.runSuite();

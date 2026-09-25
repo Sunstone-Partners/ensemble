@@ -271,3 +271,52 @@ describe("retry budget and escalation (TRD-028 / AC-006-1, AC-006-2)", () => {
     expect(out.approvalRequested).toBe(false);
   });
 });
+
+describe("issue keys do not collide across different relative paths", () => {
+  it("two different failing files are two different issues", () => {
+    // An unanchored path rule collapsed src/moduleA/index.ts and
+    // src/moduleB/index.ts to the same signature, so unrelated
+    // failures shared one retry budget.
+    const a = { testId: "suite > case", failureOutput: "at src/moduleA/index.ts expected 1" };
+    const b = { testId: "suite > case", failureOutput: "at src/moduleB/index.ts expected 1" };
+
+    expect(normalizeFailureSignature(a.failureOutput)).not.toBe(normalizeFailureSignature(b.failureOutput));
+    expect(issueKey(a)).not.toBe(issueKey(b));
+  });
+
+  it("still strips absolute prefixes so the same file in different checkouts matches", () => {
+    const a = { testId: "t", failureOutput: "at /Users/alice/repo/src/a.ts boom" };
+    const b = { testId: "t", failureOutput: "at /home/bob/work/src/a.ts boom" };
+    expect(issueKey(a)).toBe(issueKey(b));
+  });
+
+  it("budgets stay separate for colliding-looking paths", async () => {
+    const root = repo();
+    const l = loop(root, { failures: 1, targetPasses: true });
+    const a = { testId: "s", failureOutput: "at src/moduleA/index.ts" };
+    const b = { testId: "s", failureOutput: "at src/moduleB/index.ts" };
+
+    for (let i = 0; i < 3; i += 1) await l.attempt(a, { writes: [write("src/a.ts", `x${i}`)] });
+
+    expect(l.retryBudget.canAttempt(issueKey(a))).toBe(false);
+    expect(l.retryBudget.canAttempt(issueKey(b))).toBe(true);
+  });
+});
+
+describe("an I/O failure mid-apply is handled like a denial", () => {
+  it("restores the tree and spends budget instead of propagating", async () => {
+    const root = repo();
+    const l = loop(root, { failures: 0, targetPasses: true }, { failWriteAt: 2 });
+
+    const out = await l.attempt(failure, {
+      writes: [write("src/a.ts", "partial"), write("src/b.ts", "never")],
+    });
+
+    expect(out.status).toBe("rejected");
+    if (out.status !== "rejected") throw new Error("unreachable");
+    expect(out.reason).toMatch(/disk full/);
+    // AC-005-1: no partial write survives.
+    expect(readFileSync(join(root, "src/a.ts"), "utf8")).toBe("original-a");
+    expect(l.retryBudget.attemptsFor(issueKey(failure))).toBe(1);
+  });
+});

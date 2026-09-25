@@ -13,8 +13,14 @@ import { createHash } from "node:crypto";
 /** Replaces content that varies run-to-run without changing the failure. */
 export function normalizeFailureSignature(raw: string): string {
   return raw
-    // Absolute paths -> repo-relative-ish tail.
-    .replace(/(\/[\w.@-]+)+\/(?=[\w.@-]+\.[\w]+)/g, "")
+    // Absolute path prefixes -> "". Anchored at a leading "/" (or a
+    // Windows drive) so only a genuine root prefix is stripped. An
+    // unanchored rule also ate directory segments out of RELATIVE
+    // paths, collapsing src/moduleA/index.ts and src/moduleB/index.ts
+    // to the same string -- two different failing files would then
+    // share one issue key and spend each other's retry budget.
+    .replace(/(^|[\s("'[])(?:[A-Za-z]:)?(?:\/[\w.@ -]+)*\/(?=[\w.@-]*[\w-]\/)/g, "$1")
+    .replace(/(^|[\s("'[])(?:[A-Za-z]:)?(?:\/[\w.@-]+)+\/(?=[\w.@-]+\.[\w]+)/g, "$1")
     // ISO timestamps.
     .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?Z?/g, "<ts>")
     // Clock times and durations.
