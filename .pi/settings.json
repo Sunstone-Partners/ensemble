@@ -1,5 +1,6 @@
 {
   "packages": [
-    "../packages/pi"
+    "../packages/pi",
+    "../packages/pi-extension"
   ]
 }
