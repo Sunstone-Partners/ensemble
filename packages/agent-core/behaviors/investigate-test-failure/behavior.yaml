@@ -3,7 +3,7 @@ kind: Behavior
 metadata:
   name: investigate-test-failure
   version: 1.0.0
-  digest: fb1ed6114d817b0000b2acd44c8d8b9c8d693c5a03c4bf16934d2a55c60326b6
+  digest: 571205bd927bbd22183402ebb4f7c9065899597814cb2bc3e4a9751986fde529
 trigger:
   event_type: test.failure.observed
   predicate:
@@ -13,7 +13,7 @@ policy:
   mode: propose
   timeout: 30m
 capabilities:
-  tools: [read, grep, glob, bash.test, git.diff]
+  tools: [read, grep, glob, ensemble.bash]
   mutation_classes: [artifact.write, pr.open, constitution.propose]
 execution:
   graph: investigate-test-failure

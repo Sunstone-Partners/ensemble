@@ -53,16 +53,33 @@ const PI_TYPED_NATIVE_TOOLS = [
 ] as const;
 
 /**
- * Group 2 -- additional host tools OBSERVED dispatching in a real omp
- * session (.ensemble/runtime-log.jsonl, 2026-09-25). These arrive as
- * CustomToolCallEvent, so Pi's type union does not name them, but they are
- * genuinely available and must not be reported as unresolved.
+ * Group 2 -- host tools not present in Pi's typed union. These arrive as
+ * CustomToolCallEvent (toolName: string), so no type declares them, yet
+ * they are genuinely available and must not be reported as unresolved.
  *
- * This list is necessarily incomplete: a host may provide tools we have
- * never observed. That is the safe direction -- an unobserved host tool
- * produces a warning that is merely wrong, not a silent missing capability.
+ * Sources, in descending order of confidence:
+ *  - OBSERVED dispatching in a real omp session
+ *    (.ensemble/runtime-log.jsonl, 2026-09-25): glob, learn.
+ *  - Present as tool-name string literals in omp's bundled cli.js:
+ *    task, todo, replace, hashline, skill.
+ *
+ * An authoritative list is NOT extractable: omp ships as a minified
+ * bundle and its tool registry does not survive in a greppable shape
+ * (only `hashline` and `replace` retain recognisable definition sites).
+ * So this set is evidence-based and knowingly incomplete. The incompleteness
+ * is in the safe direction: an unlisted host tool yields a warning that is
+ * merely wrong, whereas a wrongly-listed name would hide a real phantom.
+ * Add entries only with a cited source.
  */
-const OBSERVED_HOST_TOOLS = ["glob", "learn"] as const;
+const OBSERVED_HOST_TOOLS = [
+  "glob",
+  "learn",
+  "task",
+  "todo",
+  "replace",
+  "hashline",
+  "skill",
+] as const;
 
 const NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...PI_TYPED_NATIVE_TOOLS,

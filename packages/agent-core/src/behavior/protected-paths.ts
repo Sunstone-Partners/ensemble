@@ -59,6 +59,13 @@ const GUARDRAIL_PATTERNS: readonly RegExp[] = [
   // The boundary must protect itself: an agent that rewrites the monitor
   // disables enforcement for every other guardrail file at once.
   /(^|\/)write-boundary-monitor\.ts$/,
+  // The preventive gate's entire security argument is "native bash is
+  // blocked, so ensemble.bash is the only shell path". Rewriting either of
+  // these removes the gate while leaving every other guardrail intact and
+  // looking correct.
+  /(^|\/)bash-approval\.ts$/,
+  /(^|\/)ensemble-bash-tool\.ts$/,
+  /(^|\/)tool-grant-enforcement\.ts$/,
 ];
 
 const FIXTURE_PATTERNS: readonly RegExp[] = [

@@ -44,14 +44,23 @@ describe("ProtectedPathPolicy (TRD-019 / REQ-015)", () => {
     expect(classifyPath("docs/standards/constitution.md").reason).toBe("constitution");
   });
 
-  it("the write boundary protects ITSELF", () => {
-    // Every other guardrail file was listed, but the module that performs
-    // the reverting was not -- so an agent could rewrite the enforcer and
-    // thereby disable protection for all seven of the others at once,
-    // with no revert and no violation recorded.
-    expect(classifyPath("packages/agent-core/src/behavior/write-boundary-monitor.ts").reason).toBe(
-      "guardrail-source",
-    );
+  it("the enforcement mechanisms protect THEMSELVES", () => {
+    // Every other guardrail file was listed, but the modules that perform
+    // the enforcing were not -- so an agent could rewrite an enforcer and
+    // thereby disable protection for all the others at once, with no
+    // revert and no violation recorded.
+    //
+    // ensemble.bash's safety rests entirely on grant enforcement blocking
+    // native bash. Editing bash-approval, the tool, or the grant wiring
+    // removes the gate while every visible guardrail still looks intact.
+    for (const file of [
+      "write-boundary-monitor.ts",
+      "bash-approval.ts",
+      "ensemble-bash-tool.ts",
+      "tool-grant-enforcement.ts",
+    ]) {
+      expect(classifyPath(`packages/agent-core/src/behavior/${file}`).reason).toBe("guardrail-source");
+    }
   });
 
   it("near-miss ordinary paths are NOT protected", () => {
