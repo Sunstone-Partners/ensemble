@@ -115,7 +115,13 @@ export function createActivate(options: ActivateOptions = {}): {
       },
     };
 
-    wireSessionLifecycle(pi, dispatchingSink, { onContext: (ctx) => uiBridge.capture(ctx as never) });
+    wireSessionLifecycle(pi, dispatchingSink, {
+      onContext: (ctx) => uiBridge.capture(ctx as never),
+      testCommand: () =>
+        lastActivation?.compiled
+          .map((c) => c.manifest.execution.test_command)
+          .find((c): c is string => Boolean(c)),
+    });
 
     // agent-core's ToolRegistry is the enforced grant-denial boundary
     // (AC-005-2: "prompt text cannot bypass this"). The grant source

@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BehaviorEvent, EventSink, withTranslation } from "@sunstone-partners/ensemble-agent-core";
+import { BehaviorEvent, EventSink, translateEvent } from "@sunstone-partners/ensemble-agent-core";
 import {
   fromSessionStart,
   fromBeforeAgentStart,
@@ -27,7 +27,11 @@ import {
 export function wireSessionLifecycle(
   pi: ExtensionAPI,
   sink: EventSink,
-  options: { testCommand?: string; onContext?: (ctx: unknown) => void } = {},
+  options: {
+    /** String, or a getter resolved per event once behaviors have loaded. */
+    testCommand?: string | (() => string | undefined);
+    onContext?: (ctx: unknown) => void;
+  } = {},
 ): void {
   const seen = (ctx: unknown) => options.onContext?.(ctx);
   // Returns the sink's promise rather than voiding it. `void` here
@@ -43,7 +47,20 @@ export function wireSessionLifecycle(
   // runtime.* events and a behavior triggering on test.failure.observed
   // can never fire in production, however correct its manifest is
   // (TRD-012 / REQ-002).
-  const publish = withTranslation(emit, { testCommand: options.testCommand });
+  // Resolved per event, not at wiring time: wireSessionLifecycle runs
+  // before behaviors are discovered, so a behavior-declared
+  // test_command captured here would always be undefined. That is why
+  // a real `node livetest/math.test.js` failure produced no
+  // test.failure.observed in a live session -- only the hardcoded
+  // runner patterns could ever match.
+  const resolveTestCommand = (): string | undefined =>
+    typeof options.testCommand === "function" ? options.testCommand() : options.testCommand;
+
+  const publish = async (event: BehaviorEvent): Promise<void> => {
+    await emit(event);
+    const derived = translateEvent(event, { testCommand: resolveTestCommand() });
+    if (derived) await emit(derived);
+  };
 
   pi.on("session_start", async (event, ctx) => { seen(ctx); return publish(fromSessionStart(event)); });
   pi.on("before_agent_start", async (event, ctx) => { seen(ctx); return publish(fromBeforeAgentStart(event)); });
