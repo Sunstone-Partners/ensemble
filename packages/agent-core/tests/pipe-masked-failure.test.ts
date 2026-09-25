@@ -73,3 +73,60 @@ describe("failure detection does not depend on exit status", () => {
     expect(outputReportsFailure("5 tests, 0 failures")).toBe(false);
   });
 });
+
+// The inverse of the pipe case. A compound command reports the exit status
+// of whatever ran LAST, so a non-zero status only means "tests failed" when
+// the runner is what ran last. Both commands below were observed live: each
+// dispatched autofix against a fully green suite.
+describe("exit status counts only when it is the runner's own", () => {
+  const JEST_ALL_PASS = "Test Suites: 17 passed, 17 total\nTests:       129 passed, 129 total";
+
+  it("does NOT fire when a trailing non-test command set the exit status", () => {
+    expect(
+      translateEvent(
+        completed({
+          command:
+            'npm test 2>&1 | grep -E "^(Tests|Test Suites):|FAIL "; grep -nE "incremental" ../agent-core/tsconfig.json; ls ../agent-core/*.tsbuildinfo 2>&1',
+          isError: true,
+          output: `${JEST_ALL_PASS}\nls: cannot access '../agent-core/*.tsbuildinfo': No such file or directory`,
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire when a trailing grep matched nothing", () => {
+    expect(
+      translateEvent(
+        completed({
+          command:
+            'rm -rf packages/agent-core/dist; npm test > /tmp/log 2>&1; echo "exit=$?"; grep -E "^(Tests|Test Suites):" /tmp/log | grep -E "failed"',
+          isError: true,
+          output: "exit=0",
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still fires on exit status when the runner ran last", () => {
+    for (const command of ["npx jest foo", "cd packages/core && npx jest", "npm test > /tmp/log 2>&1", 'npx jest -t "adds|subtracts"']) {
+      const derived = translateEvent(completed({ command, isError: true, output: "" }));
+      expect({ command, type: derived?.type }).toEqual({ command, type: "test.failure.observed" });
+      expect((derived?.payload as Record<string, unknown>).detectedBy).toBe("exit-status");
+    }
+  });
+
+  it("still fires by output when a compound command's tests failed", () => {
+    const derived = translateEvent(
+      completed({ command: "npx jest foo; echo done", isError: false, output: JEST_FAIL }),
+    );
+    expect((derived?.payload as Record<string, unknown>).detectedBy).toBe("output");
+  });
+
+  it("trusts exit status for an exact declared test command", () => {
+    const derived = translateEvent(
+      completed({ command: "make check", isError: true, output: "" }),
+      { testCommand: "make check" },
+    );
+    expect((derived?.payload as Record<string, unknown>).detectedBy).toBe("exit-status");
+  });
+});
