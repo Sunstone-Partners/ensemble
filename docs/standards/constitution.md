@@ -331,4 +331,4 @@ language is a patch change.
 | 2026-09-24 | — | Operational constitution generated via `/init-project` | ensemble-create-prd workflow |
 | 2026-09-24 | — | Added Rules 6 (reachable from entry point) and 7 (a verification must be able to fail) | behavior-runtime work |
 | 2026-09-25 | — | Added Rule 8 (user-modifiable artifacts belong in prompts/skills, not TypeScript) | behavior-runtime work |
-| 2026-09-25 | 1.1.0 | Combined both documents: Articles as Part A, operational constitution as Part B; Articles govern on conflict. B.5 moves git commit/push to the approval list to agree with Article IX | merge of ensemble-as-behaviors into dev |
+| 2026-09-25 | 1.1.0 | Combined both documents: Articles as Part A, operational constitution as Part B; Articles govern on conflict. B.5 moves git commit/push to the approval list to agree with Article IX | integration branch `integrate/behavior-runtime-into-dev` (not yet merged to dev) |
