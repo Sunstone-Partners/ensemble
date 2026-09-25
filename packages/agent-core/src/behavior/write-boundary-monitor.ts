@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { WorkspaceSnapshot } from "./workspace-snapshot";
 import { classifyPath, ProtectedPathReason } from "./protected-paths";
 
@@ -64,14 +67,34 @@ export function changedPaths(rootDir: string): string[] {
   return paths.map((p) => p.replace(/^"|"$/g, ""));
 }
 
+/** On-disk state of a path, compact enough to keep for every protected file. */
+interface Fingerprint {
+  existed: boolean;
+  digest?: string;
+  mode?: number;
+}
+
+function fingerprint(rootDir: string, relPath: string): Fingerprint {
+  const abs = resolve(rootDir, relPath);
+  if (!existsSync(abs)) return { existed: false };
+  return {
+    existed: true,
+    mode: statSync(abs).mode,
+    digest: createHash("sha256").update(readFileSync(abs)).digest("hex"),
+  };
+}
+
 export class WriteBoundaryMonitor {
-  private readonly snapshot: WorkspaceSnapshot;
-  private readonly captured = new Set<string>();
+  // One snapshot per path so a violation restores exactly that path,
+  // not every protected file in the repo.
+  private readonly snapshots = new Map<string, WorkspaceSnapshot>();
+  private readonly baselines = new Map<string, Fingerprint>();
+  private readonly enumerated = new Set<string>();
+  private readonly captureFailures: string[] = [];
+  private enumerationComplete = false;
   private readonly seen: WriteViolation[] = [];
 
-  constructor(private readonly rootDir: string) {
-    this.snapshot = new WorkspaceSnapshot(rootDir);
-  }
+  constructor(private readonly rootDir: string) {}
 
   get violations(): readonly WriteViolation[] {
     return this.seen;
@@ -85,39 +108,99 @@ export class WriteBoundaryMonitor {
    * be too late: the damage is already on disk.
    */
   protect(relPath: string): void {
-    if (this.captured.has(relPath)) return;
-    this.captured.add(relPath);
-    this.snapshot.capture(relPath);
+    if (this.snapshots.has(relPath)) return;
+    // Record nothing unless both steps succeed: a half-recorded path
+    // would be "restored" from a snapshot that holds no state for it.
+    const snapshot = new WorkspaceSnapshot(this.rootDir);
+    snapshot.capture(relPath);
+    const baseline = fingerprint(this.rootDir, relPath);
+    this.snapshots.set(relPath, snapshot);
+    this.baselines.set(relPath, baseline);
+  }
+
+  /** True when a captured path no longer matches its activation state. */
+  private changedSinceActivation(relPath: string): boolean {
+    const baseline = this.baselines.get(relPath)!;
+    let current: Fingerprint;
+    try {
+      current = fingerprint(this.rootDir, relPath);
+    } catch {
+      // Unreadable now (e.g. replaced by a directory): certainly not
+      // the captured file.
+      return true;
+    }
+    return (
+      current.existed !== baseline.existed ||
+      current.mode !== baseline.mode ||
+      current.digest !== baseline.digest
+    );
   }
 
   /** Captures every currently-protected file under the repo. */
   protectAll(paths: readonly string[]): void {
+    // Per-path isolation. A single unreadable file (permissions, an
+    // odd symlink) must not abort the pass: an aborted pass leaves
+    // later protected files uncaptured, and uncaptured is the
+    // condition under which check() would otherwise delete them as
+    // "created after activation". One bad file would become data loss.
     for (const p of paths) {
-      if (classifyPath(p).protected) this.protect(p);
+      if (!classifyPath(p).protected) continue;
+      this.enumerated.add(p);
+      try {
+        this.protect(p);
+      } catch {
+        this.captureFailures.push(p);
+      }
     }
+    this.enumerationComplete = this.captureFailures.length === 0;
+  }
+
+  /** True when every protected path on disk was captured successfully. */
+  get canInferNonExistence(): boolean {
+    return this.enumerationComplete;
   }
 
   /**
-   * Checks what changed and reverts protected paths.
+   * Checks what changed since activation and reverts protected paths.
    *
    * Intended to run after every tool call, not at some later accept
    * step: the bypass this exists for happened in an ordinary
    * conversational turn with no accept boundary anywhere.
+   *
+   * "Changed vs git HEAD" is not "changed since activation": protected
+   * files that were already untracked or dirty when the monitor started
+   * (the common case -- a just-written failing test) always appear in
+   * `git status`. Captured paths are therefore judged against their
+   * activation baseline, and are checked even when git no longer lists
+   * them (an untracked file that was deleted vanishes from status).
+   * git status is still what discovers protected files created later.
    */
   check(): MonitorResult {
-    const changed = changedPaths(this.rootDir);
+    const candidates = new Set([...changedPaths(this.rootDir), ...this.snapshots.keys()]);
     const violations: WriteViolation[] = [];
 
-    for (const path of changed) {
+    for (const path of candidates) {
       const verdict = classifyPath(path);
       if (!verdict.protected) continue;
 
-      // Only revert what we hold a pristine copy of. Reverting a file
-      // we never captured would destroy content rather than restore it.
-      const restored = this.captured.has(path);
-      if (restored) {
-        this.protect(path);
-        this.snapshot.restore();
+      const snapshot = this.snapshots.get(path);
+      let restored = false;
+      if (snapshot) {
+        if (!this.changedSinceActivation(path)) continue;
+        restored = snapshot.restore().failed.length === 0;
+      } else if (this.enumerationComplete && !this.enumerated.has(path)) {
+        // Deleting is only safe when the capture pass completed AND
+        // this path was never enumerated -- together those establish
+        // that it did not exist at activation, so its pristine state
+        // is "absent". If any capture failed, absence from `snapshots`
+        // proves nothing and deletion could destroy a pre-existing
+        // file, so the violation is reported unreverted instead.
+        try {
+          rmSync(resolve(this.rootDir, path), { force: true });
+          restored = true;
+        } catch {
+          restored = false;
+        }
       }
 
       const violation: WriteViolation = {
@@ -129,6 +212,6 @@ export class WriteBoundaryMonitor {
       this.seen.push(violation);
     }
 
-    return { checked: changed.length, violations };
+    return { checked: candidates.size, violations };
   }
 }
