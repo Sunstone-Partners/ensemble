@@ -44,6 +44,16 @@ describe("ProtectedPathPolicy (TRD-019 / REQ-015)", () => {
     expect(classifyPath("docs/standards/constitution.md").reason).toBe("constitution");
   });
 
+  it("the write boundary protects ITSELF", () => {
+    // Every other guardrail file was listed, but the module that performs
+    // the reverting was not -- so an agent could rewrite the enforcer and
+    // thereby disable protection for all seven of the others at once,
+    // with no revert and no violation recorded.
+    expect(classifyPath("packages/agent-core/src/behavior/write-boundary-monitor.ts").reason).toBe(
+      "guardrail-source",
+    );
+  });
+
   it("near-miss ordinary paths are NOT protected", () => {
     // If these were protected the policy would block ordinary fixes and
     // be switched off, which is the real-world failure mode.

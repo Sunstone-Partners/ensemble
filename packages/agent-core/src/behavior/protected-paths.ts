@@ -56,6 +56,9 @@ const GUARDRAIL_PATTERNS: readonly RegExp[] = [
   /(^|\/)behavior-loader\.ts$/,
   /(^|\/)event-catalog\.ts$/,
   /(^|\/)normalize\.ts$/,
+  // The boundary must protect itself: an agent that rewrites the monitor
+  // disables enforcement for every other guardrail file at once.
+  /(^|\/)write-boundary-monitor\.ts$/,
 ];
 
 const FIXTURE_PATTERNS: readonly RegExp[] = [
