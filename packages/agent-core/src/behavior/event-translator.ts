@@ -54,6 +54,25 @@ export function isTestCommand(command: string): boolean {
     .some((segment) => segmentInvokesRunner(segment));
 }
 
+/**
+ * True when the command's exit status is the test runner's own.
+ *
+ * A shell reports the status of the LAST command it ran. When that is not
+ * the runner, a non-zero status says nothing about the tests. Observed live,
+ * twice: `npm test ... ; ls ../agent-core/*.tsbuildinfo` exited 2 from `ls`
+ * with every suite passing, and `npm test > log; ...; grep failed log`
+ * exited 1 because grep matched nothing -- both dispatched autofix against a
+ * green suite. Output detection still covers those commands; this only stops
+ * a stranger's exit status from being read as a test failure.
+ */
+export function exitStatusIsRunners(command: string): boolean {
+  // Quoted text cannot end a command: `npx jest -t "a|b"` is one segment.
+  const unquoted = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "''");
+  const segments = unquoted.split(SEGMENT_SPLIT).filter((s) => s.trim().length > 0);
+  const last = segments[segments.length - 1];
+  return last !== undefined && segmentInvokesRunner(last);
+}
+
 function segmentInvokesRunner(segment: string): boolean {
   let tokens = segment.trim().split(/\s+/).filter(Boolean);
   // Strip leading `VAR=value` assignments and known wrappers so that
@@ -149,16 +168,18 @@ export function translateEvent(
   // ever applied to test output. Otherwise an unrelated command whose log
   // happens to contain "1 failed" would trigger a fix.
   const declared = options.testCommand?.trim();
-  const matches = (declared && command.trim() === declared) || isTestCommand(command);
-  if (!matches) return undefined;
+  const exactDeclared = Boolean(declared && command.trim() === declared);
+  if (!exactDeclared && !isTestCommand(command)) return undefined;
 
   const output = typeof payload.output === "string" ? payload.output : "";
-  // Either signal is sufficient. Exit status is authoritative when present,
-  // but a pipeline reports only its last command's status, so a genuinely
-  // failing suite arrives with isError=false whenever the model pipes the
-  // run through tail/head/grep -- observed live, and it silently disabled
-  // autofix for that run.
-  const failedByStatus = payload.isError === true;
+  // Either signal is sufficient. Exit status counts only when it is the
+  // runner's own -- the whole command IS the declared test command, or the
+  // runner is its last segment -- because a compound command reports
+  // whatever ran last. Output covers the rest, including the pipe case:
+  // `npx jest x | tail -5` arrives with isError=false for a failing suite
+  // (observed live, it silently disabled autofix for that run).
+  const failedByStatus =
+    payload.isError === true && (exactDeclared || exitStatusIsRunners(command));
   const failedByOutput = outputReportsFailure(output);
   if (!failedByStatus && !failedByOutput) return undefined;
 
