@@ -144,6 +144,60 @@ describe("loadCompiledBehavior (TRD-014)", () => {
   });
 });
 
+describe("tool grants compose as a union across loaded behaviors", () => {
+  // Regression: Pi's emitToolCall returns on the FIRST handler that
+  // answers { block: true }. With one handler registered per behavior,
+  // the session's effective permission was the INTERSECTION of every
+  // loaded behavior -- so a behavior that granted `bash` was blocked
+  // from `bash` by an unrelated behavior that did not. Observed live:
+  // `fix-failing-test` granted bash/edit and could not use either.
+  const restrictive: BehaviorManifest = {
+    ...manifest,
+    metadata: { name: "investigate-test-failure", version: "1.0.0" },
+    capabilities: { tools: ["echo", "read"], mutation_classes: [] },
+  };
+  const permissive: BehaviorManifest = {
+    ...manifest,
+    metadata: { name: "fix-failing-test", version: "1.0.0" },
+    capabilities: { tools: ["echo", "read", "bash", "edit"], mutation_classes: [] },
+  };
+
+  function loadBoth() {
+    const { compiled } = compile({ behaviors: [restrictive, permissive] });
+    const fake = fakePi();
+    for (const pkg of compiled) {
+      loadCompiledBehavior(pkg === compiled[0] ? fake.pi : fake.pi, pkg, compileBehaviorToArtifacts(pkg, [echoTool]), [echoTool]);
+    }
+    return fake;
+  }
+
+  it("a tool granted by ONE loaded behavior is allowed even though another does not grant it", async () => {
+    const { fireToolCall } = loadBoth();
+    // `bash` is granted only by fix-failing-test. Under the old
+    // per-behavior wiring, investigate-test-failure's handler ran first
+    // and blocked it.
+    expect(await fireToolCall("bash")).toBeUndefined();
+    expect(await fireToolCall("edit")).toBeUndefined();
+  });
+
+  it("a tool granted by NO loaded behavior is still blocked", async () => {
+    const { fireToolCall } = loadBoth();
+    const result = await fireToolCall("write");
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("not granted to any loaded behavior");
+  });
+
+  it("load order does not change the effective grant", async () => {
+    const { compiled } = compile({ behaviors: [permissive, restrictive] });
+    const fake = fakePi();
+    for (const pkg of compiled) {
+      loadCompiledBehavior(fake.pi, pkg, compileBehaviorToArtifacts(pkg, [echoTool]), [echoTool]);
+    }
+    expect(await fake.fireToolCall("bash")).toBeUndefined();
+    expect((await fake.fireToolCall("write"))?.block).toBe(true);
+  });
+});
+
 describe("wireToolGrantEnforcement (TRD-018)", () => {
   it("AC-018-1: a tool call for a name outside capabilities.tools is denied at the boundary regardless of prompt phrasing", async () => {
     const { compiled } = compile({ behaviors: [manifest] }); // capabilities.tools: ["echo", "read"]
@@ -235,7 +289,7 @@ describe("fail-closed load refusal (TRD-004 / AC-011-2)", () => {
     const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
     const { pi } = fakePi();
 
-    const inactiveGuard = { enforcementActive: false, authorize: () => ({ allowed: true as const }) };
+    const inactiveGuard = { mode: "propose" as const, enforcementActive: false, authorize: () => ({ allowed: true as const }) };
 
     expect(() => loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool], inactiveGuard)).toThrow(
       /refusing to load .* policy\.mode is "auto"/s,
@@ -255,7 +309,7 @@ describe("fail-closed load refusal (TRD-004 / AC-011-2)", () => {
     const { compiled } = compile({ behaviors: [manifest] });
     const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
     const { pi } = fakePi();
-    const inactiveGuard = { enforcementActive: false, authorize: () => ({ allowed: true as const }) };
+    const inactiveGuard = { mode: "propose" as const, enforcementActive: false, authorize: () => ({ allowed: true as const }) };
 
     expect(() => loadCompiledBehavior(pi, compiled[0], artifacts, [echoTool], inactiveGuard)).not.toThrow();
   });
