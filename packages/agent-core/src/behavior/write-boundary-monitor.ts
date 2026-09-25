@@ -161,6 +161,54 @@ export class WriteBoundaryMonitor {
   }
 
   /**
+   * Reports protected paths that changed, WITHOUT reverting anything.
+   *
+   * `check()` reverts as it detects, which makes "ask the user first"
+   * impossible: by the time there is something to ask about, the edit is
+   * already gone. Separating detection from reversion is what lets a human
+   * turn offer consent instead of being silently overruled.
+   *
+   * This is deliberately NOT a softer `check()`. Nothing here decides that a
+   * write is allowed; it only reports. The caller must either accept() a
+   * path explicitly or call check() to revert it.
+   */
+  pending(): readonly WriteViolation[] {
+    const candidates = new Set([...changedPaths(this.rootDir), ...this.snapshots.keys()]);
+    const out: WriteViolation[] = [];
+    for (const path of candidates) {
+      const verdict = classifyPath(path);
+      if (!verdict.protected) continue;
+      if (this.snapshots.has(path)) {
+        if (!this.changedSinceActivation(path)) continue;
+      } else if (!this.enumerationComplete || this.enumerated.has(path)) {
+        // Same caution as check(): without a completed enumeration, absence
+        // from `snapshots` proves nothing about whether the file pre-existed.
+        continue;
+      }
+      out.push({ path, reason: verdict.reason as ProtectedPathReason, restored: false });
+    }
+    return out;
+  }
+
+  /**
+   * Accepts one already-approved change: the current on-disk state becomes
+   * the new pristine baseline, so a later check() no longer reverts it.
+   *
+   * Scoped to a single path and re-baselined immediately, on purpose. A
+   * longer-lived "edits allowed" mode would let everything after the
+   * approval write freely, which is the protection this boundary exists to
+   * provide. A SECOND edit to the same path is a new change against the new
+   * baseline, and needs its own approval.
+   */
+  accept(relPath: string): void {
+    const snapshot = new WorkspaceSnapshot(this.rootDir);
+    snapshot.capture(relPath);
+    this.snapshots.set(relPath, snapshot);
+    this.baselines.set(relPath, fingerprint(this.rootDir, relPath));
+    this.enumerated.add(relPath);
+  }
+
+  /**
    * Checks what changed since activation and reverts protected paths.
    *
    * Intended to run after every tool call, not at some later accept

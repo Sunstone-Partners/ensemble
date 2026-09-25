@@ -12,6 +12,8 @@ import { createAgentFixProvider } from "./agent-fix-provider";
 import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
 import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beginBehaviorScope, endBehaviorScope } from "./tool-grant-enforcement";
 import { verifySuite } from "./verify-suite";
 import { ContinuationBudget } from "./continuation-budget";
@@ -387,6 +389,13 @@ ${next.instruction}`);
     // turn with no accept boundary to hook.
     const repoRoot = resolveRepoRoot(process.cwd());
     monitor = new WriteBoundaryMonitor(repoRoot);
+
+    // Reverted-but-recoverable protected writes, awaiting an out-of-band
+    // decision. In memory only, and never written to disk: a file holding a
+    // ready-to-apply guardrail patch is itself an attack surface, and it
+    // must not survive the session that produced it.
+    const quarantine = new Map<string, { path: string; reason: string; contents?: string }>();
+    let quarantineSeq = 0;
     try {
       // Tracked AND untracked. `git ls-files` alone misses exactly the
       // realistic case: a failing test file that was just written and
@@ -402,34 +411,93 @@ ${next.instruction}`);
 
     pi.on("tool_result", async () => {
       if (!monitor) return;
+
+      // Detect without reverting, so there is still something to ask about.
+      // check() reverts as it detects, which made consent impossible: by the
+      // time a violation existed, the edit was already gone.
+      const found = monitor.pending();
+      if (found.length === 0) return undefined;
+
+      // NOTHING is awaited here, deliberately.
+      //
+      // The obvious design -- ask ui.confirm() inline -- cannot work. This is
+      // a tool_result handler, and the host kills those at 30_000ms
+      // (br-9hv6, reproduced). A human deciding whether to change a guardrail
+      // routinely takes longer, and a handler killed mid-await leaves the
+      // file modified but neither approved nor reverted: the one state with
+      // no owner. Awaiting real work inside a bounded handler is the exact
+      // bug br-9hv6 already fixed once by moving dispatch off the handler.
+      //
+      // So the write is ALWAYS reverted, immediately, and consent is
+      // collected out of band via /ensemble-approve. Fail-closed costs one
+      // extra command; awaiting a human costs the guarantee.
+      //
+      // WHO wrote it still matters, for what happens next. A machine-
+      // originated run -- an autofix continuation -- gets no quarantine
+      // entry: there is nobody to approve it, and leaving a ready-to-apply
+      // payload produced by an autonomous loop is precisely the wrong
+      // artifact to leave lying around. An ordinary turn keeps its attempted
+      // content, because reverting the maintainer's own edits with no way to
+      // reinstate them is a lockout, not protection (same class as br-uavb).
+      const machineOriginated = Boolean(awaitingVerification);
+      const offered: string[] = [];
+
+      if (!machineOriginated) {
+        for (const v of found) {
+          let attempted: string | undefined;
+          try {
+            attempted = readFileSync(resolve(repoRoot, v.path), "utf8");
+          } catch {
+            // Deleted or unreadable: recorded with no content so
+            // /ensemble-approve reports that it cannot reapply the change,
+            // rather than writing garbage into a guardrail file.
+            attempted = undefined;
+          }
+          const id = String(++quarantineSeq);
+          quarantine.set(id, { path: v.path, reason: v.reason, contents: attempted });
+          offered.push(id);
+        }
+      }
+
       const result = monitor.check();
       for (const v of result.violations) {
         logRuntime(repoRoot, { kind: "error", violation: v });
       }
-      if (result.violations.length > 0) {
-        // Rewrites the tool result the model sees, so the revert is
-        // visible to it rather than silently undone behind its back.
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text" as const,
-              text:
-                "Write boundary violation: " +
-                result.violations
-                  .map((v) =>
-                    v.restored
-                      ? `${v.path} (${v.reason}) was reverted`
-                      : `${v.path} (${v.reason}) was modified and could NOT be reverted (no pristine copy)`,
-                  )
-                  .join("; ") +
-                ". Protected paths cannot be modified by any means, including shell redirects. " +
-                "Fix the source under test instead.",
-            },
-          ],
-        };
-      }
-      return undefined;
+      if (result.violations.length === 0) return undefined;
+
+      const offers = offered
+        .map((id) => {
+          const q = quarantine.get(id)!;
+          return q.contents === undefined
+            ? ` (${q.path}: the change could not be captured and cannot be re-applied.)`
+            : ` To keep the change to ${q.path}, the USER -- not you -- can run: /ensemble-approve ${id}`;
+        })
+        .join("");
+
+      // Rewrites the tool result the model sees, so the revert is visible to
+      // it rather than silently undone behind its back.
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text:
+              "Write boundary violation: " +
+              result.violations
+                .map((v) =>
+                  v.restored
+                    ? `${v.path} (${v.reason}) was reverted`
+                    : `${v.path} (${v.reason}) was modified and could NOT be reverted (no pristine copy)`,
+                )
+                .join("; ") +
+              (machineOriginated
+                ? ". This is a machine-originated run; it cannot approve changes to protected paths. "
+                : ". Protected paths are reverted by default. ") +
+              "Fix the source under test instead." +
+              offers,
+          },
+        ],
+      };
     });
 
     wireSessionLifecycle(pi, dispatchingSink, {
@@ -550,6 +618,74 @@ ${next.instruction}`);
       undefined,
       invoker,
     );
+
+    // Out-of-band consent for a reverted protected write.
+    //
+    // A COMMAND, not a prompt, because the decision cannot be awaited where
+    // the violation is detected: tool_result handlers are killed at 30s
+    // (br-9hv6) and a human reading a guardrail diff takes longer than that.
+    // A command is invoked by the user directly, carries no handler deadline,
+    // and -- unlike a confirm() the model could learn to expect -- cannot be
+    // triggered by the model at all.
+    pi.registerCommand("ensemble-approve", {
+      description:
+        "Re-apply a protected-path change that was reverted by the write boundary",
+      handler: async (args, ctx) => {
+        uiBridge.capture(ctx as never);
+        const say = (text: string) => {
+          if (ctx.hasUI && ctx.ui?.notify) ctx.ui.notify(text);
+          else console.log(text);
+        };
+
+        const id = String(args ?? "").trim();
+        if (!id) {
+          const listing = [...quarantine.entries()]
+            .map(([k, q]) => `  ${k}  ${q.path} (${q.reason})`)
+            .join("\n");
+          say(
+            listing
+              ? `Reverted protected changes awaiting approval:\n${listing}\n\nRe-apply one with: /ensemble-approve <id>`
+              : "No reverted protected changes are awaiting approval.",
+          );
+          return;
+        }
+
+        const entry = quarantine.get(id);
+        if (!entry) {
+          say(`No quarantined change with id ${id}.`);
+          return;
+        }
+        if (entry.contents === undefined) {
+          say(
+            `Change ${id} to ${entry.path} was not captured (the file was deleted or unreadable) and cannot be re-applied.`,
+          );
+          return;
+        }
+
+        // Order matters: accept() re-baselines the monitor to the state on
+        // disk, so the write has to land first. Re-baselining an unwritten
+        // path would bless whatever happened to be there.
+        try {
+          writeFileSync(resolve(repoRoot, entry.path), entry.contents);
+          monitor?.accept(entry.path);
+          // Consumed, so one approval cannot be replayed to re-apply the
+          // same change after a later revert.
+          quarantine.delete(id);
+          logRuntime(repoRoot, {
+            kind: "approval",
+            path: entry.path,
+            reason: entry.reason,
+            approved: true,
+            detail: `re-applied via /ensemble-approve ${id}`,
+          });
+          say(
+            `Re-applied ${entry.path}. It is now the protected baseline; a further change to it needs its own approval.`,
+          );
+        } catch (error) {
+          say(`Could not re-apply ${entry.path}: ${(error as Error).message}`);
+        }
+      },
+    });
 
     // An operator must be able to ask whether any of this is alive.
     // Without it, a silent fail-closed runtime is indistinguishable
