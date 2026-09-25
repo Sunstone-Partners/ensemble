@@ -1,0 +1,7 @@
+{
+  "event": "test-failed",
+  "verdict": "activate",
+  "proposals": ["investigate-test-failure"],
+  "outcomes": ["test.failure.investigated", "constitution.change.proposed"],
+  "mutations": ["artifact.write", "pr.open", "constitution.propose"]
+}

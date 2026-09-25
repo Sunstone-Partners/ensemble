@@ -1,0 +1,3 @@
+%{tools: ["read", "bash.test"], inferred_event_type: "test.failed", frequency: 11, recommended: true, confidence: 70, pattern_name: "test-failed-read-bash-test", exploratory: false}
+%{tools: ["git.diff", "write"], inferred_event_type: "pr.opened", frequency: 3, recommended: false, confidence: 39, pattern_name: "pr-opened-git-diff-write", exploratory: true}
+%{tools: ["grep"], inferred_event_type: "solo.event", frequency: 1, recommended: false, confidence: 20, pattern_name: "solo-event-grep", exploratory: true}

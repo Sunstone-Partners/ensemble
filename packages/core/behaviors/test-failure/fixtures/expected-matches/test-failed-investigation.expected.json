@@ -1,0 +1,7 @@
+{
+  "event": "test-failed",
+  "matches": ["investigate-test-failure"],
+  "candidates": [
+    { "behavior": "investigate-test-failure", "version": "0.1.0", "status": "matched" }
+  ]
+}

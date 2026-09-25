@@ -266,7 +266,7 @@ npm run test:coverage --workspace=packages/<name>
     "UserPromptSubmit": [{
       "hooks": [{
         "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/router.py",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/router.js",
         "timeout": 3
       }]
     }],

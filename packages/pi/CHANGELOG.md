@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Removed obsolete Claude Code/Agent SDK install guidance from the copied Anthropic skill.
 
+## [1.6.9] - 2026-09-23
+
+### Added
+- Phrase-driven behaviors: five new command-fronting skills
+  (`creating-a-prd`, `refining-a-prd`, `creating-a-trd`,
+  `implementing-a-trd`, `merging-a-pr`) are copied into `packages/pi/skills/`
+  by the generator, and `git-town` now carries `phrases:` frontmatter.
+
 ## [1.0.0] - 2026-03-29
 
 ### Added

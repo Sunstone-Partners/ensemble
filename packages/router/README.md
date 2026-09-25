@@ -124,17 +124,17 @@ The router recognizes 24+ skills including:
 ### Running Tests
 
 ```bash
-python3 -m pytest packages/router/tests/test_router.py -v
+npm test --workspace=packages/router
 ```
 
 ### Manual Testing
 
 ```bash
 # Test with debug output
-echo '{"prompt": "Deploy to vercel"}' | ROUTER_DEBUG=1 python3 packages/router/hooks/router.py
+echo '{"prompt": "Deploy to vercel"}' | ROUTER_DEBUG=1 node packages/router/hooks/router.js
 
 # Test project context
-echo '{"prompt": "Build the frontend", "cwd": "/path/to/project"}' | ROUTER_DEBUG=1 python3 packages/router/hooks/router.py
+echo '{"prompt": "Build the frontend", "cwd": "/path/to/project"}' | ROUTER_DEBUG=1 node packages/router/hooks/router.js
 ```
 
 ## Design Decisions

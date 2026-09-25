@@ -1,0 +1,14 @@
+# Elixir/Mix build artifacts
+/_build/
+/cover/
+/deps/
+/doc/
+/tmp/
+erl_crash.dump
+*.ez
+ensemble-*.tar
+
+# Node
+node_modules/
+.ensemble/
+

@@ -1,0 +1,66 @@
+{
+  "skills": [
+    {
+      "name": "test-detector",
+      "description": "Detect the project's test framework and run the right command.",
+      "source": "packages/core/skills/test-detector/SKILL.md",
+      "digest": "sha256:1756701fe396a929216076d0d9d78b8944399c7b513095653488f5e54a57cf4a",
+      "status": "active"
+    },
+    {
+      "name": "framework-detector",
+      "description": "Multi-signal framework detection with confidence scoring.",
+      "source": "packages/core/skills/framework-detector/SKILL.md",
+      "digest": "sha256:fbfa6d944952cdcd0f20828ba5e884523b3595b7ddc1374d6478281741da6008",
+      "status": "active"
+    },
+    {
+      "name": "investigate-test-failure",
+      "description": "Read failing test output and localise the broken assertion.",
+      "source": "packages/development/skills/completion-verification/SKILL.md",
+      "digest": "sha256:466f8078989ba087c81207f44c48f0e6e08ba053d4fc5447c799bfc8c71ae450",
+      "status": "active"
+    },
+    {
+      "name": "file-reader",
+      "description": "Read source and config files referenced by an event.",
+      "source": "packages/development/skills/complete-beads/SKILL.md",
+      "digest": "sha256:dd0921097ba97a31484e8e0c298727a0ab46c83aae0af0dffd3fc22403d285c2",
+      "status": "active"
+    },
+    {
+      "name": "log-search",
+      "description": "Search structured logs for the failure signature.",
+      "source": "packages/development/skills/staleness-gate/SKILL.md",
+      "digest": "sha256:f4030bd577ca8bb6c45f722df8150da34cc2cda9b6d8c2a8e2505825ce0f8966",
+      "status": "active"
+    },
+    {
+      "name": "implementing-a-trd",
+      "description": "Execute a technical requirements document.",
+      "source": "packages/development/skills/implementing-a-trd/SKILL.md",
+      "digest": "sha256:4414bb4bea8f16a56f58bd1c7648f1936d824d60209aa76f68a4daeb046d4df4",
+      "status": "active"
+    },
+    {
+      "name": "changelog-generator",
+      "description": "Generate changelog entries from conventional commits.",
+      "source": "packages/git/skills/changelog-generator/SKILL.md",
+      "digest": "sha256:965b501fa03e186ca41f236440e22dbd636a0ed01ff424eafdb182149ce2bb1b",
+      "status": "deprecated",
+      "migrations": [
+        "git/changelog"
+      ]
+    },
+    {
+      "name": "graph-query",
+      "description": "Query the code knowledge graph for blast radius.",
+      "source": "packages/ai/skills/using-weaviate/SKILL.md",
+      "digest": "sha256:a570abbaa457a6eaef828f03e481b8f489cdca9549023b0c20e7973f8c5dcef0",
+      "status": "revoked",
+      "migrations": [
+        "codebase-memory"
+      ]
+    }
+  ]
+}

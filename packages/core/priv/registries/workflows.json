@@ -1,0 +1,19 @@
+{
+  "graphs": [
+    "ensemble.assess",
+    "ensemble.discover",
+    "ensemble.fix",
+    "ensemble.implement",
+    "ensemble.implement-trd",
+    "ensemble.implement-trd-beads",
+    "ensemble.merge-pr",
+    "ensemble.plan",
+    "ensemble.prd",
+    "ensemble.release",
+    "ensemble.review-pr",
+    "ensemble.trd",
+    "ensemble.triage",
+    "ensemble.verify",
+    "investigate-test-failure"
+  ]
+}
