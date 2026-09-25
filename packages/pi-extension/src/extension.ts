@@ -14,6 +14,7 @@ import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
 import { execFileSync, spawnSync } from "node:child_process";
 import { beginBehaviorScope, endBehaviorScope } from "./tool-grant-enforcement";
 import { verifySuite } from "./verify-suite";
+import { ContinuationBudget } from "./continuation-budget";
 import {
   snapshotWorkingTree,
   restoreWorkingTree,
@@ -224,9 +225,16 @@ export function createActivate(options: ActivateOptions = {}): {
       instruction: string;
       behaviors: string[];
       cwd?: string;
-      snapshot?: WorkingTreeSnapshot;
+      // Required, not optional: rollback fails SILENTLY if this is dropped
+      // during the enqueue -> dequeue -> verification hand-off, and an
+      // optional field lets that mistake compile.
+      snapshot: WorkingTreeSnapshot;
     }[] = [];
-    const continuationAttempts = new Map<string, number>();
+    // Caps retries per issue AND per session. The per-issue key is
+    // normalised, because the model varies output plumbing freely and the old
+    // literal-string key let `| tail -5` and `| sed -n 1,60p` count as two
+    // separate issues under a cap of one.
+    const budget = new ContinuationBudget(1, 3);
     // Injected turns are currently indistinguishable from real user input
     // (br-x85k): in a live PTY session the model treated injected content as
     // carrying user authority and ran a command on that basis. This marker
@@ -234,7 +242,6 @@ export function createActivate(options: ActivateOptions = {}): {
     // change how the model weighs the instruction, and must not be mistaken
     // for a solved safety property.
     const AUTOFIX_MARKER = "[ensemble:autofix]";
-    const MAX_CONTINUATIONS_PER_ISSUE = 1;
 
     const enqueueContinuation = (
       key: string,
@@ -242,12 +249,18 @@ export function createActivate(options: ActivateOptions = {}): {
       behaviors: string[],
       cwd: string | undefined,
     ): boolean => {
-      const used = continuationAttempts.get(key) ?? 0;
-      // Without this cap the fix turn's own events re-enter dispatch and
-      // queue another turn, forever. Every probe needed this guard.
-      if (used >= MAX_CONTINUATIONS_PER_ISSUE) return false;
       if (continuationQueue.some((q) => q.key === key)) return false;
-      continuationAttempts.set(key, used + 1);
+      // Without a cap the fix turn's own events re-enter dispatch and queue
+      // another turn, forever. Every probe needed this guard.
+      const decision = budget.claim(key);
+      if (!decision.allowed) {
+        logRuntime(resolveRepoRoot(process.cwd()), {
+          kind: "continuation-refused",
+          issue: key,
+          reason: decision.reason,
+        });
+        return false;
+      }
       // Snapshot BEFORE the fix turn is injected. Snapshotting at
       // verification time would capture the damage, not the state to
       // return to.
@@ -274,7 +287,7 @@ export function createActivate(options: ActivateOptions = {}): {
     // Set when a continuation turn has been injected and its result has not
     // yet been independently checked.
     let awaitingVerification:
-      | { command: string; cwd?: string; snapshot?: WorkingTreeSnapshot }
+      | { command: string; cwd?: string; snapshot: WorkingTreeSnapshot }
       | undefined;
 
     // The window closes at agent_end, NOT turn_end. Reproduced: an injected
@@ -301,7 +314,7 @@ export function createActivate(options: ActivateOptions = {}): {
         // destroying a possibly-good fix on a non-verdict is worse than
         // leaving it and reporting the uncertainty.
         let rollback: RestoreResult | undefined;
-        if (verdict.status === "failed" && snapshot) {
+        if (verdict.status === "failed") {
           rollback = restoreWorkingTree(snapshot);
         }
 
