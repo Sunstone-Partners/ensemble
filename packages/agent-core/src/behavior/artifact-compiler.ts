@@ -31,22 +31,42 @@ export interface CompiledBehaviorArtifacts {
 /**
  * Host-provided tools that legitimately have no ToolDescriptor of ours.
  * A declared tool is only "unresolved" when it is neither registered nor
- * one of these -- otherwise every behavior would warn about `read`.
+ * one of these -- otherwise every behavior would warn about `read`, and a
+ * noisy warning is an ignored warning.
+ *
+ * EVERY NAME HERE HAS A SOURCE. Do not add guesses: a wrong entry hides a
+ * real phantom, and a missing entry invents a false one.
+ *
+ * Group 1 -- Pi's typed ToolCallEvent union, read from
+ * @earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts:790.
+ * Authoritative for the Pi host.
  */
-const NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set([
+const PI_TYPED_NATIVE_TOOLS = [
   "bash",
+  "powershell",
   "read",
   "write",
   "edit",
   "grep",
-  "glob",
   "find",
   "ls",
-  "multiedit",
-  "todo",
-  "task",
-  "webfetch",
-  "websearch",
+] as const;
+
+/**
+ * Group 2 -- additional host tools OBSERVED dispatching in a real omp
+ * session (.ensemble/runtime-log.jsonl, 2026-09-25). These arrive as
+ * CustomToolCallEvent, so Pi's type union does not name them, but they are
+ * genuinely available and must not be reported as unresolved.
+ *
+ * This list is necessarily incomplete: a host may provide tools we have
+ * never observed. That is the safe direction -- an unobserved host tool
+ * produces a warning that is merely wrong, not a silent missing capability.
+ */
+const OBSERVED_HOST_TOOLS = ["glob", "learn"] as const;
+
+const NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  ...PI_TYPED_NATIVE_TOOLS,
+  ...OBSERVED_HOST_TOOLS,
 ]);
 
 export function compileBehaviorToArtifacts(

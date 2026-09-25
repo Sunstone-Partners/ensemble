@@ -16,7 +16,11 @@ import { ApprovalHost } from "@sunstone-partners/ensemble-agent-core";
 
 export interface UiContextLike {
   hasUI: boolean;
-  ui?: { confirm(title: string, message: string): Promise<boolean> };
+  ui?: {
+    confirm(title: string, message: string): Promise<boolean>;
+    /** Pi's multi-choice dialog (ExtensionUIContext.select). */
+    select?(title: string, options: string[]): Promise<string | undefined>;
+  };
 }
 
 export class SessionUiBridge implements ApprovalHost {
@@ -39,5 +43,21 @@ export class SessionUiBridge implements ApprovalHost {
       return false;
     }
     return ctx.ui.confirm(title, message);
+  }
+
+  /** True when a 4-way choice can actually be put to a human. */
+  get canSelect(): boolean {
+    return Boolean(this.current?.hasUI && this.current?.ui?.select);
+  }
+
+  /**
+   * Asks a multi-choice question. Returns undefined when there is no UI or
+   * the user dismissed the dialog -- callers MUST treat that as "no answer",
+   * never as a default yes.
+   */
+  async select(title: string, options: string[]): Promise<string | undefined> {
+    const ctx = this.current;
+    if (!ctx?.hasUI || !ctx.ui?.select) return undefined;
+    return ctx.ui.select(title, options);
   }
 }

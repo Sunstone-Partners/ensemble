@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { ToolRegistry, InMemoryEventSink, echoTool, EventSink, ApprovalGate, ApprovalHost } from "@sunstone-partners/ensemble-agent-core";
+import { ToolRegistry, InMemoryEventSink, echoTool, EventSink, ApprovalGate, ApprovalHost, BashApprovalPolicy, createEnsembleBashTool, BASH_APPROVAL_CHOICES, answerFromChoice } from "@sunstone-partners/ensemble-agent-core";
 import { wireSessionLifecycle } from "./session";
 import { handleEchoToolCall } from "./echo-tool-handler";
 import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } from "./behavior-activation";
@@ -231,10 +231,34 @@ export function createActivate(options: ActivateOptions = {}): {
       onRecord: (r) => logRuntime(resolveRepoRoot(process.cwd()), { kind: "invocation", record: r }),
     });
 
+    // `ensemble.bash` is offered alongside echo. It only constrains
+    // anything for a behavior that omits native `bash` from
+    // capabilities.tools -- grant enforcement is what removes the
+    // alternative. Granting both makes it inert by choice.
+    //
+    // The four answers come from Pi's `ui.select`, not `ui.confirm`:
+    // confirm is boolean and would silently collapse allow-always and
+    // deny-always into nothing, discarding the "remember" behaviour that is
+    // the point of the policy. A dismissed dialog returns undefined and is
+    // treated as deny-once -- never as a default yes.
+    const bashPolicy = new BashApprovalPolicy(
+      uiBridge.canSelect
+        ? async (command) => {
+            const answer = await uiBridge.select(`Run shell command?\n${command}`, [
+              BASH_APPROVAL_CHOICES["allow-once"],
+              BASH_APPROVAL_CHOICES["allow-always"],
+              BASH_APPROVAL_CHOICES["deny-once"],
+              BASH_APPROVAL_CHOICES["deny-always"],
+            ]);
+            return answerFromChoice(answer);
+          }
+        : undefined,
+    );
+
     lastActivation = activateBehaviorPipeline(
       pi,
       resolveRepoRoot(process.cwd()),
-      [echoTool],
+      [echoTool, createEnsembleBashTool({ cwd: resolveRepoRoot(process.cwd()), policy: bashPolicy })],
       undefined,
       invoker,
     );
