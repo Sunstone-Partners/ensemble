@@ -9,7 +9,8 @@ import {
 } from "@sunstone-partners/ensemble-agent-core";
 import { AutofixLoop, FixCandidate, SuiteResult, AttemptOutcome } from "./autofix-loop";
 import { ConstitutionProposal, ConstitutionChange, PullRequestRef } from "./constitution-proposal";
-import { IssueKeyInput } from "./issue-identity";
+import { IssueKeyInput, issueKey } from "./issue-identity";
+import { captureTreeBaseline, changedSinceBaseline } from "./tree-baseline";
 
 /**
  * The invoker that runs when a behavior matches (PR 7).
@@ -115,9 +116,31 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
       return;
     }
 
-    // 1. Attempt a fix, if a provider offers a candidate.
+    // 1. Attempt a fix, if a provider offers a candidate. The baseline is
+    // taken BEFORE the provider runs: it can take minutes, the session keeps
+    // editing meanwhile, and AutofixLoop's own snapshot is taken at apply
+    // time -- too late to see anything that changed during generation.
+    const baseline = options.proposeFix ? captureTreeBaseline(options.rootDir) : undefined;
     const candidate = await options.proposeFix?.(invocation, issue);
-    if (candidate) {
+    const stale = candidate && baseline
+      ? changedSinceBaseline(baseline, candidate.writes.map((w) => w.path))
+      : [];
+    if (candidate && stale.length > 0) {
+      // Not applied, and nothing is restored: these edits are not ours to
+      // undo. The candidate was computed from content that no longer exists.
+      record.outcome = {
+        status: "rejected",
+        attempt: 0,
+        issue: issueKey(issue),
+        reason:
+          `working tree changed at ${stale.join(", ")} while the fix was being generated; ` +
+          `candidate not applied (nothing written, nothing restored)`,
+        restored: [],
+      };
+    } else if (candidate) {
+      if (!baseline) {
+        record.note = "pre-provider baseline unavailable (not a git work tree); staleness not checked";
+      }
       const testCommand = compiled.manifest.execution.test_command;
       const loop = new AutofixLoop({
         guard: createMutationGuard(compiled),

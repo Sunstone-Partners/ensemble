@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyPath, isProtectedPath } from "../src/behavior/protected-paths";
@@ -184,6 +184,44 @@ describe("WorkspaceSnapshot (TRD-021 / REQ-015)", () => {
 
     expect(existsSync(join(root, "src", "new.ts"))).toBe(false);
     expect(report.deleted).toEqual(["src/new.ts"]);
+  });
+
+  // Observed live: a file mutated BEFORE capture was "restored" to its
+  // mutated contents, and the outcome still claimed a rollback. Restore
+  // must report only what it actually changed.
+  it("does not report an untouched path as restored", () => {
+    const root = repo();
+    const snap = new WorkspaceSnapshot(root);
+    snap.capture("src/a.ts");
+
+    const report = snap.restore();
+
+    expect(report.restored).toEqual([]);
+    expect(report.unchanged).toEqual(["src/a.ts"]);
+  });
+
+  it("does not report a never-created path as deleted", () => {
+    const root = repo();
+    const snap = new WorkspaceSnapshot(root);
+    snap.capture("src/never.ts");
+
+    const report = snap.restore();
+
+    expect(report.deleted).toEqual([]);
+    expect(report.unchanged).toEqual(["src/never.ts"]);
+  });
+
+  it("reports a mode-only change as restored", () => {
+    const root = repo();
+    const original = statSync(join(root, "src", "a.ts")).mode;
+    const snap = new WorkspaceSnapshot(root);
+    snap.capture("src/a.ts");
+
+    chmodSync(join(root, "src", "a.ts"), 0o700);
+    const report = snap.restore();
+
+    expect(report.restored).toEqual(["src/a.ts"]);
+    expect(statSync(join(root, "src", "a.ts")).mode).toBe(original);
   });
 
   it("scope is limited to captured paths, so concurrent edits survive", () => {
