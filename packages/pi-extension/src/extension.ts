@@ -124,10 +124,13 @@ export function createActivate(options: ActivateOptions = {}): {
     const repoRoot = resolveRepoRoot(process.cwd());
     monitor = new WriteBoundaryMonitor(repoRoot);
     try {
-      const tracked = execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" })
-        .split("\n")
-        .filter(Boolean);
-      monitor.protectAll(tracked);
+      // Tracked AND untracked. `git ls-files` alone misses exactly the
+      // realistic case: a failing test file that was just written and
+      // never committed. An uncaptured protected path cannot be
+      // reverted, so it would be logged and silently left modified.
+      const listed = (args: string[]): string[] =>
+        execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).split("\n").filter(Boolean);
+      monitor.protectAll([...listed(["ls-files"]), ...listed(["ls-files", "--others", "--exclude-standard"])]);
     } catch {
       // Not a git repo: the monitor degrades to detecting nothing
       // rather than pretending to protect.
@@ -139,7 +142,7 @@ export function createActivate(options: ActivateOptions = {}): {
       for (const v of result.violations) {
         logRuntime(repoRoot, { kind: "error", violation: v });
       }
-      if (result.violations.some((v) => v.restored)) {
+      if (result.violations.length > 0) {
         // Rewrites the tool result the model sees, so the revert is
         // visible to it rather than silently undone behind its back.
         return {
@@ -150,8 +153,11 @@ export function createActivate(options: ActivateOptions = {}): {
               text:
                 "Write boundary violation: " +
                 result.violations
-                  .filter((v) => v.restored)
-                  .map((v) => `${v.path} (${v.reason}) was reverted`)
+                  .map((v) =>
+                    v.restored
+                      ? `${v.path} (${v.reason}) was reverted`
+                      : `${v.path} (${v.reason}) was modified and could NOT be reverted (no pristine copy)`,
+                  )
                   .join("; ") +
                 ". Protected paths cannot be modified by any means, including shell redirects. " +
                 "Fix the source under test instead.",
