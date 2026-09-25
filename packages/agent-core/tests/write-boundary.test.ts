@@ -53,13 +53,27 @@ describe("ProtectedPathPolicy (TRD-019 / REQ-015)", () => {
     // ensemble.bash's safety rests entirely on grant enforcement blocking
     // native bash. Editing bash-approval, the tool, or the grant wiring
     // removes the gate while every visible guardrail still looks intact.
-    for (const file of [
-      "write-boundary-monitor.ts",
-      "bash-approval.ts",
-      "ensemble-bash-tool.ts",
-      "tool-grant-enforcement.ts",
+    // REAL paths, not a constructed prefix + basename. The patterns are
+    // basename-anchored, so a fabricated directory would still pass while
+    // verifying nothing about where the file actually lives --
+    // tool-grant-enforcement.ts is in pi-extension, not agent-core.
+    for (const path of [
+      "packages/agent-core/src/behavior/write-boundary-monitor.ts",
+      "packages/agent-core/src/behavior/bash-approval.ts",
+      "packages/agent-core/src/behavior/ensemble-bash-tool.ts",
+      "packages/pi-extension/src/tool-grant-enforcement.ts",
     ]) {
-      expect(classifyPath(`packages/agent-core/src/behavior/${file}`).reason).toBe("guardrail-source");
+      expect(classifyPath(path).reason).toBe("guardrail-source");
+    }
+    // ...and those paths must actually exist, or this test drifts into
+    // asserting about files that were renamed or never existed.
+    for (const path of [
+      "src/behavior/write-boundary-monitor.ts",
+      "src/behavior/bash-approval.ts",
+      "src/behavior/ensemble-bash-tool.ts",
+      "../pi-extension/src/tool-grant-enforcement.ts",
+    ]) {
+      expect(existsSync(join(__dirname, "..", path))).toBe(true);
     }
   });
 

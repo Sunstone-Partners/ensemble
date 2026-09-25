@@ -57,29 +57,25 @@ const PI_TYPED_NATIVE_TOOLS = [
  * CustomToolCallEvent (toolName: string), so no type declares them, yet
  * they are genuinely available and must not be reported as unresolved.
  *
- * Sources, in descending order of confidence:
- *  - OBSERVED dispatching in a real omp session
- *    (.ensemble/runtime-log.jsonl, 2026-09-25): glob, learn.
- *  - Present as tool-name string literals in omp's bundled cli.js:
- *    task, todo, replace, hashline, skill.
+ * ADMISSION RULE: a name enters this list ONLY when it has been seen
+ * dispatching as `toolName` in a real session's runtime log. Both entries
+ * below were observed in .ensemble/runtime-log.jsonl on 2026-09-25.
  *
- * An authoritative list is NOT extractable: omp ships as a minified
- * bundle and its tool registry does not survive in a greppable shape
- * (only `hashline` and `replace` retain recognisable definition sites).
- * So this set is evidence-based and knowingly incomplete. The incompleteness
- * is in the safe direction: an unlisted host tool yields a warning that is
- * merely wrong, whereas a wrongly-listed name would hide a real phantom.
- * Add entries only with a cited source.
+ * task/todo/replace/hashline/skill were briefly added here on the strength
+ * of appearing as quoted strings in omp's bundled cli.js, and then removed:
+ * a bare string literal in a minified bundle does not establish that a name
+ * is a registered tool. An authoritative registry is not extractable -- omp
+ * ships minified and the tool definitions do not survive in a greppable
+ * shape -- so raw frequency was the only "evidence" available, and it is
+ * not evidence.
+ *
+ * The asymmetry decides the default: an unlisted host tool produces a
+ * warning that is merely wrong and self-correcting once observed, whereas a
+ * wrongly-listed name permanently hides a real phantom capability -- the
+ * exact defect this whole mechanism exists to surface. So when in doubt,
+ * leave it out.
  */
-const OBSERVED_HOST_TOOLS = [
-  "glob",
-  "learn",
-  "task",
-  "todo",
-  "replace",
-  "hashline",
-  "skill",
-] as const;
+const OBSERVED_HOST_TOOLS = ["glob", "learn"] as const;
 
 const NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...PI_TYPED_NATIVE_TOOLS,
