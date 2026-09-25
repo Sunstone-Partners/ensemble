@@ -7,7 +7,7 @@ import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } f
 import { createBehaviorInvoker, FixProvider, ConstitutionProvider, BehaviorRunRecord } from "./behavior-runner";
 import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { SuiteResult } from "./autofix-loop";
-import { logRuntime, runtimeLogPath } from "./runtime-log";
+import { logRuntime, runtimeLogPath, setRuntimeLoggingArmed } from "./runtime-log";
 import { createAgentFixProvider } from "./agent-fix-provider";
 import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
@@ -577,6 +577,10 @@ ${next.instruction}`);
       },
     });
 
+    // Arm logging only once behaviours exist here. The extension loads in
+    // every session, so an unconditional write created a stray
+    // .ensemble/runtime-log.jsonl in any directory the user visited.
+    setRuntimeLoggingArmed(lastActivation.discovered > 0);
     logRuntime(resolveRepoRoot(process.cwd()), {
       kind: "activation",
       discovered: lastActivation.discovered,
