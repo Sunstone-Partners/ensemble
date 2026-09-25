@@ -1,0 +1,40 @@
+api_version: ensemble.sunstone.dev/v1
+kind: Behavior
+metadata:
+  name: fix-failing-test
+  version: 1.0.0
+trigger:
+  event_type: test.failure.observed
+  predicate:
+    # Deliberately the same runner list as investigate-test-failure, not a
+    # looser `isError` alone. A bare isError predicate fires on ANY errored
+    # bash command, including ones that have nothing to do with a test suite.
+    command: { matches: "npm test|npx jest|jest|vitest|mix test|pytest|go test|cargo test" }
+    isError: { equals: true }
+policy:
+  mode: auto
+  timeout: 10m
+capabilities:
+  # `edit` is the difference between this behavior and
+  # investigate-test-failure, which is read-only and therefore can observe a
+  # failure without ever repairing it.
+  #
+  # Note what mutation_classes does and does not buy today. The governed path
+  # (AgentFixProvider -> AutofixLoop) routes every write through
+  # MutationGuard, which enforces this list. The continuation path
+  # (sendUserMessage) does not: it has snapshot + suite verification +
+  # rollback, but no MutationGuard, so the model's own edit tool calls apply
+  # the change. The continuation path is the one that fires in practice, so
+  # treat this list as declarative until br-o355 wires the guard in.
+  tools: [read, grep, glob, bash, edit]
+  mutation_classes: [artifact.write]
+execution:
+  graph: fix-failing-test
+  # Required when policy.mode is auto: the governed AutofixLoop path re-runs
+  # the WHOLE suite before accepting a fix, so a repair that greens the
+  # target test while breaking three others is rejected rather than shipped.
+  # This is the full-suite command; the narrower failing command is captured
+  # from the observed failure and re-run separately by verification.
+  test_command: npx jest
+outcomes:
+  - test.failure.investigated
