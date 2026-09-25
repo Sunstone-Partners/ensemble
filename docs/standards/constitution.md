@@ -15,6 +15,8 @@
 3. **Tests accompany features** — No feature is complete without tests covering its acceptance criteria.
 4. **Ownership boundary is preserved** — Ensemble must not implement durable production activation, scheduling, retries, recovery, or a second dispatcher competing with Foreman (see `docs/architecture/ensemble-behavior-runtime-plan.md` §1).
 5. **Governed tool boundary is enforced at runtime, not at the model** — Tool grants and mutation-class authority are enforced by the harness/extension boundary; prompt text must never be able to bypass a denial.
+6. **A capability is not done until it is reachable from the product entry point** — Code that is implemented, exported, and unit-tested but has no call path from the real `activate()` (or equivalent entry point) is not complete, regardless of test coverage. Acceptance must assert *through* the entry point, not around it.
+7. **A verification must be able to fail** — Any check that gates acceptance of a change must be shown capable of failing: prove it by breaking the thing it guards and observing the check fail. A green signal from a check that cannot fail is worse than no check, because it manufactures confidence.
 
 ## 2. Tech Stack
 

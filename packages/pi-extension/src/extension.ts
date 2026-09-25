@@ -1,9 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { ToolRegistry, InMemoryEventSink, echoTool, EventSink } from "@sunstone-partners/ensemble-agent-core";
+import { ToolRegistry, InMemoryEventSink, echoTool, EventSink, ApprovalGate, ApprovalHost } from "@sunstone-partners/ensemble-agent-core";
 import { wireSessionLifecycle } from "./session";
 import { handleEchoToolCall } from "./echo-tool-handler";
 import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } from "./behavior-activation";
+import { createBehaviorInvoker, FixProvider, ConstitutionProvider, BehaviorRunRecord } from "./behavior-runner";
+import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
+import { SuiteResult } from "./autofix-loop";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -40,11 +43,31 @@ function assertRequiredCapabilities(pi: ExtensionAPI): void {
  * extension activation, so binding one instance here is exactly the
  * production shape, not a test-only shortcut.
  */
-export function createActivate(): {
+export interface ActivateOptions {
+  /**
+   * Supplies candidate fixes. Omitted in a plain session: fabricating
+   * a fix without a model would be worse than doing nothing, so the
+   * default records the failure and stops rather than pretending.
+   */
+  proposeFix?: FixProvider;
+  /** Supplies constitution changes implied by an investigation. */
+  proposeConstitutionChange?: ConstitutionProvider;
+  /**
+   * Approval host. Absent means no UI, and ApprovalGate fails closed,
+   * so a constitution change is declined rather than auto-applied.
+   */
+  approvalHost?: ApprovalHost;
+  openPullRequest?: (change: ConstitutionChange) => PullRequestRef | Promise<PullRequestRef>;
+  runSuite?: (command: string, signal: AbortSignal) => SuiteResult | Promise<SuiteResult>;
+}
+
+export function createActivate(options: ActivateOptions = {}): {
   activate: (pi: ExtensionAPI) => void;
   sink: InMemoryEventSink;
   lastActivation: () => BehaviorActivationResult | null;
+  runRecords: BehaviorRunRecord[];
 } {
+  const runRecords: BehaviorRunRecord[] = [];
   const sink = new InMemoryEventSink();
   let lastActivation: BehaviorActivationResult | null = null;
 
@@ -115,10 +138,32 @@ export function createActivate(): {
     // this call existed, the entire behavior pipeline — including the
     // manifest-driven native-tool grant enforcement wired inside
     // loadCompiledBehavior — was reachable only from tests.
-    lastActivation = activateBehaviorPipeline(pi, resolveRepoRoot(process.cwd()), [echoTool]);
+    //
+    // The invoker is what makes dispatch real. Passing none left
+    // LocalEventMatcher defaulting to `() => undefined`, so a matched
+    // event ran a stub and every downstream guarantee was
+    // test-only reachable.
+    const invoker = createBehaviorInvoker({
+      rootDir: resolveRepoRoot(process.cwd()),
+      compiled: () => lastActivation?.compiled ?? [],
+      proposeFix: options.proposeFix,
+      proposeConstitutionChange: options.proposeConstitutionChange,
+      approval: options.approvalHost ? new ApprovalGate(options.approvalHost) : undefined,
+      openPullRequest: options.openPullRequest,
+      runSuite: options.runSuite,
+      records: runRecords,
+    });
+
+    lastActivation = activateBehaviorPipeline(
+      pi,
+      resolveRepoRoot(process.cwd()),
+      [echoTool],
+      undefined,
+      invoker,
+    );
   };
 
-  return { activate, sink, lastActivation: () => lastActivation };
+  return { activate, sink, lastActivation: () => lastActivation, runRecords };
 }
 
 const activate: (pi: ExtensionAPI) => void = createActivate().activate;

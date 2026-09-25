@@ -50,6 +50,8 @@ export interface BehaviorActivationResult {
   matcher?: LocalEventMatcher;
   /** Invoker failures; one behavior's failure never hides its siblings. */
   invocationErrors: { behavior: string; reason: string }[];
+  /** Successfully loaded compiled packages, for late-bound consumers. */
+  compiled: CompiledBehaviorPackage[];
 }
 
 /**
@@ -76,8 +78,8 @@ export function activateBehaviorPipeline(
   searchRoots: string[] = [...ACTIVATION_SEARCH_ROOTS],
   invoke?: BehaviorInvoker,
 ): BehaviorActivationResult {
-  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], invocationErrors: [] };
   const live: CompiledBehaviorPackage[] = [];
+  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], invocationErrors: [], compiled: live };
 
   let discovered;
   try {

@@ -29,9 +29,13 @@ export function wireSessionLifecycle(
   sink: EventSink,
   options: { testCommand?: string } = {},
 ): void {
-  const emit = (event: BehaviorEvent) => {
-    void sink.publish({ event, receivedAt: new Date().toISOString() });
-  };
+  // Returns the sink's promise rather than voiding it. `void` here
+  // made publication fire-and-forget: withTranslation awaited emit,
+  // got undefined, and returned before the matcher had invoked
+  // anything, so a behavior's work -- and any error it raised -- was
+  // unobservable and raced the rest of the session.
+  const emit = (event: BehaviorEvent): Promise<void> =>
+    sink.publish({ event, receivedAt: new Date().toISOString() });
 
   // Every raw event is forwarded, and any semantic event it implies is
   // published straight after it. Without this the runtime emits only
