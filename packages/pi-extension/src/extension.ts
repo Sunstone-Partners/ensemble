@@ -8,6 +8,7 @@ import { createBehaviorInvoker, FixProvider, ConstitutionProvider, BehaviorRunRe
 import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { SuiteResult } from "./autofix-loop";
 import { logRuntime, runtimeLogPath } from "./runtime-log";
+import { createAgentFixProvider } from "./agent-fix-provider";
 import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
 import { execFileSync } from "node:child_process";
@@ -220,7 +221,12 @@ export function createActivate(options: ActivateOptions = {}): {
     const invoker = createBehaviorInvoker({
       rootDir: resolveRepoRoot(process.cwd()),
       compiled: () => lastActivation?.compiled ?? [],
-      proposeFix: options.proposeFix,
+      // Default to a real, model-backed provider. Leaving this undefined is
+      // what made `fix provider: NOT configured` the steady state: dispatch
+      // reached invocation and then stopped, so every downstream guarantee
+      // (guard, snapshot, suite verification, retry budget, commit policy)
+      // was reachable only from tests. Injectable so tests need not spawn.
+      proposeFix: options.proposeFix ?? createAgentFixProvider({ rootDir: resolveRepoRoot(process.cwd()) }),
       proposeConstitutionChange: options.proposeConstitutionChange,
       // The bridge is the production approval channel: it answers
       // through whatever UI context Pi most recently supplied.
