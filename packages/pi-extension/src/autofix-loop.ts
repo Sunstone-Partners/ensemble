@@ -39,8 +39,16 @@ export interface AutofixDeps {
   snapshot: () => WorkspaceSnapshot;
   /** Applies one authorized write. Separated so tests can fail a specific write. */
   applyWrite: (write: CandidateWrite) => void;
-  /** Runs the behavior-declared test command over the full suite. */
-  runSuite: () => SuiteResult | Promise<SuiteResult>;
+  /**
+   * Runs the behavior-declared test command over the full suite.
+   *
+   * Receives an AbortSignal and MUST honour it: when it fires, kill the
+   * child process. Measuring elapsed time after the fact does not bound
+   * anything -- a hung suite would simply run forever and be judged
+   * late. Implementations that spawn a process should pass this signal
+   * straight to child_process.
+   */
+  runSuite: (signal: AbortSignal) => SuiteResult | Promise<SuiteResult>;
   approval?: ApprovalGate;
   budget?: RetryBudget;
   /**
@@ -153,7 +161,48 @@ export class AutofixLoop {
     }
 
     const started = this.now();
-    const suite = await this.deps.runSuite();
+    const remaining = limit === undefined ? undefined : limit - this.elapsedFor(issue);
+
+    let suite: SuiteResult;
+    let timedOut = false;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const run = Promise.resolve(this.deps.runSuite(controller.signal));
+
+      if (remaining === undefined) {
+        suite = await run;
+      } else {
+        // Race the run against the remaining budget and abort it when
+        // the budget wins, so the child process is actually killed
+        // rather than merely judged late.
+        suite = await Promise.race([
+          run,
+          new Promise<SuiteResult>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+              reject(new Error(`suite verification aborted after ${remaining}ms`));
+            }, Math.max(0, remaining));
+          }),
+        ]);
+      }
+    } catch (error) {
+      if (timer) clearTimeout(timer);
+      if (!controller.signal.aborted) controller.abort();
+      snapshot.restore();
+      this.spentMs.set(issue, limit ?? this.elapsedFor(issue));
+      const n = this.budget.recordFailure(issue);
+      const reason = timedOut
+        ? `suite verification exceeded the declared timeout (${limit}ms) and was aborted`
+        : `suite verification failed to run: ${(error as Error).message}`;
+      if (n >= this.budget.limit || timedOut) return this.escalate(issue, reason, n);
+      return { status: "rejected", attempt: attemptNumber, issue, reason, restored: [] };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+
     const spent = this.elapsedFor(issue) + Math.max(0, this.now() - started);
     this.spentMs.set(issue, spent);
 

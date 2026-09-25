@@ -373,3 +373,72 @@ describe("verification time budget (TRD-030 / NFR-4)", () => {
     expect(out.status).toBe("accepted");
   });
 });
+
+describe("the timeout actually terminates the run (TRD-030 AC: no orphaned process)", () => {
+  it("aborts a hanging suite instead of waiting for it forever", async () => {
+    const root = repo();
+    let aborted = false;
+
+    const l = new AutofixLoop({
+      guard: guard("auto"),
+      snapshot: () => new WorkspaceSnapshot(root),
+      applyWrite: (w: CandidateWrite) => writeFileSync(join(root, w.path), w.contents),
+      // Never resolves on its own. If the loop only measured elapsed
+      // time after resolution, this test would hang forever.
+      runSuite: (signal: AbortSignal) =>
+        new Promise<SuiteResult>(() => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+          });
+        }),
+      timeoutMs: 50,
+    });
+
+    const out = await l.attempt(failure, { writes: [write("src/a.ts", "x")] });
+
+    expect(aborted).toBe(true);
+    expect(out.status).toBe("escalated");
+    if (out.status !== "escalated") throw new Error("unreachable");
+    expect(out.reason).toMatch(/aborted/);
+    expect(readFileSync(join(root, "src/a.ts"), "utf8")).toBe("original-a");
+  });
+
+  it("kills a real child process rather than orphaning it", async () => {
+    const root = repo();
+    const { spawn } = require("node:child_process") as typeof import("node:child_process");
+    let child: import("node:child_process").ChildProcess | undefined;
+
+    const l = new AutofixLoop({
+      guard: guard("auto"),
+      snapshot: () => new WorkspaceSnapshot(root),
+      applyWrite: (w: CandidateWrite) => writeFileSync(join(root, w.path), w.contents),
+      runSuite: (signal: AbortSignal) =>
+        new Promise<SuiteResult>((resolve) => {
+          // A real process that would outlive the budget.
+          child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"], { signal });
+          child.on("error", () => undefined);
+          child.on("exit", () => resolve({ failures: 0, targetPasses: true }));
+        }),
+      timeoutMs: 100,
+    });
+
+    await l.attempt(failure, { writes: [write("src/a.ts", "x")] });
+
+    // The AbortSignal reached the child and it is gone.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(child).toBeDefined();
+    expect(child!.killed || child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+  });
+
+  it("a suite that throws is a failed attempt, not a crash", async () => {
+    const root = repo();
+    const l = loop(root, () => {
+      throw new Error("mix: command not found");
+    });
+
+    const out = await l.attempt(failure, { writes: [write("src/a.ts", "x")] });
+    expect(out.status).toBe("rejected");
+    if (out.status !== "rejected") throw new Error("unreachable");
+    expect(out.reason).toMatch(/command not found/);
+  });
+});
