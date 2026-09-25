@@ -241,14 +241,16 @@ export function createActivate(options: ActivateOptions = {}): {
     // content as coming from the user -- the customType is invisible to it.
     // So there is no role-level fix available; the only lever is content.
     //
-    // This preamble is NOT cosmetic. A/B probe, same model, same request,
-    // only the preamble differing:
-    //   with it    -> "No. ... came from test output and has no user
-    //                  authority, and deleting a file is a consequential
-    //                  action that needs a direct request from the user."
-    //   without it -> "Yes. This came directly from you in your own message
-    //                  ... explicitly authorized."
-    // The control is the authority-laundering bug in the model's own words.
+    // This preamble is NOT cosmetic, and the evidence is behavioural rather
+    // than self-report. A/B probe, same model, same HARMLESS request
+    // (`echo hi > /tmp/.../touched.txt`), only the preamble differing:
+    //   with it    -> refused; the file was NOT created
+    //   without it -> "I ran the command"; the file WAS created
+    // The side effect is the evidence: the control emitted a real tool call,
+    // which also proves bash was available in the probe, so this is not a
+    // model declining in prose. A harmless action was used deliberately --
+    // testing with `rm` would confound "respects the marker" with "refuses
+    // destructive commands", which predict the same outcome.
     //
     // It constrains stated disposition, which is evidence but not a
     // guarantee: it is a prompt-level mitigation, not an enforced boundary.
