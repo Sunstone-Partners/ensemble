@@ -15,9 +15,39 @@ export interface CompiledBehaviorArtifacts {
   promptMarkdown: string;
   skillMarkdown: string;
   toolNames: string[];
+  /**
+   * Declared in `capabilities.tools` but resolvable to nothing: neither a
+   * registered ToolDescriptor nor a known native host tool. Previously such
+   * names were filtered out silently, so a behavior could declare a
+   * capability it could never exercise and look correctly configured.
+   * `bash.test` sat in investigate-test-failure's grant list this way --
+   * the behavior meant to run tests and had no means to run anything.
+   */
+  unresolvedTools: string[];
   /** TRD-009/AC-012-1: the behavior's own declared test command, never an npm guess. */
   testCommand?: string;
 }
+
+/**
+ * Host-provided tools that legitimately have no ToolDescriptor of ours.
+ * A declared tool is only "unresolved" when it is neither registered nor
+ * one of these -- otherwise every behavior would warn about `read`.
+ */
+const NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "bash",
+  "read",
+  "write",
+  "edit",
+  "grep",
+  "glob",
+  "find",
+  "ls",
+  "multiedit",
+  "todo",
+  "task",
+  "webfetch",
+  "websearch",
+]);
 
 export function compileBehaviorToArtifacts(
   compiled: CompiledBehaviorPackage,
@@ -53,6 +83,17 @@ export function compileBehaviorToArtifacts(
 
   const availableToolNames = new Set(availableTools.map((tool) => tool.name));
   const toolNames = manifest.capabilities.tools.filter((tool) => availableToolNames.has(tool));
+  const unresolvedTools = manifest.capabilities.tools.filter(
+    (tool) => !availableToolNames.has(tool) && !NATIVE_TOOL_NAMES.has(tool),
+  );
 
-  return { behaviorName, commandName, promptMarkdown, skillMarkdown, toolNames, testCommand: manifest.execution.test_command };
+  return {
+    behaviorName,
+    commandName,
+    promptMarkdown,
+    skillMarkdown,
+    toolNames,
+    unresolvedTools,
+    testCommand: manifest.execution.test_command,
+  };
 }

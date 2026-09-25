@@ -31,5 +31,23 @@ describe("compileBehaviorToArtifacts (TRD-014)", () => {
     // "echo" has a real ToolDescriptor available; "bash.test" does not (no
     // descriptor was passed in) — only genuinely available tools surface.
     expect(artifacts.toolNames).toEqual(["echo"]);
+    // ...and the dropped one is now REPORTED rather than silently discarded.
+    expect(artifacts.unresolvedTools).toEqual(["bash.test"]);
+  });
+
+  it("does not report native host tools as unresolved", () => {
+    // read/grep/bash have no ToolDescriptor of ours but are real host
+    // tools. Flagging them would make the warning noise and get ignored,
+    // which is how a real warning about `bash.test` gets missed.
+    const { compiled } = compile({
+      behaviors: [
+        {
+          ...manifest,
+          capabilities: { tools: ["read", "grep", "bash", "edit"], mutation_classes: [] },
+        },
+      ],
+    });
+    const artifacts = compileBehaviorToArtifacts(compiled[0], []);
+    expect(artifacts.unresolvedTools).toEqual([]);
   });
 });

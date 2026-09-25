@@ -60,6 +60,21 @@ export function loadCompiledBehavior(
     );
   }
 
+  // A declared tool that resolves to nothing is a capability the behavior
+  // can never exercise. Filtering it out silently (the prior behavior) made
+  // a misconfigured manifest indistinguishable from a correct one:
+  // investigate-test-failure declared `bash.test`, got no test-running
+  // ability at all, and reported nothing. Warn loudly; do not refuse,
+  // since a behavior may legitimately run with a reduced toolset.
+  if (artifacts.unresolvedTools.length > 0) {
+    const message =
+      `behavior "${compiled.manifest.metadata.name}" declares tool(s) that resolve to nothing: ` +
+      `[${artifacts.unresolvedTools.join(", ")}]. They are neither registered ToolDescriptors nor ` +
+      `known native host tools, so the behavior cannot use them and will run without those ` +
+      `capabilities.`;
+    console.warn(`[ensemble] ${message}`);
+  }
+
   wireToolGrantEnforcement(pi, compiled);
 
   pi.registerCommand(artifacts.commandName, {
