@@ -43,6 +43,16 @@ export interface AutofixDeps {
   runSuite: () => SuiteResult | Promise<SuiteResult>;
   approval?: ApprovalGate;
   budget?: RetryBudget;
+  /**
+   * Total wall-clock budget for suite verification across ALL attempts
+   * for one issue, from the behavior's declared policy.timeout
+   * (TRD-030 / NFR-4). Across attempts, not per attempt: three
+   * attempts each just under a per-attempt limit would otherwise run
+   * three times longer than the declared timeout allows.
+   */
+  timeoutMs?: number;
+  /** Injectable clock, so tests need not actually wait. */
+  now?: () => number;
 }
 
 export type AttemptOutcome =
@@ -52,9 +62,17 @@ export type AttemptOutcome =
 
 export class AutofixLoop {
   private readonly budget: RetryBudget;
+  private readonly spentMs = new Map<string, number>();
+  private readonly now: () => number;
 
   constructor(private readonly deps: AutofixDeps) {
     this.budget = deps.budget ?? new RetryBudget(3);
+    this.now = deps.now ?? (() => Date.now());
+  }
+
+  /** Verification time already spent on an issue, in ms. */
+  elapsedFor(issue: string): number {
+    return this.spentMs.get(issue) ?? 0;
   }
 
   get retryBudget(): RetryBudget {
@@ -127,7 +145,27 @@ export class AutofixLoop {
       }
     }
 
+    const limit = this.deps.timeoutMs;
+    if (limit !== undefined && this.elapsedFor(issue) >= limit) {
+      snapshot.restore();
+      const n = this.budget.recordFailure(issue);
+      return this.escalate(issue, `verification time budget of ${limit}ms exhausted`, n);
+    }
+
+    const started = this.now();
     const suite = await this.deps.runSuite();
+    const spent = this.elapsedFor(issue) + Math.max(0, this.now() - started);
+    this.spentMs.set(issue, spent);
+
+    // A suite that overran the declared timeout is treated as a failed
+    // attempt rather than allowed to vouch for a fix: NFR-4 bounds the
+    // total, so accepting a result produced past the limit would make
+    // the bound advisory.
+    if (limit !== undefined && spent > limit) {
+      snapshot.restore();
+      const n = this.budget.recordFailure(issue);
+      return this.escalate(issue, `suite verification exceeded the declared timeout (${spent}ms > ${limit}ms)`, n);
+    }
 
     // Acceptance requires the whole suite green, not just the target
     // test: a fix that repairs one test and breaks another is a
@@ -135,6 +173,7 @@ export class AutofixLoop {
     // worse while reporting success (AC-005-2).
     if (suite.targetPasses && suite.failures === 0) {
       this.budget.reset(issue);
+      this.spentMs.delete(issue);
       return { status: "accepted", attempt: attemptNumber, issue };
     }
 

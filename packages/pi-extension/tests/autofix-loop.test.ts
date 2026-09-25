@@ -320,3 +320,56 @@ describe("an I/O failure mid-apply is handled like a denial", () => {
     expect(l.retryBudget.attemptsFor(issueKey(failure))).toBe(1);
   });
 });
+
+describe("verification time budget (TRD-030 / NFR-4)", () => {
+  function timedLoop(root: string, perRunMs: number, timeoutMs: number) {
+    let clock = 0;
+    const l = new AutofixLoop({
+      guard: guard("auto"),
+      snapshot: () => new WorkspaceSnapshot(root),
+      applyWrite: (w: CandidateWrite) => writeFileSync(join(root, w.path), w.contents),
+      runSuite: () => {
+        clock += perRunMs;
+        return { failures: 1, targetPasses: true };
+      },
+      timeoutMs,
+      now: () => clock,
+    });
+    return l;
+  }
+
+  it("a suite overrunning the declared timeout escalates instead of vouching for the fix", async () => {
+    const root = repo();
+    const l = timedLoop(root, 5000, 1000);
+
+    const out = await l.attempt(failure, { writes: [write("src/a.ts", "x")] });
+
+    expect(out.status).toBe("escalated");
+    if (out.status !== "escalated") throw new Error("unreachable");
+    expect(out.reason).toMatch(/exceeded the declared timeout/);
+    expect(readFileSync(join(root, "src/a.ts"), "utf8")).toBe("original-a");
+  });
+
+  it("the budget is across attempts, not per attempt", async () => {
+    // Three attempts each under the limit must not be allowed to run
+    // three times the declared total.
+    const root = repo();
+    const l = timedLoop(root, 400, 1000);
+
+    const first = await l.attempt(failure, { writes: [write("src/a.ts", "1")] });
+    const second = await l.attempt(failure, { writes: [write("src/a.ts", "2")] });
+    const third = await l.attempt(failure, { writes: [write("src/a.ts", "3")] });
+
+    expect(first.status).toBe("rejected");
+    expect(second.status).toBe("rejected");
+    expect(third.status).toBe("escalated");
+    expect(l.elapsedFor(issueKey(failure))).toBeGreaterThanOrEqual(1000);
+  });
+
+  it("no timeout configured means no time-based escalation", async () => {
+    const root = repo();
+    const out = await loop(root, { failures: 0, targetPasses: true })
+      .attempt(failure, { writes: [write("src/a.ts", "x")] });
+    expect(out.status).toBe("accepted");
+  });
+});
