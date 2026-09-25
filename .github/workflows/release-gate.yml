@@ -1,0 +1,51 @@
+name: Release Gate
+
+# Runs only on the dev -> main release PR.
+#
+# main is the live distribution channel: every marketplace.json source is an
+# unpinned relative path (./packages/<name>), so consumers resolve whatever
+# main currently holds. A merge here reaches installed machines directly,
+# without a tag or a release being involved.
+#
+# That makes this the last point at which a stale version can be stopped.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # validate-release-bump.js diffs HEAD against the base branch, so
+          # the full history has to be present. With the default shallow
+          # fetch the diff fails and the gate cannot run at all.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Fetch base branch
+        run: git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} --force
+
+      # Were the changed packages bumped at all?
+      - name: Require version bumps for changed packages
+        run: node scripts/validate-release-bump.js origin/${{ github.base_ref }}
+
+      # Do the bumped versions agree across package.json, plugin.json and
+      # marketplace.json? A bump applied to only some of those is what makes
+      # a package stop re-syncing on consumer machines.
+      - name: Verify version fields are in sync
+        run: node scripts/validate-version-sync.js
+
+      - name: Run validation
+        run: npm run validate
+
+      - name: Run tests
+        run: npm test
