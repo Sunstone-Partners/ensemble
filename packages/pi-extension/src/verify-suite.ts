@@ -54,6 +54,15 @@ export function verifySuite(
     };
   }
 
+  // The exit code is NOT trusted on its own. Observed live: the model ran
+  // `npx jest live-e2e 2>&1 | tail -60`, and in a pipeline $? is the status of
+  // `tail`, not of jest -- so a suite reporting "1 failed, 1 passed" exited 0
+  // and was graded "passed". Any reported failure count outweighs a zero exit.
+  const failed = /\b([1-9]\d*)\s+failed/.exec(totals);
+  if (failed) {
+    return { status: "failed", detail: totals.trim() };
+  }
+
   return {
     status: out.status === 0 ? "passed" : "failed",
     detail: totals.trim(),

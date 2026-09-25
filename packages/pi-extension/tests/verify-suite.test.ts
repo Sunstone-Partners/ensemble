@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,5 +71,27 @@ describe("verifySuite grades the suite, not the claim", () => {
     expect(verifySuite(CMD, root, elsewhere).status).toBe("passed");
     // No cwd: falls back, finds nothing, and must NOT claim success.
     expect(verifySuite(CMD, undefined, elsewhere).status).toBe("inconclusive");
+  });
+});
+
+describe("a pipeline must not launder a failure into a pass", () => {
+  const JEST2 = join(__dirname, "..", "..", "..", "node_modules", ".bin", "jest");
+
+  // Observed live: the model piped test output through `tail`, so $? was
+  // tail's exit status (0) and a failing suite was graded "passed". The
+  // reported failure count is authoritative over the exit code.
+  it("reports failed when the suite failed but the pipeline exited 0", () => {
+    const root = mkdtempSync(join(tmpdir(), "verify-pipe-"));
+    mkdirSync(join(root, "tests"), { recursive: true });
+    writeFileSync(join(root, "src.js"), "exports.add = (a, b) => a - b;\n");
+    writeFileSync(
+      join(root, "tests/sum.test.js"),
+      'const { add } = require("../src.js");\ntest("adds", () => { expect(add(1,1)).toBe(2); });\n',
+    );
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "p", version: "1.0.0" }));
+
+    const piped = `${JEST2} --rootDir . sum 2>&1 | tail -60`;
+    expect(spawnSync("bash", ["-lc", `cd ${root} && ${piped}`]).status).toBe(0); // pipeline hides it
+    expect(verifySuite(piped, root, root).status).toBe("failed");
   });
 });

@@ -14,6 +14,12 @@ import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
 import { execFileSync, spawnSync } from "node:child_process";
 import { beginBehaviorScope, endBehaviorScope } from "./tool-grant-enforcement";
 import { verifySuite } from "./verify-suite";
+import {
+  snapshotWorkingTree,
+  restoreWorkingTree,
+  type WorkingTreeSnapshot,
+  type RestoreResult,
+} from "./working-tree-snapshot";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -218,6 +224,7 @@ export function createActivate(options: ActivateOptions = {}): {
       instruction: string;
       behaviors: string[];
       cwd?: string;
+      snapshot?: WorkingTreeSnapshot;
     }[] = [];
     const continuationAttempts = new Map<string, number>();
     // Injected turns are currently indistinguishable from real user input
@@ -241,7 +248,16 @@ export function createActivate(options: ActivateOptions = {}): {
       if (used >= MAX_CONTINUATIONS_PER_ISSUE) return false;
       if (continuationQueue.some((q) => q.key === key)) return false;
       continuationAttempts.set(key, used + 1);
-      continuationQueue.push({ key, instruction, behaviors, cwd });
+      // Snapshot BEFORE the fix turn is injected. Snapshotting at
+      // verification time would capture the damage, not the state to
+      // return to.
+      continuationQueue.push({
+        key,
+        instruction,
+        behaviors,
+        cwd,
+        snapshot: snapshotWorkingTree(resolveRepoRoot(process.cwd())),
+      });
       return true;
     };
 
@@ -257,7 +273,9 @@ export function createActivate(options: ActivateOptions = {}): {
 
     // Set when a continuation turn has been injected and its result has not
     // yet been independently checked.
-    let awaitingVerification: { command: string; cwd?: string } | undefined;
+    let awaitingVerification:
+      | { command: string; cwd?: string; snapshot?: WorkingTreeSnapshot }
+      | undefined;
 
     // The window closes at agent_end, NOT turn_end. Reproduced: an injected
     // continuation spans MULTIPLE assistant turns (four in a probe), so
@@ -274,15 +292,28 @@ export function createActivate(options: ActivateOptions = {}): {
       // the source correctly repaired and the verdict wrong. agent_end
       // fires once, after the run settles.
       if (awaitingVerification) {
-        const { command, cwd } = awaitingVerification;
+        const { command, cwd, snapshot } = awaitingVerification;
         awaitingVerification = undefined;
         const verdict = verifyCommand(command, cwd);
+
+        // Rollback happens ONLY on a definite "failed". An "inconclusive"
+        // verdict means we could not tell whether the fix worked, and
+        // destroying a possibly-good fix on a non-verdict is worse than
+        // leaving it and reporting the uncertainty.
+        let rollback: RestoreResult | undefined;
+        if (verdict.status === "failed" && snapshot) {
+          rollback = restoreWorkingTree(snapshot);
+        }
+
         logRuntime(resolveRepoRoot(process.cwd()), {
           kind: "verification",
           issue: command,
           cwd,
           status: verdict.status,
           detail: verdict.detail,
+          ...(rollback
+            ? { rolledBack: rollback.restored, removed: rollback.removed, rollbackDetail: rollback.detail }
+            : {}),
         });
       }
       return undefined;
@@ -306,7 +337,7 @@ export function createActivate(options: ActivateOptions = {}): {
       // grants of the behaviors that matched, not the user's own.
       beginBehaviorScope(pi, next.behaviors);
       await pi.sendUserMessage(`${AUTOFIX_MARKER} ${next.instruction}`);
-      awaitingVerification = { command: next.key, cwd: next.cwd };
+      awaitingVerification = { command: next.key, cwd: next.cwd, snapshot: next.snapshot };
       return undefined;
     });
 
