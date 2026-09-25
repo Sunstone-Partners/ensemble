@@ -12,22 +12,65 @@ import type { BehaviorEvent } from "../events";
  */
 
 /** Commands treated as test runs when they fail. */
+// Anchored with ^: these are matched against a command-position token
+// sequence, never against the whole command line. See isTestCommand.
 const TEST_COMMAND_PATTERNS: readonly RegExp[] = [
-  /\bnpm\s+(run\s+)?test\b/,
-  /\bnpx\s+jest\b/,
-  /\bjest\b/,
-  /\bvitest\b/,
-  /\bpytest\b/,
-  /\bgo\s+test\b/,
-  /\bcargo\s+test\b/,
-  /\bmix\s+test\b/,
-  /\bbun\s+test\b/,
-  /\bpnpm\s+(run\s+)?test\b/,
-  /\byarn\s+test\b/,
+  /^npm\s+(run\s+)?test\b/,
+  /^(\S*\/)?jest\b/,
+  /^(\S*\/)?vitest\b/,
+  /^(\S*\/)?pytest\b/,
+  /^python\s+-m\s+pytest\b/,
+  /^go\s+test\b/,
+  /^cargo\s+test\b/,
+  /^mix\s+test\b/,
+  /^bun\s+test\b/,
+  /^pnpm\s+(run\s+)?test\b/,
+  /^yarn\s+test\b/,
 ];
 
+/** Shell operators that begin a new command. */
+const SEGMENT_SPLIT = /(?:\|\||&&|;|\||\n)/;
+/** Wrappers that delegate to the runner named after them. */
+const WRAPPERS = new Set(["npx", "bunx", "sudo", "time", "env", "exec", "command"]);
+
+/**
+ * True when the command actually INVOKES a test runner.
+ *
+ * Substring matching was wrong and fired in production. Observed live: the
+ * model ran
+ *   `git status --short; ls tests src; cat src/live-math.ts; cat jest.config.* package.json`
+ * and `/\bjest\b/` matched the FILENAME `jest.config.*`. That misclassified an
+ * investigation command as a failing test run, queued a continuation for it,
+ * and burned a retry from the budget on a command that runs no tests.
+ *
+ * So the runner must appear in COMMAND POSITION: the first token of some
+ * shell segment, after stripping wrappers (npx, bunx, env VAR=1, ...) and
+ * leading environment assignments. Mentioning a runner as an ARGUMENT --
+ * `cat jest.config.js`, `grep jest package.json` -- is not an invocation.
+ */
 export function isTestCommand(command: string): boolean {
-  return TEST_COMMAND_PATTERNS.some((pattern) => pattern.test(command));
+  return command
+    .split(SEGMENT_SPLIT)
+    .some((segment) => segmentInvokesRunner(segment));
+}
+
+function segmentInvokesRunner(segment: string): boolean {
+  let tokens = segment.trim().split(/\s+/).filter(Boolean);
+  // Strip leading `VAR=value` assignments and known wrappers so that
+  // `CI=1 npx jest` is recognised while `cat jest.config.js` is not.
+  while (tokens.length > 0) {
+    const head = tokens[0] as string;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(head) || WRAPPERS.has(head)) {
+      tokens = tokens.slice(1);
+      continue;
+    }
+    break;
+  }
+  if (tokens.length === 0) return false;
+  // Re-join so multi-word invocations (`go test`, `npm run test`) still match,
+  // but anchor every pattern to the START of the command.
+  const invocation = tokens.join(" ");
+  return TEST_COMMAND_PATTERNS.some((pattern) => pattern.test(invocation));
 }
 
 /**

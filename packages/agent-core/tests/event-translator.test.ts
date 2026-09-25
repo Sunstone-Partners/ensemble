@@ -69,3 +69,44 @@ describe("withTranslation wiring", () => {
     expect(seen).toEqual(["runtime.tool_call.completed"]);
   });
 });
+
+describe("isTestCommand requires an INVOCATION, not a mention", () => {
+  // The exact command observed live. `/\bjest\b/` matched the filename in
+  // `cat jest.config.*`, so an investigation command was classified as a
+  // failing test run: it queued a continuation and burned a retry from the
+  // budget on a command that runs no tests at all.
+  it("rejects the investigation command that matched a filename in production", () => {
+    expect(
+      isTestCommand(
+        "git status --short; ls tests src; cat src/live-math.ts; cat tests/live-e2e*.ts; cat jest.config.* package.json 2>/dev/null",
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "cat jest.config.js",
+    "grep -n jest package.json",
+    "ls node_modules/.bin/jest",
+    "echo 'run pytest later'",
+  ])("rejects a runner named as an argument: %s", (cmd) => {
+    expect(isTestCommand(cmd)).toBe(false);
+  });
+
+  // The opposite error is worse: failing to recognise a real test run means
+  // autofix never starts. Wrappers and env prefixes must still be seen.
+  it.each([
+    "npx jest live-e2e",
+    "npx jest live-e2e 2>&1 | tail -60",
+    "CI=1 npx jest",
+    "cd packages/agent-core && npx jest live-e2e",
+    "npm test",
+    "npm run test -- --watch=false",
+    "pnpm test",
+    "go test ./...",
+    "cargo test",
+    "python -m pytest tests/",
+    "./node_modules/.bin/jest",
+  ])("accepts a real invocation: %s", (cmd) => {
+    expect(isTestCommand(cmd)).toBe(true);
+  });
+});
