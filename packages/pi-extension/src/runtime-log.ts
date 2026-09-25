@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
@@ -10,22 +11,28 @@ import { dirname, join } from "node:path";
  * between "the pipeline ran correctly" and "the extension never
  * loaded". Every claim about live behavior was therefore unverifiable.
  *
- * The log is the evidence, and within an ARMED repository it is written
- * unconditionally: a diagnostic that has to be switched on is not available
- * at the moment something surprising happens.
+ * The log is the evidence, and it is written unconditionally: a diagnostic
+ * that has to be switched on is not available at the moment something
+ * surprising happens.
  *
- * It is gated on the repository having behaviours, though. The extension is
- * installed globally and loads in EVERY session, so writing unconditionally
- * created a .ensemble/runtime-log.jsonl inside any directory the user
- * happened to cd into -- including ones with no behaviours, where the
- * runtime does nothing at all. An inert feature that litters every
- * repository is not inert. Logging stays off until activation discovers at
- * least one behaviour.
+ * WHERE it lands is conditional, and that distinction is load-bearing. The
+ * extension is installed globally and loads in EVERY session, so writing to
+ * <cwd>/.ensemble/ unconditionally created a stray log inside any directory
+ * the user happened to open -- including ones with no behaviours.
+ *
+ * Suppressing the write instead was worse, and was briefly done here: a
+ * repository that discovers 0 behaviours BECAUSE OF A BUG would then produce
+ * no evidence at all, which is precisely the "cannot distinguish working
+ * from never-loaded" problem this file exists to prevent.
+ *
+ * So: an unarmed session still records its activation, out of the way, under
+ * ~/.omp/ensemble/. Only the per-session event stream -- which is noise
+ * outside a repository that actually uses behaviours -- is dropped.
  */
 
 let armed = false;
 
-/** Enabled once activation finds behaviours in this repository. */
+/** Set once activation has counted the behaviours in this repository. */
 export function setRuntimeLoggingArmed(value: boolean): void {
   armed = value;
 }
@@ -44,12 +51,28 @@ export function runtimeLogPath(rootDir: string): string {
   return join(rootDir, ".ensemble", "runtime-log.jsonl");
 }
 
+/**
+ * Where activation records go when a repository armed nothing. Outside the
+ * user's tree, so it never shows up in their git status, but still on disk
+ * so "it did nothing" and "it never loaded" stay distinguishable.
+ */
+export function unarmedRuntimeLogPath(): string {
+  return join(homedir(), ".omp", "ensemble", "runtime-log.jsonl");
+}
+
 export function logRuntime(rootDir: string, entry: Omit<RuntimeLogEntry, "at">): void {
-  if (!armed) return;
+  // Activation is the one record that must survive an unarmed session: it is
+  // the only thing that proves the extension loaded at all.
+  const path = armed
+    ? runtimeLogPath(rootDir)
+    : entry.kind === "activation"
+      ? unarmedRuntimeLogPath()
+      : null;
+  if (!path) return;
   try {
-    const path = runtimeLogPath(rootDir);
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n");
+    const record = armed ? entry : { ...entry, cwd: rootDir };
+    appendFileSync(path, JSON.stringify({ at: new Date().toISOString(), ...record }) + "\n");
   } catch {
     // Logging must never break a session. Silence here is deliberate,
     // and is the one place in this package where swallowing is correct.
