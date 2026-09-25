@@ -7,7 +7,7 @@ import { activateBehaviorPipeline, resolveRepoRoot, BehaviorActivationResult } f
 import { createBehaviorInvoker, FixProvider, ConstitutionProvider, BehaviorRunRecord } from "./behavior-runner";
 import { ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { SuiteResult } from "./autofix-loop";
-import { logRuntime, runtimeLogPath, setRuntimeLoggingArmed } from "./runtime-log";
+import { logRuntime, runtimeLogPath, setRuntimeLoggingArmed, isRuntimeLoggingArmed } from "./runtime-log";
 import { createAgentFixProvider } from "./agent-fix-provider";
 import { SessionUiBridge } from "./session-ui";
 import { WriteBoundaryMonitor } from "@sunstone-partners/ensemble-agent-core";
@@ -569,7 +569,11 @@ ${next.instruction}`);
           `  fix provider     : configured (${options.proposeFix ? "injected" : "agent subprocess"})`,
           `  dispatches in flight : ${pendingDispatches.size}`,
           `  approval channel : ${uiBridge.hasUI ? "live (ui.confirm)" : "unavailable - constitution changes fail closed"}`,
-          `  log              : ${runtimeLogPath(resolveRepoRoot(process.cwd()))}`,
+          `  log              : ${
+            isRuntimeLoggingArmed()
+              ? runtimeLogPath(resolveRepoRoot(process.cwd()))
+              : "(none - no behaviors here, so nothing is written to this repo)"
+          }`,
         ];
         const text = lines.join("\n");
         if (ctx.hasUI && ctx.ui?.notify) ctx.ui.notify(text);
