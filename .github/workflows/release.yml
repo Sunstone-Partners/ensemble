@@ -21,6 +21,16 @@ jobs:
         with:
           node-version: '20'
 
+      # `npm test` includes packages/router's Python suite, which fails in CI
+      # without pytest (by design, #75). Same setup as test.yml.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: python3 -m pip install --quiet 'pytest==9.1.1'
+
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
