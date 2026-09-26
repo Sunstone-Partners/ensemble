@@ -1,0 +1,38 @@
+// markdownlint config, read by `markdownlint-cli` (via reviewdog/action-markdownlint
+// in CI) and the local `npm run lint:md` script.
+//
+// This repo has ~700 Markdown files: generated command/agent docs, skill
+// docs, PRD/TRD templates with embedded tables and code fences, and a
+// CHANGELOG with duplicate per-release headings. The rules below are the
+// ones that fire constantly on that content without catching real mistakes;
+// everything else stays at markdownlint's default "recommended" strictness.
+{
+  "default": true,
+  // Long lines are routine in prose docs, tables, and generated content.
+  "MD013": false,
+  // Generated docs and skill READMEs intentionally use raw HTML (badges,
+  // <details>, alignment) that Markdown alone can't express.
+  "MD033": false,
+  // CHANGELOG.md and generated command docs reuse heading text
+  // (e.g. "## Changes") across sections/releases by design.
+  "MD024": { "siblings_only": true },
+  // Many generated/template docs open with a badge row or metadata block
+  // before the first heading.
+  "MD041": false,
+  // Skill/template docs mix fenced-code languages inconsistently; not
+  // worth gating PRs on.
+  "MD040": false,
+  // Bare reference URLs show up in PRD/TRD research notes.
+  "MD034": false,
+  // Blank-line-padding rules around lists/fences/headings and ordered-list
+  // numbering style (1/1/1 vs 1/2/3) are inconsistent across the ~700
+  // existing docs -- enabling them flags nearly every pre-existing block a
+  // PR touches, not just genuine mistakes.
+  "MD022": false,
+  "MD029": false,
+  "MD031": false,
+  "MD032": false,
+  // New, very strict pipe-spacing rule; this repo's existing tables don't
+  // follow one consistent style.
+  "MD060": false
+}

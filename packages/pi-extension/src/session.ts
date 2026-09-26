@@ -1,0 +1,73 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { BehaviorEvent, EventSink, translateEvent } from "@sunstone-partners/ensemble-agent-core";
+import {
+  fromSessionStart,
+  fromBeforeAgentStart,
+  fromToolExecutionStart,
+  fromToolExecutionEnd,
+  fromAgentEnd,
+  fromSessionShutdown,
+  fromToolCall,
+  fromToolResult,
+} from "./pi-events";
+
+/**
+ * Subscribes to Pi's lifecycle via the confirmed ExtensionAPI
+ * (`pi.on(...)`) and forwards normalized events to the given sink.
+ * No Pi agent-loop fork or patch is required, and no Claude-style hook
+ * mechanism is involved anywhere in this path (REQ-006/AC-006-2):
+ * capture works whether or not any hook configuration exists, because
+ * it is wired entirely through Pi's own native extension events.
+ *
+ * tool_call/tool_result (REQ-007) fire around every tool invocation —
+ * both governed custom tools and Pi's own native tools (bash/read/etc)
+ * — with a shared `toolCallId` correlating the pair, and are
+ * distinguished custom-vs-native in pi-events.ts.
+ */
+export function wireSessionLifecycle(
+  pi: ExtensionAPI,
+  sink: EventSink,
+  options: {
+    /** String, or a getter resolved per event once behaviors have loaded. */
+    testCommand?: string | (() => string | undefined);
+    onContext?: (ctx: unknown) => void;
+  } = {},
+): void {
+  const seen = (ctx: unknown) => options.onContext?.(ctx);
+  // Returns the sink's promise rather than voiding it. `void` here
+  // made publication fire-and-forget: withTranslation awaited emit,
+  // got undefined, and returned before the matcher had invoked
+  // anything, so a behavior's work -- and any error it raised -- was
+  // unobservable and raced the rest of the session.
+  const emit = (event: BehaviorEvent): Promise<void> =>
+    sink.publish({ event, receivedAt: new Date().toISOString() });
+
+  // Every raw event is forwarded, and any semantic event it implies is
+  // published straight after it. Without this the runtime emits only
+  // runtime.* events and a behavior triggering on test.failure.observed
+  // can never fire in production, however correct its manifest is
+  // (TRD-012 / REQ-002).
+  // Resolved per event, not at wiring time: wireSessionLifecycle runs
+  // before behaviors are discovered, so a behavior-declared
+  // test_command captured here would always be undefined. That is why
+  // a real `node livetest/math.test.js` failure produced no
+  // test.failure.observed in a live session -- only the hardcoded
+  // runner patterns could ever match.
+  const resolveTestCommand = (): string | undefined =>
+    typeof options.testCommand === "function" ? options.testCommand() : options.testCommand;
+
+  const publish = async (event: BehaviorEvent): Promise<void> => {
+    await emit(event);
+    const derived = translateEvent(event, { testCommand: resolveTestCommand() });
+    if (derived) await emit(derived);
+  };
+
+  pi.on("session_start", async (event, ctx) => { seen(ctx); return publish(fromSessionStart(event)); });
+  pi.on("before_agent_start", async (event, ctx) => { seen(ctx); return publish(fromBeforeAgentStart(event)); });
+  pi.on("tool_execution_start", async (event, ctx) => { seen(ctx); return publish(fromToolExecutionStart(event)); });
+  pi.on("tool_execution_end", async (event, ctx) => { seen(ctx); return publish(fromToolExecutionEnd(event)); });
+  pi.on("tool_call", async (event, ctx) => { seen(ctx); return publish(fromToolCall(event)); });
+  pi.on("tool_result", async (event, ctx) => { seen(ctx); return publish(fromToolResult(event)); });
+  pi.on("agent_end", async (event, ctx) => { seen(ctx); return publish(fromAgentEnd(event)); });
+  pi.on("session_shutdown", async (event, ctx) => { seen(ctx); return publish(fromSessionShutdown(event)); });
+}

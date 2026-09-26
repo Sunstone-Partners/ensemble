@@ -1,0 +1,77 @@
+api_version: ensemble.sunstone.dev/v1
+kind: Behavior
+metadata:
+  name: fix-failing-test
+  version: 1.0.0
+trigger:
+  event_type: test.failure.observed
+  predicate:
+    # Deliberately the same runner list as investigate-test-failure, not a
+    # looser `isError` alone. A bare isError predicate fires on ANY errored
+    # bash command, including ones that have nothing to do with a test suite.
+    command: { matches: "npm test|npx jest|jest|vitest|mix test|pytest|go test|cargo test" }
+    isError: { equals: true }
+policy:
+  # Changed from `auto` to `propose` (2026-09-25): a live run produced a
+  # change to packages/agent-core/src/behavior/outbox.ts
+  # (`if (this.entries.length > 0) return;`) that landed uncommitted with no
+  # human review. `propose` makes MutationGuard.authorize() deny every
+  # direct mutation and require a human to apply the proposal instead
+  # (mutation-guard.ts:122-130) -- but ONLY on the governed dispatch path.
+  #
+  # This does NOT close the gap below: the continuation path bypasses
+  # MutationGuard regardless of `mode`, and a `bash`-granted behavior can
+  # write straight past MutationGuard/WorkspaceSnapshot via shell redirection
+  # (write-boundary-monitor.ts's docstring documents exactly this happening
+  # with a live model and `printf > file`). Both are open as br-o355. Treat
+  # `propose` as raising the bar, not as a closed loop, until br-o355 lands.
+  mode: propose
+  timeout: 10m
+capabilities:
+  # `edit` is the difference between this behavior and
+  # investigate-test-failure, which is read-only and therefore can observe a
+  # failure without ever repairing it.
+  #
+  # What mutation_classes buys depends on WHICH dispatch path runs, and there
+  # are two:
+  #
+  #   governed     behavior-runner.runBehavior -> AutofixLoop, constructed
+  #                with createMutationGuard(compiled) at behavior-runner.ts:123.
+  #                Every write is authorized against this list, snapshotted,
+  #                and verified against execution.test_command over the whole
+  #                suite before acceptance.
+  #
+  #   continuation pi.sendUserMessage injects a turn and the MODEL applies the
+  #                change with its own edit calls. Snapshot, verification and
+  #                rollback still apply; MutationGuard does not, because no
+  #                write passes through it. agent-fix-provider.ts:14 says so
+  #                outright.
+  #
+  # The run that proved this behavior worked logged a continuation and no
+  # dispatch/invocation record at all -- so the continuation path is what
+  # fires in practice, and this list was not consulted. The guard is wired,
+  # not dead code; the gap is that the two paths diverge. That is br-o355.
+  tools: [read, grep, glob, bash, edit]
+  mutation_classes: [artifact.write]
+execution:
+  graph: fix-failing-test
+  # Was required by the loader while policy.mode was auto; now optional
+  # under propose, but left in place since it's the command a human
+  # approver (or a future auto/governed run) should verify a proposal
+  # against. Be precise about what it currently does: the governed path
+  # re-runs this command over the WHOLE
+  # suite before accepting a fix, so a repair that greens its target while
+  # breaking three others is rejected. On the continuation path -- the one
+  # observed firing -- it is never invoked, and only the narrower failing
+  # command is re-run. Until br-o355 converges the paths, treat this as
+  # satisfying validation rather than as a live full-suite guarantee.
+  #
+  # Runs from the repository root. There is no root jest config, so whether
+  # this collects anything was checked rather than assumed: `npx jest
+  # --listTests` from the root yields 170 suites, including 18 under
+  # packages/agent-core and 16 under packages/pi-extension. It is a real
+  # full-suite command, not a zero-test run that would exit 0 and make the
+  # whole-suite check vacuous.
+  test_command: npx jest
+outcomes:
+  - test.failure.investigated

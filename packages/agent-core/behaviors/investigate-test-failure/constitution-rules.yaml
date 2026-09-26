@@ -1,0 +1,18 @@
+# Constitution rules scoping this behavior's local execution.
+# Referenced by the behavior package layout in
+# docs/architecture/ensemble-behavior-runtime-plan.md §7. Enforced
+# outside this behavior's own compiled capabilities — this file
+# documents policy context, it does not itself grant capabilities
+# (capabilities.tools/mutation_classes in behavior.yaml are the sole
+# authority for what this behavior may do).
+rules:
+  - id: require-evidence-before-mutation
+    description: >
+      Any mutation_classes capability (artifact.write, pr.open,
+      constitution.propose) requires at least one evidence reference on
+      the triggering domain-tool call before a mutation may be proposed.
+  - id: propose-only-mode
+    description: >
+      policy.mode is "propose" — this behavior never applies a mutation
+      directly; it only produces a proposal for human or downstream
+      review.
