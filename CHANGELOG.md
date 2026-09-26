@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.9.4] - 2026-09-26
+
+### Fixed
+
+- **core:** the `init-project` constitution template emits Article-style headings (#68).
+  Bumps `ensemble-core` 5.6.0 → 5.6.1.
+- **development:** `create-trd-foreman` runs the Constitution Gate (#67), and `create-trd`
+  makes the gate observable on every run (#69). Bumps `ensemble-development` 6.0.5 → 6.0.6.
+- **product:** `create-prd` makes the Constitution Gate observable on every run (#69).
+  Bumps `ensemble-product` 5.6.0 → 5.6.1.
+- **pi:** generated agents keep an explicitly declared `Task` as native `task`, so OMP
+  orchestrators can delegate, without granting delegation to agents that don't declare it (#71).
+  Bumps `ensemble-pi` 1.6.9 → 1.6.10.
+- **codex:** regenerated `create-prd`, `create-trd` and `create-trd-foreman` skills for the
+  changes above. Bumps `ensemble-codex` 5.3.1 → 5.3.2.
+
+### CI
+
+- `dev` is now the integration branch; PRs into `main` must come from `dev` and pass a release
+  gate that requires version bumps for changed packages (#82).
+- The router's Python suite runs in CI, and fails rather than passing when pytest is missing (#75).
+
+`ensemble-full` 6.9.3 → 6.9.4.
+
 ## [6.9.3] - 2026-08-13
 
 ### Removed

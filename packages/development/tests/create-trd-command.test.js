@@ -259,4 +259,27 @@ describe('create-trd constitution gate contract', () => {
     expect(text).toContain('Constitution compliance: passed');
     expect(text).toContain('only after constitution compliance passes');
   });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s makes the gate observable on every invocation, independent of pass/fail (br-0eg)', (_label, filePath) => {
+    const contract = contractSection(read(filePath));
+
+    // Printed unconditionally before source resolution -- makes "gate ran"
+    // detectable even when a session is serving a stale, pre-gate cached
+    // copy of everything downstream of this line.
+    expect(contract).toContain('Constitution Gate: running');
+    expect(contract).toContain('MUST print on every single invocation, unconditionally, before any pass/fail/HALT determination');
+    // A distinct terminal-status line per outcome, so silence is never
+    // possible and "ran and passed" can't be confused with "never ran".
+    expect(contract).toContain('Constitution Gate: HALT (CONSTITUTION_CONFIG_ERROR)');
+    expect(contract).toContain('Constitution Gate: HALT (article violation:');
+    expect(contract).toContain('Constitution Gate: PASSED');
+    // The known session-caching staleness risk is documented in the gate
+    // itself, not just left to bite silently.
+    expect(contract).toContain('Known limitation');
+    expect(contract).toContain('keeps serving its first-loaded copy');
+    expect(contract).toContain('Restart the session');
+  });
 });
