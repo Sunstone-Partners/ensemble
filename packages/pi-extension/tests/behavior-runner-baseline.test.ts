@@ -127,3 +127,85 @@ describe("behavior runner: pre-provider baseline", () => {
     expect(record.outcome?.status).toBe("accepted");
   });
 });
+
+/**
+ * The before/after check. A fix provider REPLIES with a candidate; it never
+ * writes. Observed live: a fix-agent child with write tools edited the main
+ * checkout directly. The read-only tool allowlist is one layer; this is the
+ * second, and it trusts nothing about the provider -- it looks at the tree.
+ */
+describe("behavior runner: tree before/after the provider", () => {
+  it("refuses the candidate when a non-target file changed during generation", async () => {
+    const root = gitRepo();
+    const record = await run(root, () => {
+      writeFileSync(join(root, "src", "other.ts"), "written by the provider\n");
+      return fix("src/a.ts", "export const a = 2;\n");
+    });
+
+    expect(record.outcome?.status).toBe("rejected");
+    expect(record.outcome?.status === "rejected" && record.outcome.reason).toMatch(
+      /working tree changed while the fix was being generated \(src\/other\.ts\)/,
+    );
+    expect(record.treeDrift).toEqual(["src/other.ts"]);
+    // Nothing written, nothing reverted.
+    expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
+    expect(readFileSync(join(root, "src", "other.ts"), "utf8")).toBe("written by the provider\n");
+  });
+
+  it("catches a modified and a deleted tracked file", async () => {
+    const root = gitRepo();
+    writeFileSync(join(root, "src", "b.ts"), "b\n");
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"], { cwd: root });
+    const record = await run(root, () => {
+      writeFileSync(join(root, "src", "b.ts"), "changed\n");
+      rmSync(join(root, "src", "a.ts"));
+      return fix("src/c.ts", "c\n");
+    });
+
+    expect(record.outcome?.status).toBe("rejected");
+    expect(record.treeDrift).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("reports writes even when the provider offers no candidate", async () => {
+    // A child that wrote and then replied nothing parseable.
+    const root = gitRepo();
+    const record = await run(root, () => {
+      writeFileSync(join(root, "src", "a.ts"), "export const a = 'child';\n");
+      return undefined;
+    });
+
+    expect(record.outcome).toBeUndefined();
+    expect(record.treeDrift).toEqual(["src/a.ts"]);
+    expect(record.note).toMatch(/no fix candidate offered; working tree changed while the provider ran \(src\/a\.ts\)/);
+  });
+
+  it("ignores runtime state the session itself writes", async () => {
+    const root = gitRepo();
+    mkdirSync(join(root, ".beads"));
+    writeFileSync(join(root, ".beads", "issues.jsonl"), "{}\n");
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "beads"], { cwd: root });
+    const record = await run(root, () => {
+      writeFileSync(join(root, ".beads", "issues.jsonl"), "{}\n{}\n");
+      mkdirSync(join(root, ".ensemble"));
+      writeFileSync(join(root, ".ensemble", "runtime-log.jsonl"), "{}\n");
+      return fix("src/a.ts", "export const a = 2;\n");
+    });
+
+    expect(record.treeDrift).toBeUndefined();
+    expect(record.outcome?.status).toBe("accepted");
+  });
+
+  it("does not treat staging an unchanged file as a change", async () => {
+    const root = gitRepo();
+    writeFileSync(join(root, "src", "new.ts"), "same\n");
+    const record = await run(root, () => {
+      execFileSync("git", ["add", "src/new.ts"], { cwd: root });
+      return fix("src/a.ts", "export const a = 2;\n");
+    });
+
+    expect(record.treeDrift).toBeUndefined();
+    expect(record.outcome?.status).toBe("accepted");
+  });
+});
