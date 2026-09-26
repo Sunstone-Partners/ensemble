@@ -27,7 +27,7 @@
     "ensemble"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.19.0"
   },
   "peerDependencies": {
     "@sunstone-partners/ensemble-full": ">=5.0.0"
