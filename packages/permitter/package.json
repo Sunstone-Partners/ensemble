@@ -27,7 +27,7 @@
     "ensemble"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "test": "node --expose-gc ../../node_modules/jest/bin/jest.js --runInBand",

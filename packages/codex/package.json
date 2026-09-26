@@ -47,7 +47,7 @@
     "url": "https://github.com/Sunstone-Partners/ensemble/issues"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.19.0"
   },
   "devDependencies": {
     "jest": "^29.7.0"
