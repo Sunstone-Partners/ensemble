@@ -1,7 +1,11 @@
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildFixPrompt,
   parseFixReply,
   createAgentFixProvider,
+  FIX_AGENT_TOOLS,
 } from "../src/agent-fix-provider";
 
 const issue = { testId: "suite > case", failureOutput: "expected 3 received 2" };
@@ -124,6 +128,43 @@ describe("createAgentFixProvider", () => {
     });
     await provider(invocation, issue);
     expect(seen).toContain("expected 3 received 2");
+  });
+});
+
+// The child runs with --no-extensions, so none of the runtime's governance
+// exists inside it. Observed live: with its default tools it wrote the fix
+// straight into the live repo, bypassing propose mode. Its tool list is the
+// only thing keeping it read-only, so pin what actually reaches the process.
+describe("the fixing agent is spawned read-only", () => {
+  const WRITE_CAPABLE = ["edit", "write", "bash", "python", "notebook", "task", "browser", "computer", "lsp"];
+
+  it("grants no write-capable tool", () => {
+    expect(FIX_AGENT_TOOLS.filter((t) => WRITE_CAPABLE.includes(t))).toEqual([]);
+  });
+
+  it("passes the restriction to the real spawned process", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fix-agent-argv-"));
+    try {
+      const argvFile = join(dir, "argv.json");
+      const fakeAgent = join(dir, "fake-omp");
+      writeFileSync(
+        fakeAgent,
+        `#!/usr/bin/env node\nrequire("fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));\n` +
+          `process.stdout.write('{"writes":[{"path":"src/a.ts","contents":"x"}]}');\n`,
+      );
+      chmodSync(fakeAgent, 0o755);
+
+      const provider = createAgentFixProvider({ rootDir: dir, command: fakeAgent });
+      const candidate = await provider(invocation, issue);
+
+      const argv = JSON.parse(readFileSync(argvFile, "utf8")) as string[];
+      expect(argv).toContain(`--tools=${FIX_AGENT_TOOLS.join(",")}`);
+      expect(argv).toContain("--no-extensions");
+      expect(argv.filter((a) => a.startsWith("--tools="))).toHaveLength(1);
+      expect(candidate?.writes[0]?.path).toBe("src/a.ts");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

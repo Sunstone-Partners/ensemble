@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "pretest": "tsc -p ../agent-core",
     "test": "jest",
     "test:smoke": "node scripts/smoke-activate.mjs",
     "test:e2e": "node scripts/e2e-proof.mjs",
@@ -38,7 +39,7 @@
     "url": "https://github.com/Sunstone-Partners/ensemble/issues"
   },
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=22.19.0",
     "pi": ">=0.87.0"
   },
   "dependencies": {

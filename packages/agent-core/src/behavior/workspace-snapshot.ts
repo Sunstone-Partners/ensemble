@@ -31,8 +31,18 @@ interface CapturedFile {
 }
 
 export interface RestoreReport {
+  /** Paths whose on-disk content or mode differed and were written back. */
   restored: string[];
+  /** Paths that did not exist at capture, existed at restore, and were removed. */
   deleted: string[];
+  /**
+   * Paths already in their captured state, so restore did nothing. Kept
+   * separate from `restored` on purpose: reporting an untouched path as
+   * restored claims a rollback that never happened. Observed live -- a
+   * file mutated BEFORE capture was "restored" to its mutated contents and
+   * the outcome still listed it as restored.
+   */
+  unchanged: string[];
   failed: { path: string; error: string }[];
 }
 
@@ -76,18 +86,34 @@ export class WorkspaceSnapshot {
    * original's.
    */
   restore(): RestoreReport {
-    const report: RestoreReport = { restored: [], deleted: [], failed: [] };
+    const report: RestoreReport = { restored: [], deleted: [], unchanged: [], failed: [] };
 
     for (const file of this.captured.values()) {
       const abs = resolve(this.rootDir, file.path);
       try {
         if (!file.existed) {
-          if (existsSync(abs)) rmSync(abs, { force: true });
-          report.deleted.push(file.path);
+          if (existsSync(abs)) {
+            rmSync(abs, { force: true });
+            report.deleted.push(file.path);
+          } else {
+            report.unchanged.push(file.path);
+          }
           continue;
         }
+        const expected = file.contents ?? Buffer.alloc(0);
+        if (existsSync(abs)) {
+          const stat = statSync(abs);
+          if (
+            stat.isFile() &&
+            readFileSync(abs).equals(expected) &&
+            (file.mode === undefined || stat.mode === file.mode)
+          ) {
+            report.unchanged.push(file.path);
+            continue;
+          }
+        }
         mkdirSync(dirname(abs), { recursive: true });
-        writeFileSync(abs, file.contents ?? Buffer.alloc(0));
+        writeFileSync(abs, expected);
         if (file.mode !== undefined) chmodSync(abs, file.mode);
         report.restored.push(file.path);
       } catch (error) {

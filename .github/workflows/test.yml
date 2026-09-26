@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20, 22]
+        node-version: [22, 24]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +27,7 @@ jobs:
         run: npm test
 
       - name: Upload coverage
-        if: matrix.node-version == 20
+        if: matrix.node-version == 24
         uses: codecov/codecov-action@v3
         with:
           files: ./coverage/coverage-final.json
