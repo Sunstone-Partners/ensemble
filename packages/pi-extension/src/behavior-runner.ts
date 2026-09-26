@@ -10,7 +10,7 @@ import {
 import { AutofixLoop, FixCandidate, SuiteResult, AttemptOutcome } from "./autofix-loop";
 import { ConstitutionProposal, ConstitutionChange, PullRequestRef } from "./constitution-proposal";
 import { IssueKeyInput, issueKey } from "./issue-identity";
-import { captureTreeBaseline, changedSinceBaseline } from "./tree-baseline";
+import { captureTreeBaseline, changedSinceBaseline, treeChangesSinceBaseline } from "./tree-baseline";
 
 /**
  * The invoker that runs when a behavior matches (PR 7).
@@ -43,6 +43,12 @@ export interface BehaviorRunRecord {
   /** Present when a propose-mode behavior produced a reviewable patch. */
   proposal?: { issue: string; writes: { path: string; contents: string }[]; reason: string };
   constitution?: { status: string; detail: string };
+  /**
+   * Paths (outside runtime state) that changed while the fix provider ran.
+   * Not attributable: the provider writing outside its contract and a
+   * concurrent edit look the same. Present only when non-empty.
+   */
+  treeDrift?: string[];
   note?: string;
 }
 
@@ -125,6 +131,14 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
     const stale = candidate && baseline
       ? changedSinceBaseline(baseline, candidate.writes.map((w) => w.path))
       : [];
+    // Before/after check around the provider, independent of its tool
+    // allowlist: a provider replies, it never writes. Runs with or without a
+    // candidate -- a child that wrote and then replied nothing parseable is
+    // exactly the case an allowlist gap would produce.
+    const drift = baseline ? treeChangesSinceBaseline(baseline) : [];
+    if (drift && drift.length > 0) record.treeDrift = drift;
+    const listed = (paths: readonly string[]) =>
+      paths.slice(0, 10).join(", ") + (paths.length > 10 ? ` (+${paths.length - 10} more)` : "");
     if (candidate && stale.length > 0) {
       // Not applied, and nothing is restored: these edits are not ours to
       // undo. The candidate was computed from content that no longer exists.
@@ -137,9 +151,22 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
           `candidate not applied (nothing written, nothing restored)`,
         restored: [],
       };
+    } else if (candidate && drift && drift.length > 0) {
+      record.outcome = {
+        status: "rejected",
+        attempt: 0,
+        issue: issueKey(issue),
+        reason:
+          `working tree changed while the fix was being generated (${listed(drift)}); ` +
+          `a fix provider must not write and a concurrent edit cannot be told apart from one -- ` +
+          `candidate not applied (nothing written, nothing reverted)`,
+        restored: [],
+      };
     } else if (candidate) {
       if (!baseline) {
         record.note = "pre-provider baseline unavailable (not a git work tree); staleness not checked";
+      } else if (!drift) {
+        record.note = "post-provider tree check unavailable; provider writes not checked";
       }
       const testCommand = compiled.manifest.execution.test_command;
       const loop = new AutofixLoop({
@@ -178,7 +205,10 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
         };
       }
     } else {
-      record.note = "no fix candidate offered";
+      record.note = drift && drift.length > 0
+        ? `no fix candidate offered; working tree changed while the provider ran (${listed(drift)}) ` +
+          `-- cannot attribute, nothing reverted`
+        : "no fix candidate offered";
     }
 
     // 2. Propose a constitution change, if the investigation implies one.
