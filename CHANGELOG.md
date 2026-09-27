@@ -14,12 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **core:** the `init-project` constitution template emits Article-style headings (#68).
   Bumps `ensemble-core` 5.6.0 → 5.6.1.
 - **development:** `create-trd-foreman` runs the Constitution Gate (#67), and `create-trd`
-  makes the gate observable on every run (#69). Bumps `ensemble-development` 6.0.5 → 6.0.6.
+  makes the gate observable on every run (#69). Bumps `ensemble-development` 6.0.5 → 6.0.6;
+  regenerating the Pi output for these prompts bumps `ensemble-pi` 1.6.9 → 1.6.10.
 - **product:** `create-prd` makes the Constitution Gate observable on every run (#69).
   Bumps `ensemble-product` 5.6.0 → 5.6.1.
 - **pi:** generated agents keep an explicitly declared `Task` as native `task`, so OMP
   orchestrators can delegate, without granting delegation to agents that don't declare it (#71).
-  Bumps `ensemble-pi` 1.6.9 → 1.6.10.
 - **codex:** regenerated `create-prd`, `create-trd` and `create-trd-foreman` skills for the
   changes above. Bumps `ensemble-codex` 5.3.1 → 5.3.2.
 
