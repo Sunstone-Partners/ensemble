@@ -1057,12 +1057,27 @@ ${next.instruction}`,
       await drainDispatches();
     });
 
+    // Records that a governed run BEGAN. The completion record is written
+    // only after the whole run resolves -- fix provider and rule provider
+    // subprocesses included -- so a run still in flight when the session ends
+    // left no trace at all. Its absence was then indistinguishable from "no
+    // behavior matched", which is how a slow-but-working governed path gets
+    // read as a dead one (br-zcxb). Logged here rather than per event so it
+    // fires only when a behavior actually matched and was invoked.
+    const tracedInvoker: typeof invoker = async (invocation) => {
+      logRuntime(resolveRepoRoot(process.cwd()), {
+        kind: "invocation-started",
+        behavior: invocation.behavior?.metadata?.name,
+      });
+      return invoker(invocation);
+    };
+
     lastActivation = activateBehaviorPipeline(
       pi,
       resolveRepoRoot(process.cwd()),
       [echoTool, createEnsembleBashTool({ cwd: resolveRepoRoot(process.cwd()), policy: bashPolicy })],
       undefined,
-      invoker,
+      tracedInvoker,
     );
 
     // Out-of-band consent for a reverted protected write.
