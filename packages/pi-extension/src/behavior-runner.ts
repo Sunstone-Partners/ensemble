@@ -239,6 +239,37 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
     const mayPropose =
       compiled.manifest.capabilities.mutation_classes.includes("constitution.propose");
     const change = mayPropose ? await options.proposeConstitutionChange?.(invocation, issue) : undefined;
+
+    // Every outcome of this step is recorded, including the ones where
+    // nothing happens (br-zcxb). Previously a falsy `change` fell through
+    // silently, so the log could not tell these apart:
+    //
+    //   the behavior was never granted constitution.propose
+    //   no provider was configured
+    //   the provider ran and judged that no rule change was warranted
+    //
+    // They need different fixes and looked identical -- as an absent field.
+    // That is how "the constitution step never fires" became a believable
+    // reading of a run in which it may well have fired and correctly
+    // declined: a typo'd operator does not imply a constitutional rule.
+    //
+    // "skipped" is not a failure. It is the capability gate working.
+    if (!change) {
+      record.constitution = !mayPropose
+        ? {
+            status: "skipped",
+            detail: "behavior does not declare constitution.propose",
+          }
+        : !options.proposeConstitutionChange
+          ? {
+              status: "unavailable",
+              detail: "constitution.propose granted but no rule provider is configured",
+            }
+          : {
+              status: "none",
+              detail: "rule provider ran and implied no constitution change",
+            };
+    }
     if (change) {
       // The PR backend is no longer required: approval now APPLIES the
       // change (br-9uqd), and delivery is optional. What is still required
