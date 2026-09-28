@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -38,6 +47,18 @@ export interface FixSandbox {
   cleanup(): void;
 }
 
+/**
+ * Why the sandbox could not be built, or why part of the mirror is missing.
+ *
+ * Reported rather than swallowed. A sandbox that fails silently makes the fix
+ * provider return "no fix candidate offered", which reads as "the model had
+ * nothing to suggest" when the truth is that the model was never asked. That
+ * cost two full live runs to diagnose (br-boam), because the log for "the
+ * step ran and found nothing" and "the step could not run" was identical --
+ * the same defect class as br-zcxb.
+ */
+export type SandboxProblem = (reason: string) => void;
+
 function git(cwd: string, args: string[], input?: string): string {
   return execFileSync("git", args, {
     cwd,
@@ -55,7 +76,7 @@ function git(cwd: string, args: string[], input?: string): string {
  * the ungoverned behaviour this exists to remove, and it would do it
  * silently, at the moment something is already going wrong.
  */
-export function createFixSandbox(rootDir: string): FixSandbox | undefined {
+export function createFixSandbox(rootDir: string, onProblem?: SandboxProblem): FixSandbox | undefined {
   let dir: string | undefined;
   try {
     dir = mkdtempSync(join(tmpdir(), "ensemble-fix-"));
@@ -81,8 +102,35 @@ export function createFixSandbox(rootDir: string): FixSandbox | undefined {
       const from = resolve(rootDir, rel);
       const to = resolve(tree, rel);
       if (!existsSync(from)) continue;
-      mkdirSync(dirname(to), { recursive: true });
-      copyFileSync(from, to);
+
+      // node_modules is linked below, wholesale. Copying it is redundant --
+      // and when it is a symlink, fatal (see below).
+      if (rel === "node_modules" || rel.startsWith("node_modules/")) continue;
+
+      try {
+        mkdirSync(dirname(to), { recursive: true });
+
+        // lstat, NOT stat: a symlink must be recreated as a symlink. git
+        // reports a symlinked DIRECTORY as a single entry, and copyFileSync
+        // on it throws ENOTSUP -- which used to abandon the entire sandbox
+        // and silently disable the whole governed path (br-boam). A
+        // symlinked node_modules is not exotic; it is what workspace layouts
+        // and this project's own worktree instructions produce.
+        const info = lstatSync(from);
+        if (info.isSymbolicLink()) {
+          symlinkSync(readlinkSync(from), to);
+        } else if (info.isFile()) {
+          copyFileSync(from, to);
+        } else {
+          onProblem?.(`skipped untracked ${rel}: not a regular file or symlink`);
+        }
+      } catch (error) {
+        // One uncopyable entry must not cost the whole sandbox. The mirror
+        // is a convenience for the child's reading; the fix candidate still
+        // comes back through AutofixLoop and is applied against the live
+        // tree under MutationGuard either way.
+        onProblem?.(`could not mirror untracked ${rel}: ${(error as Error).message}`);
+      }
     }
 
     // Dependencies are shared, not copied: an install would take minutes and
@@ -113,8 +161,11 @@ export function createFixSandbox(rootDir: string): FixSandbox | undefined {
         }
       },
     };
-  } catch {
+  } catch (error) {
     if (dir) rmSync(dir, { recursive: true, force: true });
+    // Fail closed, but SAY SO. Returning a bare undefined is what made this
+    // indistinguishable from "the model had no suggestion".
+    onProblem?.(`fix sandbox could not be built: ${(error as Error).message}`);
     return undefined;
   }
 }

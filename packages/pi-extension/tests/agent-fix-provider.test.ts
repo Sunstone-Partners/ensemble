@@ -234,3 +234,51 @@ describe("fix strategy lives in the behavior package, not in code", () => {
     expect(seen).toContain("Fix the SOURCE, never the test");
   });
 });
+
+/**
+ * br-cxn8: a behavior's own fix-prompt.md replaced the WHOLE prompt, so a
+ * behavior that wrote good strategy advice silently deleted the wire
+ * protocol. The live agent then answered in prose -- correct diagnosis,
+ * correct fix, unparseable -- and the governed path recorded "no fix
+ * candidate offered" every single time.
+ */
+describe("the response contract is the runtime's, not the behavior's", () => {
+  const shape = '{ "writes": [ { "path": "relative/path.ts", "contents": "<entire new file>" } ] }';
+
+  it("appends the json contract even when the behavior ships its own prompt", () => {
+    // The real trial-repo prompt: entirely about strategy, says nothing
+    // about how to reply, and actively implies the agent edits files.
+    const behaviorPrompt = [
+      "A test in this repository is failing. Repair the SOURCE so it passes.",
+      "Failing test: {{testId}}",
+      "Your change is verified by re-running the exact command that failed.",
+    ].join("\n");
+
+    const prompt = buildFixPrompt("suite > case", "boom", behaviorPrompt);
+
+    // The behavior's judgment survives...
+    expect(prompt).toContain("Repair the SOURCE so it passes");
+    // ...and so does the protocol it forgot.
+    expect(prompt).toContain(shape);
+    expect(prompt).toMatch(/do NOT use any tool to change this repository/i);
+  });
+
+  it("tells the agent it cannot write, so it stops trying to edit files", () => {
+    const prompt = buildFixPrompt("suite > case", "boom", "Fix it however you like.");
+    // Asserts a DIRECTIVE, not a claim about the environment: the child can
+    // actually see write-capable tools despite the allowlist (br-33co), so a
+    // prompt saying "you have no write tool" is checkably false.
+    expect(prompt).toMatch(/do NOT use any tool to change this repository/i);
+    expect(prompt).toMatch(/even if one appears\s+available to you/i);
+  });
+
+  it("still substitutes into a behavior-supplied template", () => {
+    const prompt = buildFixPrompt("suite > case", "the failure text", "Test: {{testId}}\n{{failureOutput}}");
+    expect(prompt).toContain("Test: suite > case");
+    expect(prompt).toContain("the failure text");
+  });
+
+  it("keeps the contract in the default prompt too", () => {
+    expect(buildFixPrompt("t", "f")).toContain(shape);
+  });
+});

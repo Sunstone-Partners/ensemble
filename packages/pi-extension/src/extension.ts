@@ -991,6 +991,10 @@ ${next.instruction}`,
       createAgentFixProvider({
         rootDir: resolveRepoRoot(process.cwd()),
         behaviorDirFor: (name) => lastActivation?.packageDirs?.get(name),
+        // A fix that never happened because the HARNESS broke reads exactly
+        // like a model with no suggestion unless this is recorded (br-boam).
+        onDiagnostic: (reason) =>
+          logRuntime(resolveRepoRoot(process.cwd()), { kind: "fix-provider-diagnostic", reason }),
       });
 
     const invoker = createBehaviorInvoker({

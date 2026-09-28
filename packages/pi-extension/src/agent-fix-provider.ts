@@ -47,19 +47,67 @@ export interface AgentFixProviderOptions {
   readonly behaviorDirFor?: (behaviorName: string) => string | undefined;
   /** Explicit template, overriding both the behavior's file and the default. */
   readonly promptTemplate?: string;
+  /**
+   * Reports why no candidate came back, when the reason is the harness
+   * rather than the model. Without it, a broken sandbox and a model with
+   * nothing to suggest are the same line in the log.
+   */
+  readonly onDiagnostic?: (reason: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
+ * The wire protocol, appended to EVERY fix prompt.
+ *
+ * Not the behavior's to override (br-cxn8, observed live). A behavior that
+ * ships its own fix-prompt.md replaces the whole body, and the one in the
+ * trial repo said "Repair the SOURCE so it passes" and "your change is
+ * verified by re-running the exact command" -- both of which describe an
+ * agent that EDITS FILES. The child is spawned with read-only tools and its
+ * reply is parsed as a patch, so the agent did as it was told, found it had
+ * no way to write, and explained itself in prose:
+ *
+ *   "this session has no tool that can edit files in the working tree...
+ *    I have no edit or shell tool."
+ *
+ * Diagnosis correct, fix correct, reply unparseable, loop dead. The strategy
+ * is the behavior's business; how the answer comes back is not.
+ */
+const RESPONSE_CONTRACT = [
+  "",
+  "---",
+  "",
+  "HOW TO REPLY. This part is fixed by the runtime and overrides anything",
+  "above that contradicts it.",
+  "",
+  "Do NOT use any tool to change this repository, even if one appears",
+  "available to you. Your REPLY is the patch; something else applies it.",
+  "",
+  "(Stated as a directive, not as a fact about your environment: the child",
+  "really can see write-capable tools despite the allowlist -- br-33co -- and",
+  "an instruction a model can check and disprove undermines the rest.)",
+  "",
+  "Reply with ONLY a fenced json block of this exact shape, and nothing else:",
+  "```json",
+  '{ "writes": [ { "path": "relative/path.ts", "contents": "<entire new file>" } ] }',
+  "```",
+  "",
+  "Return the COMPLETE new contents of each file you change, not a diff.",
+  'If you cannot find a real fix, reply with { "writes": [] } and nothing else.',
+].join("\n");
+
+/**
  * Renders the prompt sent to the fixing agent.
  *
- * The TEXT is not the point of this function -- it is a fallback. The fix
- * strategy is judgment, and judgment belongs in the behavior package beside
- * its trigger and capabilities, not hardcoded here where every behavior is
- * forced to share one strategy it cannot specialize. A behavior supplies its
- * own by adding `fix-prompt.md`; `{{testId}}` and `{{failureOutput}}` are
- * substituted.
+ * The STRATEGY text is a fallback. Fix strategy is judgment, and judgment
+ * belongs in the behavior package beside its trigger and capabilities, not
+ * hardcoded here where every behavior shares one approach it cannot
+ * specialize. A behavior supplies its own by adding `fix-prompt.md`;
+ * `{{testId}}` and `{{failureOutput}}` are substituted.
+ *
+ * The RESPONSE CONTRACT is appended regardless, because it is not strategy:
+ * it is the interface between this process and the next one.
  *
  * What stays in TypeScript is the part a prompt must not own: re-running the
  * suite, confirming the target test really passes, and rolling back when it
@@ -86,15 +134,9 @@ export function buildFixPrompt(
       "Rules:",
       "- Fix the SOURCE, never the test. Do not weaken, skip, or delete assertions.",
       "- Do not edit any file whose name ends in .test.ts, .test.js, .spec.ts or .spec.js.",
-      "- Return the COMPLETE new contents of each file you change, not a diff.",
-      "",
-      "Reply with ONLY a fenced json block of this exact shape, and nothing else:",
-      "```json",
-      '{ "writes": [ { "path": "relative/path.ts", "contents": "<entire new file>" } ] }',
-      "```",
     ].join("\n");
 
-  return body
+  return `${body}\n${RESPONSE_CONTRACT}`
     .replace(/\{\{testId\}\}/g, testId)
     .replace(/\{\{failureOutput\}\}/g, failureOutput.slice(0, 8000));
 }
@@ -204,7 +246,7 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
         // built applies inside it: no grants, no MutationGuard, no write
         // boundary, no log. Rules cannot be enforced in a process we do not
         // control, so it is given nothing of value to write to instead.
-        const sandbox = createFixSandbox(options.rootDir);
+        const sandbox = createFixSandbox(options.rootDir, (reason) => options.onDiagnostic?.(reason));
         if (!sandbox) {
           // Fail CLOSED. Falling back to the live repo would silently
           // restore the ungoverned behaviour, at the exact moment something
@@ -258,10 +300,23 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
         buildFixPrompt(issue.testId, issue.failureOutput ?? "", template),
         controller.signal,
       );
-      return parseFixReply(reply, mutationClass);
-    } catch {
+      const candidate = parseFixReply(reply, mutationClass);
+      if (!candidate) {
+        // Carry the evidence. "could not be parsed" without the reply sends
+        // the next person to reproduce a NON-DETERMINISTIC model output,
+        // which may well parse fine on the retry -- as it did the first time
+        // this was chased by hand.
+        const shown = reply.length > 600 ? `${reply.slice(0, 600)}...[${reply.length} bytes]` : reply;
+        options.onDiagnostic?.(`agent replied, but no fix candidate could be parsed from it; reply was: ${shown}`);
+      }
+      return candidate;
+    } catch (error) {
       // A provider that throws would abort dispatch; "no candidate" is the
-      // correct degraded answer and is already handled downstream.
+      // correct degraded answer and is already handled downstream. But it
+      // must not be a SILENT one: "no candidate offered" and "the harness
+      // broke before the model was asked" looked identical in the log, and
+      // that cost two live runs to tell apart (br-boam).
+      options.onDiagnostic?.(`fix provider failed: ${(error as Error).message}`);
       return undefined;
     } finally {
       clearTimeout(timer);
