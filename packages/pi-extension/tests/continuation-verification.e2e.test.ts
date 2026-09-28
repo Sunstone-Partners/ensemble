@@ -32,7 +32,11 @@ trigger:
   predicate:
     isError: { equals: true }
 policy:
-  mode: propose
+  # auto, because these tests are about WHOLE-SUITE verification (br-o355):
+  # they assert that a good fix survives the extra check and a regressing one
+  # is rolled back. Under propose a verified fix is held for approval instead
+  # (br-xz6q), which would mask exactly what is under test here.
+  mode: auto
   timeout: 30m
 capabilities:
   tools: [read, edit]

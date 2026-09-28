@@ -19,6 +19,7 @@ import { resolve } from "node:path";
 import { beginBehaviorScope, endBehaviorScope } from "./tool-grant-enforcement";
 import { verifySuite } from "./verify-suite";
 import { ContinuationBudget } from "./continuation-budget";
+import { captureTreeBaseline, treeChangesSinceBaseline, TreeBaseline } from "./tree-baseline";
 import {
   snapshotWorkingTree,
   restoreWorkingTree,
@@ -290,6 +291,11 @@ export function createActivate(options: ActivateOptions = {}): {
       // during the enqueue -> dequeue -> verification hand-off, and an
       // optional field lets that mistake compile.
       snapshot: WorkingTreeSnapshot;
+      // What the tree looked like BEFORE the fix turn, so the files the fix
+      // actually touched can be told apart from the user's pre-existing
+      // changes. Capturing this at verification time would see the fix
+      // already applied and could not distinguish the two.
+      baseline: TreeBaseline | undefined;
     }[] = [];
     // Caps retries per issue AND per session. The per-issue key is
     // normalised, because the model varies output plumbing freely and the old
@@ -352,6 +358,7 @@ export function createActivate(options: ActivateOptions = {}): {
         behaviors,
         cwd,
         snapshot: snapshotWorkingTree(resolveRepoRoot(process.cwd())),
+        baseline: captureTreeBaseline(resolveRepoRoot(process.cwd())),
       });
       return true;
     };
@@ -387,7 +394,14 @@ export function createActivate(options: ActivateOptions = {}): {
     // Set when a continuation turn has been injected and its result has not
     // yet been independently checked.
     let awaitingVerification:
-      | { command: string; cwd?: string; snapshot: WorkingTreeSnapshot; suiteCommands: readonly string[] }
+      | {
+          command: string;
+          cwd?: string;
+          snapshot: WorkingTreeSnapshot;
+          suiteCommands: readonly string[];
+          behaviors: readonly string[];
+          baseline: TreeBaseline | undefined;
+        }
       | undefined;
 
     // --- Behavior execution window ------------------------------------------
@@ -496,9 +510,59 @@ export function createActivate(options: ActivateOptions = {}): {
       monitor.setScope(isAlwaysProtectedPath);
     };
 
+    const modeOf = (behaviorName: string): string | undefined =>
+      lastActivation?.compiled.find((c) => c.manifest.metadata.name === behaviorName)?.manifest
+        .policy.mode;
+
+    /**
+     * Reverts a verified fix and keeps it where a human can apply it.
+     *
+     * Capture BEFORE restore, obviously, but worth stating: the whole point
+     * is that the work is not destroyed, only ungated-applied. A hold that
+     * loses the fix is just a rollback with extra steps, and the model has
+     * already told the user it succeeded.
+     *
+     * Contents are held in memory only, like every other quarantine entry: a
+     * file on disk holding a ready-to-apply patch is its own hazard.
+     */
+    const holdForApproval = (
+      snapshot: WorkingTreeSnapshot,
+      baseline: TreeBaseline | undefined,
+    ): string[] => {
+      const root = resolveRepoRoot(process.cwd());
+      // No baseline means we cannot tell the fix's changes from the user's.
+      // Reverting everything on that guess would destroy their work, so the
+      // fix is left applied and the gap is reported rather than acted on.
+      const changed = baseline ? treeChangesSinceBaseline(baseline) : undefined;
+      if (!changed) return [];
+      const captured = changed.map((rel: string) => {
+        let contents: string | undefined;
+        try {
+          contents = readFileSync(resolve(root, rel), "utf8");
+        } catch {
+          contents = undefined;
+        }
+        return { path: rel, contents };
+      });
+
+      restoreWorkingTree(snapshot);
+
+      const ids: string[] = [];
+      for (const c of captured) {
+        const id = String(++quarantineSeq);
+        quarantine.set(id, {
+          path: c.path,
+          reason: "held for approval (policy.mode: propose)",
+          contents: c.contents,
+        });
+        ids.push(id);
+      }
+      return ids;
+    };
+
     const verifyPendingFix = (): void => {
       if (!awaitingVerification) return;
-      const { command, cwd, snapshot, suiteCommands } = awaitingVerification;
+      const { command, cwd, snapshot, suiteCommands, behaviors, baseline } = awaitingVerification;
       awaitingVerification = undefined;
       let verdict = verifyCommand(command, cwd);
 
@@ -538,6 +602,29 @@ export function createActivate(options: ActivateOptions = {}): {
         rollback = restoreWorkingTree(snapshot);
       }
 
+      // br-xz6q: `policy.mode: propose` has to gate THIS path too.
+      //
+      // mode is read only inside MutationGuard.authorize(), and a
+      // continuation fix never passes a write through it -- the MODEL edits
+      // the files itself. So `propose`, adopted precisely because a live run
+      // wrote an unreviewed change, gated nothing on the path that actually
+      // fires. Proven by a live run repairing src/math.js with no approval.
+      //
+      // A verified fix is still not consent. The change is reverted and held,
+      // and a human applies it with /ensemble-approve -- the same mechanism
+      // the write boundary already uses for protected paths, so there is one
+      // way to say yes rather than two.
+      //
+      // Only on a PASS. A failed fix is rolled back above and there is
+      // nothing worth offering; an inconclusive one is left alone, because
+      // holding a fix we could not judge would turn "we are unsure" into "we
+      // reverted your work".
+      const proposeOnly = behaviors.some((name) => modeOf(name) === "propose");
+      let held: string[] = [];
+      if (proposeOnly && verdict.status === "passed") {
+        held = holdForApproval(snapshot, baseline);
+      }
+
       logRuntime(resolveRepoRoot(process.cwd()), {
         kind: "verification",
         issue: command,
@@ -547,7 +634,45 @@ export function createActivate(options: ActivateOptions = {}): {
         ...(rollback
           ? { rolledBack: rollback.restored, removed: rollback.removed, rollbackDetail: rollback.detail }
           : {}),
+        ...(held.length > 0 ? { heldForApproval: held } : {}),
+        ...(proposeOnly && verdict.status === "passed" && held.length === 0
+          ? { heldForApproval: [], holdSkipped: "no tree baseline; fix left applied" }
+          : {}),
       });
+
+      // Same reasoning as the rollback notice (br-o9j1), and the same risk:
+      // the model believes its edits are on disk. Here they are not, and it
+      // must not go on editing a file whose contents it no longer knows.
+      if (held.length > 0) {
+        const ids = held.join(", ");
+        try {
+          pi.sendMessage(
+            {
+              customType: "ensemble-autofix-held",
+              content:
+                `The fix for \`${command}\` PASSED verification but was not applied: this behavior runs ` +
+                `under policy.mode: propose, so a change lands only when a human applies it. The files ` +
+                `have been reverted and the change is held as ${ids}.\n\n` +
+                `Do not continue editing those files: they no longer contain what you wrote. ` +
+                `The USER -- not you -- can apply it with: /ensemble-approve <id>`,
+              display: true,
+            },
+            { triggerTurn: true, deliverAs: "steer" },
+          );
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          logRuntime(resolveRepoRoot(process.cwd()), {
+            kind: "hold-notice-failed",
+            issue: command,
+            detail: reason,
+          });
+          uiBridge.notify(
+            `ensemble: the fix for \`${command}\` passed but is held for approval (${ids}); ` +
+              `could not tell the model: ${reason}`,
+            "error",
+          );
+        }
+      }
 
       // A rollback must not be silent (br-o9j1). By the time it happens the
       // model has usually told the user the fix worked, and it still
@@ -680,7 +805,14 @@ ${next.instruction}`,
             .filter((c): c is string => Boolean(c)),
         ),
       );
-      awaitingVerification = { command: next.key, cwd: next.cwd, snapshot: next.snapshot, suiteCommands };
+      awaitingVerification = {
+        command: next.key,
+        cwd: next.cwd,
+        snapshot: next.snapshot,
+        suiteCommands,
+        behaviors: next.behaviors,
+        baseline: next.baseline,
+      };
       return undefined;
     });
 

@@ -35,7 +35,11 @@ trigger:
   predicate:
     isError: { equals: true }
 policy:
-  mode: propose
+  # auto on purpose. These tests are about the WINDOW -- when the boundary
+  # arms, when grants apply, when verification runs -- and they assert that a
+  # verified fix lands. Under propose a verified fix is deliberately held for
+  # approval instead (br-xz6q), which is asserted separately below.
+  mode: auto
   timeout: 30m
 capabilities:
   tools: [read, edit]
@@ -46,6 +50,9 @@ execution:
 outcomes:
   - test.failure.investigated
 `;
+
+/** Same behavior, gated: a verified fix must be held, not applied. */
+const PROPOSE_BEHAVIOR = BEHAVIOR.replace("mode: auto", "mode: propose");
 
 const RUN = `const { add } = require("./src/math.js");
 if (add(1, 2) === 3) {
@@ -69,12 +76,12 @@ afterAll(() => {
   dirs.forEach((d) => rmSync(d, { recursive: true, force: true }));
 });
 
-function sandbox(): string {
+function sandbox(behaviorYaml: string = BEHAVIOR): string {
   const root = mkdtempSync(join(tmpdir(), "behavior-window-"));
   dirs.push(root);
   const bdir = join(root, ".ensemble", "behaviors", "fix-failing-test");
   mkdirSync(bdir, { recursive: true });
-  writeFileSync(join(bdir, "behavior.yaml"), BEHAVIOR);
+  writeFileSync(join(bdir, "behavior.yaml"), behaviorYaml);
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, "tests"), { recursive: true });
   writeFileSync(join(root, "src", "math.js"), BROKEN);
@@ -97,10 +104,13 @@ type ToolResultReply = { isError?: boolean; content?: { text: string }[] } | und
 
 function fakePi(opts: { sendMessageThrows?: boolean } = {}) {
   const handlers = new Map<string, ((e: unknown, ctx?: unknown) => unknown)[]>();
+  const commands = new Map<string, { handler: (a: unknown, c: unknown) => unknown }>();
+  const said: string[] = [];
   const sent: string[] = [];
   const notices: { message: { customType: string; content: string; display?: boolean }; options?: unknown }[] = [];
   const pi = {
-    registerCommand: () => undefined,
+    registerCommand: (name: string, o: unknown) =>
+      commands.set(name, o as { handler: (a: unknown, c: unknown) => unknown }),
     registerTool: () => undefined,
     registerFlag: () => undefined,
     getFlag: () => false,
@@ -127,7 +137,15 @@ function fakePi(opts: { sendMessageThrows?: boolean } = {}) {
     await drainDispatches();
     return reply;
   };
-  return { pi, fire, sent, notices };
+  return {
+    pi,
+    fire,
+    sent,
+    notices,
+    said,
+    run: async (name: string, args: unknown) =>
+      commands.get(name)?.handler(args, { hasUI: true, ui: { notify: (t: string) => said.push(t) } }),
+  };
 }
 
 /** A tool call the model (or user) made; the monitor checks after each. */
@@ -137,14 +155,26 @@ const turnWithTools = { type: "turn_end", toolResults: [{}] };
 /** A turn that ran no tools: the model's final answer. */
 const finalTurn = { type: "turn_end", toolResults: [] };
 
-async function start(opts: { sendMessageThrows?: boolean } = {}, existingRoot?: string) {
-  const root = existingRoot ?? sandbox();
+async function start(
+  opts: { sendMessageThrows?: boolean } = {},
+  existingRoot?: string,
+  behaviorYaml: string = BEHAVIOR,
+) {
+  const root = existingRoot ?? sandbox(behaviorYaml);
   const instance = createActivate({ proposeFix: () => undefined });
   process.chdir(root);
   const harness = fakePi(opts);
   instance.activate(harness.pi);
   expect(instance.lastActivation()!.loaded).toEqual(["fix-failing-test"]);
-  return { root, pi: harness.pi, fire: harness.fire, sent: harness.sent, notices: harness.notices };
+  return {
+    root,
+    pi: harness.pi,
+    fire: harness.fire,
+    sent: harness.sent,
+    notices: harness.notices,
+    said: harness.said,
+    run: harness.run,
+  };
 }
 
 /** The real failing command fails, then the turn it ran in ends: the fix turn is injected. */
@@ -294,6 +324,51 @@ describe("guardrails stay protected between behavior windows", () => {
     expect(read(root, GUARD)).toBe("# rules\n");
     expect(reply?.isError).toBe(true);
     void fire;
+  });
+});
+
+/**
+ * br-xz6q, REPRODUCED LIVE before it was written down.
+ *
+ * `policy.mode: propose` is supposed to mean no mutation lands without a
+ * human applying it. It was adopted after a live run wrote an unreviewed
+ * change to outbox.ts. On the first real end-to-end run of the loop, a
+ * `propose` behavior repaired src/math.js on disk with no approval anywhere:
+ * mode is read only inside MutationGuard.authorize(), and the continuation
+ * path -- the one that fires in practice -- never passes a write through it.
+ *
+ * A mode that claims to gate and does not is worse than no mode: it buys
+ * confidence in exactly the situation it was introduced to make safe.
+ */
+describe("policy.mode: propose gates the continuation path too (br-xz6q)", () => {
+  it("holds a VERIFIED fix instead of landing it, and offers it for approval", async () => {
+    const { root, fire, run, said } = await start(undefined, undefined, PROPOSE_BEHAVIOR);
+    await openFixTurn(fire);
+
+    // The model repairs the file during the fix turn, and the repair is good.
+    writeFileSync(join(root, "src", "math.js"), GOOD_FIX);
+    await fire("turn_end", finalTurn);
+
+    // Verification passed -- and under `propose` that is still not consent.
+    const log = read(root, ".ensemble/runtime-log.jsonl");
+    expect(log).toMatch(/"kind":"verification".*"status":"passed"/);
+    expect(read(root, "src/math.js")).toBe(BROKEN);
+
+    // The work is not thrown away: a human can apply it.
+    await run("ensemble-approve", "");
+    expect(said.join("\n")).toMatch(/src\/math\.js/);
+
+    await run("ensemble-approve", "1");
+    expect(read(root, "src/math.js")).toBe(GOOD_FIX);
+  });
+
+  it("leaves an auto behavior alone, so gating does not neuter the loop", async () => {
+    const { root, fire } = await start();
+    await openFixTurn(fire);
+    writeFileSync(join(root, "src", "math.js"), GOOD_FIX);
+    await fire("turn_end", finalTurn);
+
+    expect(read(root, "src/math.js")).toBe(GOOD_FIX);
   });
 });
 
