@@ -50,7 +50,7 @@ export interface AppliedChange {
 export interface ConstitutionProposalDeps {
   approval: ApprovalGate;
   /** Applies the change. Called only after an explicit "yes". */
-  applyChange: (change: ConstitutionChange) => AppliedChange | Promise<AppliedChange>;
+  applyChange: (change: ConstitutionChange, rootDir?: string) => AppliedChange | Promise<AppliedChange>;
   /** Optional delivery of an already-applied change. */
   openPullRequest?: (change: ConstitutionChange) => PullRequestRef | Promise<PullRequestRef>;
 }

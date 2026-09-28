@@ -4,6 +4,7 @@ import {
   BehaviorInvoker,
   CompiledBehaviorPackage,
   createMutationGuard,
+  eventCwd,
   WorkspaceSnapshot,
   ApprovalGate,
 } from "@sunstone-partners/ensemble-agent-core";
@@ -64,7 +65,10 @@ export interface BehaviorRunnerOptions {
   proposeConstitutionChange?: ConstitutionProvider;
   approval?: ApprovalGate;
   /** Applies an APPROVED constitution change in place (br-9uqd). */
-  applyConstitutionChange?: (change: ConstitutionChange) => AppliedChange | Promise<AppliedChange>;
+  applyConstitutionChange?: (
+    change: ConstitutionChange,
+    rootDir?: string,
+  ) => AppliedChange | Promise<AppliedChange>;
   /** Optional delivery of an already-applied change; no longer a gate. */
   openPullRequest?: (change: ConstitutionChange) => PullRequestRef | Promise<PullRequestRef>;
   /** Overrides suite execution; defaults to spawning the declared command. */
@@ -114,6 +118,14 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
   return async (invocation: BehaviorInvocation) => {
    const finish = (r: BehaviorRunRecord) => options.onRecord?.(r);
     const payload = (invocation.event.payload ?? {}) as Record<string, unknown>;
+    // The repository the FAILING COMMAND ran in, not the extension host's.
+    // br-x36p: these were the same value in practice only when the user
+    // happened to be working in the repo under repair. When they were not,
+    // fix-agent children wrote into the maintainer's main checkout on the
+    // strength of a failure observed in a different worktree. The fallback
+    // is the configured root, which is the old behaviour for events that
+    // carry no cwd.
+    const root = eventCwd(invocation.event) ?? options.rootDir;
     const issue: IssueKeyInput = {
       testId: String(payload.toolName ?? "suite") + " > " + String(payload.command ?? "unknown"),
       failureOutput: String(payload.output ?? payload.command ?? ""),
@@ -135,7 +147,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
     // taken BEFORE the provider runs: it can take minutes, the session keeps
     // editing meanwhile, and AutofixLoop's own snapshot is taken at apply
     // time -- too late to see anything that changed during generation.
-    const baseline = options.proposeFix ? captureTreeBaseline(options.rootDir) : undefined;
+    const baseline = options.proposeFix ? captureTreeBaseline(root) : undefined;
     const candidate = await options.proposeFix?.(invocation, issue);
     const stale = candidate && baseline
       ? changedSinceBaseline(baseline, candidate.writes.map((w) => w.path))
@@ -180,13 +192,13 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
       const testCommand = compiled.manifest.execution.test_command;
       const loop = new AutofixLoop({
         guard: createMutationGuard(compiled),
-        snapshot: () => new WorkspaceSnapshot(options.rootDir),
+        snapshot: () => new WorkspaceSnapshot(root),
         applyWrite: (write) => {
           // Writes still route through the guard inside the loop; this
           // only performs one already-authorized write.
           const fs = require("node:fs") as typeof import("node:fs");
           const path = require("node:path") as typeof import("node:path");
-          const abs = path.resolve(options.rootDir, write.path);
+          const abs = path.resolve(root, write.path);
           fs.mkdirSync(path.dirname(abs), { recursive: true });
           fs.writeFileSync(abs, write.contents);
         },
@@ -194,7 +206,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
           options.runSuite
             ? options.runSuite(testCommand ?? "npm test", signal)
             : testCommand
-              ? spawnSuite(options.rootDir, testCommand, signal)
+              ? spawnSuite(root, testCommand, signal)
               : { failures: 1, targetPasses: false, output: "no declared test_command" },
         approval: options.approval,
       });
@@ -284,7 +296,7 @@ export function createBehaviorInvoker(options: BehaviorRunnerOptions): BehaviorI
       }
       const proposal = new ConstitutionProposal({
         approval: options.approval,
-        applyChange: options.applyConstitutionChange,
+        applyChange: (change) => options.applyConstitutionChange!(change, root),
         openPullRequest: options.openPullRequest,
       });
       const result = await proposal.propose(change);

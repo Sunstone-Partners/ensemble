@@ -39,9 +39,12 @@ export interface ConstitutionApplierDeps {
 
 export function createConstitutionApplier(
   deps: ConstitutionApplierDeps,
-): (change: ConstitutionChange) => AppliedChange {
-  return (change: ConstitutionChange): AppliedChange => {
-    const abs = resolve(deps.rootDir, CONSTITUTION_PATH);
+): (change: ConstitutionChange, rootDir?: string) => AppliedChange {
+  return (change: ConstitutionChange, rootDir?: string): AppliedChange => {
+    // The constitution that governs the repo the failure came from, not the
+    // one the extension host happens to sit in (br-x36p). Falls back to the
+    // configured root when the caller supplies none.
+    const abs = resolve(rootDir ?? deps.rootDir, CONSTITUTION_PATH);
     if (!existsSync(abs)) {
       throw new Error(`constitution not found at ${CONSTITUTION_PATH}`);
     }

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { classifyPath } from "@sunstone-partners/ensemble-agent-core";
+import { classifyPath, eventCwd } from "@sunstone-partners/ensemble-agent-core";
 import { FixProvider } from "./behavior-runner";
 import { CandidateWrite, FixCandidate } from "./autofix-loop";
 import { createFixSandbox } from "./fix-sandbox";
@@ -33,7 +33,8 @@ export interface AgentFixProviderOptions {
   /** Agent executable. Default "omp". */
   readonly command?: string;
   /** Overrides process execution; tests supply a fake instead of spawning. */
-  readonly run?: (prompt: string, signal: AbortSignal) => Promise<string>;
+  /** Injectable for tests. rootDir is the repo the failing command ran in (br-x36p). */
+  readonly run?: (prompt: string, signal: AbortSignal, rootDir: string) => Promise<string>;
   readonly timeoutMs?: number;
   /** Mutation class recorded on each write; must be one the behavior grants. */
   readonly mutationClass?: string;
@@ -239,14 +240,23 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
 
   const runAgent =
     options.run ??
-    ((prompt: string, signal: AbortSignal) =>
+    ((prompt: string, signal: AbortSignal, rootDir: string) =>
       new Promise<string>((resolve, reject) => {
         // The child runs in a DISPOSABLE mirror of the tree, never the live
         // repository (br-r3om). It is spawned --no-extensions, so nothing we
         // built applies inside it: no grants, no MutationGuard, no write
         // boundary, no log. Rules cannot be enforced in a process we do not
         // control, so it is given nothing of value to write to instead.
-        const sandbox = createFixSandbox(options.rootDir, (reason) => options.onDiagnostic?.(reason));
+        // br-x36p: the sandbox is built from the repo the FAILING COMMAND ran
+        // in. Using the extension host's root here is how fix-agent children
+        // came to write into the maintainer's main checkout over a failure
+        // observed in a different worktree.
+        //
+        // br-boam: the callback matters as much as the root. A sandbox that
+        // cannot be built fails closed and reports "no fix candidate offered"
+        // -- indistinguishable from a model with nothing to say. Both sides
+        // of this conflict are load-bearing.
+        const sandbox = createFixSandbox(rootDir, (reason) => options.onDiagnostic?.(reason));
         if (!sandbox) {
           // Fail CLOSED. Falling back to the live repo would silently
           // restore the ungoverned behaviour, at the exact moment something
@@ -299,6 +309,9 @@ export function createAgentFixProvider(options: AgentFixProviderOptions): FixPro
       const reply = await runAgent(
         buildFixPrompt(issue.testId, issue.failureOutput ?? "", template),
         controller.signal,
+        // The repo the FAILING COMMAND ran in, not the extension host's
+        // (br-x36p).
+        eventCwd(invocation.event) ?? options.rootDir,
       );
       const candidate = parseFixReply(reply, mutationClass);
       if (!candidate) {

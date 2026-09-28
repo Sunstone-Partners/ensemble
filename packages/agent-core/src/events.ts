@@ -21,6 +21,29 @@ export interface EventEnvelope<T extends BehaviorEvent = BehaviorEvent> {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * The directory the observed command actually ran in, when the event says so.
+ *
+ * br-x36p: the governed dispatch resolved its root from the EXTENSION HOST's
+ * process.cwd(), so a failure observed in one worktree sent the fix provider,
+ * the rule provider and the constitution applier at a different repository --
+ * observed live, with fix-agent children writing into the maintainer's main
+ * checkout while the failing command had run in /private/tmp/wt-autofix-fix.
+ *
+ * Returns undefined rather than a default so each caller states its own
+ * fallback explicitly. A silent default here would reintroduce exactly the
+ * bug: a wrong root that looks like a working one.
+ */
+export function eventCwd(event: BehaviorEvent | undefined): string | undefined {
+  // Tolerates a missing event on purpose. Callers reach this from provider
+  // entry points whose invocation is assembled by adapters and, in tests, by
+  // fixtures -- and the nearest catch turns a TypeError here into "no
+  // candidate offered", which reads as a considered decision rather than a
+  // crash. Answering "no cwd" is the honest degraded result.
+  const cwd = event?.payload?.cwd;
+  return typeof cwd === "string" && cwd.length > 0 ? cwd : undefined;
+}
+
 export function isBehaviorEvent(value: unknown): value is BehaviorEvent {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;

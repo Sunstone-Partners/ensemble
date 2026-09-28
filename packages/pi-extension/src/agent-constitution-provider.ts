@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import type { ConstitutionChange } from "./constitution-proposal";
 import type { IssueKeyInput } from "./issue-identity";
+import { BehaviorEvent, eventCwd } from "@sunstone-partners/ensemble-agent-core";
 import { createFixSandbox } from "./fix-sandbox";
 
 /**
@@ -112,14 +113,22 @@ export interface AgentConstitutionProviderOptions {
  */
 export function createAgentConstitutionProvider(
   options: AgentConstitutionProviderOptions,
-): (invocation: { behavior: { metadata: { name: string } } }, issue: IssueKeyInput) => Promise<ConstitutionChange | undefined> {
+): (
+  invocation: { behavior: { metadata: { name: string } }; event?: BehaviorEvent },
+  issue: IssueKeyInput,
+) => Promise<ConstitutionChange | undefined> {
   return async (invocation, issue) => {
     const command = issue.testId ?? "";
     const output = issue.failureOutput ?? "";
     if (!command && !output) return undefined;
 
     try {
-      const run = options.run ?? defaultRun(options.rootDir);
+      // Same root rule as the fix provider (br-x36p): the rule provider
+      // reads the repository that failed, not whichever one the host
+      // process happens to be sitting in.
+      const run =
+        options.run ??
+        defaultRun(eventCwd(invocation.event) ?? options.rootDir);
       const reply = await run(buildConstitutionPrompt(command, output, options.template));
       return parseConstitutionReply(reply, invocation.behavior.metadata.name);
     } catch {
