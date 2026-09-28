@@ -52,17 +52,15 @@ capabilities:
   # fires in practice, and this list was not consulted. The gap is that the
   # two paths diverge. That is br-o355.
   #
-  # CORRECTION (br-zcxb): the note that used to end this paragraph -- "the
-  # guard is wired, not dead code" -- was wrong. runBehavior has ZERO callers
-  # anywhere in the repo, including tests:
+  # The paragraph above is CORRECT and stays: the guard is wired, not dead
+  # code. createBehaviorInvoker (behavior-runner.ts:111) is called live at
+  # extension.ts:996, and a live run logs an `invocation` record to prove it.
   #
-  #   $ grep -rn runBehavior packages/*/src packages/*/tests \
-  #       | grep -v behavior-runner.ts
-  #   (no output)
-  #
-  # So the governed path is unreachable in full, and every guarantee described
-  # above is enforced in code that never executes. br-xz6q (policy.mode not
-  # gating the continuation path) was one visible symptom of that.
+  # What that live record showed was "no fix candidate offered": the governed
+  # invoker ran, but the repair happened on the continuation path, where the
+  # MODEL edits files directly. So this list is not consulted for the fix --
+  # not because the code never runs, but because the fix does not travel
+  # through it. br-o355.
   tools: [read, grep, glob, bash, edit]
   #
   # constitution.propose is the right to ASK for a constitution amendment, not
