@@ -1054,7 +1054,20 @@ ${next.instruction}`,
     // timeout -- a fix slower than that cannot be rescued here, which is why
     // long-running autofix ultimately needs a detached worker (see notes).
     pi.on("session_shutdown", async () => {
+      // br-mr22: two candidate causes produce the same symptom -- a governed
+      // run that begins and never completes. Either this hook is never
+      // emitted in a headless run, or it is emitted and the host exits
+      // without awaiting it. They need different fixes, so record BOTH
+      // edges: entering the hook, and the drain actually finishing.
+      logRuntime(resolveRepoRoot(process.cwd()), {
+        kind: "shutdown-hook-entered",
+        pending: trackedDispatches ? trackedDispatches.size : 0,
+      });
       await drainDispatches();
+      // Its ABSENCE is the signal (br-mr22): measured live, the process is
+      // killed about two seconds into the drain, so this record is missing
+      // whenever a governed run was still in flight at shutdown.
+      logRuntime(resolveRepoRoot(process.cwd()), { kind: "shutdown-drain-complete" });
     });
 
     // Records that a governed run BEGAN. The completion record is written
