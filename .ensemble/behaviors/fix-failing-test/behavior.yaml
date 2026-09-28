@@ -49,10 +49,32 @@ capabilities:
   #
   # The run that proved this behavior worked logged a continuation and no
   # dispatch/invocation record at all -- so the continuation path is what
-  # fires in practice, and this list was not consulted. The guard is wired,
-  # not dead code; the gap is that the two paths diverge. That is br-o355.
+  # fires in practice, and this list was not consulted. The gap is that the
+  # two paths diverge. That is br-o355.
+  #
+  # CORRECTION (br-zcxb): the note that used to end this paragraph -- "the
+  # guard is wired, not dead code" -- was wrong. runBehavior has ZERO callers
+  # anywhere in the repo, including tests:
+  #
+  #   $ grep -rn runBehavior packages/*/src packages/*/tests \
+  #       | grep -v behavior-runner.ts
+  #   (no output)
+  #
+  # So the governed path is unreachable in full, and every guarantee described
+  # above is enforced in code that never executes. br-xz6q (policy.mode not
+  # gating the continuation path) was one visible symptom of that.
   tools: [read, grep, glob, bash, edit]
-  mutation_classes: [artifact.write]
+  #
+  # constitution.propose is the right to ASK for a constitution amendment, not
+  # to write one: a proposal still requires human approval before it is
+  # applied. Without it the behavior can repair a failing test forever and
+  # never record what would stop the failure recurring, which is the whole
+  # point of the loop.
+  #
+  # Inert until br-zcxb lands -- the constitution step is only called from the
+  # dead governed path, so nothing will exercise this grant until the live
+  # loop can reach it.
+  mutation_classes: [artifact.write, constitution.propose]
 execution:
   graph: fix-failing-test
   # The whole-suite check. BOTH dispatch paths re-run this before accepting
