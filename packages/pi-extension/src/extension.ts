@@ -23,6 +23,7 @@ import { captureTreeBaseline, treeChangesSinceBaseline, TreeBaseline } from "./t
 import {
   snapshotWorkingTree,
   restoreWorkingTree,
+  planHold,
   type WorkingTreeSnapshot,
   type RestoreResult,
 } from "./working-tree-snapshot";
@@ -528,13 +529,20 @@ export function createActivate(options: ActivateOptions = {}): {
     const holdForApproval = (
       snapshot: WorkingTreeSnapshot,
       baseline: TreeBaseline | undefined,
-    ): string[] => {
-      const root = resolveRepoRoot(process.cwd());
-      // No baseline means we cannot tell the fix's changes from the user's.
-      // Reverting everything on that guess would destroy their work, so the
-      // fix is left applied and the gap is reported rather than acted on.
-      const changed = baseline ? treeChangesSinceBaseline(baseline) : undefined;
-      if (!changed) return [];
+    ): { ids: string[]; unheld?: string } => {
+      // The tree being restored, not the extension host's cwd: those differ
+      // whenever the failing command ran in another worktree (br-x36p).
+      const root = snapshot.root;
+
+      // br-dowt. A missing baseline used to mean "leave the fix applied and
+      // note the gap" -- fail OPEN, in a system that fails closed everywhere
+      // else, at the exact moment policy.mode: propose promised the opposite.
+      // The decision lives in planHold so it can be tested; see there.
+      const plan = planHold(snapshot, baseline ? treeChangesSinceBaseline(baseline) : undefined);
+      if (plan.unheld) return { ids: [], unheld: plan.unheld };
+      const changed = plan.paths;
+      if (changed.length === 0) return { ids: [] };
+
       const captured = changed.map((rel: string) => {
         let contents: string | undefined;
         try {
@@ -557,7 +565,7 @@ export function createActivate(options: ActivateOptions = {}): {
         });
         ids.push(id);
       }
-      return ids;
+      return { ids };
     };
 
     const verifyPendingFix = (): void => {
@@ -621,8 +629,11 @@ export function createActivate(options: ActivateOptions = {}): {
       // reverted your work".
       const proposeOnly = behaviors.some((name) => modeOf(name) === "propose");
       let held: string[] = [];
+      let unheld: string | undefined;
       if (proposeOnly && verdict.status === "passed") {
-        held = holdForApproval(snapshot, baseline);
+        const outcome = holdForApproval(snapshot, baseline);
+        held = outcome.ids;
+        unheld = outcome.unheld;
       }
 
       logRuntime(resolveRepoRoot(process.cwd()), {
@@ -635,9 +646,11 @@ export function createActivate(options: ActivateOptions = {}): {
           ? { rolledBack: rollback.restored, removed: rollback.removed, rollbackDetail: rollback.detail }
           : {}),
         ...(held.length > 0 ? { heldForApproval: held } : {}),
-        ...(proposeOnly && verdict.status === "passed" && held.length === 0
-          ? { heldForApproval: [], holdSkipped: "no tree baseline; fix left applied" }
-          : {}),
+        // Only when propose was actually NOT honoured. A clean tree with a
+        // missing baseline now holds normally, so this no longer fires for
+        // the ordinary case it used to (and mislabelled as "not a git work
+        // tree" -- the repo was a clean clone; br-dowt).
+        ...(unheld ? { heldForApproval: [], holdSkipped: unheld, proposeViolated: true } : {}),
       });
 
       // Same reasoning as the rollback notice (br-o9j1), and the same risk:
@@ -671,6 +684,42 @@ export function createActivate(options: ActivateOptions = {}): {
               `could not tell the model: ${reason}`,
             "error",
           );
+        }
+      }
+
+      // The ambiguous case: an unreviewed change is on disk and the runtime
+      // could not hold it. That is a promise broken, so it is said out loud
+      // to BOTH audiences -- a UI warning for the human who chose propose,
+      // and a message into the session so the model stops reporting the fix
+      // as simply "done". Previously this was a single log line nobody read,
+      // which is how it survived (br-dowt).
+      if (unheld) {
+        uiBridge.notify(
+          `ensemble: the fix for \`${command}\` passed and was LEFT APPLIED without approval - ${unheld}. ` +
+            `policy.mode: propose was not honoured for this change; review it before committing.`,
+          "warning",
+        );
+        try {
+          pi.sendMessage(
+            {
+              customType: "ensemble-autofix-unheld",
+              content:
+                `The fix for \`${command}\` PASSED verification and IS ON DISK, but it was not held for ` +
+                `approval: ${unheld}.\n\n` +
+                `This behavior runs under policy.mode: propose, so that change should have required a ` +
+                `human to apply it. Tell the user plainly that the change was applied without approval ` +
+                `and which files it touched. Do not describe this as a normal successful fix.`,
+              display: true,
+            },
+            { triggerTurn: true, deliverAs: "steer" },
+          );
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          logRuntime(resolveRepoRoot(process.cwd()), {
+            kind: "unheld-notice-failed",
+            issue: command,
+            detail: reason,
+          });
         }
       }
 

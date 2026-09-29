@@ -98,3 +98,87 @@ export function restoreWorkingTree(snapshot: WorkingTreeSnapshot): RestoreResult
     detail: removed.length ? `restored; removed ${removed.length} new file(s)` : "restored",
   };
 }
+
+/**
+ * Runtime state the session writes itself (runtime log, beads export).
+ * Changes here are expected and prove nothing about a fix.
+ */
+const RUNTIME_OWNED = [".ensemble/", ".beads/"];
+
+const runtimeOwned = (rel: string): boolean => RUNTIME_OWNED.some((prefix) => rel.startsWith(prefix));
+
+/**
+ * True when the tree held no human work-in-progress at snapshot time.
+ *
+ * This is what makes a hold safe WITHOUT a baseline (br-dowt). A baseline
+ * exists to tell the fix's edits from the user's; when it is missing, that
+ * question is normally unanswerable. But if nothing was modified or newly
+ * created when the fix began, then everything that differs now is the fix's,
+ * and `policy.mode: propose` can still be honoured exactly.
+ *
+ * Deliberately conservative: a single pre-existing edit makes this false, and
+ * the caller must escalate rather than guess. Being wrong here means reverting
+ * a human's in-flight work into memory-only quarantine, which is worse than
+ * the unreviewed change it would prevent.
+ */
+export function snapshotWasClean(snapshot: WorkingTreeSnapshot): boolean {
+  if (snapshot.patch.trim() !== "") return false;
+  return snapshot.untracked.filter((rel) => !runtimeOwned(rel)).length === 0;
+}
+
+/**
+ * Every path that differs from HEAD right now, excluding runtime-owned state.
+ *
+ * Only meaningful together with `snapshotWasClean`: on its own it cannot
+ * distinguish a fix's edit from anything else.
+ */
+export function changesSinceCleanSnapshot(snapshot: WorkingTreeSnapshot): string[] {
+  const { root } = snapshot;
+  const status = git(root, ["status", "--porcelain", "-z", "--untracked-files=all"]).out;
+  const paths: string[] = [];
+  for (const entry of status.split("\0")) {
+    if (!entry) continue;
+    // Porcelain v1: two status characters, a space, then the path.
+    const rel = entry.slice(3);
+    if (!rel || runtimeOwned(rel)) continue;
+    paths.push(rel);
+  }
+  return [...new Set(paths)].sort();
+}
+
+/**
+ * What to do with a verified fix under `policy.mode: propose` (br-dowt).
+ *
+ * Separated from the IO around it because this decision is the whole policy,
+ * and it had never been tested: the hold lived inside `activate()` where no
+ * test could reach it, which is how "no baseline means leave it applied"
+ * survived as the behaviour of a system that fails closed everywhere else.
+ *
+ *   paths   -> revert the tree and hold these for /ensemble-approve
+ *   unheld  -> propose could NOT be honoured; say so loudly
+ */
+export type HoldPlan = { readonly paths: readonly string[]; readonly unheld?: string };
+
+export function planHold(
+  snapshot: WorkingTreeSnapshot,
+  changedFromBaseline: readonly string[] | undefined,
+): HoldPlan {
+  // The normal path: a baseline told us exactly which files the fix touched.
+  if (changedFromBaseline) return { paths: changedFromBaseline };
+
+  // No baseline. If the tree held work-in-progress, the fix cannot be told
+  // apart from it, and reverting would sweep a human's edits into memory-only
+  // quarantine -- worse than the unreviewed change it would prevent.
+  if (!snapshotWasClean(snapshot)) {
+    return {
+      paths: [],
+      unheld:
+        "no tree baseline, and uncommitted edits were already in flight when the fix began; " +
+        "the fix cannot be told apart from your work, so it was left applied",
+    };
+  }
+
+  // Clean tree: everything that differs now IS the fix, so propose is
+  // honoured exactly, with no baseline needed.
+  return { paths: changesSinceCleanSnapshot(snapshot) };
+}
