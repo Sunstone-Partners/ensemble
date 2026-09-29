@@ -112,35 +112,52 @@ const runtimeOwned = (rel: string): boolean => RUNTIME_OWNED.some((prefix) => re
  *
  * This is what makes a hold safe WITHOUT a baseline (br-dowt). A baseline
  * exists to tell the fix's edits from the user's; when it is missing, that
- * question is normally unanswerable. But if nothing was modified or newly
- * created when the fix began, then everything that differs now is the fix's,
- * and `policy.mode: propose` can still be honoured exactly.
+ * question is normally unanswerable. But if nothing was MODIFIED when the fix
+ * began, then everything that differs now is the fix's, and
+ * `policy.mode: propose` can still be honoured exactly.
  *
- * Deliberately conservative: a single pre-existing edit makes this false, and
- * the caller must escalate rather than guess. Being wrong here means reverting
- * a human's in-flight work into memory-only quarantine, which is worse than
- * the unreviewed change it would prevent.
+ * Judged on tracked modifications only. An untracked file that was already
+ * sitting there -- `node_modules`, a build directory, scratch notes -- is not
+ * work in flight; it is furniture, and it is still there afterwards. Counting
+ * it as work in flight would send almost every real repository down the
+ * escalate branch and quietly restore the fail-open this exists to close,
+ * since a shared `node_modules` is untracked in most of them.
+ *
+ * Those known entries are excluded from the hold set rather than trusted
+ * blindly: see `changesSinceCleanSnapshot`.
+ *
+ * Still deliberately conservative about the case that matters: one
+ * pre-existing EDIT makes this false, and the caller escalates rather than
+ * guesses. Being wrong there means reverting a human's in-flight work into
+ * memory-only quarantine, which is worse than the unreviewed change it would
+ * prevent.
  */
 export function snapshotWasClean(snapshot: WorkingTreeSnapshot): boolean {
-  if (snapshot.patch.trim() !== "") return false;
-  return snapshot.untracked.filter((rel) => !runtimeOwned(rel)).length === 0;
+  return snapshot.patch.trim() === "";
 }
 
 /**
- * Every path that differs from HEAD right now, excluding runtime-owned state.
+ * Every path that differs from HEAD right now, excluding runtime-owned state
+ * and anything already untracked when the snapshot was taken.
  *
  * Only meaningful together with `snapshotWasClean`: on its own it cannot
  * distinguish a fix's edit from anything else.
+ *
+ * Known limitation, stated rather than hidden: a fix that edits a file which
+ * was ALREADY untracked is not held, because without a baseline there is no
+ * way to tell it changed. That is the narrow price of not sweeping every
+ * repository's untracked furniture into quarantine.
  */
 export function changesSinceCleanSnapshot(snapshot: WorkingTreeSnapshot): string[] {
   const { root } = snapshot;
+  const preexisting = new Set(snapshot.untracked);
   const status = git(root, ["status", "--porcelain", "-z", "--untracked-files=all"]).out;
   const paths: string[] = [];
   for (const entry of status.split("\0")) {
     if (!entry) continue;
     // Porcelain v1: two status characters, a space, then the path.
     const rel = entry.slice(3);
-    if (!rel || runtimeOwned(rel)) continue;
+    if (!rel || runtimeOwned(rel) || preexisting.has(rel)) continue;
     paths.push(rel);
   }
   return [...new Set(paths)].sort();

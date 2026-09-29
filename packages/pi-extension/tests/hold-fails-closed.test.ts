@@ -65,13 +65,20 @@ describe("a verified fix is held even without a baseline (br-dowt)", () => {
     expect(plan.unheld).toMatch(/cannot be told apart from your work/);
   });
 
-  it("treats a pre-existing untracked file as work in flight", () => {
+  // The trial repo that exposed br-dowt has an untracked `node_modules`
+  // symlink, and so does most of the world. Treating pre-existing untracked
+  // furniture as "work in flight" would send nearly every repository down the
+  // escalate branch and restore the fail-open through the back door.
+  it("still holds when untracked furniture was already present", () => {
     const root = repo();
     writeFileSync(join(root, "scratch.md"), "notes\n");
     const snap = snapshotWorkingTree(root);
     writeFileSync(join(root, "src.ts"), "the fix\n");
 
-    expect(planHold(snap, undefined).unheld).toBeDefined();
+    const plan = planHold(snap, undefined);
+    expect(plan.unheld).toBeUndefined();
+    // Only the fix. The pre-existing scratch file is not swept up with it.
+    expect(plan.paths).toEqual(["src.ts"]);
   });
 
   // Runtime state is written by the session itself during every run. Counting
@@ -116,10 +123,10 @@ describe("snapshot cleanliness is judged conservatively", () => {
     expect(snapshotWasClean(snapshotWorkingTree(root))).toBe(false);
   });
 
-  it("is dirty with an untracked file", () => {
+  it("is clean with pre-existing untracked files, which are not edits", () => {
     const root = repo();
     writeFileSync(join(root, "new.ts"), "x\n");
-    expect(snapshotWasClean(snapshotWorkingTree(root))).toBe(false);
+    expect(snapshotWasClean(snapshotWorkingTree(root))).toBe(true);
   });
 
   it("reports both modified and newly created paths as changes", () => {
