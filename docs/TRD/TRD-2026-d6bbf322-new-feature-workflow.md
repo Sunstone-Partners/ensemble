@@ -8,6 +8,10 @@ version: 1.0.0
 status: Draft
 date: 2026-09-30
 design_readiness_score: 4.6
+ensemble_implement_trd_beads:
+  branch_name: feature/trd-2026-d6bbf322-new-feature-workflow
+  use_proposed: true
+  stacked_prs: false
 ---
 
 # TRD-2026-d6bbf322: Resumable New-Feature Workflow for Ensemble
@@ -67,14 +71,14 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
 
 **Shippable State:** A user can run `/ensemble:new-feature "<idea>"` and progress, checkpointed and resumable, through PRD creation, PRD refinement, TRD creation, TRD refinement, and bead planning, with exact artifact lineage recorded at every step. The run correctly halts at the implementation-approval checkpoint — no approval-granting mechanism exists yet in this PR, so nothing can reach implementation (PR 3 adds the mechanism that unblocks it). Supplying an unindexed PRD/TRD path is rejected rather than guessed at, and `--skip-refine` is rejected with guidance to the existing standalone commands.
 
-- [ ] **TRD-001**: Define `RunRecord`, `Stage`, `StageOutcome`, and `ArtifactRef` TypeScript types (1h) [satisfies REQ-005]
+- [x] **TRD-001**: Define `RunRecord`, `Stage`, `StageOutcome`, and `ArtifactRef` TypeScript types (1h) [satisfies REQ-005]
   - Target File: `packages/agent-core/src/new-feature/types.ts`
   - Actions:
     1. Declare the `RunRecord` interface and its nested types exactly as specified in Component Design's data contracts above.
     2. Declare the fixed `Stage` union in PRD stage order: `prd_create | prd_refine | trd_create | trd_refine | beads_plan | implementation_approval | implementation | pr_approval | pr_create | done`.
     3. Export all types from `packages/agent-core/src/index.ts`.
 
-- [ ] **TRD-002**: Implement `RunIndexStore` core (`createRun`, `findActive`, `resolveByArtifact`, `mutate`) on atomic-write + optimistic concurrency (6h) [depends: TRD-001] [satisfies REQ-005]
+- [x] **TRD-002**: Implement `RunIndexStore` core (`createRun`, `findActive`, `resolveByArtifact`, `mutate`) on atomic-write + optimistic concurrency (6h) [depends: TRD-001] [satisfies REQ-005]
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-005-3
   - Target File: `packages/agent-core/src/new-feature/run-index.ts`
   - Actions:
@@ -88,7 +92,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given a run file is truncated or has a non-enum `stage` value, when `findActive`/`resolveByArtifact` reads it, then a typed `RUN_INDEX_CORRUPT` error is thrown rather than the file being skipped or guessed at.
     - Given a process crash simulated by killing the writer between `openSync` and `renameSync`, when the store is reopened, then the prior valid run file is intact (the `.tmp` file, if any, is orphaned but never renamed over the real file).
 
-- [ ] **TRD-002-TEST**: Verify `RunIndexStore` atomicity, concurrency conflict detection, and fail-closed loading (3h) [verifies TRD-002] [satisfies REQ-005] [depends: TRD-002]
+- [x] **TRD-002-TEST**: Verify `RunIndexStore` atomicity, concurrency conflict detection, and fail-closed loading (3h) [verifies TRD-002] [satisfies REQ-005] [depends: TRD-002]
   - Validates PRD ACs: AC-005-1, AC-005-2, AC-005-3
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -99,7 +103,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given a malformed run file on disk, when `findActive(projectRoot)` is called, then it throws `RUN_INDEX_CORRUPT` and does not fall back to a directory scan.
     - Given a valid active run and two completed runs in the same `.ensemble/new-feature/` directory, when `findActive` is called, then only the active run is returned.
 
-- [ ] **TRD-003**: Implement the fixed stage-sequence state machine (4h) [depends: TRD-002] [satisfies REQ-002]
+- [x] **TRD-003**: Implement the fixed stage-sequence state machine (4h) [depends: TRD-002] [satisfies REQ-002]
   - Validates PRD ACs: AC-002-1, AC-002-3
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -110,7 +114,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given a new run advances successfully, when each stage completes, then the next stage entered matches the fixed order exactly (never skips or reorders).
     - Given the current stage has not reached a `success` outcome, when the command is invoked again, then no later stage runs, regardless of which artifact files exist on disk.
 
-- [ ] **TRD-003-TEST**: Verify stage ordering and no-skip-ahead behavior (3h) [verifies TRD-003] [satisfies REQ-002] [depends: TRD-003]
+- [x] **TRD-003-TEST**: Verify stage ordering and no-skip-ahead behavior (3h) [verifies TRD-003] [satisfies REQ-002] [depends: TRD-003]
   - Validates PRD ACs: AC-002-1, AC-002-3
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -119,7 +123,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given a `RunRecord` at `stage: "trd_create"` with `stageOutcome.kind` not `"success"`, when the command runs, then it executes the TRD-creation stage and does not treat any existing file as satisfying a later stage.
 
-- [ ] **TRD-004**: Implement inline stage execution and artifact-reference recording (5h) [depends: TRD-003] [satisfies REQ-004]
+- [x] **TRD-004**: Implement inline stage execution and artifact-reference recording (5h) [depends: TRD-003] [satisfies REQ-004]
   - Validates PRD ACs: AC-004-1, AC-004-2, AC-004-3
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -132,7 +136,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given `trd_create` begins, when it needs the PRD, then it is invoked with the exact `path` from the `artifacts[]` entry recorded by `prd_refine`, not a freshly globbed path.
     - Given `prd_refine` revises the PRD, when the revision is accepted, then both the prior and the new artifact entries are present in `artifacts[]`.
 
-- [ ] **TRD-004-TEST**: Verify exact artifact-reference recording and consumption (3h) [verifies TRD-004] [satisfies REQ-004] [depends: TRD-004]
+- [x] **TRD-004-TEST**: Verify exact artifact-reference recording and consumption (3h) [verifies TRD-004] [satisfies REQ-004] [depends: TRD-004]
   - Validates PRD ACs: AC-004-1, AC-004-2, AC-004-3
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -142,7 +146,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given two sequential artifact-recording `mutate()` calls, when `artifacts[]` is inspected, then both entries are present with distinct `recordedAt` timestamps and correct `producingStage` values.
 
-- [ ] **TRD-005**: Implement manual start and resume entry (5h) [depends: TRD-002] [satisfies REQ-001]
+- [x] **TRD-005**: Implement manual start and resume entry (5h) [depends: TRD-002] [satisfies REQ-001]
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-001-3
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -154,7 +158,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given an artifact path matching an indexed run's recorded reference, when resumed, then the workflow opens that run at its recorded stage.
     - Given an artifact path not referenced by any indexed run, when resume is attempted, then it is rejected and no run is created or advanced.
 
-- [ ] **TRD-005-TEST**: Verify start/resume/reject-unindexed entry paths (3h) [verifies TRD-005] [satisfies REQ-001] [depends: TRD-005]
+- [x] **TRD-005-TEST**: Verify start/resume/reject-unindexed entry paths (3h) [verifies TRD-005] [satisfies REQ-001] [depends: TRD-005]
   - Validates PRD ACs: AC-001-1, AC-001-2, AC-001-3
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -164,7 +168,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given an unindexed PRD path, when resume is attempted, then the rejection message explains that only indexed runs can be resumed.
 
-- [ ] **TRD-006**: Reject `--skip-refine` and equivalent flags (1h) [depends: TRD-003] [satisfies REQ-003]
+- [x] **TRD-006**: Reject `--skip-refine` and equivalent flags (1h) [depends: TRD-003] [satisfies REQ-003]
   - Validates PRD ACs: AC-003-1, AC-003-2
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -173,7 +177,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given `--skip-refine` is passed, when options are validated, then the command rejects the request and names both mandatory refinement stages before any stage executes.
 
-- [ ] **TRD-006-TEST**: Verify `--skip-refine` rejection and standalone-command guidance (1h) [verifies TRD-006] [satisfies REQ-003] [depends: TRD-006]
+- [x] **TRD-006-TEST**: Verify `--skip-refine` rejection and standalone-command guidance (1h) [verifies TRD-006] [satisfies REQ-003] [depends: TRD-006]
   - Validates PRD ACs: AC-003-1, AC-003-2
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -185,7 +189,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
 
 **Shippable State:** Failed stages pause safely, preserve every previously completed artifact, and require an explicit user retry rather than silently repeating or advancing. Declined or edited PRD/TRD outputs correctly return to their own stage without corrupting run history or unblocking a dependent stage early. A project is protected from a second concurrent run while still permitting a fresh run once the prior one reaches a terminal state, and a merely-stale (not terminal) run is never auto-abandoned. `new-feature --status` gives full visibility into any run.
 
-- [ ] **TRD-007**: Implement failure pause (4h) [depends: TRD-004] [satisfies REQ-006]
+- [x] **TRD-007**: Implement failure pause (4h) [depends: TRD-004] [satisfies REQ-006]
   - Validates PRD ACs: AC-006-1
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -194,7 +198,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given a stage throws, when the outcome is recorded, then the run is parked at that stage with `stageOutcome.kind === "failure"` and all prior `artifacts[]` entries are unchanged.
 
-- [ ] **TRD-007-TEST**: Verify failure pause preserves prior artifacts and does not auto-retry (3h) [verifies TRD-007] [satisfies REQ-006] [depends: TRD-007]
+- [x] **TRD-007-TEST**: Verify failure pause preserves prior artifacts and does not auto-retry (3h) [verifies TRD-007] [satisfies REQ-006] [depends: TRD-007]
   - Validates PRD ACs: AC-006-1, AC-006-3
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -203,7 +207,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given a paused-by-failure run, when the command is invoked again with no retry/resume action from the user, then the run record's `stage`/`stageOutcome`/`revision` are unchanged.
 
-- [ ] **TRD-008**: Implement explicit-retry-only resume of a failed stage (3h) [depends: TRD-007] [satisfies REQ-006]
+- [x] **TRD-008**: Implement explicit-retry-only resume of a failed stage (3h) [depends: TRD-007] [satisfies REQ-006]
   - Validates PRD ACs: AC-006-2
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -211,7 +215,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given a user explicitly retries a failed stage, when it succeeds, then only that stage's artifact/outcome changes; earlier stages' recorded artifacts are untouched.
 
-- [ ] **TRD-008-TEST**: Verify retry reruns only the paused stage (2h) [verifies TRD-008] [satisfies REQ-006] [depends: TRD-008]
+- [x] **TRD-008-TEST**: Verify retry reruns only the paused stage (2h) [verifies TRD-008] [satisfies REQ-006] [depends: TRD-008]
   - Validates PRD ACs: AC-006-2
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -219,7 +223,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given an explicit retry, when it completes, then earlier completed stages' artifact entries are unchanged.
 
-- [ ] **TRD-009**: Implement decline/edit handling for PRD/TRD stages (4h) [depends: TRD-004] [satisfies REQ-007]
+- [x] **TRD-009**: Implement decline/edit handling for PRD/TRD stages (4h) [depends: TRD-004] [satisfies REQ-007]
   - Validates PRD ACs: AC-007-1, AC-007-2
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -229,7 +233,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given a decline, when recorded, then the run remains at the same stage and the run record shows no advance.
     - Given a regenerate/edit request, when the new version is produced, then the prior artifact entry remains in history and no dependent stage's outcome becomes `success` until acceptance.
 
-- [ ] **TRD-009-TEST**: Verify decline/edit stage-return and history preservation (3h) [verifies TRD-009] [satisfies REQ-007] [depends: TRD-009]
+- [x] **TRD-009-TEST**: Verify decline/edit stage-return and history preservation (3h) [verifies TRD-009] [satisfies REQ-007] [depends: TRD-009]
   - Validates PRD ACs: AC-007-1, AC-007-2
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -238,7 +242,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given a dependent stage after an unaccepted edit, when the run is inspected, then that dependent stage has not been entered.
 
-- [ ] **TRD-010**: Enforce single-active-run-per-project with create-time exclusivity (3h) [depends: TRD-002] [satisfies REQ-008]
+- [x] **TRD-010**: Enforce single-active-run-per-project with create-time exclusivity (3h) [depends: TRD-002] [satisfies REQ-008]
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-008-3
   - Target File: `packages/agent-core/src/new-feature/run-index.ts`
   - Actions:
@@ -251,7 +255,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given a run is completed or abandoned, when `active.lock` is removed, then a subsequent `createRun()` succeeds and the terminal run's `.json` file still exists on disk.
     - Given a run has not been updated in a long time but is still `active`/`paused`, when `createRun()` is called again, then it is still rejected (no auto-expiry).
 
-- [ ] **TRD-010-TEST**: Verify single-active-run exclusivity and terminal-state transitions (3h) [verifies TRD-010] [satisfies REQ-008] [depends: TRD-010]
+- [x] **TRD-010-TEST**: Verify single-active-run exclusivity and terminal-state transitions (3h) [verifies TRD-010] [satisfies REQ-008] [depends: TRD-010]
   - Validates PRD ACs: AC-008-1, AC-008-2, AC-008-3
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -261,7 +265,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given two back-to-back `createRun()` calls with no terminal state in between, when the second runs, then it fails with the first run's identifier in the error.
 
-- [ ] **TRD-011**: Implement `new-feature --status` reporting (3h) [depends: TRD-002] [satisfies REQ-012]
+- [x] **TRD-011**: Implement `new-feature --status` reporting (3h) [depends: TRD-002] [satisfies REQ-012]
   - Validates PRD ACs: AC-012-1, AC-012-2
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -271,7 +275,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given `--status` on an active run, when it responds, then all five required fields (id, stage, outcome, pending decision, references) are present.
     - Given a completed run with no PR created, when status is shown, then nothing in the output implies a PR exists.
 
-- [ ] **TRD-011-TEST**: Verify status completeness and no-implied-PR wording (2h) [verifies TRD-011] [satisfies REQ-012] [depends: TRD-011]
+- [x] **TRD-011-TEST**: Verify status completeness and no-implied-PR wording (2h) [verifies TRD-011] [satisfies REQ-012] [depends: TRD-011]
   - Validates PRD ACs: AC-012-1, AC-012-2
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -284,7 +288,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
 
 **Shippable State:** The implementation-approval checkpoint left halted by PR 1 can now actually be unblocked via explicit user approval, and a completed implementation can, optionally and separately, become a pull request via the `gh`-CLI provider. A project may opt into explicitly configured event-triggered starts, which still require full human review and PRD elicitation before anything is created, and a payload that is invalid, incomplete, or declined creates nothing. Every mutating action (implementation, PR write) is denied unless the corresponding approval is persisted in the run record, independent of what any prompt text claims.
 
-- [ ] **TRD-012**: Implement project-local event-mapping config (schema, validation, default-deny) (4h) [depends: TRD-005] [satisfies REQ-009]
+- [x] **TRD-012**: Implement project-local event-mapping config (schema, validation, default-deny) (4h) [depends: TRD-005] [satisfies REQ-009]
   - Validates PRD ACs: AC-009-1
   - Target File: `packages/agent-core/src/new-feature/event-mapping.ts`
   - Actions:
@@ -294,7 +298,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given no `event-mapping.json` file exists, when any event is delivered, then no run is started and the manual entry path is unaffected.
 
-- [ ] **TRD-012-TEST**: Verify default-deny event entry (2h) [verifies TRD-012] [satisfies REQ-009] [depends: TRD-012]
+- [x] **TRD-012-TEST**: Verify default-deny event entry (2h) [verifies TRD-012] [satisfies REQ-009] [depends: TRD-012]
   - Validates PRD ACs: AC-009-1
   - Target File: `packages/agent-core/tests/new-feature/event-mapping.test.ts`
   - Actions:
@@ -302,7 +306,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given no event-mapping config, when an event arrives, then `RunIndexStore.findActive` shows no new run was created by it.
 
-- [ ] **TRD-013**: Implement event-triggered human review, PRD elicitation gate, and invalid-payload handling (5h) [depends: TRD-012] [satisfies REQ-009]
+- [x] **TRD-013**: Implement event-triggered human review, PRD elicitation gate, and invalid-payload handling (5h) [depends: TRD-012] [satisfies REQ-009]
   - Validates PRD ACs: AC-009-2, AC-009-3
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -313,7 +317,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given an allowed configured event, when delivered, then the event source and payload are shown for human review and PRD elicitation completes before any PRD file is written.
     - Given an invalid/incomplete/declined payload, when handled, then no PRD exists afterward and the reported message names the specific pending step.
 
-- [ ] **TRD-013-TEST**: Verify event review gate and invalid-payload rejection (3h) [verifies TRD-013] [satisfies REQ-009] [depends: TRD-013]
+- [x] **TRD-013-TEST**: Verify event review gate and invalid-payload rejection (3h) [verifies TRD-013] [satisfies REQ-009] [depends: TRD-013]
   - Validates PRD ACs: AC-009-2, AC-009-3
   - Target File: `packages/agent-core/tests/new-feature/event-mapping.test.ts`
   - Actions:
@@ -322,7 +326,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given an incomplete event payload, when processed, then no PRD is created and the report names the missing validation step.
 
-- [ ] **TRD-014**: Implement the implementation-approval checkpoint (5h) [depends: TRD-002, TRD-004] [satisfies REQ-010]
+- [x] **TRD-014**: Implement the implementation-approval checkpoint (5h) [depends: TRD-002, TRD-004] [satisfies REQ-010]
   - Validates PRD ACs: AC-010-1, AC-010-2
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -333,7 +337,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given the checkpoint is reached, when presented, then the exact PRD/TRD refs and bead plan shown match the run record's `artifacts[]`/`beadRefs`.
     - Given approval is declined or not given, when the command exits this turn, then `implementationApprovedAt` remains `null` and `stage` remains `"implementation_approval"`.
 
-- [ ] **TRD-014-TEST**: Verify approval persistence and no-work-without-approval (3h) [verifies TRD-014] [satisfies REQ-010] [depends: TRD-014]
+- [x] **TRD-014-TEST**: Verify approval persistence and no-work-without-approval (3h) [verifies TRD-014] [satisfies REQ-010] [depends: TRD-014]
   - Validates PRD ACs: AC-010-1, AC-010-2
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -342,7 +346,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given a declined approval, when the run record is inspected, then `stage` is still `"implementation_approval"`.
 
-- [ ] **TRD-015**: Implement material-plan-change re-approval (3h) [depends: TRD-014] [satisfies REQ-010]
+- [x] **TRD-015**: Implement material-plan-change re-approval (3h) [depends: TRD-014] [satisfies REQ-010]
   - Validates PRD ACs: AC-010-3
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -350,7 +354,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given an approved plan changes materially before implementation finishes, when detected, then `implementationApprovedAt` is cleared and the run returns to the approval checkpoint rather than proceeding on stale approval.
 
-- [ ] **TRD-015-TEST**: Verify material-change detection clears stale approval (2h) [verifies TRD-015] [satisfies REQ-010] [depends: TRD-015]
+- [x] **TRD-015-TEST**: Verify material-change detection clears stale approval (2h) [verifies TRD-015] [satisfies REQ-010] [depends: TRD-015]
   - Validates PRD ACs: AC-010-3
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -358,7 +362,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given a material plan change post-approval, when re-checked, then the run requires a fresh approval before implementation can proceed.
 
-- [ ] **TRD-016**: Implement `PrProvider` interface and `GhCliPrProvider` (3h) [depends: TRD-002] [satisfies REQ-011]
+- [x] **TRD-016**: Implement `PrProvider` interface and `GhCliPrProvider` (3h) [depends: TRD-002] [satisfies REQ-011]
   - Validates PRD ACs: AC-011-2, AC-011-3
   - Target File: `packages/agent-core/src/new-feature/pr-provider.ts`
   - Actions:
@@ -369,7 +373,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given `gh` is not installed or not authenticated, when `isAvailable()` is called, then it returns `false` and no exception is thrown.
     - Given `gh` is available, when `createPullRequest()` is called, then it constructs the same repo/branch/title/body shape `fix-issue.yaml`'s PR step already uses.
 
-- [ ] **TRD-016-TEST**: Verify provider availability probe and PR-creation shape (2h) [verifies TRD-016] [satisfies REQ-011] [depends: TRD-016]
+- [x] **TRD-016-TEST**: Verify provider availability probe and PR-creation shape (2h) [verifies TRD-016] [satisfies REQ-011] [depends: TRD-016]
   - Validates PRD ACs: AC-011-2, AC-011-3
   - Target File: `packages/agent-core/tests/new-feature/pr-provider.test.ts`
   - Actions:
@@ -378,7 +382,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given an unauthenticated `gh`, when `isAvailable()` is checked before any create call, then the caller can cleanly skip PR creation.
 
-- [ ] **TRD-017**: Implement the PR-creation checkpoint (4h) [depends: TRD-016, TRD-014] [satisfies REQ-011]
+- [x] **TRD-017**: Implement the PR-creation checkpoint (4h) [depends: TRD-016, TRD-014] [satisfies REQ-011]
   - Validates PRD ACs: AC-011-1, AC-011-2, AC-011-3
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -391,7 +395,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
     - Given approval is granted, when the create call is made, then it is preceded by a presentation of the exact target repo/branch/title/body and a separate approval distinct from the implementation approval.
     - Given `isAvailable()` is `false`, when the PR stage is reached, then no PR is created and the implementation completion record is preserved unchanged.
 
-- [ ] **TRD-017-TEST**: Verify PR opt-in, separate approval, and unavailable-provider handling (4h) [verifies TRD-017] [satisfies REQ-011] [depends: TRD-017]
+- [x] **TRD-017-TEST**: Verify PR opt-in, separate approval, and unavailable-provider handling (4h) [verifies TRD-017] [satisfies REQ-011] [depends: TRD-017]
   - Validates PRD ACs: AC-011-1, AC-011-2, AC-011-3
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -401,7 +405,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given `prApprovedAt` is `null` at the time the stage is entered, when the stage runs, then `createPullRequest` is never invoked.
 
-- [ ] **TRD-018**: Implement boundary validation for event/artifact/path inputs (3h) [depends: TRD-012, TRD-005] [satisfies REQ-014]
+- [x] **TRD-018**: Implement boundary validation for event/artifact/path inputs (3h) [depends: TRD-012, TRD-005] [satisfies REQ-014]
   - Validates PRD ACs: AC-014-1
   - Target File: `packages/agent-core/src/new-feature/event-mapping.ts`
   - Actions:
@@ -410,7 +414,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given a malformed event payload or a disallowed artifact path, when it is checked, then rejection happens before any `RunIndexStore.mutate()`/`createRun()` call is made.
 
-- [ ] **TRD-018-TEST**: Verify boundary validation precedes state mutation (2h) [verifies TRD-018] [satisfies REQ-014] [depends: TRD-018]
+- [x] **TRD-018-TEST**: Verify boundary validation precedes state mutation (2h) [verifies TRD-018] [satisfies REQ-014] [depends: TRD-018]
   - Validates PRD ACs: AC-014-1
   - Target File: `packages/agent-core/tests/new-feature/event-mapping.test.ts`
   - Actions:
@@ -418,7 +422,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given a disallowed input, when validation runs, then no run-state file is created or modified.
 
-- [ ] **TRD-019**: Enforce store-persisted-approval precondition at every mutating call site (3h) [depends: TRD-014, TRD-017] [satisfies REQ-014]
+- [x] **TRD-019**: Enforce store-persisted-approval precondition at every mutating call site (3h) [depends: TRD-014, TRD-017] [satisfies REQ-014]
   - Validates PRD ACs: AC-014-2
   - Target File: `packages/development/commands/new-feature.yaml`
   - Actions:
@@ -427,7 +431,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given prompt text claims implementation was approved but `implementationApprovedAt` is `null` in the store, when the implementation call site checks, then it denies the operation.
 
-- [ ] **TRD-019-TEST**: Verify denial on missing store-persisted approval despite prompt claims (3h) [verifies TRD-019] [satisfies REQ-014] [depends: TRD-019]
+- [x] **TRD-019-TEST**: Verify denial on missing store-persisted approval despite prompt claims (3h) [verifies TRD-019] [satisfies REQ-014] [depends: TRD-019]
   - Validates PRD ACs: AC-014-2
   - Target File: `packages/agent-core/tests/new-feature/run-index.test.ts`
   - Actions:
@@ -436,7 +440,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given `implementationApprovedAt === null`, when the implementation call site is exercised regardless of accompanying prompt text, then the operation is denied.
 
-- [ ] **TRD-020**: Represent event-mapping and PR-provider selection as editable project-local config (2h) [depends: TRD-012, TRD-016] [satisfies REQ-014]
+- [x] **TRD-020**: Represent event-mapping and PR-provider selection as editable project-local config (2h) [depends: TRD-012, TRD-016] [satisfies REQ-014]
   - Validates PRD ACs: AC-014-3
   - Target File: `packages/agent-core/src/new-feature/event-mapping.ts`
   - Actions:
@@ -444,7 +448,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given a project edits `event-mapping.json` to add an allowed event type, when the workflow next runs, then the new behavior takes effect with no code change.
 
-- [ ] **TRD-020-TEST**: Verify config-only behavior change (2h) [verifies TRD-020] [satisfies REQ-014] [depends: TRD-020]
+- [x] **TRD-020-TEST**: Verify config-only behavior change (2h) [verifies TRD-020] [satisfies REQ-014] [depends: TRD-020]
   - Validates PRD ACs: AC-014-3
   - Target File: `packages/agent-core/tests/new-feature/event-mapping.test.ts`
   - Actions:
@@ -456,7 +460,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
 
 **Shippable State:** `new-feature` is discoverable in the product's command surface alongside `fix-issue` and every other existing command, and every existing standalone command's entry point and behavior remain exactly as they were before this feature shipped.
 
-- [ ] **TRD-021**: Wire `new-feature.yaml` into the existing generation pipeline (2h) [depends: TRD-003] [satisfies REQ-013]
+- [x] **TRD-021**: Wire `new-feature.yaml` into the existing generation pipeline (2h) [depends: TRD-003] [satisfies REQ-013]
   - Validates PRD ACs: AC-013-2
   - Target Files: `packages/development/commands/ensemble/new-feature.md`, `packages/pi/prompts/ensemble-new-feature.md`, `packages/codex/.codex/skills/commands/ensemble-new-feature/SKILL.md`
   - Actions:
@@ -465,7 +469,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given `npm run generate` runs, when it completes, then all three runtime files exist with correct frontmatter and the generation banner.
 
-- [ ] **TRD-021-TEST**: Verify generated command is discoverable in each runtime (1h) [verifies TRD-021] [satisfies REQ-013] [depends: TRD-021]
+- [x] **TRD-021-TEST**: Verify generated command is discoverable in each runtime (1h) [verifies TRD-021] [satisfies REQ-013] [depends: TRD-021]
   - Validates PRD ACs: AC-013-2
   - Target File: `packages/development/tests/new-feature-command.test.js`
   - Actions:
@@ -473,7 +477,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Test AC:
     - Given the generated files, when a runtime's command list is built, then `new-feature` appears alongside `fix-issue`.
 
-- [ ] **TRD-022**: Verify no existing standalone command changed (1h) [depends: TRD-021] [satisfies REQ-013]
+- [x] **TRD-022**: Verify no existing standalone command changed (1h) [depends: TRD-021] [satisfies REQ-013]
   - Validates PRD ACs: AC-013-1
   - Target Files: `packages/development/commands/fix-issue.yaml`, `packages/development/commands/create-prd.yaml`, `packages/development/commands/refine-prd.yaml`, `packages/development/commands/create-trd.yaml`, `packages/development/commands/refine-trd.yaml`
   - Actions:
@@ -481,7 +485,7 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
   - Implementation AC:
     - Given the full diff of this feature's changes, when scoped to the files above, then it is empty.
 
-- [ ] **TRD-022-TEST**: Run each existing standalone command's own test suite unmodified (1h) [verifies TRD-022] [satisfies REQ-013] [depends: TRD-022]
+- [x] **TRD-022-TEST**: Run each existing standalone command's own test suite unmodified (1h) [verifies TRD-022] [satisfies REQ-013] [depends: TRD-022]
   - Validates PRD ACs: AC-013-1
   - Target File: `packages/development/tests/fix-issue-command.test.js`
   - Actions:

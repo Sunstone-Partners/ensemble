@@ -29,3 +29,4 @@ export * from "./local-runner";
 export * from "./behavior/package-assets";
 export * from "./cqrs";
 export * from "./workflow";
+export * from "./new-feature/types";
