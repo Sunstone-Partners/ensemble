@@ -336,3 +336,115 @@ describe('complexity-analyzer narrow markers do not disarm the gate', () => {
     }
   );
 });
+
+describe('complexity-analyzer readable signals only (br-0r3)', () => {
+  // The operator decision on br-0r3: score only what classify can actually read,
+  // cite where each signal came from, and report what was missing rather than
+  // guessing it. Team size is never readable, so it is never scored.
+  const { execFileSync } = require('child_process');
+  let repo;
+
+  const write = (rel, body) => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), body);
+  };
+
+  beforeAll(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'classify-repo-'));
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    write('packages/a/src/core.js', 'module.exports = {};\n');
+    write('packages/a/src/leaf.js', 'module.exports = {};\n');
+    for (let i = 0; i < 6; i++) write(`packages/a/src/user${i}.js`, "const core = require('./core');\n");
+    for (let i = 0; i < 6; i++) write(`packages/b/src/use${i}.ts`, "import core from '../../a/src/core.js';\n");
+    write('packages/b/src/other.ts', 'export {};\n');
+    write('packages/a/src/dup.js', '\n');
+    write('packages/b/src/dup.js', '\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo });
+  });
+
+  afterAll(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+  const run = (description, extra = {}) =>
+    analyzer.analyze(null, { foreman: false, description, repoRoot: repo, ...extra }, {});
+
+  test('team size is not a dimension and is always reported missing', () => {
+    const result = run('Fix a typo in the README');
+    expect(result.dimensions.teamSize).toBeUndefined();
+    expect(result.missingDetails).toContain(analyzer.TEAM_SIZE_UNREADABLE);
+  });
+
+  test('product words that used to read as team size no longer move the score', () => {
+    const plain = analyzer.analyze(null, { foreman: false, description: 'Add a settings page' }, {});
+    const wordy = analyzer.analyze(null, {
+      foreman: false,
+      description: 'Add a settings page for users, owners, admins, operators and stakeholders',
+    }, {});
+    expect(wordy.score).toBe(plain.score);
+  });
+
+  test('fan-in counts require and import forms, across packages, excluding the file itself', () => {
+    const facts = analyzer.collectRepoFacts('packages/a/src/core.js', repo);
+    expect(facts.resolved).toHaveLength(1);
+    expect(facts.resolved[0].fanIn).toBe(12);
+  });
+
+  test('the same text naming a high fan-in file scores higher than naming a leaf', () => {
+    const core = run('Change the return shape of packages/a/src/core.js');
+    const leaf = run('Change the return shape of packages/a/src/leaf.js');
+    expect(core.score).toBeGreaterThan(leaf.score);
+    expect(core.rationale.join('\n')).toContain('packages/a/src/core.js is imported by 12 files');
+  });
+
+  test('named paths spanning packages raise scope, with the packages cited', () => {
+    const result = run('Update packages/a/src/leaf.js and packages/b/src/other.ts');
+    expect(result.dimensions.scopeSize.score).toBe(3);
+    expect(result.rationale.join('\n')).toContain('span 2 packages (packages/a, packages/b)');
+  });
+
+  test('unresolved and ambiguous paths are reported missing, never guessed', () => {
+    const result = run('Fix nope.js and dup.js');
+    expect(result.missingDetails).toContain('named path not found in repository: nope.js');
+    expect(result.missingDetails).toContain('named path ambiguous (2 tracked matches): dup.js');
+    expect(result.repoFacts.resolved).toHaveLength(0);
+  });
+
+  test('a bare filename with one tracked match resolves', () => {
+    const result = run('Rename a variable in leaf.js');
+    expect(result.repoFacts.resolved.map(r => r.path)).toEqual(['packages/a/src/leaf.js']);
+  });
+
+  test('without a repository root, repo facts are reported missing', () => {
+    const result = analyzer.analyze(null, { foreman: false, description: 'Fix packages/a/src/core.js' }, {});
+    expect(result.repoFacts.available).toBe(false);
+    expect(result.missingDetails).toContain('repository facts: no repository root supplied');
+  });
+
+  test('URLs are not mistaken for paths', () => {
+    expect(analyzer.extractPathMentions('See https://example.com/a/b.js and packages/a/src/core.js'))
+      .toEqual(['packages/a/src/core.js']);
+  });
+
+  test('a bead supplies subject, and its type and dependencies are cited signals', () => {
+    const bead = { id: 'br-x', title: 'Epic: rework billing', description: 'Rework billing', issue_type: 'epic', priority: 1, dependencies: [{ id: 'a' }, { id: 'b' }], dependents: 1 };
+    const result = run('', { bead });
+    expect(result.ok).toBe(true);
+    expect(result.normalized.source).toBe('bead');
+    expect(result.dimensions.scopeSize.score).toBe(3);
+    expect(result.dimensions.dependencies.evidence).toContain('bead: 2 dependencies, 1 dependents');
+  });
+
+  test('bead priority and labels are cited but neither scored nor able to disarm the gate', () => {
+    const bead = { id: 'br-y', title: 'Rework how we handle customers', priority: 0, labels: ['urgent'] };
+    const result = run('', { bead });
+    expect(result.rationale).toContain('bead: priority P0 (urgency; not scored)');
+    expect(result.rationale).toContain('bead: labels urgent (not scored)');
+    expect(result.confidence).toBe('low');
+    expect(result.needsConfirmation).toBe(true);
+  });
+
+  test('the report prints missing inputs', () => {
+    const report = analyzer.renderReport(run('Fix nope.js'));
+    expect(report).toContain('## Missing Inputs');
+    expect(report).toContain('named path not found in repository: nope.js');
+  });
+});

@@ -2,7 +2,7 @@
 name: ensemble-analyze-complexity
 description: Score work complexity and choose an adaptive Ensemble planning route (Codex skill for /ensemble:analyze-complexity)
 user-invocable: true
-argument-hint: '[work-description] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]'
+argument-hint: '[work-description] [--bead <id>] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]'
 model: gpt-5.1-codex
 ---
 
@@ -16,10 +16,14 @@ Follow the workflow below, adapt to the current repository, and keep outputs str
 
 
 Analyze a user or Foreman work item before planning starts. Normalize input,
-redact likely secrets in audit text, compute deterministic complexity scores
-for scope size, dependencies, risk factors, and team size, map the final
-score to Simple/Medium/Complex planning depth, apply explicit overrides,
-and disclose the selected route before invoking or instructing downstream
+redact likely secrets in audit text, and compute deterministic complexity
+scores for scope size, dependencies, and risk factors from READABLE signals
+only: the description text, the paths it names resolved against the git
+repository (existence, size, package span, import fan-in), and bead metadata
+when --bead is given. Team size is not readable and is never scored; it and
+every other unavailable input is reported under Missing Inputs. Map the final
+score to Simple/Medium/Complex planning depth, apply explicit overrides, and
+disclose the selected route before invoking or instructing downstream
 Ensemble commands.
 
 ## Workflow
@@ -46,8 +50,9 @@ Preserve the original subject and description for downstream route payloads.
 
 
 **2. Score required dimensions**
-   Compute numeric and qualitative scores for scope size, dependencies, risk factors, and team size.
-Include concrete evidence per elevated dimension in the rationale.
+   Compute numeric and qualitative scores for scope size, dependencies, and risk factors.
+Resolve named paths against the repository; cite each repository or bead fact in the rationale.
+Never guess an input that is not readable: list it under Missing Inputs instead.
 
 
 **3. Map score to route**
@@ -70,7 +75,7 @@ Reject any other override value with valid choices listed and no route side effe
 
 
 **2. Print pre-planning disclosure**
-   Print score, route, confidence, override status, dimension detail, and rationale before downstream dispatch text.
+   Print score, route, confidence, override status, dimension detail, rationale, and missing inputs before downstream dispatch text.
 In interactive low-confidence mode, request clarification or explicit confirmation before route execution.
 
 
@@ -104,5 +109,5 @@ In interactive low-confidence mode, request clarification or explicit confirmati
 ## Usage
 
 ```
-/ensemble:analyze-complexity [work-description] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]
+/ensemble:analyze-complexity [work-description] [--bead <id>] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]
 ```

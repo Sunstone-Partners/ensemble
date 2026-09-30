@@ -1,19 +1,23 @@
 metadata:
   name: ensemble:analyze-complexity
   description: Score work complexity and choose an adaptive Ensemble planning route
-  version: 1.0.0
-  lastUpdated: "2026-09-02"
+  version: 1.1.0
+  lastUpdated: "2026-09-29"
   category: planning
   output_path: ensemble/analyze-complexity.md
   source: sunstone
   model: medium
-  argument_hint: "[work-description] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]"
+  argument_hint: "[work-description] [--bead <id>] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]"
 
 parameters:
   - name: description
     type: string
     required: false
     description: Work description to classify before planning begins
+  - name: bead
+    type: string
+    required: false
+    description: Classify a bead (br show --json) instead of free text; its type and dependency counts become cited signals, and its priority and labels are cited but not scored
   - name: route
     type: string
     required: false
@@ -38,10 +42,14 @@ constraints:
 mission:
   summary: |
     Analyze a user or Foreman work item before planning starts. Normalize input,
-    redact likely secrets in audit text, compute deterministic complexity scores
-    for scope size, dependencies, risk factors, and team size, map the final
-    score to Simple/Medium/Complex planning depth, apply explicit overrides,
-    and disclose the selected route before invoking or instructing downstream
+    redact likely secrets in audit text, and compute deterministic complexity
+    scores for scope size, dependencies, and risk factors from READABLE signals
+    only: the description text, the paths it names resolved against the git
+    repository (existence, size, package span, import fan-in), and bead metadata
+    when --bead is given. Team size is not readable and is never scored; it and
+    every other unavailable input is reported under Missing Inputs. Map the final
+    score to Simple/Medium/Complex planning depth, apply explicit overrides, and
+    disclose the selected route before invoking or instructing downstream
     Ensemble commands.
   behavior:
     - Accept free-text descriptions in interactive mode.
@@ -82,8 +90,9 @@ workflow:
         - order: 2
           title: Score required dimensions
           description: |
-            Compute numeric and qualitative scores for scope size, dependencies, risk factors, and team size.
-            Include concrete evidence per elevated dimension in the rationale.
+            Compute numeric and qualitative scores for scope size, dependencies, and risk factors.
+            Resolve named paths against the repository; cite each repository or bead fact in the rationale.
+            Never guess an input that is not readable: list it under Missing Inputs instead.
         - order: 3
           title: Map score to route
           description: |
@@ -108,7 +117,7 @@ workflow:
         - order: 2
           title: Print pre-planning disclosure
           description: |
-            Print score, route, confidence, override status, dimension detail, and rationale before downstream dispatch text.
+            Print score, route, confidence, override status, dimension detail, rationale, and missing inputs before downstream dispatch text.
             In interactive low-confidence mode, request clarification or explicit confirmation before route execution.
         - order: 3
           title: Emit Foreman artifacts

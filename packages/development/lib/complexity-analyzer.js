@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROUTES = ['simple', 'medium', 'complex'];
 const SECRET_PATTERNS = [
@@ -41,6 +42,8 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     else if (arg === '--foreman') opts.foreman = true;
     else if (arg === '--no-adaptive-planning') opts.noAdaptivePlanning = true;
     else if (arg === '--route') opts.route = argv[++i];
+    else if (arg === '--bead') opts.beadId = argv[++i];
+    else if (arg.startsWith('--bead=')) opts.beadId = arg.slice('--bead='.length);
     else if (arg.startsWith('--route=')) opts.route = arg.slice('--route='.length);
     else if (arg === '--description') opts.args.push(argv[++i] || '');
     else opts.args.push(arg);
@@ -73,8 +76,29 @@ function normalizeInput(opts = {}, env = process.env) {
     };
   }
 
+  const bead = opts.bead && typeof opts.bead === 'object' ? opts.bead : null;
+  if (bead) {
+    // A bead supplies its own title and description. Argument text, if any, is
+    // appended rather than discarded: it is usually the user's gloss on the bead.
+    const title = String(bead.title || '').trim();
+    const description = [String(bead.description || '').trim(), argDescription].filter(Boolean).join('\n');
+    if (!title && !description) {
+      return { ok: false, error: `ERROR: Bead ${bead.id || '(unknown)'} has no title or description. No route side effects performed.` };
+    }
+    return {
+      ok: true,
+      mode: 'interactive',
+      source: 'bead',
+      subject: title || description,
+      description: description || title,
+      originalSubject: title || description,
+      originalDescription: description || title,
+      bead: { id: bead.id || null },
+    };
+  }
+
   if (!argDescription) {
-    return { ok: false, error: 'ERROR: Missing work description: pass a work description. No route side effects performed.' };
+    return { ok: false, error: 'ERROR: Missing work description: pass a work description or --bead <id>. No route side effects performed.' };
   }
   return {
     ok: true,
@@ -167,14 +191,165 @@ function scoreRiskFactors(text) {
   return dimension(0, 'low', evidence);
 }
 
-function scoreTeamSize(text) {
-  const evidence = [];
-  const teamWords = text.match(/\b(teams?|pm|developers?|operators?|users?|reviewers?|qa|foreman|humans?|approvals?|owners?|tenants?|admins?|stakeholders?)\b/gi) || [];
-  evidence.push(...teamWords.slice(0, 5).map(w => `team signal: ${w.toLowerCase()}`));
-  if (/\bmulti[- ]team\b/i.test(text) || teamWords.length >= 5) return dimension(3, 'high', evidence);
-  if (teamWords.length >= 2) return dimension(2, 'medium', evidence);
-  if (teamWords.length === 1) return dimension(1, 'low', evidence);
-  return dimension(0, 'low', evidence);
+// Team size is deliberately NOT a dimension. Nothing classify can read says how
+// many people will work on something: the previous scorer counted words like
+// "users", "approvals" and "owners", which describe the product, not the team,
+// and turned their presence into a confident-looking number. An input that is
+// never available is reported as missing instead (see TEAM_SIZE_UNREADABLE).
+const TEAM_SIZE_UNREADABLE = 'team size: not readable from a description or the repository; not scored';
+
+// Path-like mentions: anything with a slash, or a bare filename with a known
+// source/config extension. URLs are excluded before matching.
+const PATH_MENTION = /(?:[\w@.-]+\/)+[\w@.-]+|\b[\w-]+\.(?:[cm]?[jt]sx?|py|rb|go|rs|exs?|java|cs|kt|swift|php|md|ya?ml|json|toml|sh|sql|css|scss|html|vue|svelte)\b/g;
+const PACKAGE_ROOTS = new Set(['packages', 'apps', 'libs', 'services', 'modules', 'crates']);
+
+function extractPathMentions(text) {
+  const withoutUrls = String(text || '').replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, ' ');
+  return unique((withoutUrls.match(PATH_MENTION) || []).map(m => m.replace(/^\.\//, '').replace(/[.,;:)]+$/, '')));
+}
+
+function packageOf(relPath) {
+  const parts = relPath.split('/');
+  if (parts.length >= 2 && PACKAGE_ROOTS.has(parts[0])) return `${parts[0]}/${parts[1]}`;
+  return parts.length > 1 ? parts[0] : '(root)';
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function defaultExec(cmd, args, cwd) {
+  return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+}
+
+/**
+ * Resolves paths named in the text against the repository and reports only what
+ * git can show: whether each exists, its size, which package it sits in, and how
+ * many tracked files import it. A mention that does not resolve, or resolves to
+ * several files, is recorded as missing rather than guessed at.
+ */
+function collectRepoFacts(text, repoRoot, exec = defaultExec) {
+  const mentions = extractPathMentions(text);
+  const facts = { available: false, resolved: [], unresolved: [], ambiguous: [], packages: [], maxFanIn: 0 };
+  if (!repoRoot) return { ...facts, reason: 'no repository root supplied' };
+  let tracked;
+  try {
+    tracked = exec('git', ['ls-files'], repoRoot).split('\n').filter(Boolean);
+  } catch {
+    return { ...facts, reason: 'not a git repository' };
+  }
+  facts.available = true;
+  facts.mentions = mentions;
+  const trackedSet = new Set(tracked);
+
+  for (const mention of mentions.slice(0, 8)) {
+    let matches;
+    if (trackedSet.has(mention)) matches = [mention];
+    else if (mention.includes('/')) {
+      const prefix = mention.replace(/\/$/, '') + '/';
+      const under = tracked.filter(f => f.startsWith(prefix));
+      matches = under.length ? [{ dir: mention.replace(/\/$/, ''), files: under.length }] : tracked.filter(f => f.endsWith('/' + mention));
+    } else {
+      matches = tracked.filter(f => f === mention || f.endsWith('/' + mention));
+    }
+    if (matches.length === 0) { facts.unresolved.push(mention); continue; }
+    if (matches.length > 1) { facts.ambiguous.push({ mention, count: matches.length }); continue; }
+
+    const match = matches[0];
+    if (typeof match === 'object') {
+      facts.resolved.push({ mention, path: match.dir, kind: 'dir', files: match.files, package: packageOf(match.dir + '/x') });
+      continue;
+    }
+    let lines = null;
+    try { lines = fs.readFileSync(path.join(repoRoot, match), 'utf8').split('\n').length; } catch { /* unreadable: size unknown */ }
+    const base = path.basename(match).replace(/\.[^.]+$/, '');
+    const stem = base === 'index' ? path.basename(path.dirname(match)) : base;
+    let fanIn = 0;
+    try {
+      // POSIX classes, not \s: git grep -E does not support Perl escapes, and an
+      // unsupported escape silently matches nothing, i.e. a fan-in of zero.
+      const importPattern = `(from|require\\(|import\\()[[:space:]]*['"]([^'"]*/)?${escapeRegExp(stem)}(\\.[a-z]+)?['"]`;
+      const importers = exec('git', ['grep', '-l', '-E', importPattern], repoRoot).split('\n').filter(f => f && f !== match);
+      fanIn = importers.length;
+    } catch { fanIn = 0; /* git grep exits 1 on no match */ }
+    facts.resolved.push({ mention, path: match, kind: 'file', lines, fanIn, package: packageOf(match) });
+    facts.maxFanIn = Math.max(facts.maxFanIn, fanIn);
+  }
+  facts.packages = unique(facts.resolved.map(r => r.package));
+  return facts;
+}
+
+/** Reads a bead through the br CLI. Returns null when it cannot be read. */
+function loadBead(id, cwd, exec = defaultExec) {
+  try {
+    const parsed = JSON.parse(exec('br', ['show', id, '--json'], cwd));
+    const bead = Array.isArray(parsed) ? parsed[0] : parsed;
+    return bead && bead.id ? bead : null;
+  } catch {
+    return null;
+  }
+}
+
+function raise(dim, score, evidence) {
+  const next = Math.max(dim.score, score);
+  const label = next === dim.score ? dim.label : next >= 3 ? 'high' : next >= 2 ? 'medium' : 'low';
+  return dimension(next, label, [...dim.evidence, ...evidence]);
+}
+
+/** Folds repository and bead facts into the text-derived dimensions, each with a citation. */
+function applyReadableFacts(dimensions, repo, bead) {
+  let { scopeSize, dependencies, riskFactors } = dimensions;
+  for (const r of repo.resolved) {
+    const detail = r.kind === 'dir'
+      ? `${r.path}/ (${r.files} tracked files, ${r.package})`
+      : `${r.path} (${r.lines ?? '?'} lines, ${r.package}, imported by ${r.fanIn} files)`;
+    scopeSize = raise(scopeSize, 0, [`repo: ${detail}`]);
+  }
+  if (repo.packages.length >= 2) {
+    scopeSize = raise(scopeSize, 3, [`repo: named paths span ${repo.packages.length} packages (${repo.packages.join(', ')})`]);
+  } else if (repo.resolved.length >= 2 || repo.resolved.some(r => r.kind === 'dir')) {
+    scopeSize = raise(scopeSize, 1, [`repo: ${repo.resolved.length} named paths in ${repo.packages[0]}`]);
+  }
+  if (repo.maxFanIn > 0) {
+    const top = repo.resolved.reduce((a, b) => ((b.fanIn || 0) > (a.fanIn || 0) ? b : a));
+    const score = repo.maxFanIn >= 10 ? 3 : repo.maxFanIn >= 3 ? 2 : 1;
+    dependencies = raise(dependencies, score, [`repo: ${top.path} is imported by ${top.fanIn} files`]);
+  }
+
+  if (bead) {
+    const type = String(bead.issue_type || '').toLowerCase();
+    if (type === 'epic') scopeSize = raise(scopeSize, 3, [`bead: type ${type}`]);
+    else if (type === 'feature') scopeSize = raise(scopeSize, 1, [`bead: type ${type}`]);
+    else if (type) scopeSize = raise(scopeSize, 0, [`bead: type ${type}`]);
+    const deps = Array.isArray(bead.dependencies) ? bead.dependencies.length : Number(bead.dependency_count) || 0;
+    const dependents = Array.isArray(bead.dependents) ? bead.dependents.length : Number(bead.dependents ?? bead.dependent_count) || 0;
+    if (deps + dependents > 0) {
+      dependencies = raise(dependencies, deps + dependents >= 3 ? 2 : 1, [`bead: ${deps} dependencies, ${dependents} dependents`]);
+    }
+  }
+  return { scopeSize, dependencies, riskFactors };
+}
+
+/**
+ * Bead fields that are real but say nothing about size. Cited in the rationale so
+ * the user sees them; kept out of the dimensions so they cannot raise confidence.
+ */
+function beadCitations(bead) {
+  if (!bead) return [];
+  const out = [];
+  if (bead.priority !== undefined && bead.priority !== null) out.push(`bead: priority P${bead.priority} (urgency; not scored)`);
+  if (Array.isArray(bead.labels) && bead.labels.length) out.push(`bead: labels ${bead.labels.join(', ')} (not scored)`);
+  return out;
+}
+
+function missingRepoInputs(repo, bead) {
+  const missing = [];
+  if (!repo.available) missing.push(`repository facts: ${repo.reason}`);
+  else if (!repo.mentions.length) missing.push('repository facts: no file or path named in the description');
+  for (const m of repo.unresolved) missing.push(`named path not found in repository: ${m}`);
+  for (const a of repo.ambiguous) missing.push(`named path ambiguous (${a.count} tracked matches): ${a.mention}`);
+  if (!bead) missing.push('bead metadata: no --bead given');
+  return missing;
 }
 
 function scoreToRoute(score) {
@@ -193,15 +368,14 @@ function routePlan(route) {
 }
 
 function confidenceFor(dimensions) {
+  const names = { scopeSize: 'scope size', dependencies: 'dependencies', riskFactors: 'risk factors' };
   const scored = Object.values(dimensions).filter(d => d.evidence.length > 0 || d.score > 0).length;
-  const missingDetails = [];
-  if (!dimensions.scopeSize.evidence.length && dimensions.scopeSize.score === 0) missingDetails.push('scope size');
-  if (!dimensions.dependencies.evidence.length && dimensions.dependencies.score === 0) missingDetails.push('dependencies');
-  if (!dimensions.riskFactors.evidence.length && dimensions.riskFactors.score === 0) missingDetails.push('risk factors');
-  if (!dimensions.teamSize.evidence.length && dimensions.teamSize.score === 0) missingDetails.push('team size');
+  const missingDetails = Object.entries(names)
+    .filter(([key]) => !dimensions[key].evidence.length && dimensions[key].score === 0)
+    .map(([, label]) => label);
   let confidence = 'high';
   if (scored < 2) confidence = 'low';
-  else if (scored < 4) confidence = 'medium';
+  else if (scored < 3) confidence = 'medium';
   return { confidence, missingDetails, scoredDimensionCount: scored };
 }
 
@@ -246,14 +420,19 @@ function analyze(input, opts = {}, env = process.env) {
 
   const safe = redactSecrets(`${normalized.subject}\n${normalized.description}`);
   const text = safe.text;
-  const dimensions = {
+  const textDimensions = {
     scopeSize: scoreScopeSize(text),
     dependencies: scoreDependencies(text),
     riskFactors: scoreRiskFactors(text),
-    teamSize: scoreTeamSize(text),
   };
-  const { confidence, missingDetails, scoredDimensionCount } = confidenceFor(dimensions);
-  let score = 1 + Math.round(Object.values(dimensions).reduce((sum, d) => sum + d.score, 0) * 0.75);
+  const bead = normalized.source === 'bead' ? opts.bead : null;
+  const repo = collectRepoFacts(text, opts.repoRoot || null, opts.exec);
+  const dimensions = applyReadableFacts(textDimensions, repo, bead);
+  const conf = confidenceFor(dimensions);
+  const { confidence, scoredDimensionCount } = conf;
+  const missingDetails = [...conf.missingDetails, TEAM_SIZE_UNREADABLE, ...missingRepoInputs(repo, bead)];
+  // Three dimensions of 0-3 each: 1 + sum spans 1-10 without rescaling.
+  let score = 1 + Object.values(dimensions).reduce((sum, d) => sum + d.score, 0);
   score = clamp(score, 1, 10);
   let recommendedRoute = scoreToRoute(score);
 
@@ -278,9 +457,16 @@ function analyze(input, opts = {}, env = process.env) {
   if (!overrideResult.ok) return { ok: false, error: overrideResult.error, normalized, recommendedRoute };
   const selectedRoute = overrideResult.route || recommendedRoute;
   const band = selectedRoute;
-  const rationale = Object.entries(dimensions)
-    .flatMap(([name, dim]) => dim.evidence.slice(0, 2).map(e => `${name}: ${e}`))
-    .slice(0, 6);
+  // Repository and bead citations are listed first: they are facts, where the
+  // text signals are keyword matches.
+  const dimensionRationale = Object.entries(dimensions)
+    .flatMap(([name, dim]) => {
+      const facts = dim.evidence.filter(e => /^(repo|bead):/.test(e));
+      const words = dim.evidence.filter(e => !/^(repo|bead):/.test(e)).slice(0, 2);
+      return [...facts, ...words].map(e => `${name}: ${e}`);
+    })
+    .slice(0, 10);
+  const rationale = dimensionRationale.concat(beadCitations(bead));
 
   // A description carrying no signal in any dimension scores at the floor, so the
   // route reads Simple — and Simple dispatches to /ensemble:fix-issue with no PRD
@@ -301,7 +487,10 @@ function analyze(input, opts = {}, env = process.env) {
   const needsConfirmation =
     normalized.mode !== 'foreman' &&
     confidence === 'low' &&
-    rationale.length === 0 &&
+    // Dimension evidence only: a bead's priority or labels are real but say
+    // nothing about size, and must not disarm the gate the way a stray narrow
+    // word once did.
+    dimensionRationale.length === 0 &&
     !overrideResult.override.applied;
 
   return {
@@ -318,6 +507,7 @@ function analyze(input, opts = {}, env = process.env) {
     override: overrideResult.override,
     dimensions,
     missingDetails,
+    repoFacts: repo,
     rationale,
     redactions: safe.redactions,
     routePlan: routePlan(selectedRoute),
@@ -351,10 +541,13 @@ function renderReport(result, artifactPath) {
   for (const item of result.rationale || []) lines.push(`- ${item}`);
   if (!result.rationale?.length) lines.push('- No high-signal rationale extracted.');
   lines.push('');
+  lines.push('## Missing Inputs');
+  for (const item of result.missingDetails || []) lines.push(`- ${item}`);
+  lines.push('');
   lines.push('## Route Plan');
   if (result.needsConfirmation) {
     lines.push(
-      '- CONFIRM BEFORE DISPATCH: no scope, dependency, risk or team signal was found in'
+      '- CONFIRM BEFORE DISPATCH: no scope, dependency or risk signal was found in'
     );
     lines.push(
       '  this description, so the score sits at the floor and the route below is a guess.'
@@ -367,10 +560,27 @@ function renderReport(result, artifactPath) {
   return `${lines.join('\n')}\n`;
 }
 
+function repoRootOf(cwd) {
+  try {
+    return defaultExec('git', ['rev-parse', '--show-toplevel'], cwd).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function main() {
   const opts = parseArgs();
   if (!process.argv.includes('analyze')) return;
-  const result = analyze(null, opts, process.env);
+  const cwd = process.cwd();
+  opts.repoRoot = repoRootOf(cwd);
+  let result;
+  if (opts.beadId && !opts.foreman) {
+    opts.bead = loadBead(opts.beadId, cwd);
+    if (!opts.bead) {
+      result = { ok: false, error: `ERROR: Could not read bead ${opts.beadId} via 'br show --json'. No route side effects performed.` };
+    }
+  }
+  result = result || analyze(null, opts, process.env);
   const artifactPath = process.env.FOREMAN_ARTIFACT_PATH || '';
   if (opts.foreman && artifactPath) {
     fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
@@ -391,7 +601,10 @@ module.exports = {
   scoreScopeSize,
   scoreDependencies,
   scoreRiskFactors,
-  scoreTeamSize,
+  TEAM_SIZE_UNREADABLE,
+  extractPathMentions,
+  collectRepoFacts,
+  loadBead,
   scoreToRoute,
   routePlan,
   confidenceFor,
