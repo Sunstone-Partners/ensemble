@@ -497,10 +497,10 @@ REQ-009 requires an explicit, project-local event-mapping contract with default-
 
 Informational grouping only; `implement-trd-beads` does not parse this section.
 
-### Sprint 1 (PR 1 — ~36h): TRD-001 through TRD-006 and their TEST tasks. Foundation: run index, stage sequence, artifact recording, entry/resume, refine-skip rejection.
-### Sprint 2 (PR 2 — ~30h): TRD-007 through TRD-011 and their TEST tasks. Continuation, failure/decline handling, single-active-run, status.
-### Sprint 3 (PR 3 — ~55h): TRD-012 through TRD-020 and their TEST tasks. Event triggers, approval gates, PR-provider seam, mutation-boundary enforcement.
-### Sprint 4 (PR 4 — ~5h): TRD-021 and TRD-022 and their TEST tasks. Discoverability and compatibility verification.
+### Sprint 1 (PR 1 — ~36h): TRD-001 through TRD-006 and their TEST tasks. Foundation: run index, stage sequence, artifact recording, entry/resume, refine-skip rejection
+### Sprint 2 (PR 2 — ~30h): TRD-007 through TRD-011 and their TEST tasks. Continuation, failure/decline handling, single-active-run, status
+### Sprint 3 (PR 3 — ~55h): TRD-012 through TRD-020 and their TEST tasks. Event triggers, approval gates, PR-provider seam, mutation-boundary enforcement
+### Sprint 4 (PR 4 — ~5h): TRD-021 and TRD-022 and their TEST tasks. Discoverability and compatibility verification
 
 ## Acceptance Criteria Traceability
 
