@@ -468,35 +468,43 @@ function analyze(input, opts = {}, env = process.env) {
     .slice(0, 10);
   const rationale = dimensionRationale.concat(beadCitations(bead));
 
-  // A description carrying no signal in any dimension scores at the floor, so the
-  // route reads Simple — and Simple dispatches to /ensemble:fix-issue with no PRD
-  // and no TRD. "Rework how we handle customers" lands there. That is the case the
-  // command spec means by "ask for confirmation or clarification on low-confidence
-  // interactive analysis before dispatch".
+  // Confirmation policy (br-0r3, operator decision 2026-09-29, option C): low
+  // confidence asks before dispatch UNLESS the work is recognisably small.
   //
-  // Scoped narrowly on purpose. Blanket low-confidence escalation would also catch
-  // "Fix a typo in the README", which reports low confidence and is nonetheless
-  // correctly Simple; escalating it hands a typo a PRD. The discriminator is not
-  // confidence alone but confidence WITH no extracted evidence — a typo scores low
-  // because there is little to say, a vague subject scores low because nothing was
-  // said. An explicit --route means the human already named the route, so there is
-  // nothing left to confirm.
+  // Low confidence means at most one of the three dimensions had any evidence, so
+  // the score rests on very little. That covers two different situations:
+  //   - nothing recognised at all ("Rework how we handle customers"), which #65
+  //     already gated because it scores at the floor and would route to Simple;
+  //   - one weak signal ("Add a caching layer"), which #65 let through silently.
+  // Both now ask. The exemption is work that is recognisably small: a narrow
+  // marker (typo, off-by-one, "rename a variable"), or a single named file that
+  // nothing imports. Asking about those would put a prompt in front of every
+  // one-line fix, which is the overhead the Simple route exists to remove.
   //
-  // This flags; it does not reroute. The recommendation stands and the caller
-  // decides, which keeps the analyzer's output deterministic.
+  // Evidence here is dimension evidence only: a bead's priority or labels are real
+  // but say nothing about size, and must not exempt anything. An explicit --route
+  // means the human already chose, and Foreman is unattended and keeps its own
+  // safety bump instead. This flags; it does not reroute.
+  const singleLeafFile =
+    repo.resolved.length === 1 && repo.resolved[0].kind === 'file' && (repo.resolved[0].fanIn || 0) < 3;
+  const recognisablySmall =
+    dimensions.scopeSize.evidence.includes('narrow, single-artifact scope') || singleLeafFile;
   const needsConfirmation =
     normalized.mode !== 'foreman' &&
     confidence === 'low' &&
-    // Dimension evidence only: a bead's priority or labels are real but say
-    // nothing about size, and must not disarm the gate the way a stray narrow
-    // word once did.
-    dimensionRationale.length === 0 &&
+    !recognisablySmall &&
     !overrideResult.override.applied;
+  const confirmationReason = !needsConfirmation
+    ? null
+    : dimensionRationale.length === 0
+      ? 'no scope, dependency or risk signal was found, so the score sits at the floor and the route below is a guess'
+      : `confidence is low: only ${scoredDimensionCount} of 3 dimensions had evidence, so the route below rests on one signal`;
 
   return {
     ok: true,
     adaptivePlanning: config,
     needsConfirmation,
+    confirmationReason,
     subject: normalized.subject,
     descriptionPresent: Boolean(normalized.description),
     score,
@@ -546,12 +554,7 @@ function renderReport(result, artifactPath) {
   lines.push('');
   lines.push('## Route Plan');
   if (result.needsConfirmation) {
-    lines.push(
-      '- CONFIRM BEFORE DISPATCH: no scope, dependency or risk signal was found in'
-    );
-    lines.push(
-      '  this description, so the score sits at the floor and the route below is a guess.'
-    );
+    lines.push(`- CONFIRM BEFORE DISPATCH: ${result.confirmationReason || 'confidence is low'}.`);
     lines.push(
       '  Describe the work in more detail, or name the route with --route simple|medium|complex.'
     );

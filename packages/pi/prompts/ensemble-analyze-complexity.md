@@ -63,7 +63,7 @@ Reject any other override value with valid choices listed and no route side effe
 ### Step 2: Print pre-planning disclosure
 
 Print score, route, confidence, override status, dimension detail, rationale, and missing inputs before downstream dispatch text.
-In interactive low-confidence mode, request clarification or explicit confirmation before route execution.
+When the analyzer reports needsConfirmation (interactive, low confidence, not recognisably small), print its confirmationReason and request clarification or explicit confirmation before route execution.
 
 ### Step 3: Emit Foreman artifacts
 

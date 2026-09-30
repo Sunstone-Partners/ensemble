@@ -217,11 +217,10 @@ describe('complexity-analyzer route calibration', () => {
 });
 
 describe('complexity-analyzer low-confidence confirmation gate', () => {
-  // The command YAML asks for confirmation on low-confidence interactive analysis.
-  // Confidence alone is the wrong trigger: "Fix a typo in the README" is also low
-  // confidence and is correctly Simple, so gating on it would hand a typo a PRD.
-  // The trigger is low confidence WITH no extracted evidence — nothing recognised,
-  // as opposed to something small recognised.
+  // Operator decision on br-0r3 (option C): low confidence asks before dispatch
+  // unless the work is recognisably small. #65 gated only on "nothing recognised";
+  // a single weak signal now asks too. Recognisably small work (a narrow marker, or
+  // one named file nothing imports) is exempt, so a typo does not get a prompt.
   const VAGUE = [
     'Rework how we handle customers',
     'Make the checkout flow better',
@@ -280,6 +279,31 @@ describe('complexity-analyzer low-confidence confirmation gate', () => {
     };
     const result = analyzer.analyze(null, { foreman: true }, env);
     expect(result.ok).toBe(true);
+    expect(result.needsConfirmation).toBe(false);
+  });
+});
+
+describe('complexity-analyzer option C: low confidence asks unless recognisably small', () => {
+  test('one weak signal is low confidence and now asks, saying why', () => {
+    const result = analyzer.analyze(null, { foreman: false, description: 'Add a settings page' }, {});
+    expect(result.confidence).toBe('low');
+    expect(result.rationale.length).toBeGreaterThan(0);
+    expect(result.needsConfirmation).toBe(true);
+    expect(result.confirmationReason).toContain('only 1 of 3 dimensions had evidence');
+    expect(analyzer.renderReport(result)).toContain('CONFIRM BEFORE DISPATCH: confidence is low');
+  });
+
+  test('nothing recognised keeps the floor-score explanation', () => {
+    const result = analyzer.analyze(null, { foreman: false, description: 'Redo onboarding' }, {});
+    expect(result.confirmationReason).toContain('score sits at the floor');
+  });
+
+  test('medium confidence does not ask', () => {
+    // Two dimensions with evidence: scope ("add") and dependencies ("database").
+    // "Add a caching layer" was wrong here: the dependency pattern matches
+    // "cache", not "caching", so that text has one signal and is correctly low.
+    const result = analyzer.analyze(null, { foreman: false, description: 'Add a settings page backed by the database' }, {});
+    expect(result.confidence).toBe('medium');
     expect(result.needsConfirmation).toBe(false);
   });
 });
@@ -438,6 +462,18 @@ describe('complexity-analyzer readable signals only (br-0r3)', () => {
     const result = run('', { bead });
     expect(result.rationale).toContain('bead: priority P0 (urgency; not scored)');
     expect(result.rationale).toContain('bead: labels urgent (not scored)');
+    expect(result.confidence).toBe('low');
+    expect(result.needsConfirmation).toBe(true);
+  });
+
+  test('option C: a single named file that nothing imports is recognisably small', () => {
+    const result = run('Tweak packages/a/src/leaf.js');
+    expect(result.confidence).toBe('low');
+    expect(result.needsConfirmation).toBe(false);
+  });
+
+  test('option C: a bead whose only signal is its type still asks', () => {
+    const result = run('', { bead: { id: 'br-z', title: 'Improve the reporting', issue_type: 'task', priority: 2 } });
     expect(result.confidence).toBe('low');
     expect(result.needsConfirmation).toBe(true);
   });

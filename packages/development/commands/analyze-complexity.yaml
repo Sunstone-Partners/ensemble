@@ -58,7 +58,7 @@ mission:
     - Support adaptive_planning.enabled false config and --no-adaptive-planning precedence.
     - Map scores 1-3 to Simple, 4-6 to Medium, and 7-10 to Complex.
     - Use deterministic fallback when model output is malformed and enough non-secret structural evidence exists.
-    - Ask for confirmation or clarification on low-confidence interactive analysis before dispatch.
+    - Ask for confirmation or clarification on low-confidence interactive analysis before dispatch, unless the work is recognisably small (a narrow marker such as a typo, or one named file that nothing imports).
     - In low-confidence Foreman mode, choose the safer higher-depth plausible route and record missing details.
 
 workflow:
@@ -118,7 +118,7 @@ workflow:
           title: Print pre-planning disclosure
           description: |
             Print score, route, confidence, override status, dimension detail, rationale, and missing inputs before downstream dispatch text.
-            In interactive low-confidence mode, request clarification or explicit confirmation before route execution.
+            When the analyzer reports needsConfirmation (interactive, low confidence, not recognisably small), print its confirmationReason and request clarification or explicit confirmation before route execution.
         - order: 3
           title: Emit Foreman artifacts
           description: |
