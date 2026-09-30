@@ -14,7 +14,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
-import type { ArtifactRef, RunRecord, Stage } from "./types";
+import type { ArtifactRef, RunRecord } from "./types";
 import { STAGE_ORDER } from "./types";
 
 /** Typed error thrown by `mutate()` on a stale `expectedRevision`. */
@@ -141,7 +141,7 @@ function validateRunRecordShape(value: unknown, filePath: string): asserts value
     throw makeRunIndexCorrupt(filePath, "not a JSON object");
   }
   const r = value as Record<string, unknown>;
-  const requiredStrings = ["runId", "projectRoot", "status", "stage", "createdAt", "updatedAt"];
+  const requiredStrings = ["runId", "projectRoot", "idea", "status", "stage", "createdAt", "updatedAt"];
   for (const key of requiredStrings) {
     if (typeof r[key] !== "string") {
       throw makeRunIndexCorrupt(filePath, `missing or non-string field "${key}"`);
@@ -240,6 +240,7 @@ export function createRun(projectRoot: string, idea: string): RunRecord {
   const record: RunRecord = {
     runId,
     projectRoot,
+    idea,
     status: "active",
     stage: "prd_create",
     // No stage has been attempted yet. None of the four StageOutcome.kind

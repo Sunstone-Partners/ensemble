@@ -53,6 +53,7 @@ describe("mutate (TRD-002)", () => {
       JSON.stringify({
         runId: "bad-stage",
         projectRoot: root,
+        idea: "an idea",
         status: "active",
         stage: "not_a_real_stage",
         stageOutcome: { kind: "approval_wait", recordedAt: new Date().toISOString() },

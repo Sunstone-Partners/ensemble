@@ -54,6 +54,13 @@ export interface ArtifactRef {
 export interface RunRecord {
   runId: string;
   projectRoot: string;
+  /**
+   * The feature idea this run started from (manual `idea` argument, or
+   * `event.summary` for an event-triggered start). Persisted at creation
+   * so a later-session dispatch to `prd_create` has input to read even
+   * when it did not execute synchronously with the entry call.
+   */
+  idea: string;
   status: "active" | "paused" | "completed" | "abandoned";
   stage: Stage;
   stageOutcome: StageOutcome;
