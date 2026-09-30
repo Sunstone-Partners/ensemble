@@ -111,10 +111,10 @@ function headOid(rootDir: string): string {
   }
 }
 
-/** Content of a path as committed at HEAD, or undefined when absent there. */
-function headFingerprint(rootDir: string, relPath: string): Fingerprint | undefined {
+/** Content of a path as committed at some revision, or undefined when absent there. */
+function blobFingerprintAt(rootDir: string, oid: string, relPath: string): Fingerprint | undefined {
   try {
-    const blob = execFileSync("git", ["show", `HEAD:${relPath}`], {
+    const blob = execFileSync("git", ["show", `${oid}:${relPath}`], {
       cwd: rootDir,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -162,6 +162,52 @@ function movedByExternalHistory(rootDir: string, fromOid: string): boolean {
   return false; // Starting point not in the window.
 }
 
+/**
+ * Commit oids reachable from `fromOid` that changed this path, newest
+ * first.
+ *
+ * Bounded like the reflog scan above: real revert distances are shallow,
+ * and an unbounded walk on a long-lived guardrail file is an unforced
+ * cost for no correctness gain.
+ */
+function historyOidsForPath(rootDir: string, fromOid: string, relPath: string): string[] {
+  return git(rootDir, ["log", "--format=%H", "-n", "200", fromOid, "--", relPath])
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/**
+ * True when a protected path's current content byte-for-byte matches some
+ * commit reachable from `fromOid` already committed for this path -- a
+ * RESTORATION, not new content (br-suoh).
+ *
+ * This is the file-content analogue of EXTERNAL_HISTORY_ACTIONS above. A
+ * `git checkout <good-sha> -- <path>` never moves HEAD, so
+ * syncExternalHistory's reflog walk cannot see it, and without this the
+ * guard reverts a legitimate restoration straight back to the bad content
+ * it was restoring away from -- with no agent-reachable way out, because
+ * the correction is itself a write to a protected path.
+ *
+ * `fromOid` MUST be the monitor's `trustedHead`, never live HEAD. Live
+ * HEAD would match a bypass against ITS OWN just-made commit: edit a
+ * protected file, `git commit -am`, and the laundered content is now "in
+ * HEAD's history" by definition -- the exact one-command bypass
+ * EXTERNAL_HISTORY_ACTIONS already excludes `commit`/`reset` to prevent.
+ * `trustedHead` only ever advances on a CONFIRMED external move, so a
+ * local commit -- however many are chained -- never becomes a trusted
+ * anchor. Still an accepted, narrower risk: a blob that predates this
+ * guard's own hardening remains a legitimate ancestor of `trustedHead` and
+ * would still match. Closing that fully would mean tracking which
+ * historical commits were themselves approved, which this does not do.
+ */
+function isRestorationToHistory(rootDir: string, fromOid: string, relPath: string, digest: string): boolean {
+  for (const oid of historyOidsForPath(rootDir, fromOid, relPath)) {
+    if (blobFingerprintAt(rootDir, oid, relPath)?.digest === digest) return true;
+  }
+  return false;
+}
+
 
 export class WriteBoundaryMonitor {
   // One snapshot per path so a violation restores exactly that path,
@@ -173,6 +219,13 @@ export class WriteBoundaryMonitor {
   private enumerationComplete = false;
   private readonly seen: WriteViolation[] = [];
   private knownHead: string;
+  // Anchor for isRestorationToHistory. Deliberately separate from
+  // knownHead, which advances on EVERY HEAD move including a rejected
+  // (local) one -- using it here would let a local commit launder its own
+  // content one call later. Advances ONLY inside syncExternalHistory's
+  // `external` branch, so it can never point past a commit this session
+  // made itself.
+  private trustedHead: string;
 
   /**
    * `inScope` narrows WHICH protected paths this monitor governs.
@@ -189,6 +242,7 @@ export class WriteBoundaryMonitor {
     private inScope: (path: string) => boolean = () => true,
   ) {
     this.knownHead = headOid(rootDir);
+    this.trustedHead = this.knownHead;
   }
 
   get violations(): readonly WriteViolation[] {
@@ -253,9 +307,10 @@ export class WriteBoundaryMonitor {
     // subsequent call, and its paths stay pinned to their old baselines.
     this.knownHead = current;
     if (!external) return;
+    this.trustedHead = current;
 
     for (const path of [...this.snapshots.keys()]) {
-      const committed = headFingerprint(this.rootDir, path);
+      const committed = blobFingerprintAt(this.rootDir, "HEAD", path);
       if (!committed) {
         // Two very different reasons `git show HEAD:path` can fail, and
         // treating them alike resurrects deleted files. When the pull
@@ -293,21 +348,22 @@ export class WriteBoundaryMonitor {
   }
 
   /** True when a captured path no longer matches its activation state. */
-  private changedSinceActivation(relPath: string): boolean {
+  /** Current fingerprint, when it differs from the activation baseline. */
+  private changedSinceActivation(relPath: string): Fingerprint | undefined {
     const baseline = this.baselines.get(relPath)!;
     let current: Fingerprint;
     try {
       current = fingerprint(this.rootDir, relPath);
     } catch {
-      // Unreadable now (e.g. replaced by a directory): certainly not
-      // the captured file.
-      return true;
+      // Unreadable now (e.g. replaced by a directory): certainly not the
+      // captured file, and with no digest to check against history.
+      return { existed: false };
     }
-    return (
+    const changed =
       current.existed !== baseline.existed ||
       current.mode !== baseline.mode ||
-      current.digest !== baseline.digest
-    );
+      current.digest !== baseline.digest;
+    return changed ? current : undefined;
   }
 
   /** Captures every currently-protected file under the repo. */
@@ -354,7 +410,9 @@ export class WriteBoundaryMonitor {
       const verdict = classifyPath(path);
       if (!verdict.protected || !this.inScope(path)) continue;
       if (this.snapshots.has(path)) {
-        if (!this.changedSinceActivation(path)) continue;
+        const current = this.changedSinceActivation(path);
+        if (!current) continue;
+        if (current.digest && isRestorationToHistory(this.rootDir, this.trustedHead, path, current.digest)) continue;
       } else if (!this.enumerationComplete || this.enumerated.has(path)) {
         // Same caution as check(): without a completed enumeration, absence
         // from `snapshots` proves nothing about whether the file pre-existed.
@@ -410,8 +468,26 @@ export class WriteBoundaryMonitor {
       const snapshot = this.snapshots.get(path);
       let restored = false;
       if (snapshot) {
-        if (!this.changedSinceActivation(path)) continue;
+        const current = this.changedSinceActivation(path);
+        if (!current) continue;
+        if (current.digest && isRestorationToHistory(this.rootDir, this.trustedHead, path, current.digest)) {
+          // Adopting, not reverting, is what makes `git checkout <good-sha>
+          // -- <path>` agent-reachable again after a bad commit (br-suoh):
+          // the correction needs no approval, because it can only ever
+          // reproduce a state this branch's own history already holds.
+          this.accept(path);
+          continue;
+        }
         restored = snapshot.restore().failed.length === 0;
+        if (restored) {
+          // restore() only ever touches the working tree (writeFileSync). A
+          // prior `git checkout <sha> -- path` also staged the good blob, so
+          // without this the index keeps holding it after the working tree
+          // is reverted -- the stale-staged-blob trap an unrelated later
+          // commit can silently sweep in (br-suoh). Scoped to this one path,
+          // never a bare `-A`.
+          git(this.rootDir, ["add", "-A", "--", path]);
+        }
       } else if (this.enumerationComplete && !this.enumerated.has(path)) {
         // Deleting is only safe when the capture pass completed AND
         // this path was never enumerated -- together those establish
@@ -422,6 +498,8 @@ export class WriteBoundaryMonitor {
         try {
           rmSync(resolve(this.rootDir, path), { force: true });
           restored = true;
+          // Same index concern as the restore branch above.
+          git(this.rootDir, ["add", "-A", "--", path]);
         } catch {
           restored = false;
         }

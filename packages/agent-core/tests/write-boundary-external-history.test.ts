@@ -152,3 +152,106 @@ describe("HEAD moving under a live monitor", () => {
     expect(existsSync(join(clone, GUARD))).toBe(true);
   });
 });
+
+/**
+ * br-suoh: a checkout of just this PATH, not a ref, so HEAD never moves.
+ *
+ * `git checkout <sha> -- <path>` is the only agent-reachable way to undo a
+ * bad protected-path commit, and it does not appear in the reflog the way
+ * `pull`/`merge`/`switch` do -- syncExternalHistory's HEAD-oid check can
+ * never see it. Without recognising the restored content by history, the
+ * guard reverts the fix straight back to the bad commit it was correcting,
+ * and every retry of the fix is itself a protected write, so no agent can
+ * ever land it.
+ */
+describe("restoring a path from an older commit, HEAD unmoved (br-suoh)", () => {
+  function commitAt(root: string, content: string, msg: string): string {
+    writeFileSync(join(root, GUARD), content);
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-qm", msg]);
+    return git(root, ["rev-parse", "HEAD"]).trim();
+  }
+
+  it("adopts a same-tool-call restore instead of reverting it back to the bad commit", () => {
+    const root = join(mkdtempSync(join(tmpdir(), "br-suoh-")));
+    dirs.push(root);
+    mkdirSync(join(root, "packages", "agent-core", "src", "behavior"), { recursive: true });
+    git(root, ["init", "-q", "-b", "main"]);
+    git(root, ["config", "user.email", "t@t"]);
+    git(root, ["config", "user.name", "t"]);
+    const goodSha = commitAt(root, "export const v = 1;\n// good\n", "good");
+    commitAt(root, "export const v = 1;\n// BROKEN unapproved wiring\n", "bad, committed");
+
+    // Monitor activates on the already-broken committed state, exactly as a
+    // session opened on a checkout that already has the bad commit would.
+    const monitor = armed(root);
+
+    // Recovery, inside a monitored call: restore just this path. HEAD itself
+    // does not move.
+    git(root, ["checkout", goodSha, "--", GUARD]);
+    const result = monitor.check();
+
+    expect(result.violations).toEqual([]);
+    expect(readFileSync(join(root, GUARD), "utf8")).toContain("// good");
+  });
+
+  it("adopts a restore made by a human between tool calls, seen only via a later unrelated call", () => {
+    const root = mkdtempSync(join(tmpdir(), "br-suoh-"));
+    dirs.push(root);
+    mkdirSync(join(root, "packages", "agent-core", "src", "behavior"), { recursive: true });
+    git(root, ["init", "-q", "-b", "main"]);
+    git(root, ["config", "user.email", "t@t"]);
+    git(root, ["config", "user.name", "t"]);
+    const goodSha = commitAt(root, "export const v = 1;\n// good\n", "good");
+    commitAt(root, "export const v = 1;\n// BROKEN unapproved wiring\n", "bad, committed");
+
+    const monitor = armed(root);
+    monitor.check(); // an ordinary tool call, session already live on the bad state
+
+    // The human intervenes OUTSIDE the agent, between tool calls.
+    git(root, ["checkout", goodSha, "--", GUARD]);
+
+    // The next tool call is unrelated and read-only, but still runs check().
+    const result = monitor.check();
+
+    expect(result.violations).toEqual([]);
+    expect(readFileSync(join(root, GUARD), "utf8")).toContain("// good");
+  });
+
+  it("still reverts content that never appeared anywhere in HEAD's history", () => {
+    const root = mkdtempSync(join(tmpdir(), "br-suoh-"));
+    dirs.push(root);
+    mkdirSync(join(root, "packages", "agent-core", "src", "behavior"), { recursive: true });
+    git(root, ["init", "-q", "-b", "main"]);
+    git(root, ["config", "user.email", "t@t"]);
+    git(root, ["config", "user.name", "t"]);
+    commitAt(root, "export const v = 1;\n", "base");
+    const monitor = armed(root);
+
+    // Brand new content, never committed on this branch -- not a restoration.
+    writeFileSync(join(root, GUARD), "export const v = 1;\nexport const NEW = 2;\n");
+    const result = monitor.check();
+
+    expect(result.violations.map((v) => v.path)).toEqual([GUARD]);
+    expect(readFileSync(join(root, GUARD), "utf8")).toBe("export const v = 1;\n");
+  });
+
+  it("leaves no stale staged blob in the index after a genuine revert", () => {
+    const root = mkdtempSync(join(tmpdir(), "br-suoh-"));
+    dirs.push(root);
+    mkdirSync(join(root, "packages", "agent-core", "src", "behavior"), { recursive: true });
+    git(root, ["init", "-q", "-b", "main"]);
+    git(root, ["config", "user.email", "t@t"]);
+    git(root, ["config", "user.name", "t"]);
+    commitAt(root, "export const v = 1;\n", "base");
+    const monitor = armed(root);
+
+    // A bypass that both writes AND stages brand-new, non-historical content.
+    writeFileSync(join(root, GUARD), "export const v = 1;\nexport const NEW = 2;\n");
+    git(root, ["add", "--", GUARD]);
+    monitor.check();
+
+    expect(git(root, ["status", "--porcelain", "--", GUARD]).trim()).toBe("");
+    expect(git(root, ["show", `:${GUARD}`])).toBe("export const v = 1;\n");
+  });
+});
