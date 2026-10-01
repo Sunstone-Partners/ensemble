@@ -188,7 +188,23 @@ describe("createRunFromArtifact (REQ-001 extension)", () => {
 });
 
 describe("artifact-reference recording (TRD-004)", () => {
+  afterEach(() => {
+    // Unconditional: runs whether AC-004-1 (the only test here using fake
+    // timers) passed, failed, or threw, so a regression there can never leak
+    // the fake 2026-01-01 clock into sibling tests in this describe block.
+    jest.useRealTimers();
+  });
+
   it("AC-004-1: two sequential stage-completion mutate() calls each append an exact-match artifacts[] entry", () => {
+    // Fake timers: the two mutate() calls below are synchronous and otherwise
+    // close enough in wall-clock time that Date.toISOString()'s millisecond
+    // resolution can tie on a fast runner, flaking the distinct-recordedAt
+    // assertion below (per Test AC in TRD-004-TEST). Advancing the clock
+    // between calls makes the distinctness deterministic instead of relying
+    // on real-clock race luck.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
     const run = createRun(root, "an idea");
 
     const afterPrdCreate = mutate(root, run.runId, 0, (r) => {
@@ -203,6 +219,7 @@ describe("artifact-reference recording (TRD-004)", () => {
       r.stage = "prd_refine";
       r.stageOutcome = { kind: "success", recordedAt: new Date().toISOString() };
     });
+    jest.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
 
     const afterPrdRefine = mutate(root, run.runId, afterPrdCreate.revision, (r) => {
       r.artifacts.push({
