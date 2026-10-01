@@ -234,7 +234,7 @@ class CommandTranslator {
 
     // --- Arguments ---
     if (parsed.parameters && Array.isArray(parsed.parameters) && parsed.parameters.length > 0) {
-      lines.push(renderArguments(parsed.parameters));
+      lines.push(...renderArguments(parsed.parameters).split('\n'));
     }
 
     // --- Workflow phases and steps (CMD-004 + CMD-007) ---
