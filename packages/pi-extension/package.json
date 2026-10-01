@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-pi-extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Thin Pi-specific extension loading the behavior runtime into a live Pi session via Pi's native extension mechanism",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

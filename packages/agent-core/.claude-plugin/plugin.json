@@ -1,6 +1,6 @@
 {
   "name": "ensemble-agent-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Provider-neutral event/tool/protocol/behavior-compiler code shared by Pi/OMP adapters (npm library, no Claude Code skills/agents/commands)",
   "author": {
     "name": "Sunstone Partners",

@@ -119,7 +119,7 @@ describe('OC-S3-DIST-002: ensemble-info tool registration', () => {
     // Result should be parseable JSON
     const parsed = JSON.parse(result);
     expect(parsed.name).toBe('ensemble-opencode');
-    expect(parsed.version).toBe('5.3.0');
+    expect(parsed.version).toBe('5.3.1');
   });
 
   it('ensemble-info should include agent count', async () => {
@@ -268,11 +268,11 @@ describe('OC-S3-DIST-006: Local file:// installation support', () => {
 // OC-S3-DIST-007: Version sync
 // ---------------------------------------------------------------------------
 describe('OC-S3-DIST-007: Version sync with ecosystem', () => {
-  it('should match ensemble ecosystem version (5.3.0)', () => {
+  it('should match ensemble ecosystem version (5.3.1)', () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf-8')
     );
-    expect(pkg.version).toBe('5.3.0');
+    expect(pkg.version).toBe('5.3.1');
   });
 
   it('should match plugin.json version', () => {

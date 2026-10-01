@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-agent-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Provider-neutral event/tool/protocol/behavior-compiler code shared by Pi/OMP adapters",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

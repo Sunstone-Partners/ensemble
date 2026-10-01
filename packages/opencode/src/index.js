@@ -24,7 +24,7 @@ const { createHookBridge, discoverHooksFiles, parseHooksJson } = require("./hook
 /** Ensemble ecosystem metadata */
 const ENSEMBLE_META = {
   name: "ensemble-opencode",
-  version: "5.3.0",
+  version: "5.3.1",
   ecosystem: "ensemble",
   runtime: "opencode",
   agents: 28,

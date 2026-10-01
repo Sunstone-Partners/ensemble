@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-router",
-  "version": "5.2.1",
+  "version": "5.2.2",
   "description": "UserPromptSubmit routing hook for intelligent agent delegation and skill invocation",
   "author": {
     "name": "Sunstone Partners",
