@@ -17,6 +17,10 @@
 > - Mark every unresolved ambiguity inline with [NEEDS CLARIFICATION: <specific question>] rather than making a best-guess assumption — these markers drive the refine-prd interview
 > - When --foreman is set, Scale Detection and all clarifying-question interviews are force-skipped in favor of best-effort defaults and inline [NEEDS CLARIFICATION: ...] markers; the CONCERNS-level Implementation Readiness Gate confirmation defaults to proceeding (with the warning still shown) only for non-constitution concerns; constitution violations are excluded from CONCERNS auto-proceed and always HALT; the FAIL-level HALT is unaffected
 
+## Arguments
+
+- **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the Scale Detection question and all clarifying-question interviews, using best-effort defaults (STANDARD depth) and marking unresolved ambiguity inline with [NEEDS CLARIFICATION: ...] instead of asking. Soft "proceed anyway?" confirmations are skipped (default to proceeding, with the warning still logged). Hard gate failures (e.g. Implementation Readiness Gate FAIL) still HALT unchanged. Constitution Gate Contract failures also hard HALT; --foreman cannot bypass missing-source, unmapped-check, or article violation failures. For automated Foreman orchestration.
+
 ## Phase 1: Structured Elicitation
 
 ### Step 1: Scale Detection

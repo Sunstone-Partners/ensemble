@@ -36,6 +36,10 @@ a subject nobody asked for is worse than no PRD, because the run reports success
 Outside Foreman dispatch both variables are simply absent, and behavior is unchanged --
 the arguments are the product description.
 
+## Arguments
+
+- **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the Scale Detection question and all clarifying-question interviews, using best-effort defaults (STANDARD depth) and marking unresolved ambiguity inline with [NEEDS CLARIFICATION: ...] instead of asking. Soft "proceed anyway?" confirmations are skipped (default to proceeding, with the warning still logged). Hard gate failures (e.g. Implementation Readiness Gate FAIL) still HALT unchanged. Constitution Gate Contract failures also hard HALT; --foreman cannot bypass missing-source, unmapped-check, or article violation failures. For automated Foreman orchestration.
+
 ## Workflow
 
 ### Phase 1: Structured Elicitation

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { GhCliPrProvider } from "../../src/new-feature/pr-provider";
-import { abandon, complete, createRun, findActive, isRunAlreadyActiveError, loadRun, mutate, resolveByArtifact } from "../../src/new-feature/run-index";
+import { abandon, complete, createRun, createRunFromArtifact, findActive, isRunAlreadyActiveError, loadRun, mutate, resolveByArtifact } from "../../src/new-feature/run-index";
 import type { RunRecord } from "../../src/new-feature/types";
 
 let root: string;
@@ -125,6 +125,65 @@ describe("createRun (TRD-002)", () => {
     expect(run.revision).toBe(0);
     expect(run.status).toBe("active");
     expect(run.artifacts).toEqual([]);
+  });
+});
+
+describe("createRunFromArtifact (REQ-001 extension)", () => {
+  it("creates a run at startStage, seeded with the given artifact as artifacts[0]", () => {
+    const run = createRunFromArtifact(
+      root,
+      "adopted idea",
+      { type: "prd", path: "docs/PRD/PRD-2026-adopted.md", documentId: "PRD-2026-adopted", version: "1.0.0", producingStage: "prd_create" },
+      "prd_refine",
+    );
+    expect(run.stage).toBe("prd_refine");
+    expect(run.status).toBe("active");
+    expect(run.revision).toBe(0);
+    expect(run.artifacts).toHaveLength(1);
+    expect(run.artifacts[0]).toMatchObject({
+      type: "prd",
+      path: "docs/PRD/PRD-2026-adopted.md",
+      documentId: "PRD-2026-adopted",
+      version: "1.0.0",
+      producingStage: "prd_create",
+    });
+    expect(run.stageOutcome).toMatchObject({ kind: "approval_wait" });
+    expect(run.stageOutcome.detail).toContain("prd_refine");
+  });
+
+  it("the seeded artifact is resolvable by path, same as a stage-produced one", () => {
+    const run = createRunFromArtifact(
+      root,
+      "adopted idea",
+      { type: "prd", path: "docs/PRD/PRD-2026-adopted.md", documentId: "PRD-2026-adopted", version: "1.0.0", producingStage: "prd_create" },
+      "prd_refine",
+    );
+    const resolved = resolveByArtifact(root, "docs/PRD/PRD-2026-adopted.md");
+    expect(resolved?.runId).toBe(run.runId);
+  });
+
+  it("rejects a second createRunFromArtifact while a first run is active (TRD-010), writing nothing", () => {
+    const first = createRunFromArtifact(
+      root,
+      "adopted idea",
+      { type: "prd", path: "docs/PRD/PRD-2026-adopted.md", documentId: "PRD-2026-adopted", version: "1.0.0", producingStage: "prd_create" },
+      "prd_refine",
+    );
+    let caught: unknown;
+    try {
+      createRunFromArtifact(
+        root,
+        "a second idea",
+        { type: "prd", path: "docs/PRD/PRD-2026-other.md", documentId: "PRD-2026-other", version: "1.0.0", producingStage: "prd_create" },
+        "prd_refine",
+      );
+    } catch (err) {
+      caught = err;
+    }
+    if (!isRunAlreadyActiveError(caught)) throw new Error("expected createRunFromArtifact to throw RunAlreadyActiveError");
+    expect(caught.existingRunId).toBe(first.runId);
+    const files = readdirSync(runsDir(root)).filter((n) => n.endsWith(".json"));
+    expect(files).toHaveLength(1);
   });
 });
 

@@ -19,6 +19,18 @@ const FIXED_STAGE_ORDER = [
   'done',
 ];
 
+/**
+ * Join a step's `actions[]` array into one string for regex/.includes()
+ * assertions. Each action entry is itself a single continuous string (no
+ * internal hard-wrapping), so cross-clause assertions that used to rely on
+ * the old `instructions: |` block scalar's line wraps (`\s*\n\s*` between
+ * two phrases) now only need `\s+` -- the phrases themselves are unchanged,
+ * only the line-wrap mechanics are gone.
+ */
+function actionsText(step) {
+  return (step.actions || []).join('\n');
+}
+
 describe('New-Feature Command', () => {
   let commandYaml;
   let yamlContent;
@@ -56,12 +68,14 @@ describe('New-Feature Command', () => {
       expect(phase).toBeDefined();
       const dispatchStep = phase.steps.find((s) => s.title === 'Dispatch to the Eligible Stage');
       expect(dispatchStep).toBeDefined();
-
-      const lines = dispatchStep.instructions.split('\n').map((l) => l.trim());
-      const dispatchedStages = FIXED_STAGE_ORDER.filter((stage) =>
-        lines.some((l) => l.startsWith(`${stage} `) || l.startsWith(`${stage}-`)),
-      );
-      expect(dispatchedStages).toEqual(FIXED_STAGE_ORDER);
+      // Each stage is dispatched via an explicit "<stage> -> ..." mapping inside
+      // one semicolon-separated action string; confirm every stage appears in
+      // this exact mapped form, in fixed order (not just present-anywhere).
+      const text = actionsText(dispatchStep);
+      const positions = FIXED_STAGE_ORDER.map((stage) => text.indexOf(`${stage} ->`));
+      expect(positions.every((p) => p >= 0)).toBe(true);
+      const sorted = [...positions].sort((a, b) => a - b);
+      expect(positions).toEqual(sorted);
     });
   });
 
@@ -70,14 +84,13 @@ describe('New-Feature Command', () => {
       const phase = commandYaml.workflow.phases.find((p) => p.name === 'Stage Resolution');
       const loadStep = phase.steps.find((s) => s.title === 'Load Current Checkpoint');
       expect(loadStep).toBeDefined();
-
       // The only two ways ELIGIBLE_STAGE is derived: from stageOutcome.kind
       // (success -> next stage) or from the current stage itself (not yet
       // succeeded -> same stage). Neither branch may consult the filesystem.
-      expect(loadStep.instructions).toMatch(/stageOutcome\.kind/);
-      expect(loadStep.instructions).toMatch(/ELIGIBLE_STAGE/);
-      expect(loadStep.instructions).toMatch(/Never consult the filesystem/i);
-      expect(loadStep.instructions).toMatch(/regardless of what files already exist on disk/i);
+      expect(actionsText(loadStep)).toMatch(/ELIGIBLE_STAGE/);
+      expect(actionsText(loadStep)).toMatch(/stageOutcome\.kind/);
+      expect(actionsText(loadStep)).toMatch(/Never consult the filesystem/i);
+      expect(actionsText(loadStep)).toMatch(/regardless of what files already exist on disk/i);
     });
 
     test('a non-success stageOutcome keeps the eligible stage pinned to the current stage, not a later one', () => {
@@ -85,18 +98,17 @@ describe('New-Feature Command', () => {
       const loadStep = phase.steps.find((s) => s.title === 'Load Current Checkpoint');
       // Exercises exactly the TRD-003-TEST scenario in prose form: a run
       // parked at trd_create (outcome not success) with a stray
-      // beads_plan-looking file present must still resolve to trd_create.
-      expect(loadStep.instructions).toMatch(
-        /\(and only it\) is what runs next/,
-      );
+      // beads_plan-looking file present must still resolve to trd_create,
+      // not what runs next.
+      expect(actionsText(loadStep)).toMatch(/\(and only it\) is what runs next/);
     });
   });
 
   describe('Optional PR branch', () => {
     test('pr_approval and pr_create are reserved stage slots, not unconditionally executed', () => {
       const orderConstraint = commandYaml.constraints.find((c) => c.includes('pr_approval'));
-      expect(orderConstraint).toContain('only entered if a PR was requested');
       expect(orderConstraint).toContain('completion without a PR request is a valid terminal state');
+      expect(orderConstraint).toContain('only entered if a PR was requested');
     });
   });
 
@@ -116,28 +128,59 @@ describe('New-Feature Command', () => {
     test('AC-001-1: idea input creates exactly one run via RunIndexStore.createRun and prints its identifier', () => {
       const step = entryPhase.steps.find((s) => s.title === 'Idea Input -- Start a New Run');
       expect(step).toBeDefined();
-      expect(step.instructions).toMatch(/RunIndexStore\.createRun\(projectRoot, idea\)/);
-      expect(step.instructions).toMatch(/print the new run's identifier/);
-      expect(step.instructions).toMatch(/prd_create/);
+      expect(actionsText(step)).toMatch(/RunIndexStore\.createRun\(projectRoot, idea\)/);
+      expect(actionsText(step)).toMatch(/print the new run's identifier/);
+      expect(actionsText(step)).toMatch(/prd_create/);
     });
 
     test('AC-008-1: createRun() rejection (RUN_ALREADY_ACTIVE) is handled without creating a second run', () => {
       const step = entryPhase.steps.find((s) => s.title === 'Idea Input -- Start a New Run');
-      expect(step.instructions).toMatch(/RUN_ALREADY_ACTIVE/);
-      expect(step.instructions).toMatch(/no new run is created/);
+      expect(actionsText(step)).toMatch(/RUN_ALREADY_ACTIVE/);
+      expect(actionsText(step)).toMatch(/no new run is created/);
     });
 
     test('AC-001-2: a matched artifact path resumes that run at its recorded stage', () => {
-      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run');
+      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run, or Adopt an Unindexed PRD');
       expect(step).toBeDefined();
-      expect(step.instructions).toMatch(/RunIndexStore\.resolveByArtifact\(projectRoot, path\)/);
-      expect(step.instructions).toMatch(/Found:.*run's recorded stage/s);
+      expect(actionsText(step)).toMatch(/RunIndexStore\.resolveByArtifact\(projectRoot, path\)/);
+      expect(actionsText(step)).toMatch(/Found:.*run's recorded stage/s);
     });
 
-    test('AC-001-3: an unindexed artifact path is rejected; no run is created or advanced', () => {
-      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run');
-      expect(step.instructions).toMatch(/Not found:.*Create no run; advance nothing/s);
-      expect(step.instructions).toMatch(/only.*resumed/is);
+    test('AC-001-3: a `path` that does not exist or cannot be read is rejected outright; no run is created or advanced', () => {
+      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run, or Adopt an Unindexed PRD');
+      const text = actionsText(step);
+      expect(text).toMatch(/no file exists at that path to adopt as a new run's source/);
+      expect(text).toMatch(/Not found,.*Create no run; advance nothing/s);
+    });
+
+    // The following three tests cover createRunFromArtifact-based PRD adoption,
+    // added as a documented extension of REQ-001/AC-001 beyond TRD-2026-d6bbf322's
+    // original scope. No AC-NNN/REQ-NNN number has been assigned to this behavior
+    // in the PRD/TRD yet -- flagged, not fabricated, pending a traceability update.
+
+    test('unindexed-but-readable-PRD path is adopted via RunIndexStore.createRunFromArtifact, entering at prd_refine', () => {
+      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run, or Adopt an Unindexed PRD');
+      const text = actionsText(step);
+      expect(text).toMatch(/document_id` matching `PRD-\*`: adopt it as the source of a brand-new run/);
+      expect(text).toMatch(/RunIndexStore\.createRunFromArtifact\(projectRoot,/);
+      expect(text).toMatch(/'prd_refine'\)/);
+      expect(text).toMatch(/enters at prd_refine, not prd_create/);
+    });
+
+    test('unindexed-path rejection still applies when the file is not a PRD (a TRD, unrelated file, or malformed frontmatter)', () => {
+      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run, or Adopt an Unindexed PRD');
+      const text = actionsText(step);
+      expect(text).toMatch(/no `document_id` matching `PRD-\*` \(a TRD, an unrelated file, or malformed frontmatter\)/);
+      expect(text).toMatch(/not a PRD document/);
+      expect(text).toMatch(/only.*resumed/is);
+      expect(text).toMatch(/Create no run; advance nothing \(AC-001-3\)/);
+    });
+
+    test('adopted-artifact exclusivity: createRunFromArtifact enforces the same RUN_ALREADY_ACTIVE rejection as createRun', () => {
+      const step = entryPhase.steps.find((s) => s.title === 'Artifact-Path Input -- Resume an Indexed Run, or Adopt an Unindexed PRD');
+      const text = actionsText(step);
+      expect(text).toMatch(/createRunFromArtifact\(\) enforces the same single-active-run exclusivity as createRun\(\)/);
+      expect(text).toMatch(/RUN_ALREADY_ACTIVE/);
     });
   });
 
@@ -146,11 +189,11 @@ describe('New-Feature Command', () => {
       const entryPhase = commandYaml.workflow.phases.find((p) => p.name === 'Entry Point Resolution');
       const step = entryPhase.steps.find((s) => s.title === 'Reject Unsupported Flags Before Any Stage Runs');
       expect(step).toBeDefined();
-      expect(step.instructions).toMatch(/--skip-refine/);
-      expect(step.instructions).toMatch(/mandatory/);
-      expect(step.instructions).toMatch(/refine-prd/);
-      expect(step.instructions).toMatch(/refine-trd/);
-      expect(step.instructions).toMatch(/unmodified/);
+      expect(actionsText(step)).toMatch(/--skip-refine/);
+      expect(actionsText(step)).toMatch(/mandatory/);
+      expect(actionsText(step)).toMatch(/refine-prd/);
+      expect(actionsText(step)).toMatch(/refine-trd/);
+      expect(actionsText(step)).toMatch(/unmodified/);
       // This check must run first (order: 1), before createRun/resolveByArtifact steps.
       expect(step.order).toBe(1);
     });
@@ -168,24 +211,24 @@ describe('New-Feature Command', () => {
     test('AC-006-3: a bare resume of a failed run asks for explicit confirmation before re-dispatching, never auto-retries', () => {
       const step = entryPhase.steps.find((s) => s.title === 'No Arguments -- Resume Active or Show Status');
       expect(step).toBeDefined();
-      expect(step.instructions).toMatch(/stageOutcome\.kind is "failure"/);
-      expect(step.instructions).toMatch(/do NOT proceed to Stage Resolution on a\s*\n\s*bare invocation alone/);
-      expect(step.instructions).toMatch(/no mutate\(\)\s*\n\s*call is made merely by viewing this prompt/);
+      expect(actionsText(step)).toMatch(/stageOutcome\.kind is "failure"/);
+      expect(actionsText(step)).toMatch(/do NOT proceed to Stage Resolution on a\s+bare invocation alone/);
+      expect(actionsText(step)).toMatch(/no mutate\(\)\s+call is made merely by viewing this prompt/);
     });
 
     test('AC-006-2: retry re-executes only the parked stage; earlier stages are never re-executed or re-derived', () => {
       const step = executePhase.steps.find((s) => s.title === 'Explicit-Retry-Only Resume of a Failed Stage');
       expect(step).toBeDefined();
-      expect(step.instructions).toMatch(/only that stage's artifact\/outcome/);
-      expect(step.instructions).toMatch(/never re-executed or\s*\n\s*re-derived by a retry/);
-      expect(step.instructions).toMatch(/remain blocked/);
+      expect(actionsText(step)).toMatch(/only that stage's artifact\/outcome/);
+      expect(actionsText(step)).toMatch(/never re-executed or\s+re-derived by a retry/);
+      expect(actionsText(step)).toMatch(/remain blocked/);
     });
 
     test('failure handling step defers to the confirmation gate for what counts as an explicit retry', () => {
       const failStep = executePhase.steps.find((s) => s.title === 'Handle Stage Failure');
       expect(failStep).toBeDefined();
-      expect(failStep.instructions).toMatch(/AC-006-3/);
-      expect(failStep.instructions).toMatch(/Do not advance, do not retry/);
+      expect(actionsText(failStep)).toMatch(/AC-006-3/);
+      expect(actionsText(failStep)).toMatch(/Do not advance, do\s+not retry/);
     });
   });
 
@@ -198,16 +241,16 @@ describe('New-Feature Command', () => {
     });
 
     test('AC-007-1: a decline keeps the run at the current stage and asks for the needed correction', () => {
-      expect(recordStep.instructions).toMatch(/stageOutcome to \{ kind: "decline"/);
-      expect(recordStep.instructions).toMatch(/stage does not advance/);
-      expect(recordStep.instructions).toMatch(/Ask\s*\n\s*the user for the correction\/input needed to continue/);
+      expect(actionsText(recordStep)).toMatch(/stageOutcome to \{ kind: "decline"/);
+      expect(actionsText(recordStep)).toMatch(/stage does not advance/);
+      expect(actionsText(recordStep)).toMatch(/Ask\s+the user for the correction\/input needed to continue/);
     });
 
     test('AC-007-2: an edit/regenerate request preserves the prior artifact and blocks dependent stages until acceptance', () => {
-      expect(recordStep.instructions).toMatch(/edit\/regenerate request/);
-      expect(recordStep.instructions).toMatch(/preserving the prior version/);
-      expect(recordStep.instructions).toMatch(/do NOT advance `stage` and do NOT set\s*\n\s*stageOutcome\.kind to "success"/);
-      expect(recordStep.instructions).toMatch(/No dependent stage may be dispatched/);
+      expect(actionsText(recordStep)).toMatch(/edit\/regenerate request/);
+      expect(actionsText(recordStep)).toMatch(/preserving the prior version/);
+      expect(actionsText(recordStep)).toMatch(/do NOT advance `stage` and do NOT set\s+stageOutcome\.kind to "success"/);
+      expect(actionsText(recordStep)).toMatch(/No dependent stage may be dispatched/);
     });
   });
 
@@ -220,23 +263,23 @@ describe('New-Feature Command', () => {
     });
 
     test('AC-012-1: --status is read-only and always prints the five required fields', () => {
-      expect(statusStep.instructions).toMatch(/If `status` is true/);
-      expect(statusStep.instructions).toMatch(/No stage executes and no mutate\(\) call is made/);
-      expect(statusStep.instructions).toMatch(/run identifier, current stage, last\s*\n\s*stageOutcome\.kind/);
-      expect(statusStep.instructions).toMatch(/every recorded artifacts\[\] and\s*\n\s*beadRefs\[\] reference/);
-      expect(statusStep.instructions).toMatch(/status is always\s*\n\s*read-only and never proceeds to Stage Resolution/);
+      expect(actionsText(statusStep)).toMatch(/If `status` is true/);
+      expect(actionsText(statusStep)).toMatch(/No stage executes and no mutate\(\) call is made/);
+      expect(actionsText(statusStep)).toMatch(/run identifier, current stage, last\s+stageOutcome\.kind/);
+      expect(actionsText(statusStep)).toMatch(/every recorded artifacts\[\] and\s+beadRefs\[\] reference/);
+      expect(actionsText(statusStep)).toMatch(/status is always\s+read-only and never proceeds to Stage Resolution/);
     });
 
     test('AC-012-1: falls back to the most recent terminal run when none is active', () => {
-      expect(statusStep.instructions).toMatch(/no dedicated "most recent terminal run" query/);
-      expect(statusStep.instructions).toMatch(/pick the one with the latest updatedAt/);
+      expect(actionsText(statusStep)).toMatch(/no dedicated "most recent terminal run" query/);
+      expect(actionsText(statusStep)).toMatch(/pick the one with the latest updatedAt/);
     });
 
     test('AC-012-2: a completed run with no PR never implies one was created', () => {
-      expect(statusStep.instructions).toMatch(/Never imply a PR was created or/);
-      expect(statusStep.instructions).toMatch(/STATUS_RUN\.prApprovedAt is\s*\n\s*non-null AND a PR reference is present/);
-      expect(statusStep.instructions).toMatch(/TRD-017's "pr:" prefix/);
-      expect(statusStep.instructions).toMatch(/if either is missing, state\s*\n\s*plainly that no PR exists/);
+      expect(actionsText(statusStep)).toMatch(/Never imply a PR was created or/);
+      expect(actionsText(statusStep)).toMatch(/STATUS_RUN\.prApprovedAt is\s+non-null AND a PR reference is present/);
+      expect(actionsText(statusStep)).toMatch(/TRD-017's "pr:" prefix/);
+      expect(actionsText(statusStep)).toMatch(/if either is missing, state\s+plainly that no PR exists/);
     });
   });
 
@@ -276,3 +319,4 @@ describe('New-Feature Command', () => {
     });
   });
 });
+

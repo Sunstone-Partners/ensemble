@@ -14,7 +14,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
-import type { ArtifactRef, RunRecord } from "./types";
+import type { ArtifactRef, RunRecord, Stage } from "./types";
 import { STAGE_ORDER } from "./types";
 
 /** Typed error thrown by `mutate()` on a stale `expectedRevision`. */
@@ -212,17 +212,13 @@ function listRunFiles(projectRoot: string): string[] {
 }
 
 /**
- * Create a new run for `projectRoot` at `stage: "prd_create"`.
- *
- * Enforces single-active-run-per-project exclusivity at create time
- * (REQ-008): writes `.ensemble/new-feature/active.lock` write-exclusive
- * (`{ flag: "wx" }`) before the run's own JSON file exists, since a
- * brand-new file has no prior `revision` for `mutate()`'s optimistic-
- * concurrency check to compare against. On `EEXIST` throws
- * `RUN_ALREADY_ACTIVE` naming the existing run and writes nothing.
+ * Acquire `active.lock` for a new run (REQ-008): write-exclusive create of
+ * the lock file naming `runId`. Throws `RUN_ALREADY_ACTIVE` (naming the
+ * existing run) on `EEXIST`, writing nothing. Shared by `createRun()` and
+ * `createRunFromArtifact()` so both entry paths enforce identical
+ * single-active-run-per-project exclusivity through one code path.
  */
-export function createRun(projectRoot: string, idea: string): RunRecord {
-  const runId = randomBytes(8).toString("hex");
+function acquireActiveLock(projectRoot: string, runId: string): void {
   const lockPath = activeLockPath(projectRoot);
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   try {
@@ -235,6 +231,21 @@ export function createRun(projectRoot: string, idea: string): RunRecord {
     }
     throw err;
   }
+}
+
+/**
+ * Create a new run for `projectRoot` at `stage: "prd_create"`.
+ *
+ * Enforces single-active-run-per-project exclusivity at create time
+ * (REQ-008): writes `.ensemble/new-feature/active.lock` write-exclusive
+ * (`{ flag: "wx" }`) before the run's own JSON file exists, since a
+ * brand-new file has no prior `revision` for `mutate()`'s optimistic-
+ * concurrency check to compare against. On `EEXIST` throws
+ * `RUN_ALREADY_ACTIVE` naming the existing run and writes nothing.
+ */
+export function createRun(projectRoot: string, idea: string): RunRecord {
+  const runId = randomBytes(8).toString("hex");
+  acquireActiveLock(projectRoot, runId);
 
   const now = new Date().toISOString();
   const record: RunRecord = {
@@ -251,6 +262,52 @@ export function createRun(projectRoot: string, idea: string): RunRecord {
     // correctly as "prd_create has not succeeded yet, so run it."
     stageOutcome: { kind: "approval_wait", detail: "run created; prd_create not yet attempted", recordedAt: now },
     artifacts: [],
+    beadRefs: [],
+    implementationApprovedAt: null,
+    prApprovedAt: null,
+    revision: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  writeRunAtomic(runFilePath(projectRoot, runId), record);
+  return record;
+}
+
+/**
+ * Create a new run for `projectRoot` seeded with an already-existing
+ * artifact, starting at `startStage` instead of "prd_create" -- adopting
+ * an unindexed PRD given as `path` as a run's source (REQ-001 extension).
+ * The artifact is recorded as the first `artifacts[]` entry so later
+ * stages (trd_create, etc.) have the same exact-reference lineage a run
+ * created via `createRun()` would have accumulated by the time it reached
+ * `startStage`.
+ *
+ * Enforces the same single-active-run-per-project exclusivity as
+ * `createRun()` (REQ-008), via the identical `active.lock` write-exclusive
+ * create.
+ */
+export function createRunFromArtifact(
+  projectRoot: string,
+  idea: string,
+  artifact: Omit<ArtifactRef, "recordedAt">,
+  startStage: Stage,
+): RunRecord {
+  const runId = randomBytes(8).toString("hex");
+  acquireActiveLock(projectRoot, runId);
+
+  const now = new Date().toISOString();
+  const record: RunRecord = {
+    runId,
+    projectRoot,
+    idea,
+    status: "active",
+    stage: startStage,
+    stageOutcome: {
+      kind: "approval_wait",
+      detail: `run created from existing ${artifact.type} artifact; ${startStage} not yet attempted`,
+      recordedAt: now,
+    },
+    artifacts: [{ ...artifact, recordedAt: now }],
     beadRefs: [],
     implementationApprovedAt: null,
     prApprovedAt: null,

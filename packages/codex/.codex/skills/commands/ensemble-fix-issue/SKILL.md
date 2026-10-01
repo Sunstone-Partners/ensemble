@@ -25,6 +25,16 @@ phase produced an artifact. Never invent, alter, or relocate the path, and
 never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman
 dispatch it is simply absent and behavior is unchanged).
 
+## Arguments
+
+- **`description`** (string, optional): Issue description (free text or omit if using --issue)
+- **`issue`** (number, optional): GitHub issue number (e.g., --issue 34)
+- **`branch`** (string, optional): Custom branch name (default auto-generated)
+- **`skip-tests`** (boolean, optional, default: `false`): Skip test validation (not recommended)
+- **`draft-pr`** (boolean, optional, default: `false`): Create draft PR instead of ready-for-review
+- **`interactive`** (boolean, optional, default: `false`): Enable detailed user interviews during planning
+- **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the user interview step and always auto-commit + create the PR without pausing for confirmation (for automated Foreman orchestration). When --foreman is present and the FOREMAN_ARTIFACT_PATH environment variable is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes. Foreman computes that path and reads it back to confirm the phase produced an artifact; writing only to a repo-local convention leaves Foreman with no artifact. Never invent, alter, or relocate the path. Never treat an unset FOREMAN_ARTIFACT_PATH as an error — outside Foreman dispatch it is simply absent, and behavior must be unchanged.
+
 ## Workflow
 
 ### Phase 1: Analysis & Planning

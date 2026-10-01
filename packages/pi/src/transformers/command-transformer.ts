@@ -16,7 +16,7 @@
  */
 
 import * as path from 'path';
-import { CommandYaml, Phase, Step } from '../types';
+import { CommandYaml, CommandParameter, Phase, Step } from '../types';
 
 // ---------------------------------------------------------------------------
 // Internal rendering helpers
@@ -69,6 +69,30 @@ function renderConstraints(constraints: string[]): string {
   const lines: string[] = ['> **Constraints:**'];
   for (const constraint of constraints) {
     lines.push(`> - ${constraint.trim()}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Render the parameters array as an "## Arguments" section.
+ * Each parameter renders as a single bullet: name, type, required/optional,
+ * default (if present), and description.
+ */
+function renderArguments(parameters: CommandParameter[]): string {
+  const lines: string[] = ['## Arguments', ''];
+  for (const param of parameters) {
+    const type = param.type ?? 'string';
+    const requirement = param.required ? 'required' : 'optional';
+    let tag = `${type}, ${requirement}`;
+    if (param.default !== undefined) {
+      tag += `, default: \`${JSON.stringify(param.default)}\``;
+    }
+    let line = `- **\`${param.name}\`** (${tag})`;
+    if (param.description) {
+      const desc = param.description.trim().replace(/\s+/g, ' ');
+      line += `: ${desc}`;
+    }
+    lines.push(line);
   }
   return lines.join('\n');
 }
@@ -194,7 +218,13 @@ export function transformCommand(
     sections.push(renderConstraints(commandYaml.constraints));
   }
 
-  // 5. Workflow phases
+  // 5. Arguments (optional)
+  if (commandYaml.parameters && commandYaml.parameters.length > 0) {
+    sections.push('');
+    sections.push(renderArguments(commandYaml.parameters));
+  }
+
+  // 6. Workflow phases
   const phases = commandYaml.workflow?.phases ?? [];
   for (let i = 0; i < phases.length; i++) {
     sections.push('');

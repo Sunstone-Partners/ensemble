@@ -14,6 +14,14 @@
 > - Preserve original subject/description for downstream command handoff; redact only rationale/audit output.
 > - When FOREMAN_ARTIFACT_PATH is set, write the human report exactly there and write a sidecar named with the same basename plus .classification.json.
 
+## Arguments
+
+- **`description`** (string, optional): Work description to classify before planning begins
+- **`bead`** (string, optional): Classify a bead (br show --json) instead of free text; its type and dependency counts become cited signals, and its priority and labels are cited but not scored
+- **`route`** (string, optional): Override selected route; valid values are simple, medium, complex
+- **`no-adaptive-planning`** (boolean, optional, default: `false`): Skip adaptive classification for this invocation
+- **`foreman`** (boolean, optional, default: `false`): Use FOREMAN_TASK_TITLE and FOREMAN_TASK_DESCRIPTION as the subject/description and write Foreman artifacts when configured
+
 ## Phase 1: Input Normalization
 
 ### Step 1: Resolve subject and description

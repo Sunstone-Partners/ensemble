@@ -35,6 +35,14 @@ export interface Step {
   actions?: unknown[];
 }
 
+export interface CommandParameter {
+  name: string;
+  type?: string;
+  required?: boolean;
+  default?: unknown;
+  description?: string;
+}
+
 export interface CommandYaml {
   metadata: {
     name: string;
@@ -48,6 +56,7 @@ export interface CommandYaml {
   mission?: {
     summary?: string;
   };
+  parameters?: CommandParameter[];
 }
 
 export interface AgentYaml {

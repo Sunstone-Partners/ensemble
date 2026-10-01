@@ -94,6 +94,39 @@ function generateCommandFrontmatter(data) {
 }
 
 /**
+ * Generate the Arguments section from a command's parameters[] list.
+ * Each parameter renders as a single bullet: name, type, required/optional,
+ * default (if present), and description. Descriptions may arrive as
+ * folded/literal YAML block scalars with embedded whitespace runs -- these
+ * are collapsed to a single line so one parameter never spans multiple
+ * bullets.
+ * @param {Array<object>} parameters - Parameter definitions
+ * @returns {string}
+ */
+function generateArgumentsSection(parameters) {
+  const lines = ['## Arguments', ''];
+
+  for (const param of parameters) {
+    const type = param.type || 'string';
+    const requirement = param.required ? 'required' : 'optional';
+    let tag = `${type}, ${requirement}`;
+    if (param.default !== undefined) {
+      tag += `, default: \`${JSON.stringify(param.default)}\``;
+    }
+
+    let line = `- **\`${param.name}\`** (${tag})`;
+    if (param.description) {
+      const desc = param.description.trim().replace(/\s+/g, ' ');
+      line += `: ${desc}`;
+    }
+    lines.push(line);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
  * Transform command YAML to Markdown
  * @param {object} commandData - Validated command YAML
  * @param {string} sourceYamlPath - Path to source YAML (for header)
@@ -115,7 +148,12 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
     parts.push('');
   }
 
-  // 4. Workflow phases
+  // 4. Arguments
+  if (commandData.parameters && commandData.parameters.length > 0) {
+    parts.push(generateArgumentsSection(commandData.parameters));
+  }
+
+  // 5. Workflow phases
   if (commandData.workflow?.phases) {
     parts.push('## Workflow');
     parts.push('');
@@ -181,7 +219,7 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
     }
   }
 
-  // 5. Expected Output
+  // 6. Expected Output
   if (commandData.expectedOutput) {
     parts.push('## Expected Output');
     parts.push('');
@@ -200,7 +238,7 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
     }
   }
 
-  // 6. Usage section
+  // 7. Usage section
   const name = commandData.metadata?.name || 'command';
   const argHint = commandData.metadata?.argument_hint || '';
   parts.push('## Usage');
@@ -216,5 +254,6 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
 module.exports = {
   transformCommandToMarkdown,
   generateCommandFrontmatter,
-  generateDoNotEditHeader
+  generateDoNotEditHeader,
+  generateArgumentsSection
 };

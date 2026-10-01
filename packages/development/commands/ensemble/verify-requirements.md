@@ -37,9 +37,11 @@ console-only behavior.
 This command is a sibling to validate-requirements (pre-impl gate) and
 requirement-status (bead-comment scan); it goes further by pointing at code.
 
-Works identically for implement-trd-beads (beads track) and implement-trd
-(checkbox track) - both produce the same REQ->AC->code chain. The difference
-is only where completion-state is read from.
+Works for both beads-backed implementation (implement-trd-beads; reads
+completion from beads) and TRD checkbox state (reads '- [x]' markers
+directly from the Master Task List, regardless of how they were checked)
+- both produce the same REQ->AC->code chain. The difference is only where
+completion-state is read from.
 
 ## Workflow
 

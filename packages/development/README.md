@@ -20,7 +20,6 @@ Part of the ensemble plugin ecosystem for Claude Code. This plugin provides deve
 
 | Command | Description |
 |---------|-------------|
-| `/ensemble:implement-trd` | Complete TRD implementation using git-town workflow with TDD methodology |
 | `/ensemble:implement-trd-beads` | TRD implementation with persistent beads project management — epic/story/task hierarchy, `bd ready` execution loop, cross-session resumability |
 | `/ensemble:refine-beads` | Approval-gated Beads graph refinement before execution — detects dependency, hierarchy, PR-boundary, traceability, and duplicate-task gaps; applies approved `br` repairs and revalidates with `bv --robot-*` |
 | `/ensemble:create-trd` | Create a Technical Requirements Document from a PRD |
@@ -35,17 +34,13 @@ After installation, this plugin's agents, commands, and skills will be automatic
 
 ### Quickstart Validation Artifacts
 
-Standard `/ensemble:implement-trd` generates a parser-backed `quickstart.md` validation runbook after completion verification passes and before final success reporting. The runbook maps parsed TRD acceptance criteria to manual checkbox scenarios and reports parsed AC count, scenario count, unmapped AC count, clarification count, and coverage percentage.
-
-In Foreman mode, the generated `quickstart.md` path and coverage summary are included in the Foreman phase report; when `FOREMAN_ARTIFACT_PATH` is set, the default quickstart path is beside that exact phase artifact. Outside Foreman, the default quickstart path is beside the source TRD unless an explicit output path is supplied.
-
-`/ensemble:implement-trd-beads` does not generate quickstart artifacts in v1. Use standard `/ensemble:implement-trd` when a v1 `quickstart.md` validation artifact is required.
+`/ensemble:implement-trd-beads` does not generate a `quickstart.md` validation runbook in v1. No standalone command currently generates this artifact.
 
 ### BDD Scenario Generation (Reqnroll)
 
 `/ensemble:create-trd` requires >=3 Given/When/Then scenarios (happy path, edge case, error/negative case) per functional REQ-NNN's acceptance criteria, authored under each TRD-NNN-TEST task's `Test AC:` checklist (`- [ ] Scenario: <title> -- Given ..., When ..., Then ...`, indented deeper than the `Test AC:` label so the TRD/beads parsers pick it up).
 
-Both `/ensemble:implement-trd` (via `implement-trd-task`) and `/ensemble:implement-trd-beads` route any task whose id matches `-TEST` through the Reqnroll BDD path: resolve `reqnroll-cli`, resolve the target `.csproj`, run `generate-bindings` to scaffold `.feature` files and `Pending()` step stubs, confirm RED, delegate `reqnroll-binding-specialist` to fill step bodies test-first, then re-confirm RED before handing off to GREEN implementation. `implement-trd-beads` carries the same `Test AC:`/`validatesAcs` content verbatim into each TRD-NNN-TEST bead's description via `scaffold-planner.js`, so the contract holds regardless of which specialist later executes the bead.
+`/ensemble:implement-trd-beads` routes any task whose id matches `-TEST` through the Reqnroll BDD path: resolve `reqnroll-cli`, resolve the target `.csproj`, run `generate-bindings` to scaffold `.feature` files and `Pending()` step stubs, confirm RED, delegate `reqnroll-binding-specialist` to fill step bodies test-first, then re-confirm RED before handing off to GREEN implementation. It carries the same `Test AC:`/`validatesAcs` content verbatim into each TRD-NNN-TEST bead's description via `scaffold-planner.js`, so the contract holds regardless of which specialist later executes the bead.
 
 ### Multi-TRD Beads Workstreams
 

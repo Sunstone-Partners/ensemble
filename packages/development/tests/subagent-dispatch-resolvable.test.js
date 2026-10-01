@@ -54,7 +54,7 @@ describe('every subagent_type dispatched by a command resolves to a real agent',
 
   // The two that regressed. Named explicitly so deleting either agent fails
   // loudly even if the dispatch prose is reworded.
-  test.each(['beads-build-wave', 'implement-trd-task'])(
+  test.each(['beads-build-wave'])(
     '%s ships as an agent, not only as a command',
     (name) => {
       expect(fs.existsSync(path.join(agentsDir, `${name}.yaml`))).toBe(true);
@@ -63,8 +63,8 @@ describe('every subagent_type dispatched by a command resolves to a real agent',
     }
   );
 
-  test('runner agents delegate to their command instead of duplicating it', () => {
-    for (const name of ['beads-build-wave', 'implement-trd-task']) {
+  test('runner agent delegates to its command instead of duplicating it', () => {
+    for (const name of ['beads-build-wave']) {
       const text = fs.readFileSync(path.join(agentsDir, `${name}.yaml`), 'utf8');
       expect(text).toMatch(new RegExp(`ensemble:${name}`));
       expect(text).toMatch(/RUNNER, not a second copy of the procedure/);

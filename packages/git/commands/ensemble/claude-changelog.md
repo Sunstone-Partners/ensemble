@@ -13,6 +13,16 @@ This command fetches and displays Claude changelog information from Anthropic do
 It provides intelligent filtering by version, date, category, and importance level.
 Results are cached for 24 hours to optimize performance.
 
+## Arguments
+
+- **`version`** (string, optional): Specific version (e.g., 3.5.0) or "latest"
+- **`since`** (string, optional): Show changes since date or time period
+- **`category`** (string, optional): Filter by feature category (comma-separated for multiple)
+- **`important`** (boolean, optional, default: `false`): Show only high-impact changes
+- **`format`** (string, optional, default: `"console"`): Output format
+- **`refresh`** (boolean, optional, default: `false`): Force refresh, bypass cache
+- **`help`** (boolean, optional, default: `false`): Show help and usage examples
+
 ## Workflow
 
 ### Phase 1: Parameter Parsing

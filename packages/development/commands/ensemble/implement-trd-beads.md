@@ -33,9 +33,13 @@ Key behaviors:
 - Quality gates: phase completion triggers test delegation; results recorded as br comments
 - Sync: br sync --flush-only exports JSONL before every bv call
 - Hard requirement: bv is required. There is no graceful-degradation path — if bv is missing, installation is a precondition. br ready is never a fallback dispatcher; bv --robot-plan is the only scheduler.
-- Quickstart generation: beads-backed quickstart.md generation is unsupported in v1; use standard /ensemble:implement-trd when a v1 quickstart.md validation artifact is required.
+- Quickstart generation: beads-backed quickstart.md generation is unsupported in v1. No standalone command currently generates this artifact for a beads-backed run.
 - --foreman forces non-interactive mode without changing safety HALT behavior (branch-intent-required, PR-backend-unresolved, and completion-verification-failed still HALT unchanged).
 - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
+
+## Arguments
+
+- **`foreman`** (boolean, optional, default: `false`): Force non-interactive mode (INTERACTIVE=false) regardless of whether AskUserQuestion is available, for automated Foreman orchestration. This does NOT change any HALT/error behavior: unresolved branch intent, unresolved PR backend, and failed completion verification (epic closure gate) still HALT with the same explicit-flag/env-var instructions as today's non-interactive fallback. --foreman only forces that fallback path proactively instead of relying on availability detection. When --foreman is present and the FOREMAN_ARTIFACT_PATH environment variable is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes. Foreman computes that path and reads it back to confirm the phase produced an artifact; writing only to a repo-local convention leaves Foreman with no artifact. Never invent, alter, or relocate the path. Never treat an unset FOREMAN_ARTIFACT_PATH as an error — outside Foreman dispatch it is simply absent, and behavior must be unchanged.
 
 ## Workflow
 
@@ -324,7 +328,7 @@ Skipped if TRD has no [satisfies] annotations (legacy TRD without traceability).
    - For each entry in PLAN.tasks (each has id, phaseN, titlePrefix, title, type, priority, description, isTest): check EXISTING_BEADS for the entry's titlePrefix ([trd:<TRD_SLUG>:task:<id>])
    - If found: TASK_BEAD_IDs[i][j] = existing id; record in TRD_TO_BEAD_MAP; skip creation
    - If not found: run br create using PLAN.tasks[j] fields verbatim — --title='<PLAN.tasks[j].title>' --type=<PLAN.tasks[j].type> --priority=<PLAN.tasks[j].priority> --description='<PLAN.tasks[j].description>' --json. PLAN.tasks[j].title already includes the [trd:<TRD_SLUG>:task:<id>] titlePrefix, and PLAN.tasks[j].description is the AUTHORITATIVE structured description (impl vs test classification, target files, actions, AC checklists, sub-items, embedded tests, dependencies are all already folded in by PLAN). Do NOT re-derive the description/title inline — use PLAN.tasks[j].
-   - BDD preservation (isTest=true tasks): PLAN.tasks[j].description for a TRD-NNN-TEST task is built by scaffold-planner.js's buildTestTaskDescription, which already serializes task.testAc verbatim under a `Test AC:` section and task.validatesAcs under `PRD ACs Proven:` -- this is how the Scenario checklist items from create-trd's BDD Test Task Generation phase (one `- [ ] Scenario: ...` per AC-NNN-M, written under the task's `Test AC:` label so the TRD parser's labeled-checklist extractor captures it) reach the bead body. Do not move Scenario content to an unparsed heading. Whichever specialist later picks up this bead must, before writing any binding: resolve REQNROLL_CLI (packages/product/lib/reqnroll-cli.js), run `generate-bindings <PRD_PATH> --out tests --sut <SUT_CSPROJ> --json` to scaffold the Test AC scenarios, confirm RED, delegate to reqnroll-binding-specialist to fill bodies test-first (packages/reqnroll/skills/reqnroll/SKILL.md), and re-confirm RED before the paired TRD-NNN implementation bead is allowed to close it to GREEN -- same contract as implement-trd-task.yaml Execute Step 1a-1c.
+   - BDD preservation (isTest=true tasks): PLAN.tasks[j].description for a TRD-NNN-TEST task is built by scaffold-planner.js's buildTestTaskDescription, which already serializes task.testAc verbatim under a `Test AC:` section and task.validatesAcs under `PRD ACs Proven:` -- this is how the Scenario checklist items from create-trd's BDD Test Task Generation phase (one `- [ ] Scenario: ...` per AC-NNN-M, written under the task's `Test AC:` label so the TRD parser's labeled-checklist extractor captures it) reach the bead body. Do not move Scenario content to an unparsed heading. Whichever specialist later picks up this bead must, before writing any binding: resolve REQNROLL_CLI (packages/product/lib/reqnroll-cli.js), run `generate-bindings <PRD_PATH> --out tests --sut <SUT_CSPROJ> --json` to scaffold the Test AC scenarios, confirm RED, delegate to reqnroll-binding-specialist to fill bodies test-first (packages/reqnroll/skills/reqnroll/SKILL.md), and re-confirm RED before the paired TRD-NNN implementation bead is allowed to close it to GREEN.
    - Capture TASK_BEAD_ID by parsing .id from JSON response
    - Do NOT wire the task-blocks-story dependency here — the task-blocks-story edge is in PLAN.deps and is executed once in the Dependency Encoding step (avoid double-wiring).
    - Record TRD_TO_BEAD_MAP[PLAN.tasks[j].id] = bead_id for each task
@@ -508,7 +512,7 @@ manual instructions, never automated).
 
 
    - Print completion report: TRD file, branch, strategy, epic ID, task counts, coverage summary
-   - Quickstart generation note: beads-backed quickstart.md generation is intentionally unsupported in v1. If a quickstart.md validation artifact is required, rerun the completed TRD through standard /ensemble:implement-trd (not /ensemble:implement-trd-beads) so the parser-backed quickstart completion hook can write and report it.
+   - Quickstart generation note: beads-backed quickstart.md generation is intentionally unsupported in v1. No standalone command currently generates this artifact for a beads-backed run.
    - Print 'Completion verification report (authoritative): <COMPLETION_REPORT_PATH>' — the Requirement Satisfaction Table below is informational/supplementary; the completion-verification skill's report is the authoritative record of gaps.
    - Requirement Satisfaction Table: scan ROOT_EPIC_ID comments for req-verified: tokens
    -   Run: br comment list <ROOT_EPIC_ID>
@@ -548,7 +552,7 @@ manual instructions, never automated).
 - **TRD Checkboxes**: TRD Master Task List updated with completed checkboxes synced to bead closure state
 - **Wheel Instructions**: Printed agentic coding flywheel instructions with NTM spawn commands, agent self-selection loop, mail coordination, and progress monitoring commands
 - **BV Analysis**: Captured bv --robot-plan parallel execution tracks and bv --robot-triage scored recommendations (when bv available)
-- **Completion Report**: Summary with epic ID, coverage metrics, PR creation reminder, and v1 unsupported quickstart.md note pointing to standard implement-trd
+- **Completion Report**: Summary with epic ID, coverage metrics, PR creation reminder, and v1 unsupported quickstart.md note
 - **Requirement Satisfaction Report**: Table of PRD REQ-NNN requirements with SATISFIED/NOT VERIFIED status, test task references, and proven AC sub-IDs (generated from root epic req-verified comments)
 
 ## Usage
