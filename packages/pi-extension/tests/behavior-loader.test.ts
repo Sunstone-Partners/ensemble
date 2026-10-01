@@ -80,20 +80,7 @@ function fakePi() {
 }
 
 describe("loadCompiledBehavior (TRD-014)", () => {
-  it("AC-014-1 (superseded by br-p7gr): the command describes the behavior and does not run it", async () => {
-    // ORIGINAL AC-014-1 asserted that `/behavior-name` delivered the compiled
-    // prompt via pi.sendUserMessage, i.e. that the prompt was "functional as
-    // a real Pi command". br-p7gr retires that: it gave every behavior a
-    // second route to the model — prompt pasted into the conversation, with
-    // no interpreter, no command registry and no MutationGuard — so a
-    // behavior authored as a bounded workflow silently degraded to
-    // unstructured prose when invoked by hand.
-    //
-    // Running the interpreter here instead was rejected on substance: these
-    // behaviors are event-triggered and their workflows read
-    // `${event.payload...}`, so a manual invocation has no event to read.
-    // Inventing an empty one would add a third execution shape rather than
-    // remove the second.
+  it("AC-014-1: the compiled prompt is available and functional as a real Pi command", async () => {
     const { compiled } = compile({ behaviors: [manifest] });
     const artifacts = compileBehaviorToArtifacts(compiled[0], [echoTool]);
 
@@ -103,17 +90,10 @@ describe("loadCompiledBehavior (TRD-014)", () => {
     expect(commands.has("investigate-test-failure")).toBe(true);
 
     const command = commands.get("investigate-test-failure")!;
-    const shown: string[] = [];
-    await command.handler("", { ui: { setStatus: (_t: string, body: string) => shown.push(body) } });
+    await command.handler("", { ui: {} });
 
-    // The load-bearing assertion: no turn is triggered.
-    expect(sentMessages).toHaveLength(0);
-
-    // And the user is told why, rather than being left with a command that
-    // appears to do nothing.
-    expect(shown).toHaveLength(1);
-    expect(shown[0]).toContain("test.failure.observed");
-    expect(shown[0]).toMatch(/cannot be run by hand/);
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].content).toBe(artifacts.promptMarkdown);
   });
 
   it("AC-014-1: the compiled skill document is available on demand via --skill without triggering a turn", async () => {

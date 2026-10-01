@@ -1,12 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { EventEmitter, once } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setImmediate as tick } from "node:timers/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AgentPort } from "@sunstone-partners/ensemble-agent-core";
-import { createActivate, drainDispatches } from "../src/extension";
 
 /**
  * /ensemble-approve, exercised through the real createActivate() (br-9uqd).
@@ -22,53 +18,27 @@ import { createActivate, drainDispatches } from "../src/extension";
  */
 
 const dirs: string[] = [];
-// A held run is always released after its test, so a failing assertion
-// cannot leave a dispatch pending and hang the worker.
-const gates: EventEmitter[] = [];
-afterEach(async () => {
-  gates.splice(0).forEach((g) => g.emit("release"));
-  await drainDispatches();
-});
 
-/**
- * A governed behavior with a real workflow, so a failing test run dispatches
- * through the one dispatch path. Its only step is a contained agent, which the
- * test holds open so it can act while the run is in flight.
- */
-const GOVERNED_BEHAVIOR = `api_version: ensemble.sunstone.dev/v1
+/** Auto-mode so dispatch queues a continuation without an approval prompt. */
+const AUTO_BEHAVIOR = `api_version: ensemble.sunstone.dev/v1
 kind: Behavior
 metadata:
-  name: fix-failing-test
-  version: 2.0.0
+  name: investigate-test-failure
+  version: 1.0.0
 trigger:
   event_type: test.failure.observed
 policy:
-  mode: propose
-  timeout: 10m
+  mode: auto
+  timeout: 30m
 capabilities:
-  tools: [read, grep, glob]
+  tools:
+    - read
   mutation_classes: []
-  commands: []
 execution:
-  graph: fix-failing-test
+  graph: investigate-test-failure
   test_command: npm test
-  workflow:
-    schema_version: "1.0.0"
-    start: investigate
-    steps:
-      - id: investigate
-        kind: agent
-        prompt: prompts/investigate.md
-        tools: [read, grep, glob]
-        expect: json
-        timeout: 2m
-        on_failure: inconclusive
-      - id: inconclusive
-        kind: outcome
-        outcome: investigation.inconclusive
-        status: inconclusive
 outcomes:
-  - investigation.inconclusive
+  - test.failure.investigated
 `;
 const originalCwd = process.cwd();
 afterAll(() => {
@@ -106,12 +76,10 @@ function harness() {
       commands.set(name, o as { handler: (a: unknown, c: unknown) => Promise<void> }),
     registerTool: () => undefined,
     registerFlag: () => undefined,
-    // Recorded, not required: nothing on this runtime should ever call them
-    // (see the last test).
-    sendMessage: (m: unknown, options?: unknown) => {
-      sent.push({ content: JSON.stringify(m), options });
-      return undefined;
-    },
+    getFlag: () => false,
+    // #94 made the rollback notice a REQUIRED capability: without it a
+    // rolled-back fix is silent, so activate() refuses to start.
+    sendMessage: (_m: unknown, _o?: unknown) => undefined,
     sendUserMessage: (content: unknown, options?: unknown) => {
       sent.push({ content: String(content), options });
       return undefined;
@@ -148,6 +116,7 @@ describe("/ensemble-approve", () => {
   it("re-applies a reverted guardrail change, and only when asked", async () => {
     const root = repoWithGuardrail();
     process.chdir(root);
+    const { createActivate } = await import("../src/extension");
     const h = harness();
     createActivate().activate(h.pi);
 
@@ -181,6 +150,7 @@ describe("/ensemble-approve", () => {
   it("an approval is consumed, so it cannot bless a later edit", async () => {
     const root = repoWithGuardrail();
     process.chdir(root);
+    const { createActivate } = await import("../src/extension");
     const h = harness();
     createActivate().activate(h.pi);
 
@@ -203,6 +173,7 @@ describe("/ensemble-approve", () => {
   it("an unknown id changes nothing", async () => {
     const root = repoWithGuardrail();
     process.chdir(root);
+    const { createActivate } = await import("../src/extension");
     const h = harness();
     createActivate().activate(h.pi);
 
@@ -212,65 +183,52 @@ describe("/ensemble-approve", () => {
     expect(readFileSync(join(root, GUARD), "utf8")).toBe("export const original = 1;\n");
   });
 
-  // REVERSES dev's "offers nothing during a machine-originated run". There,
-  // an autofix continuation wrote into the session as though it were the
-  // user, so a write it made got no quarantine entry: nobody could approve on
-  // a loop's behalf. That route does not exist on this runtime. A governed run
-  // works in a contained agent and lands as a proposal; it never sends text
-  // into the session, so nothing it assembles -- test output included -- can
-  // reach /ensemble-approve. A write the boundary reverts in the session is
-  // therefore an ordinary turn's write, which is exactly the maintainer's
-  // edit the consent path exists for, and it is offered even mid-run.
-  it("a governed run sends nothing into the session, and a write reverted while it runs is still offered", async () => {
+  it("offers nothing during a machine-originated run", async () => {
+    // The structural guarantee behind "an autonomous loop cannot approve its
+    // own guardrail edit". It must not rest on host internals (whether the
+    // model can reach a slash command at all), so it is asserted here on the
+    // observable behaviour instead: while a continuation is in flight, a
+    // protected write is reverted with NO approvable entry created.
     const root = repoWithGuardrail();
-    const bdir = join(root, ".ensemble", "behaviors", "fix-failing-test");
-    mkdirSync(join(bdir, "prompts"), { recursive: true });
-    writeFileSync(join(bdir, "behavior.yaml"), GOVERNED_BEHAVIOR);
-    writeFileSync(join(bdir, "prompts", "investigate.md"), "Diagnose the failure.\n");
-    writeFileSync(join(root, ".ensemble", "config.yaml"), "behaviors:\n  armed: true\n");
+    const bdir = join(root, "packages", "agent-core", "behaviors", "investigate-test-failure");
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(join(bdir, "behavior.yaml"), AUTO_BEHAVIOR);
     execFileSync("git", ["add", "-A"], { cwd: root });
     execFileSync("git", ["commit", "-qm", "behaviors"], { cwd: root });
 
-    // Held open until the test has acted while the run is in flight.
-    const gate = new EventEmitter();
-    gates.push(gate);
-    let invoked = 0;
-    const agent: AgentPort = {
-      async invoke() {
-        invoked++;
-        await once(gate, "release");
-        return { ok: true, reply: JSON.stringify({ diagnosis: "unclear", confidence: "inconclusive" }) };
-      },
-    };
-
     process.chdir(root);
+    const { createActivate } = await import("../src/extension");
     const h = harness();
-    const instance = createActivate({ agent });
-    instance.activate(h.pi);
+    createActivate().activate(h.pi);
 
-    // A failing test run starts a governed dispatch, held open in the agent.
+    // A failing test run, then the turn boundary that injects the fix turn.
     await h.fire("tool_result", {
       type: "tool_result",
       toolCallId: "t1",
       toolName: "bash",
       input: { command: "npm test" },
-      content: [{ type: "text", text: "Tests: 1 failed, 0 passed, 1 total" }],
+      content: [{ type: "text", text: "Tests: 1 failed, 0 passed" }],
       isError: true,
     });
-    await tick();
-    expect(invoked).toBe(1);
+    await h.fire("turn_end", {});
 
-    // The maintainer edits a guardrail while that run is in flight.
-    writeFileSync(join(root, GUARD), "export const original = 1;\n// maintainer edit mid-run\n");
+    // The injected turn carries text assembled from TEST OUTPUT. If the host
+    // were allowed to expand it, prompt() would dispatch anything starting
+    // with "/" as an extension command. Pinned off here rather than trusting
+    // the library default, so a dependency bump cannot reopen it silently.
+    expect(h.sent.length).toBe(1);
+    expect(h.sent[0].options).toMatchObject({ expandPromptTemplates: false });
+    expect(h.sent[0].content.startsWith("/")).toBe(false);
+
+    // A protected write made by that machine-originated turn.
+    writeFileSync(join(root, GUARD), "export const original = 1;\n// loop edit\n");
     const result = (await h.fire("tool_result", {})) as { content: { text: string }[] };
-    expect(readFileSync(join(root, GUARD), "utf8")).not.toContain("maintainer edit mid-run");
-    expect(result.content[0].text).toMatch(/\/ensemble-approve \d+/);
 
-    gate.emit("release");
-    await drainDispatches();
-    expect(instance.runRecords.some((r) => r.behavior === "fix-failing-test" && r.run)).toBe(true);
+    expect(readFileSync(join(root, GUARD), "utf8")).not.toContain("loop edit");
+    expect(result.content[0].text).not.toContain("/ensemble-approve");
 
-    // Nothing was ever sent into the session, by the run or by the boundary.
-    expect(h.sent).toEqual([]);
+    // And there is nothing for anyone to approve.
+    await h.run("ensemble-approve", "");
+    expect(h.notices.join("\n")).toContain("No reverted protected changes are awaiting approval.");
   });
 });

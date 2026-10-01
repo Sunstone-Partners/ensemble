@@ -25,34 +25,10 @@ export interface BehaviorPolicy {
 export interface BehaviorCapabilities {
   tools: string[];
   mutation_classes: string[];
-  /**
-   * Typed commands this behavior may request (REQ-CQRS-001).
-   *
-   * A third list rather than a reuse of `tools`, because the three authorities
-   * are genuinely independent: holding `bash` must not imply authority to run
-   * `fix.apply`, and holding `artifact.write` must not imply the right to ask
-   * for it through any particular command (REQ-SAFE-003). Absent means the
-   * behavior may call no commands — the safe default for every manifest
-   * written before commands existed.
-   */
-  commands?: string[];
 }
 
 export interface BehaviorExecution {
-  /**
-   * Legacy identifier naming the behavior's execution graph. Retained so
-   * existing manifests keep validating (REQ-BEH-005); it selects nothing.
-   * A manifest that declares `workflow` is interpreted from that data.
-   */
   graph: string;
-  /**
-   * The declarative workflow (REQ-BEH-002). When present, the shared
-   * interpreter runs these steps and no runtime branch is consulted. Typed as
-   * `unknown` here on purpose: the workflow validator owns its shape, and
-   * letting the manifest type assert a shape nothing checked is how invalid
-   * package data reaches an interpreter.
-   */
-  workflow?: unknown;
   /**
    * The command this package's own repository uses to run its full
    * test suite (e.g. `npm test`, `mix test`, `pytest`).
@@ -71,14 +47,6 @@ export interface BehaviorMetadata {
   version: string;
   /** Immutable digest of the manifest content (TRD-011/AC-011-2), excluding this field itself. */
   digest?: string;
-  /**
-   * Digest over the manifest AND every package asset it references
-   * (REQ-BEH-003). Prompt text is editable without a rebuild, so "what ran"
-   * would otherwise be unidentifiable: two runs with the same manifest
-   * digest could have used different prompts. Computed at load time and
-   * reported by status output; it is not declared in the YAML.
-   */
-  packageDigest?: string;
 }
 
 export interface BehaviorManifest {

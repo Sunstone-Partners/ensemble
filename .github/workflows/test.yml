@@ -6,30 +6,6 @@ on:
     branches: [main, dev]
 
 jobs:
-  # Staged deliberately in test.yml, which is NOT a required check.
-  #
-  # A gate that is wrong even twice teaches people to bypass gates, so this
-  # runs where it can be observed being right before it is allowed to block
-  # anything. Promote it to release-gate.yml (a required check) only after it
-  # has been correct for a sustained period.
-  branch-base:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # REQUIRED. The default shallow checkout does not contain the base
-          # branch, and the script fails closed rather than passing a
-          # comparison it cannot make.
-          fetch-depth: 0
-
-      - name: Refuse a PR from a branch behind its base
-        run: |
-          git fetch --no-tags origin "${{ github.base_ref }}"
-          node scripts/check-branch-base.js --base "origin/${{ github.base_ref }}"
-
   test:
     runs-on: ubuntu-latest
     permissions:

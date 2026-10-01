@@ -18,33 +18,6 @@ ensemble_implement_trd_beads:
 
 Source PRD: [PRD-2026-15aa5acd](../PRD/PRD-2026-15aa5acd-live-behavior-dispatch-autofix.md) (readiness 4.7, PASS).
 
-> **Partially superseded — 2026-09-29.** Epic `br-behavior-runtime-cqrs-xl24` (behavior runtime:
-> CQRS commands, closed event catalog, declarative workflows) replaced this TRD's *dispatch and
-> auto-fix mechanism*.
->
-> Of the modules this document names, two are gone: `packages/pi-extension/src/autofix-loop.ts` and
-> `packages/pi-extension/src/issue-identity.ts`. The continuation-message path they implemented was
-> deleted outright rather than disabled, because §7 of the CQRS requirements forbids keeping both
-> dispatch paths behind a flag.
->
-> `packages/agent-core/src/behavior/workspace-snapshot.ts` (named at the Target Files entries around
-> lines 304, 309 and 368) **survives unchanged** and is still used by `write-boundary-monitor.ts`.
-> Do not read it as deleted; a near-identically-named `pi-extension/src/working-tree-snapshot.ts`
-> was removed, but this TRD never referenced that file.
->
-> The epic also deleted several pi-extension modules this document does not mention. They are
-> listed, with the reasoning for each removal, in
-> [Phase 0 boundaries](../architecture/cqrs-phase0-boundaries.md).
->
-> **What survives:** the architecture decision below (Option C — one `MutationGuard` chokepoint) is
-> still the design, and `MutationGuard` is still the single enforcement seam. The auto-fix
-> *workflow* is now package data rather than code: see
-> [Authoring a behavior package](../architecture/behavior-authoring-guide.md) and the
-> [command/event reference](../architecture/behavior-command-event-reference.md).
->
-> Read this TRD for the enforcement rationale; do not read it as a description of current modules.
-
-
 ## Reused Capabilities
 
 None. `trd-graph-cli capabilities docs/TRD` returns an empty registry — no `kind: foundational` TRD exists in this repo, so there is no shared capability to reference instead of rebuilding.

@@ -1,20 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   ToolDescriptor,
-  CompileOptions,
   compile,
   compileBehaviorToArtifacts,
   discoverBehaviorPackages,
-  explainInertTrigger,
-  loadPackageAssets,
-  readPackageAsset,
   LocalEventMatcher,
   BehaviorInvoker,
   CompiledBehaviorPackage,
   ACTIVATION_SEARCH_ROOTS,
 } from "@sunstone-partners/ensemble-agent-core";
 import { existsSync } from "node:fs";
-import { readRepoConsent, RepoConsent } from "./repo-consent";
 import { dirname, join } from "node:path";
 import { loadCompiledBehavior } from "./behavior-loader";
 
@@ -48,8 +43,6 @@ export interface BehaviorActivationResult {
   discovered: number;
   loaded: string[];
   skipped: { behaviorId: string; reason: string }[];
-  /** Loaded, but nothing in this build emits their trigger (br-jgxo). */
-  inertTriggers: { behaviorId: string; reason: string }[];
   /**
    * Dispatches matching events to loaded behaviors for this session
    * only. Always present, even when nothing was discovered.
@@ -61,12 +54,6 @@ export interface BehaviorActivationResult {
    * ships its own prompt/skill files wherever it actually lives.
    */
   packageDirs?: Map<string, string>;
-  /**
-   * Whether this repository consented to being acted on, and why (br-fvmq).
-   * Always populated, including when arming was refused — a caller that wants
-   * to tell the user why nothing ran needs the reason, not just `discovered: 0`.
-   */
-  consent?: RepoConsent;
   /** Invoker failures; one behavior's failure never hides its siblings. */
   invocationErrors: { behavior: string; reason: string }[];
   /** Successfully loaded compiled packages, for late-bound consumers. */
@@ -96,23 +83,10 @@ export function activateBehaviorPipeline(
   availableTools: readonly ToolDescriptor<Record<string, unknown>, unknown>[] = [],
   searchRoots: string[] = [...ACTIVATION_SEARCH_ROOTS],
   invoke?: BehaviorInvoker,
-  compileOptions: CompileOptions = {},
 ): BehaviorActivationResult {
   const live: CompiledBehaviorPackage[] = [];
   const packageDirs = new Map<string, string>();
-  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], inertTriggers: [], invocationErrors: [], compiled: live, packageDirs };
-
-  // Consent is checked BEFORE discovery, not after (br-fvmq). Arming must be
-  // something the repository's owner did, not a consequence of what its
-  // dependency tree happens to contain. An unarmed repo still activates the
-  // extension and still returns a matcher, so nothing downstream has to
-  // null-check — it simply has no behaviors to dispatch to.
-  const consent = readRepoConsent(rootDir);
-  result.consent = consent;
-  if (!consent.armed) {
-    result.matcher = new LocalEventMatcher([], { invoke: invoke ?? (() => undefined) });
-    return result;
-  }
+  const result: BehaviorActivationResult = { discovered: 0, loaded: [], skipped: [], invocationErrors: [], compiled: live, packageDirs };
 
   let discovered;
   try {
@@ -138,15 +112,7 @@ export function activateBehaviorPipeline(
       continue;
     }
 
-    const packageDir = dirname(pkg.manifestPath);
-    // Prompt files are resolved against THIS package's directory, so a
-    // workflow referencing a missing prompt fails at activation with a
-    // diagnostic rather than at invocation with "no candidate offered"
-    // (REQ-BEH-003, REQ-BEH-004).
-    const compileResult = compile(
-      { behaviors: [pkg.manifest] },
-      { ...compileOptions, readPrompt: (_name, relative) => readPackageAsset(packageDir, relative) },
-    );
+    const compileResult = compile({ behaviors: [pkg.manifest] });
     if (compileResult.errors.length > 0 || compileResult.compiled.length === 0) {
       result.skipped.push({
         behaviorId: pkg.behaviorId,
@@ -155,31 +121,12 @@ export function activateBehaviorPipeline(
       continue;
     }
 
-    // A behavior whose trigger nothing emits will load cleanly and then sit
-    // there forever, looking installed (br-jgxo). Report it at activation
-    // rather than letting the silence be discovered later, or never.
-    //
-    // A WARNING, not a skip: an adapter may legitimately publish a type this
-    // build does not know about, and refusing to load would turn an
-    // unknown-producer guess into a hard failure.
-    for (const compiled of compileResult.compiled) {
-      const inert = explainInertTrigger(compiled.manifest.trigger.event_type);
-      if (inert) {
-        result.inertTriggers.push({ behaviorId: pkg.behaviorId, reason: inert });
-        console.warn(`[ensemble] ${pkg.behaviorId}: ${inert}`);
-      }
-    }
-
     for (const compiled of compileResult.compiled) {
       try {
         const artifacts = compileBehaviorToArtifacts(compiled, availableTools);
         loadCompiledBehavior(pi, compiled, artifacts, availableTools);
-        // Computed here, from the files actually on disk right now. A
-        // manifest digest alone cannot distinguish two runs whose prompts
-        // differ, and prompts are editable by design (REQ-BEH-003).
-        compiled.manifest.metadata.packageDigest = loadPackageAssets(packageDir, compiled.manifest).packageDigest;
         result.loaded.push(compiled.manifest.metadata.name);
-        packageDirs.set(compiled.manifest.metadata.name, packageDir);
+        packageDirs.set(compiled.manifest.metadata.name, dirname(pkg.manifestPath));
         live.push(compiled);
       } catch (error) {
         // Includes the TRD-004 fail-closed refusal for an unenforced

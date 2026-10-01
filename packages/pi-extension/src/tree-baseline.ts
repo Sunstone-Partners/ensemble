@@ -1,6 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, readlinkSync } from "node:fs";
-import { resolve } from "node:path";
 
 /**
  * The state of the working tree BEFORE a fix provider runs.
@@ -45,74 +43,20 @@ export function captureTreeBaseline(root: string): TreeBaseline | undefined {
   if (stash.status !== 0) return undefined;
   const commit = stash.out.trim() || head.out.trim();
 
-  // Untracked entries are classified BEFORE hashing, because
-  // `hash-object --stdin-paths` is all-or-nothing: one entry it cannot hash
-  // fails the whole batch, and the caller loses the baseline for the entire
-  // repository (br-dowt).
-  //
-  // The entry that does this in practice is `node_modules` symlinked at a
-  // shared install -- `git ls-files --others` reports it as a single path and
-  // `git hash-object` answers "fatal: Unable to hash node_modules". Observed
-  // live: the hold was skipped and an unreviewed fix stayed on disk under
-  // policy.mode: propose.
-  //
-  // A symlink is recorded by its TARGET rather than dropped. Repointing
-  // node_modules changes what the code under test imports, so it is a real
-  // change; silencing the error by ignoring the entry would trade a loud
-  // failure for a blind spot.
   const untracked = new Map<string, string>();
   const paths = git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
     .out.split("\0")
     .filter(Boolean);
-  const hashable: string[] = [];
-  for (const p of paths) {
-    let stat;
-    try {
-      stat = lstatSync(resolve(root, p));
-    } catch {
-      // Vanished between listing and stat. Not ours to explain; the next
-      // capture will simply not see it.
-      continue;
-    }
-    if (stat.isSymbolicLink()) {
-      try {
-        untracked.set(p, `link:${readlinkSync(resolve(root, p))}`);
-      } catch {
-        continue;
-      }
-    } else if (stat.isFile()) {
-      hashable.push(p);
-    }
-    // Anything else -- a socket, a fifo, a directory git chose to list -- has
-    // no content to compare. Skipped deliberately: it cannot carry a fix.
-  }
-  if (hashable.length > 0) {
-    const ids = git(root, ["hash-object", "--stdin-paths"], hashable.join("\n")).out.split("\n").filter(Boolean);
-    // Still fail closed if hashing ORDINARY files goes wrong: ids are paired
-    // to paths by index, so a short list would mis-attribute contents.
-    if (ids.length !== hashable.length) return undefined;
-    hashable.forEach((p, i) => untracked.set(p, ids[i] as string));
+  if (paths.length > 0) {
+    const ids = git(root, ["hash-object", "--stdin-paths"], paths.join("\n")).out.split("\n").filter(Boolean);
+    if (ids.length !== paths.length) return undefined;
+    paths.forEach((p, i) => untracked.set(p, ids[i] as string));
   }
   return { root, commit, untracked };
 }
 
-/**
- * Blob id of the file as it is now, or null when it does not exist as a file.
- *
- * Symlinks answer in the same `link:<target>` form the baseline records, so
- * the two sides of a comparison are symmetric. Without this, `hash-object`
- * fails on a symlink and returns null, and an untouched symlink reads as
- * changed forever -- harmless where the caller compares captured maps, but
- * wrong for `changedSinceBaseline`, which is called directly with a fix
- * candidate's paths.
- */
+/** Blob id of the file as it is now, or null when it does not exist as a file. */
 function currentBlob(root: string, relPath: string): string | null {
-  try {
-    const stat = lstatSync(resolve(root, relPath));
-    if (stat.isSymbolicLink()) return `link:${readlinkSync(resolve(root, relPath))}`;
-  } catch {
-    return null;
-  }
   const r = git(root, ["hash-object", `--path=${relPath}`, "--", relPath]);
   return r.status === 0 ? r.out.trim() : null;
 }

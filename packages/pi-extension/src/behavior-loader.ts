@@ -77,55 +77,20 @@ export function loadCompiledBehavior(
 
   wireToolGrantEnforcement(pi, compiled);
 
-  // `/behavior-name` DESCRIBES the behavior; it does not run it (br-p7gr).
-  //
-  // This used to call `pi.sendUserMessage(artifacts.promptMarkdown)`, which
-  // pasted the behavior's prompt into the conversation as a follow-up. That
-  // gave a behavior two routes to the model with very different properties:
-  //
-  //   automatic: event -> trigger -> interpreter -> command registry -> guard
-  //   manual:    /name -> prompt in the conversation, none of the above
-  //
-  // The manual route was not a safety hole in the way the old continuation
-  // path was — it is user-initiated, so attribution is unambiguous and any
-  // tool use is the user's own session under its normal rules. It was
-  // something subtler: a behavior authored as a bounded workflow (steps,
-  // timeouts, conditions, approval gates, declared commands) silently
-  // degraded to unstructured prose, and the person invoking it had no signal
-  // that the version they got was not the version that was tested.
-  //
-  // Running the interpreter here instead was considered and rejected. These
-  // behaviors are event-triggered: their workflows reference
-  // `${event.payload...}`, and a manual invocation has no triggering event,
-  // so the run would fail on reference resolution. "Manually run an
-  // event-driven behavior" is not a well-defined request, and inventing an
-  // empty event to satisfy it would be a third execution shape rather than a
-  // fix. Section 7 of the CQRS requirements is precisely about not
-  // maintaining several ways to run a behavior.
   pi.registerCommand(artifacts.commandName, {
-    description: `Describe behavior: ${artifacts.behaviorName} (does not run it)`,
+    description: `Behavior: ${artifacts.behaviorName}`,
     async handler(args, ctx) {
       if (args.trim() === "--skill") {
         ctx.ui.setStatus?.(artifacts.commandName, artifacts.skillMarkdown);
         return;
       }
-      const trigger = compiled.manifest.trigger.event_type;
-      const mode = compiled.manifest.policy.mode;
-      const commands = compiled.commands.join(", ") || "(none)";
-      ctx.ui.setStatus?.(
-        artifacts.commandName,
-        [
-          `# ${artifacts.behaviorName}`,
-          "",
-          `This behavior runs when \`${trigger}\` occurs. It cannot be run by hand:`,
-          `its workflow reads the triggering event, and there is no event here.`,
-          "",
-          `- **mode**: ${mode}`,
-          `- **commands**: ${commands}`,
-          "",
-          `Use \`${artifacts.commandName} --skill\` for the full description.`,
-        ].join("\n"),
-      );
+      // Pinned OFF for the same reason as the autofix call site: with it on,
+      // prompt() would dispatch a behavior prompt that happens to begin with
+      // "/" as an extension command instead of sending it.
+      pi.sendUserMessage(artifacts.promptMarkdown, {
+        deliverAs: "followUp",
+        expandPromptTemplates: false,
+      });
     },
   });
 

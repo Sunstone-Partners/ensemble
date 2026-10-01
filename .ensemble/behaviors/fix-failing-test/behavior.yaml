@@ -2,7 +2,7 @@ api_version: ensemble.sunstone.dev/v1
 kind: Behavior
 metadata:
   name: fix-failing-test
-  version: 2.0.0
+  version: 1.0.0
 trigger:
   event_type: test.failure.observed
   predicate:
@@ -12,149 +12,90 @@ trigger:
     command: { matches: "npm test|npx jest|jest|vitest|mix test|pytest|go test|cargo test" }
     isError: { equals: true }
 policy:
-  # `propose` now means what it says. Under the previous runtime it did not:
-  # MutationGuard denied the governed write while a second dispatch path -- an
-  # injected user turn -- repaired the same file in the same run. That path is
-  # gone (Phase 0), so the only way this behavior can change a file is
-  # `fix.apply`, which it does not declare.
+  # Changed from `auto` to `propose` (2026-09-25): a live run produced a
+  # change to packages/agent-core/src/behavior/outbox.ts
+  # (`if (this.entries.length > 0) return;`) that landed uncommitted with no
+  # human review. `propose` makes MutationGuard.authorize() deny every
+  # direct mutation and require a human to apply the proposal instead
+  # (mutation-guard.ts:122-130) -- but ONLY on the governed dispatch path.
+  #
+  # This does NOT close the gap below: the continuation path bypasses
+  # MutationGuard regardless of `mode`, and a `bash`-granted behavior can
+  # write straight past MutationGuard/WorkspaceSnapshot via shell redirection
+  # (write-boundary-monitor.ts's docstring documents exactly this happening
+  # with a live model and `printf > file`). Both are open as br-o355. Treat
+  # `propose` as raising the bar, not as a closed loop, until br-o355 lands.
   mode: propose
-  timeout: 30m
+  timeout: 10m
 capabilities:
-  # Read-only. The investigating agent returns a candidate patch as DATA; it
-  # never holds a tool that can write, and `fix.propose` stores the candidate
-  # rather than applying it.
-  tools: [read, grep, glob]
-  # Empty on purpose. This behavior proposes; it does not mutate. An
-  # `artifact.write` grant here would be inert under `mode: propose` but would
-  # misdescribe the behavior to anyone reading the manifest.
-  mutation_classes: []
-  # The third, independent authority axis: which typed commands may be
-  # requested. Note `fix.apply` is absent -- applying is a separate decision,
-  # made by a human through a separate command.
-  commands:
-    - investigation.record
-    - fix.propose
-    - fix.verify
+  # `edit` is the difference between this behavior and
+  # investigate-test-failure, which is read-only and therefore can observe a
+  # failure without ever repairing it.
+  #
+  # What mutation_classes buys depends on WHICH dispatch path runs, and there
+  # are two:
+  #
+  #   governed     behavior-runner.runBehavior -> AutofixLoop, constructed
+  #                with createMutationGuard(compiled) at behavior-runner.ts:123.
+  #                Every write is authorized against this list, snapshotted,
+  #                and verified against execution.test_command over the whole
+  #                suite before acceptance.
+  #
+  #   continuation pi.sendUserMessage injects a turn and the MODEL applies the
+  #                change with its own edit calls. Snapshot, verification and
+  #                rollback still apply; MutationGuard does not, because no
+  #                write passes through it. agent-fix-provider.ts:14 says so
+  #                outright.
+  #
+  # The run that proved this behavior worked logged a continuation and no
+  # dispatch/invocation record at all -- so the continuation path is what
+  # fires in practice, and this list was not consulted. The gap is that the
+  # two paths diverge. That is br-o355.
+  #
+  # The paragraph above is CORRECT and stays: the guard is wired, not dead
+  # code. createBehaviorInvoker (behavior-runner.ts:111) is called live at
+  # extension.ts:996, and a live run logs an `invocation` record to prove it.
+  #
+  # What that live record showed was "no fix candidate offered": the governed
+  # invoker ran, but the repair happened on the continuation path, where the
+  # MODEL edits files directly. So this list is not consulted for the fix --
+  # not because the code never runs, but because the fix does not travel
+  # through it. br-o355.
+  tools: [read, grep, glob, bash, edit]
+  #
+  # constitution.propose is the right to ASK for a constitution amendment, not
+  # to write one: a proposal still requires human approval before it is
+  # applied. Without it the behavior can repair a failing test forever and
+  # never record what would stop the failure recurring, which is the whole
+  # point of the loop.
+  #
+  # Inert until br-zcxb lands -- the constitution step is only called from the
+  # dead governed path, so nothing will exercise this grant until the live
+  # loop can reach it.
+  mutation_classes: [artifact.write, constitution.propose]
 execution:
   graph: fix-failing-test
-  # The whole-suite command fix.verify runs, from the root of the throwaway
-  # worktree. Whether it collects anything is checked rather than assumed; a
-  # zero-test run would exit 0 and make the check vacuous, which is why the
-  # verifier treats zero tests as inconclusive.
+  # The whole-suite check. BOTH dispatch paths re-run this before accepting
+  # a fix: the governed AutofixLoop, and the continuation path's
+  # verification (extension.ts verifyPendingFix), which runs it after the
+  # narrow failing command passes. A repair that greens its target while
+  # breaking three others is rolled back.
   #
-  # Not `npx jest`: listing is not loading. With no root jest config every
-  # TypeScript suite fails to parse at the root (66 of them, br-srbd), so the
-  # verifier could only ever answer "inconclusive". `npm test` runs each
-  # workspace's own configured runner, the same command CI runs, and prints
-  # one jest summary per workspace -- the verifier sums them all.
+  # Runs from the repository root. It was `npx jest`, which was checked with
+  # `npx jest --listTests` (170 suites) -- but listing is not loading. With
+  # no root jest config, every TypeScript suite fails to parse at the root
+  # (66 of them), so the check failed for every fix, correct ones included,
+  # and every fix was rolled back (br-srbd). `npm test` runs each
+  # workspace's own configured runner, the same command CI runs.
+  # Slower (about a minute) but real.
   #
-  # `env -u CI`: omp sets CI=true for tool processes, and packages/router's
-  # test script deliberately exits 1 under CI when pytest is missing. Without
-  # CI it announces the skip instead, which the verifier grades inconclusive
-  # (br-91nr) rather than letting it pass as a full run. Real CI still
-  # enforces it; nothing else in the suite reads CI.
+  # `env -u CI`: omp sets CI=true for every tool process, so a local run
+  # looks like CI. packages/router's test script deliberately exits 1 under
+  # CI when pytest is missing, so on any machine without pytest every
+  # verification failed -- observed, with 3189 jest tests passing and a
+  # correct fix rolled back. Without CI it skips with a visible message if
+  # pytest is absent and runs if present; real CI still enforces it.
+  # Nothing else in the suite reads CI.
   test_command: env -u CI npm test
-  workflow:
-    schema_version: "1.0.0"
-    start: investigate
-    steps:
-      # 1. Read-only investigation. The agent runs in a contained subprocess
-      #    with a throwaway HOME and an isolated worktree, so what it can
-      #    persist dies with the step.
-      - id: investigate
-        kind: agent
-        prompt: prompts/investigate.md
-        tools: [read, grep, glob]
-        expect: json
-        timeout: 10m
-        attempts: 2
-        max_output_bytes: 262144
-        inputs:
-          command: ${event.payload.command}
-          failureOutput: ${event.payload.output}
-        on_failure: inconclusive
-
-      # 2. Record the diagnosis as a fact, separately from any fix. An
-      #    investigation that reaches no fix is still worth having.
-      - id: record-diagnosis
-        kind: command
-        command: investigation.record
-        timeout: 30s
-        args:
-          command: ${event.payload.command}
-          diagnosis: ${steps.investigate.diagnosis}
-          confidence: ${steps.investigate.confidence}
-          evidence: ${steps.investigate.evidence}
-        on_failure: inconclusive
-
-      # 3. Branch on a STRUCTURED field the agent was required to return, not
-      #    on whether its prose sounded confident.
-      - id: confident-enough
-        kind: condition
-        left: ${steps.investigate.confidence}
-        operator: in
-        right: [high, medium]
-        then: has-candidate
-        otherwise: inconclusive
-
-      # 3b. A confident diagnosis with no candidate is a real and useful
-      #     outcome -- a one-line arithmetic bug may be diagnosed precisely and
-      #     still warrant no patch from an automated step. Without this branch
-      #     it would reach fix.propose with an empty `writes` and be reported
-      #     as malformed, which describes the wrong thing.
-      - id: has-candidate
-        kind: condition
-        left: ${steps.investigate.writes}
-        operator: exists
-        then: propose-fix
-        otherwise: inconclusive
-
-      # 4. The candidate becomes a reviewable artifact. Nothing is written to
-      #    the project.
-      - id: propose-fix
-        kind: command
-        command: fix.propose
-        timeout: 60s
-        args:
-          issue: ${event.payload.command}
-          rationale: ${steps.investigate.diagnosis}
-          writes: ${steps.investigate.writes}
-          evidence: ${steps.investigate.evidence}
-        on_failure: blocked
-
-      # 5. Verification runs in a throwaway worktree, so it cannot be the thing
-      #    that applies the fix. Its verdict is recorded against the proposal
-      #    either way; a failed or inconclusive verdict still leaves a proposal
-      #    a human can read, which is why on_failure lands on `proposed`.
-      - id: verify-candidate
-        kind: command
-        command: fix.verify
-        timeout: 20m
-        args:
-          proposalRef: ${steps.propose-fix.proposalRef}
-          command: ${behavior.testCommand}
-        on_failure: proposed
-
-      - id: proposed
-        kind: outcome
-        outcome: fix.proposed
-        status: succeeded
-        evidence:
-          - ${steps.propose-fix.proposalRef}
-          - ${steps.verify-candidate.result.detail}
-
-      - id: inconclusive
-        kind: outcome
-        outcome: investigation.inconclusive
-        status: inconclusive
-        evidence:
-          - ${steps.investigate.diagnosis}
-
-      - id: blocked
-        kind: outcome
-        outcome: behavior.blocked
-        status: blocked
 outcomes:
-  - fix.proposed
-  - investigation.inconclusive
-  - behavior.blocked
+  - test.failure.investigated

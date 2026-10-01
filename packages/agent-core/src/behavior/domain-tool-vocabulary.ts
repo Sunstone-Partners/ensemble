@@ -130,12 +130,12 @@ export function createDomainToolVocabulary(
     ),
     buildDomainTool(
       "ensemble.propose_change",
-      "Proposes a change requiring review (prd.refined, trd.refined and related proposal event types).",
+      "Proposes a change requiring review (change.proposed and related proposal event types).",
       outbox,
     ),
     buildDomainTool(
       "ensemble.report_blocked",
-      "Reports a blocked state (behavior.blocked and related event types).",
+      "Reports or clears a blocked state (behavior.blocked/behavior.unblocked and related event types).",
       outbox,
     ),
     buildDomainTool(

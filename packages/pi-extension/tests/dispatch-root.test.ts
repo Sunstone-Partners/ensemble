@@ -1,212 +1,153 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentPort } from "@sunstone-partners/ensemble-agent-core";
-import { createActivate } from "../src/extension";
-import { createAgentPort } from "../src/agent-port";
-import { cleanupSandboxes, enterSandbox, fakePi, failingToolResult, sandbox } from "./support/harness";
+import type { BehaviorInvocation, CompiledBehaviorPackage } from "@sunstone-partners/ensemble-agent-core";
+import { BehaviorRunRecord, createBehaviorInvoker, FixProvider } from "../src/behavior-runner";
 
 /**
- * br-x36p on the governed path: a run acts on the repository the FAILING
- * COMMAND ran in, not on the extension host's.
+ * br-x36p. The governed dispatch resolved every root from the EXTENSION
+ * HOST's process.cwd(), while the failing command's own cwd travelled in the
+ * event payload and was used only by the continuation path.
  *
- * Observed on dev: failures in /private/tmp/wt-autofix-fix sent fix-agent
- * children into the maintainer's main checkout, because every root came from
- * the host's process.cwd(). The same shape here would build the agent's
- * worktree, store the proposal and run verification against a repository
- * where nothing failed.
+ * Observed live: failing commands ran in /private/tmp/wt-autofix-fix, and
+ * fix-agent children wrote into the maintainer's MAIN CHECKOUT --
+ * event-translator.ts and agent-fix-provider.ts were both modified there, on
+ * the strength of a failure that happened somewhere else entirely.
  *
- * Two real repositories, told apart by a committed identity file. The
- * verification command is the real spawn path in the real isolated worktree;
- * it copies that identity out, so the assertion cannot pass unless the
- * worktree was built from the failing repo.
+ * These tests pin that the repo under repair is the one the failure came
+ * from. Two separate git repos are used, because the whole defect is the two
+ * being confused: asserting against a single directory could not fail.
  */
 
-jest.setTimeout(60_000);
+const dirs: string[] = [];
+afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
-const markers: string[] = [];
-afterAll(() => {
-  cleanupSandboxes();
-  markers.forEach((d) => rmSync(d, { recursive: true, force: true }));
-});
-
-function behavior(markerFile: string): string {
-  return `api_version: ensemble.sunstone.dev/v1
-kind: Behavior
-metadata:
-  name: fix-failing-test
-  version: 2.0.0
-trigger:
-  event_type: test.failure.observed
-  predicate:
-    isError: { equals: true }
-policy:
-  mode: propose
-  timeout: 10m
-capabilities:
-  tools: [read, grep, glob]
-  mutation_classes: []
-  commands: [fix.propose, fix.verify]
-execution:
-  graph: fix-failing-test
-  test_command: 'cat identity.txt > ${markerFile} && echo "Tests:       1 passed, 1 total"'
-  workflow:
-    schema_version: "1.0.0"
-    start: investigate
-    steps:
-      - id: investigate
-        kind: agent
-        prompt: prompts/investigate.md
-        tools: [read, grep, glob]
-        expect: json
-        timeout: 2m
-        on_failure: inconclusive
-      - id: propose-fix
-        kind: command
-        command: fix.propose
-        args:
-          issue: \${event.payload.command}
-          rationale: \${steps.investigate.diagnosis}
-          writes: \${steps.investigate.writes}
-        on_failure: blocked
-      - id: verify-candidate
-        kind: command
-        command: fix.verify
-        args:
-          proposalRef: \${steps.propose-fix.proposalRef}
-          command: \${behavior.testCommand}
-        on_failure: proposed
-      - id: proposed
-        kind: outcome
-        outcome: fix.proposed
-        status: succeeded
-      - id: inconclusive
-        kind: outcome
-        outcome: investigation.inconclusive
-        status: inconclusive
-      - id: blocked
-        kind: outcome
-        outcome: behavior.blocked
-        status: blocked
-outcomes:
-  - fix.proposed
-  - investigation.inconclusive
-  - behavior.blocked
-`;
+function gitRepo(label: string): string {
+  const d = mkdtempSync(join(tmpdir(), `dispatch-root-${label}-`));
+  dirs.push(d);
+  mkdirSync(join(d, "src"), { recursive: true });
+  writeFileSync(join(d, "src", "a.ts"), `export const from = "${label}";\n`);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: d, stdio: "ignore" });
+  git("init", "-q");
+  git("add", "-A");
+  git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init");
+  return d;
 }
 
-const BROKEN = "exports.add = (a, b) => a - b;\n";
-const FIXED = "exports.add = (a, b) => a + b;\n";
+const compiled = {
+  manifest: {
+    metadata: { name: "fixer" },
+    policy: { mode: "auto" },
+    capabilities: { tools: [], mutation_classes: ["artifact.write"] },
+    execution: { test_command: "true" },
+  },
+  hasMutationAuthority: (cls: string) => cls === "artifact.write",
+} as unknown as CompiledBehaviorPackage;
 
-describe("a governed run acts on the failing command's repository (br-x36p)", () => {
-  it("builds the agent workspace, stores the proposal and verifies in the failing repo", async () => {
-    const markerDir = mkdtempSync(join(tmpdir(), "dispatch-root-marker-"));
-    markers.push(markerDir);
-    const marker = join(markerDir, "verified-in.txt");
-
-    const host = sandbox([
-      { path: ".ensemble/behaviors/fix-failing-test/behavior.yaml", contents: behavior(marker) },
-      { path: ".ensemble/behaviors/fix-failing-test/prompts/investigate.md", contents: "Diagnose it.\n" },
-      { path: "identity.txt", contents: "HOST\n" },
-      { path: "src/math.js", contents: BROKEN },
-    ]);
-    const failing = sandbox([
-      { path: "identity.txt", contents: "FAILING-REPO\n" },
-      { path: "src/math.js", contents: BROKEN },
-    ]);
-
-    const roots: (string | undefined)[] = [];
-    const agent: AgentPort = {
-      async invoke(request) {
-        roots.push(request.workspaceRoot);
-        return {
-          ok: true,
-          reply: JSON.stringify({
-            diagnosis: "add subtracts",
-            confidence: "high",
-            writes: [{ path: "src/math.js", contents: FIXED }],
-          }),
-        };
+function invocationWithCwd(cwd?: string): BehaviorInvocation {
+  return {
+    behavior: { metadata: { name: "fixer" } },
+    event: {
+      id: "e1",
+      type: "test.failure.observed",
+      source: "test",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        toolName: "bash",
+        command: "npx jest",
+        output: "Tests: 1 failed",
+        ...(cwd ? { cwd } : {}),
       },
-    };
+    },
+  } as unknown as BehaviorInvocation;
+}
 
-    enterSandbox(host);
-    const instance = createActivate({ agent });
-    const { pi, fire } = fakePi();
-    instance.activate(pi);
-
-    await fire("tool_result", {
-      ...failingToolResult("npm test", "Tests:       1 failed, 0 passed, 1 total"),
-      input: { command: "npm test", cwd: failing },
-    });
-
-    const run = instance.runRecords.find((r) => r.behavior === "fix-failing-test")?.run;
-    expect(run?.terminal).toBe("succeeded");
-
-    // The agent was pointed at the failing repo...
-    expect(roots).toEqual([failing]);
-    // ...its candidate was stored there, and nothing was stored in the host...
-    expect(readdirSync(join(failing, ".ensemble", "proposals")).length).toBeGreaterThan(0);
-    expect(existsSync(join(host, ".ensemble", "proposals"))).toBe(false);
-    // ...and verification ran in a worktree of the failing repo.
-    expect(readFileSync(marker, "utf8")).toBe("FAILING-REPO\n");
+async function run(
+  hostRoot: string,
+  invocation: BehaviorInvocation,
+  proposeFix: FixProvider,
+): Promise<BehaviorRunRecord> {
+  const records: BehaviorRunRecord[] = [];
+  const invoke = createBehaviorInvoker({
+    rootDir: hostRoot,
+    compiled: () => [compiled],
+    proposeFix,
+    runSuite: () => ({ failures: 0, targetPasses: true, output: "Tests: 1 passed" }),
+    records,
   });
+  await invoke(invocation);
+  return records[0] as BehaviorRunRecord;
+}
 
-  it("keeps the host repository for an event that names no cwd", async () => {
-    const markerDir = mkdtempSync(join(tmpdir(), "dispatch-root-marker-"));
-    markers.push(markerDir);
-    const marker = join(markerDir, "verified-in.txt");
-    const host = sandbox([
-      { path: ".ensemble/behaviors/fix-failing-test/behavior.yaml", contents: behavior(marker) },
-      { path: ".ensemble/behaviors/fix-failing-test/prompts/investigate.md", contents: "Diagnose it.\n" },
-      { path: "identity.txt", contents: "HOST\n" },
-      { path: "src/math.js", contents: BROKEN },
-    ]);
-
-    const roots: (string | undefined)[] = [];
-    const agent: AgentPort = {
-      async invoke(request) {
-        roots.push(request.workspaceRoot);
-        return { ok: true, reply: JSON.stringify({ diagnosis: "add subtracts", confidence: "high", writes: [{ path: "src/math.js", contents: FIXED }] }) };
-      },
-    };
-
-    enterSandbox(host);
-    const instance = createActivate({ agent });
-    const { pi, fire } = fakePi();
-    instance.activate(pi);
-    await fire("tool_result", failingToolResult("npm test", "Tests:       1 failed, 0 passed, 1 total"));
-
-    // process.cwd() reports the resolved path (macOS /var -> /private/var).
-    expect(roots).toEqual([realpathSync(host)]);
-    expect(readFileSync(marker, "utf8")).toBe("HOST\n");
-  });
+const fix: FixProvider = () => ({
+  writes: [{ path: "src/a.ts", contents: 'export const from = "fixed";\n', mutationClass: "artifact.write" }],
 });
 
-describe("the agent port isolates the repository the run names", () => {
-  it("builds its worktree from request.workspaceRoot, not its configured root", async () => {
-    const isolated: string[] = [];
-    const port = createAgentPort({
-      repoRoot: "/host/repo",
-      isolate: (root) => {
-        isolated.push(root);
-        return { ok: false, reason: "stops here: only the root is under test" };
+describe("governed dispatch uses the failing command's repo (br-x36p)", () => {
+  it("writes into the repo the failure came from, not the extension host's", async () => {
+    const host = gitRepo("host");
+    const failing = gitRepo("failing");
+
+    await run(host, invocationWithCwd(failing), fix);
+
+    expect(readFileSync(join(failing, "src", "a.ts"), "utf8")).toContain("fixed");
+    // The live symptom: the maintainer's checkout modified by a failure that
+    // happened elsewhere.
+    expect(readFileSync(join(host, "src", "a.ts"), "utf8")).toContain('"host"');
+  });
+
+  it("falls back to the configured root when the event carries no cwd", async () => {
+    // Events without a cwd must behave exactly as before rather than
+    // silently doing nothing.
+    const host = gitRepo("host-fallback");
+
+    await run(host, invocationWithCwd(undefined), fix);
+
+    expect(readFileSync(join(host, "src", "a.ts"), "utf8")).toContain("fixed");
+  });
+
+  it("ignores a non-string or empty cwd rather than resolving against it", async () => {
+    // An empty string would resolve to the process cwd, which is the bug
+    // wearing a different hat.
+    const host = gitRepo("host-empty");
+    const invocation = invocationWithCwd(undefined);
+    (invocation.event.payload as Record<string, unknown>).cwd = "";
+
+    await run(host, invocation, fix);
+
+    expect(readFileSync(join(host, "src", "a.ts"), "utf8")).toContain("fixed");
+  });
+
+  it("runs the verification suite in the failing repo, not the host's", async () => {
+    // The verdict has to come from the tree that was actually repaired.
+    // runSuite is NOT injected here, so this exercises the real spawn path
+    // and the command records where it ran.
+    const host = gitRepo("host-suite");
+    const failing = gitRepo("failing-suite");
+
+    const suiteCompiled = {
+      manifest: {
+        metadata: { name: "fixer" },
+        policy: { mode: "auto" },
+        capabilities: { tools: [], mutation_classes: ["artifact.write"] },
+        execution: {
+          test_command: 'pwd > suite-ran-here.txt && echo "Tests:       1 passed, 1 total"',
+        },
       },
-      run: async () => "unused",
-    });
+      hasMutationAuthority: (cls: string) => cls === "artifact.write",
+    } as unknown as CompiledBehaviorPackage;
 
-    await port.invoke({
-      prompt: "p",
-      tools: [],
-      expect: "json",
-      maxOutputBytes: 1_000,
-      timeoutMs: 1_000,
-      signal: new AbortController().signal,
-      behavior: "fix-failing-test",
-      stepId: "investigate",
-      workspaceRoot: "/failing/repo",
+    const records: BehaviorRunRecord[] = [];
+    const invoke = createBehaviorInvoker({
+      rootDir: host,
+      compiled: () => [suiteCompiled],
+      proposeFix: fix,
+      records,
     });
+    await invoke(invocationWithCwd(failing));
 
-    expect(isolated).toEqual(["/failing/repo"]);
+    expect(existsSync(join(failing, "suite-ran-here.txt"))).toBe(true);
+    expect(existsSync(join(host, "suite-ran-here.txt"))).toBe(false);
   });
 });

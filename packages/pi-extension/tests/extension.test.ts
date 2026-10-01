@@ -8,13 +8,6 @@ import activate from "../src/extension";
 // dynamic `import()` gets compiled back to `require` under a CJS jest
 // transform. A real Node ESM process sidesteps that resolver limitation
 // entirely instead of mocking around it.
-/** Arms a fixture repository; see br-fvmq. Refusal is covered separately. */
-function arm(root: string): string {
-  mkdirSync(join(root, ".ensemble"), { recursive: true });
-  writeFileSync(join(root, ".ensemble", "config.yaml"), "behaviors:\n  armed: true\n");
-  return root;
-}
-
 describe("pi-extension activation (AC-004-1/AC-004-2)", () => {
   it("throws a documented blocking-gap error instead of degrading silently if registerTool is missing (AC-004-2)", async () => {
     const brokenPi = {
@@ -23,32 +16,16 @@ describe("pi-extension activation (AC-004-1/AC-004-2)", () => {
     expect(() => activate(brokenPi)).toThrow(/BLOCKING GAP/);
   });
 
-  // REVERSES dev 609e790 (br-o9j1), which made pi.sendMessage a required
-  // capability so a rolled-back continuation fix could be announced. On this
-  // runtime no fix is applied to the live tree before it is verified --
-  // fix.verify runs in a throwaway worktree and fix-failing-test only
-  // proposes -- so there is no rollback to announce, and the extension sends
-  // nothing into the session at all. Refusing to load for want of an API it
-  // never calls would turn a missing capability into a missing extension.
-  it("loads fully without pi.sendMessage: nothing is rolled back, so nothing needs announcing", () => {
-    const registered: string[] = [];
+  it("throws a blocking-gap error if sendMessage is missing: a rollback could not be reported (br-o9j1)", () => {
     const noSendMessage = {
       on: () => undefined,
       registerTool: () => undefined,
-      registerCommand: (name: string) => registered.push(name),
+      registerCommand: () => undefined,
       registerFlag: () => undefined,
       getFlag: () => false,
+      sendUserMessage: () => undefined,
     } as unknown as ExtensionAPI;
-    const cwd = process.cwd();
-    const scratch = mkdtempSync(join(tmpdir(), "no-send-message-"));
-    try {
-      process.chdir(scratch);
-      activate(noSendMessage);
-    } finally {
-      process.chdir(cwd);
-      rmSync(scratch, { recursive: true, force: true });
-    }
-    expect(registered).toEqual(expect.arrayContaining(["ensemble-approve", "ensemble-status"]));
+    expect(() => activate(noSendMessage)).toThrow(/BLOCKING GAP: pi\.sendMessage/);
   });
 });
 
@@ -96,6 +73,7 @@ describe("production activate() wires the behavior pipeline (TRD-005 / AC-009-1,
       registerFlag: () => undefined,
       getFlag: () => false,
       sendUserMessage: () => undefined,
+      sendMessage: () => undefined,
       on: (name: string, h: (e: { type: string; toolCallId: string; toolName: string }) =>
         | { block?: boolean; reason?: string }
         | undefined) => {
@@ -122,7 +100,7 @@ describe("production activate() wires the behavior pipeline (TRD-005 / AC-009-1,
     // wiring is removed from extension.ts, this test fails even though
     // the pipeline modules still work in isolation. That distinction is
     // the entire point of REQ-009.
-    const root = arm(mkdtempSync(join(tmpdir(), "activate-e2e-")));
+    const root = mkdtempSync(join(tmpdir(), "activate-e2e-"));
     dirs.push(root);
     const dir = join(root, "packages", "agent-core", "behaviors", "investigate-test-failure");
     mkdirSync(dir, { recursive: true });
@@ -166,6 +144,7 @@ describe("live dispatch reaches a behavior through the real activate() (TRD-015 
       registerFlag: () => undefined,
       getFlag: () => false,
       sendUserMessage: () => undefined,
+      sendMessage: () => undefined,
       on: (name: string, h: (e: unknown) => Promise<void> | void) => {
         handlers.set(name, h);
         return () => undefined;
@@ -178,7 +157,7 @@ describe("live dispatch reaches a behavior through the real activate() (TRD-015 
     // The full production path: real createActivate() -> session
     // wiring -> translator -> matcher -> behavior. Only a raw Pi
     // tool_result is injected; everything else must be real.
-    const root = arm(mkdtempSync(join(tmpdir(), "dispatch-e2e-")));
+    const root = mkdtempSync(join(tmpdir(), "dispatch-e2e-"));
     dirs.push(root);
     const dir = join(root, "packages", "agent-core", "behaviors", "investigate-test-failure");
     mkdirSync(dir, { recursive: true });

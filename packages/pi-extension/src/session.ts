@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BehaviorEvent, EventSink, translateEvent, translateRepositoryChange } from "@sunstone-partners/ensemble-agent-core";
+import { BehaviorEvent, EventSink, translateEvent } from "@sunstone-partners/ensemble-agent-core";
 import {
   fromSessionStart,
   fromBeforeAgentStart,
@@ -60,11 +60,6 @@ export function wireSessionLifecycle(
     await emit(event);
     const derived = translateEvent(event, { testCommand: resolveTestCommand() });
     if (derived) await emit(derived);
-    // Separate translator, separate publish: a tool call can be both a test
-    // run and a repository change is not a case that arises, but coupling the
-    // two would make either one's early return silently suppress the other.
-    const repository = translateRepositoryChange(event);
-    if (repository) await emit(repository);
   };
 
   pi.on("session_start", async (event, ctx) => { seen(ctx); return publish(fromSessionStart(event)); });

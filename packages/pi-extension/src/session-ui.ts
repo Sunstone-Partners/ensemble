@@ -20,6 +20,8 @@ export interface UiContextLike {
     confirm(title: string, message: string): Promise<boolean>;
     /** Pi's multi-choice dialog (ExtensionUIContext.select). */
     select?(title: string, options: string[]): Promise<string | undefined>;
+    /** Pi's non-blocking notification (ExtensionUIContext.notify). */
+    notify?(message: string, type?: "info" | "warning" | "error"): void;
   };
 }
 
@@ -59,5 +61,13 @@ export class SessionUiBridge implements ApprovalHost {
     const ctx = this.current;
     if (!ctx?.hasUI || !ctx.ui?.select) return undefined;
     return ctx.ui.select(title, options);
+  }
+
+  /** Shows a notification. Returns false when there is no UI to show it in. */
+  notify(message: string, type: "info" | "warning" | "error" = "info"): boolean {
+    const ctx = this.current;
+    if (!ctx?.hasUI || !ctx.ui?.notify) return false;
+    ctx.ui.notify(message, type);
+    return true;
   }
 }

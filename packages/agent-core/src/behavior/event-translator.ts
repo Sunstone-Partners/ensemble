@@ -28,72 +28,6 @@ const TEST_COMMAND_PATTERNS: readonly RegExp[] = [
   /^yarn\s+test\b/,
 ];
 
-/**
- * Evidence that a run reported a count of tests actually executed.
- *
- * Deliberately separate from the failure patterns. A run reporting
- * `Tests: 0 total` with exit code 0 matches no failure pattern and is not
- * `isError`, so before this it produced NO event at all — the single most
- * common local failure shape in this repo's own log (29 of 51 classifiable
- * failures) was invisible to the runtime.
- */
-const TEST_COUNT_PATTERNS: readonly { readonly pattern: RegExp; readonly group: number }[] = [
-  // jest / vitest: "Tests:       12 passed, 12 total"
-  { pattern: /^\s*Tests:.*?\b(\d+)\s+total\b/m, group: 1 },
-  // jest / vitest suites: "Test Suites: 3 passed, 3 total"
-  { pattern: /^\s*Test Suites:.*?\b(\d+)\s+total\b/m, group: 1 },
-  // pytest: "12 passed in 0.4s" / "no tests ran in 0.1s"
-  { pattern: /\b(\d+)\s+passed\b/, group: 1 },
-  // mix / ExUnit: "5 tests, 0 failures"
-  { pattern: /\b(\d+)\s+tests?,\s+\d+\s+failures?\b/, group: 1 },
-  // NOTE: go test has no count-based entry. `go test` prints "ok pkg 0.2s"
-  // with no number, so there is nothing to read. Its empty case is caught
-  // by NOTHING_RAN_PATTERNS ("no test files") instead. Do not add a count
-  // pattern here for go without a real sample -- an invented one would
-  // read some other number as a test count.
-];
-
-/** Phrases that state outright that nothing ran. */
-const NOTHING_RAN_PATTERNS: readonly RegExp[] = [
-  /\bno tests ran\b/i,
-  /\bno tests found\b/i,
-  /\[no test files\]/i,
-  /\bno test files\b/i,
-  /^\s*Tests:\s*0\s+total\b/m,
-  /^\s*Test Suites:\s*0\s+total\b/m,
-];
-
-export interface TestVolume {
-  /** Tests the run claims to have executed, when it said so at all. */
-  readonly testsReported?: number;
-  /** True when the output states outright that nothing ran. */
-  readonly nothingRan: boolean;
-  /** True when the run reported no count AND no explicit "nothing ran". */
-  readonly silent: boolean;
-}
-
-/**
- * What a test run claims about its own volume.
- *
- * `silent` is its own case on purpose. "Reported zero" and "reported
- * nothing" are different facts, and collapsing them would let an unknown
- * runner's healthy output be read as a vacuous pass — which is the same
- * class of error in the opposite direction.
- */
-export function readTestVolume(output: string): TestVolume {
-  const nothingRan = NOTHING_RAN_PATTERNS.some((p) => p.test(output));
-  for (const { pattern, group } of TEST_COUNT_PATTERNS) {
-    const match = pattern.exec(output);
-    if (match) {
-      const count = Number(match[group]);
-      if (Number.isFinite(count)) {
-        return { testsReported: count, nothingRan: nothingRan || count === 0, silent: false };
-      }
-    }
-  }
-  return { nothingRan, silent: !nothingRan };
-}
-
 /** Shell operators that begin a new command. */
 const SEGMENT_SPLIT = /(?:\|\||&&|;|\||\n)/;
 /** Wrappers that delegate to the runner named after them. */
@@ -258,10 +192,9 @@ const OPT_OUT = /\bENSEMBLE_NO_AUTOFIX=1\b/;
  *
  * RESIDUAL GAP, deliberately unaddressed here: a mutation applied in one
  * tool call and tested in the NEXT arrives as a bare `npx jest` and is
- * indistinguishable from a genuine failure. It no longer destroys anything:
- * the governed path verifies by running the behavior's declared test command
- * in a throwaway worktree (fix.verify), never by replaying the captured
- * chain (br-c3s4), and it only ever proposes.
+ * indistinguishable from a genuine failure. Catching that needs a clean
+ * re-run to confirm the failure persists, which is br-c3s4's territory --
+ * today's verifier re-runs the whole chain and would re-apply the mutation.
  */
 export function isInconclusiveRun(command: string): boolean {
   if (OPT_OUT.test(command)) return true;
@@ -272,6 +205,59 @@ export function isInconclusiveRun(command: string): boolean {
     const invocation = tokens.join(" ");
     return MUTATION_INDICATORS.some((pattern) => pattern.test(invocation));
   });
+}
+
+/** Keeps a directory change so the tests run where they actually failed. */
+const NAVIGATION = /^cd\s/;
+
+/**
+ * The part of a failing command that should be RE-RUN to verify a fix.
+ *
+ * OBSERVED LIVE (br-c3s4). A test was broken with a compound command:
+ *
+ *   cd packages/agent-core && python3 -c "<edit that introduces the bug>" \
+ *     && sed -n '18,21p' src/behavior/outbox.ts && npx jest ...
+ *
+ * Verification re-ran that command VERBATIM, so the python3 step matched
+ * again -- the repair had restored exactly the text its .replace() searches
+ * for -- and re-introduced the bug. jest failed, and a CORRECT fix was
+ * rolled back as rejected. The loop was structurally unable to accept a
+ * good fix to a bug introduced this way.
+ *
+ * Verification therefore re-runs only what is needed to observe the tests:
+ * directory changes, and the test invocations themselves. Everything else is
+ * dropped, because anything else in the chain is what BROKE the tests.
+ *
+ * Conservative on purpose. A dropped step might have been genuine setup
+ * (a build, a fixture), and losing it can make the re-run fail or find
+ * nothing -- both of which surface as "inconclusive", which does NOT roll
+ * back. The opposite error, re-running the mutation, silently destroys
+ * correct work. Returns undefined when no test invocation survives, so the
+ * caller can decline to grade rather than grade the wrong thing.
+ */
+export function verificationCommand(command: string, testCommand?: string): string | undefined {
+  // A behavior-declared test_command is AUTHORITATIVE, exactly as it is for
+  // detection (TranslationOptions.testCommand, REQ-012). Pattern matching
+  // recognises the common runners; a repository whose suite runs via
+  // something unrecognised -- `node run-all.js`, a shell wrapper, a make
+  // target -- declares it instead.
+  //
+  // Without this, verification returned "no test invocation found" for such
+  // a repo and every fix stayed unverified: never rolled back, but never
+  // confirmed either. The maintainer had already told us how to run the
+  // suite; refusing to believe them is not caution, it is just silence.
+  const declared = testCommand?.trim();
+  const isTest = (segment: string): boolean =>
+    (declared !== undefined && declared.length > 0 && segment === declared) || isTestCommand(segment);
+
+  const kept = command
+    .split(SEGMENT_SPLIT)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .filter((segment) => NAVIGATION.test(segment) || isTest(segment));
+
+  if (!kept.some((segment) => isTest(segment))) return undefined;
+  return kept.join(" && ");
 }
 
 export interface TranslationOptions {
@@ -321,42 +307,7 @@ export function translateEvent(
   const failedByStatus =
     payload.isError === true && (exactDeclared || exitStatusIsRunners(command));
   const failedByOutput = outputReportsFailure(output);
-  if (!failedByStatus && !failedByOutput) {
-    // A recognised test command that did NOT report failure.
-    //
-    // A HEALTHY run still translates to nothing, deliberately. The original
-    // contract — "no event for a passing suite" — exists so behaviors cannot
-    // chase healthy suites, and emitting on every green run would also make
-    // this the highest-volume event in the system for no benefit.
-    //
-    // The exception is a run that passed because it ran NOTHING. That is not
-    // a pass; it is the absence of evidence being reported as evidence, and
-    // it was invisible here: it matches no failure pattern and is not
-    // `isError`, so it produced no event at all. In this repo's own log it
-    // is the single most common failure shape (29 of 51 classifiable).
-    //
-    // `silent` — no count and no explicit "nothing ran" — is NOT emitted.
-    // An unrecognised runner's healthy output would otherwise be reported as
-    // vacuous, which is the same error in the opposite direction.
-    const volume = readTestVolume(output);
-    if (!volume.nothingRan) return undefined;
-
-    return normalizeEvent({
-      type: "test.passed",
-      source: event.source,
-      payload: {
-        command,
-        cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
-        testsReported: volume.testsReported,
-        nothingRan: true,
-        // The verdict is still the behavior's to draw. This module reports
-        // what the run said about itself and nothing more.
-        toolName: payload.toolName,
-        toolCallId: payload.toolCallId,
-        output: payload.output,
-      },
-    });
-  }
+  if (!failedByStatus && !failedByOutput) return undefined;
 
   return normalizeEvent({
     type: "test.failure.observed",
@@ -380,13 +331,6 @@ export function translateEvent(
 /**
  * Wraps a publish function so that every raw event is forwarded and any
  * implied semantic event is published immediately after it.
- *
- * MUST name every translator. When `translateRepositoryChange` was added this
- * function still called only `translateEvent`, so its doc comment — "any
- * implied semantic event" — had quietly become false, and any caller using
- * this wrapper instead of calling the translators directly would have missed
- * repository events with no diagnostic anywhere. A new translator has to be
- * added here as well as at the call site.
  */
 export function withTranslation(
   publish: (event: BehaviorEvent) => void | Promise<void>,
@@ -396,57 +340,5 @@ export function withTranslation(
     await publish(event);
     const derived = translateEvent(event, options);
     if (derived) await publish(derived);
-    const repository = translateRepositoryChange(event);
-    if (repository) await publish(repository);
   };
-}
-
-/**
- * Commands that change the repository's committed state.
- *
- * Anchored to command position, never matched against the whole line, for the
- * same reason `isTestCommand` is: a message containing the words "git commit"
- * must not be read as one.
- */
-const REPOSITORY_CHANGING = [
-  /^git\s+commit\b/,
-  /^git\s+merge\b/,
-  /^git\s+rebase\b/,
-  /^git\s+revert\b/,
-  /^git\s+cherry-pick\b/,
-  /^git\s+apply\b/,
-  /^git\s+am\b/,
-];
-
-/** `git checkout -b` / `git switch -c`, which create a branch. */
-const BRANCH_CREATING = [/^git\s+checkout\s+(?:.*\s)?-b\b/, /^git\s+switch\s+(?:.*\s)?-c\b/];
-
-/**
- * Derives `repository.changed` / `repository.branch.created` from a tool call
- * (br-gpha, closing two of br-d7lm's EMIT list).
- *
- * Kept SEPARATE from `translateEvent` rather than folded into it, because that
- * function returns at most one event and is written around test runs — every
- * early return in it means "not a test command", not "nothing happened".
- *
- * NOT emitted for a command that failed: a rejected commit changed nothing,
- * and a behavior that re-checked the tree on every failed attempt would be
- * noise. The exit status is trusted here only because these commands are the
- * whole command line, not a segment of a pipeline.
- */
-export function translateRepositoryChange(event: BehaviorEvent): BehaviorEvent | undefined {
-  if (event.type !== "runtime.tool_call.completed") return undefined;
-
-  const payload = (event.payload ?? {}) as Record<string, unknown>;
-  const command = typeof payload.command === "string" ? payload.command.trim() : undefined;
-  if (!command || payload.isError === true) return undefined;
-
-  const branch = BRANCH_CREATING.some((pattern) => pattern.test(command));
-  if (!branch && !REPOSITORY_CHANGING.some((pattern) => pattern.test(command))) return undefined;
-
-  return normalizeEvent({
-    type: branch ? "repository.branch.created" : "repository.changed",
-    source: event.source,
-    payload: { command, cwd: typeof payload.cwd === "string" ? payload.cwd : undefined },
-  });
 }

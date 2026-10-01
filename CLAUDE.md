@@ -46,14 +46,6 @@ translation layer implementation.
 
 ## Architecture Overview
 
-> **Foreman owns the session; Ensemble runs inside it as a child process.** Neither attaches to
-> the other's sessions, there is no event subscription in either direction, and context arrives as
-> launch input rather than as events. Do not design pull/push/webhook ingestion between them, and
-> do not infer an integration from `event-catalog.ts` — most of its ~54 trigger types are never
-> emitted and the Foreman-domain ones cannot arrive at all. Full detail, including why this keeps
-> getting inverted, is in [AGENTS.md](./AGENTS.md#foreman-and-ensemble-the-relationship).
-
-
 ```
 Tier 1: Core Foundation
 └── ensemble-core (orchestration, framework detection, XDG config)

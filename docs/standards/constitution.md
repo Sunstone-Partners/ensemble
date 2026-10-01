@@ -92,9 +92,3 @@ Every implementation must pass through:
 | 2026-09-24 | Initial constitution generated via `/init-project` | ensemble-create-prd workflow |
 | 2026-09-24 | Added Rules 6 (reachable from entry point) and 7 (a verification must be able to fail) | behavior-runtime work |
 | 2026-09-25 | Added Rule 8 (user-modifiable artifacts belong in prompts/skills, not TypeScript) | behavior-runtime work |
-
-## Amendment 2026-09-29: investigate-test-failure
-
-Rationale: Piping a build or test command into `tail` makes `$?` report `tail`'s exit status instead of the command's, and Jest's "Tests: N passed" line can look fine while suites that failed to compile ran no tests, so a verification step can pass while the build is broken.
-
-- Take a build or test verdict from the command's own exit status, never from a pipeline (`set -o pipefail`, or check `$?`/`PIPESTATUS` before any pipe). For Jest and similar runners, require `Test Suites: 0 failed` and zero compile errors, not just passing test counts.
