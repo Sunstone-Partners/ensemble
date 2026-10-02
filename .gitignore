@@ -42,3 +42,5 @@ __pycache__/
 # Fork-local operating notes, loaded by Claude Code alongside CLAUDE.md
 CLAUDE.local.md
 .ensemble/runtime-log.jsonl
+# br doctor per-run artifacts
+.doctor/
