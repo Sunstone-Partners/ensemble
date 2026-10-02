@@ -9,6 +9,10 @@ status: Draft
 date: 2026-09-30
 design_readiness_score: 4.25
 constitution_compliance: passed
+ensemble_implement_trd_beads:
+  branch_name: pi-behaviors
+  use_proposed: false
+  stacked_prs: false
 ---
 
 # TRD-2026-b6db9749: Ensemble Behavior and Habits Runtime — Extensibility, Communication, and Cross-Platform Verification
