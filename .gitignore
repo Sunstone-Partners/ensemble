@@ -42,5 +42,7 @@ __pycache__/
 # Fork-local operating notes, loaded by Claude Code alongside CLAUDE.md
 CLAUDE.local.md
 .ensemble/runtime-log.jsonl
+# Checkout-local runtime state (TRD-2026-b6db9749 data model), e.g. authoring.json
+.ensemble/state/
 # br doctor per-run artifacts
 .doctor/

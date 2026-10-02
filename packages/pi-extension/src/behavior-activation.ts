@@ -5,9 +5,12 @@ import {
   compile,
   compileBehaviorToArtifacts,
   discoverBehaviorPackages,
+  DiscoveredBehaviorPackage,
   explainInertTrigger,
   loadPackageAssets,
+  readAuthoringRecords,
   readPackageAsset,
+  runFixtureConformance,
   LocalEventMatcher,
   BehaviorInvoker,
   CompiledBehaviorPackage,
@@ -17,6 +20,44 @@ import { existsSync } from "node:fs";
 import { readRepoConsent, RepoConsent } from "./repo-consent";
 import { dirname, join } from "node:path";
 import { loadCompiledBehavior } from "./behavior-loader";
+
+/** Authoring timestamps are a metric: an unusable record is reported, never fatal (TRD-023). */
+const warnAuthoring = (message: string): void => console.warn(`[ensemble] ${message}`);
+
+/**
+ * Runs fixture conformance for every loaded package that has a full fixture
+ * set and no recorded completion yet, so a first pass is recorded as its
+ * authoring completion (TRD-023 / AC-029-1). This is the product running the
+ * conformance check: nobody has to call it with an extra argument for the
+ * pass to count. Packages that already have a completion are skipped, so
+ * once recorded it costs nothing. Never throws.
+ *
+ * Like the start, a completion is observed at a lifecycle point: fixtures
+ * that begin passing between sessions are seen at the next activation.
+ */
+function recordFixtureCompletions(rootDir: string, packages: readonly DiscoveredBehaviorPackage[]): void {
+  const read = readAuthoringRecords(rootDir);
+  // Discovery has already reported why an unusable record disables the metric.
+  if (!read.ok) return;
+  const completed = new Set(read.entries.filter((entry) => entry.completedAt !== null).map((entry) => entry.package));
+
+  for (const pkg of packages) {
+    const { events, expectedMatches, expectedOutcomes } = pkg.fixtures;
+    if (!pkg.manifest || completed.has(pkg.behaviorId) || !(events && expectedMatches && expectedOutcomes)) continue;
+    try {
+      runFixtureConformance(
+        dirname(pkg.manifestPath),
+        { behaviors: [pkg.manifest] },
+        { authoring: { rootDir, onDiagnostic: warnAuthoring } },
+      );
+    } catch (error) {
+      warnAuthoring(
+        `${pkg.behaviorId}: fixture conformance could not run ` +
+          `(${error instanceof Error ? error.message : String(error)}); its authoring completion is not recorded`,
+      );
+    }
+  }
+}
 
 /**
  * Resolves the repository root by walking up from `startDir` to the
@@ -116,7 +157,14 @@ export function activateBehaviorPipeline(
 
   let discovered;
   try {
-    discovered = discoverBehaviorPackages(rootDir, { searchRoots });
+    discovered = discoverBehaviorPackages(rootDir, {
+      searchRoots,
+      // Authoring start (TRD-023 / AC-029-1). Activation is the discovery a
+      // developer gets without asking for it, so recording here is what makes
+      // the start observable without hand instrumentation. Never fatal: a bad
+      // record disables the metric with a diagnostic, not the session.
+      authoring: { onDiagnostic: warnAuthoring },
+    });
   } catch {
     // A repo with no discoverable layout at all is not an error —
     // the extension must still activate normally (AC-009-3). A matcher
@@ -127,6 +175,7 @@ export function activateBehaviorPipeline(
   }
 
   result.discovered = discovered.length;
+  const loadedPackages = new Set<DiscoveredBehaviorPackage>();
 
   for (const pkg of discovered) {
     if (!pkg.manifest) {
@@ -181,6 +230,7 @@ export function activateBehaviorPipeline(
         result.loaded.push(compiled.manifest.metadata.name);
         packageDirs.set(compiled.manifest.metadata.name, packageDir);
         live.push(compiled);
+        loadedPackages.add(pkg);
       } catch (error) {
         // Includes the TRD-004 fail-closed refusal for an unenforced
         // `mode: auto` manifest — surfaced, never swallowed into a
@@ -192,6 +242,10 @@ export function activateBehaviorPipeline(
       }
     }
   }
+
+  // A package that does not load is not finished being authored, so only
+  // loaded packages are checked for their authoring completion.
+  recordFixtureCompletions(rootDir, [...loadedPackages]);
 
   // Dispatch (TRD-015 / REQ-003). Without this, behaviors are
   // discovered, compiled and loaded, and a matching event still invokes

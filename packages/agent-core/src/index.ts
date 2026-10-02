@@ -18,6 +18,7 @@ export * from "./behavior/discovery";
 export * from "./behavior/conformance";
 export * from "./behavior/package-discovery";
 export * from "./behavior/fixture-conformance";
+export * from "./behavior/authoring-record";
 export * from "./behavior/artifact-compiler";
 export * from "./behavior/event-catalog";
 export * from "./behavior/event-translator";

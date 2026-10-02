@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AuthoringRecord } from "@sunstone-partners/ensemble-agent-core";
 import activate from "../src/extension";
 
 // AC-004-1 (real activation through Pi's loader with no load-time errors) is
@@ -52,7 +53,7 @@ describe("pi-extension activation (AC-004-1/AC-004-2)", () => {
   });
 });
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beginBehaviorScope } from "../src/tool-grant-enforcement";
@@ -147,6 +148,65 @@ describe("production activate() wires the behavior pipeline (TRD-005 / AC-009-1,
     process.chdir(empty);
     const { pi } = fakePi();
     expect(() => activate(pi)).not.toThrow();
+  });
+
+  it("TRD-023 / AC-029-1: the real activate() records a discovered package's authoring start", () => {
+    // Through the entry point Pi calls (Rule 6). If activation stopped opting
+    // into recording, discovery would still work and nothing would be recorded.
+    const root = arm(mkdtempSync(join(tmpdir(), "activate-authoring-")));
+    dirs.push(root);
+    const dir = join(root, ".ensemble", "behaviors", "investigate-test-failure");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "behavior.yaml"), READ_ONLY_BEHAVIOR);
+
+    process.chdir(root);
+    const before = Date.now();
+    activate(fakePi().pi);
+
+    const state: { schema_version: string; entries: AuthoringRecord[] } = JSON.parse(
+      readFileSync(join(root, ".ensemble", "state", "authoring.json"), "utf8"),
+    );
+    expect(state.schema_version).toBe("1.0.0");
+    expect(state.entries).toEqual([
+      { package: "investigate-test-failure", startedAt: expect.any(String), completedAt: null },
+    ]);
+    expect(Date.parse(state.entries[0].startedAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(state.entries[0].startedAt)).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("TRD-023 / AC-029-1: the real activate() records completion for a package whose fixtures pass, and not for one whose fixtures fail", () => {
+    // Nobody calls conformance by hand here: activation runs it. If that
+    // wiring were removed, both packages would keep `completedAt: null`.
+    const root = arm(mkdtempSync(join(tmpdir(), "activate-completion-")));
+    dirs.push(root);
+    for (const [id, agree] of [["passing-fixtures", true], ["failing-fixtures", false]] as const) {
+      const dir = join(root, ".ensemble", "behaviors", id);
+      for (const sub of ["events", "expected-matches", "expected-outcomes"]) {
+        mkdirSync(join(dir, "fixtures", sub), { recursive: true });
+      }
+      writeFileSync(join(dir, "behavior.yaml"), READ_ONLY_BEHAVIOR.replace(/investigate-test-failure/g, id));
+      writeFileSync(
+        join(dir, "fixtures", "events", "npm-test-failed.json"),
+        JSON.stringify({ type: "test.failure.observed", source: "fixture", payload: { command: "npm test", isError: true } }),
+      );
+      writeFileSync(join(dir, "fixtures", "expected-matches", "npm-test-failed.json"), JSON.stringify(agree ? [id] : []));
+      writeFileSync(
+        join(dir, "fixtures", "expected-outcomes", "npm-test-failed.json"),
+        JSON.stringify(agree ? ["test.failure.investigated"] : []),
+      );
+    }
+
+    process.chdir(root);
+    activate(fakePi().pi);
+
+    const state: { schema_version: string; entries: AuthoringRecord[] } = JSON.parse(
+      readFileSync(join(root, ".ensemble", "state", "authoring.json"), "utf8"),
+    );
+    const passing = state.entries.find((entry) => entry.package === "passing-fixtures");
+    const failing = state.entries.find((entry) => entry.package === "failing-fixtures");
+    expect(failing).toEqual({ package: "failing-fixtures", startedAt: expect.any(String), completedAt: null });
+    expect(passing).toEqual({ package: "passing-fixtures", startedAt: expect.any(String), completedAt: expect.any(String) });
+    expect(Date.parse(passing?.completedAt ?? "")).toBeGreaterThanOrEqual(Date.parse(passing?.startedAt ?? ""));
   });
 });
 

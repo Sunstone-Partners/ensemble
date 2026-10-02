@@ -3,6 +3,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { BehaviorManifest } from "./schema";
 import { validate } from "./compiler";
+import { AuthoringRecordOptions, recordAuthoringStarts } from "./authoring-record";
 
 export interface FixturePresence {
   events: boolean;
@@ -73,6 +74,19 @@ function loadManifest(manifestPath: string): { manifest?: BehaviorManifest; pars
  */
 export interface DiscoveryOptions {
   searchRoots?: string[];
+  /**
+   * Records each discovered package's first-discovery time -- its authoring
+   * start -- in `<rootDir>/.ensemble/state/authoring.json` (TRD-023 /
+   * REQ-029). A package is recorded even when its manifest does not parse
+   * yet: authoring starts before the manifest is valid.
+   *
+   * Opt-in for the same reason `"."` is: tests and CLIs discover this very
+   * checkout, and a library default that wrote state would dirty it on every
+   * run. The product entry point opts in (pi-extension's
+   * behavior-activation.ts), which is what makes the start observable
+   * without anyone instrumenting their workflow by hand.
+   */
+  authoring?: AuthoringRecordOptions;
 }
 
 
@@ -151,6 +165,14 @@ export function discoverBehaviorPackages(
         });
       }
     }
+  }
+
+  if (options.authoring) {
+    recordAuthoringStarts(
+      rootDir,
+      discovered.map((pkg) => pkg.behaviorId),
+      options.authoring,
+    );
   }
 
   return discovered;

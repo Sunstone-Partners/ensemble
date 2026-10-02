@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { normalizeEvent, RawEventInput } from "../normalize";
 import { match } from "./discovery";
 import { BehaviorPackage } from "./schema";
+import { AuthoringRecordOptions, recordAuthoringCompletion } from "./authoring-record";
 
 /**
  * Payload fields the runtime is actually capable of emitting, per
@@ -42,6 +43,29 @@ export interface FixtureConformanceResult {
   expectedOutcomes: string[];
   /** TRD-007/AC-010-2: empty when every fixture field is emittable. */
   constructibility: FixtureConstructibilityIssue | null;
+}
+
+export interface FixtureConformanceOptions {
+  /**
+   * Records the package's first passing run as its authoring completion in
+   * `<rootDir>/.ensemble/state/authoring.json` (TRD-023 / REQ-029), keyed by
+   * the package directory's name -- the id discovery reports and keys the
+   * start by. Opt-in, like discovery's: a conformance run over this very
+   * checkout must not write state into it unasked.
+   */
+  readonly authoring?: AuthoringRecordOptions & { readonly rootDir: string };
+}
+
+/**
+ * A conformance run passes only when it checked at least one fixture and
+ * every fixture matched, produced its expected outcomes and is constructible
+ * (TRD-007). A run that checked nothing proved nothing, so it is not a pass.
+ */
+export function fixtureConformancePassed(results: readonly FixtureConformanceResult[]): boolean {
+  return (
+    results.length > 0 &&
+    results.every((result) => result.matchesEqual && result.outcomesEqual && result.constructibility === null)
+  );
 }
 
 /**
@@ -102,13 +126,17 @@ function readJson<T>(path: string, fallback: T): T {
  * the produced matches/outcomes against the expected fixtures
  * structurally (AC-013-1).
  */
-export function runFixtureConformance(behaviorDir: string, pkg: BehaviorPackage): FixtureConformanceResult[] {
+export function runFixtureConformance(
+  behaviorDir: string,
+  pkg: BehaviorPackage,
+  options: FixtureConformanceOptions = {},
+): FixtureConformanceResult[] {
   const fixturesDir = join(behaviorDir, "fixtures");
   const eventsDir = join(fixturesDir, "events");
   const expectedMatchesDir = join(fixturesDir, "expected-matches");
   const expectedOutcomesDir = join(fixturesDir, "expected-outcomes");
 
-  return listJsonFiles(eventsDir).map((eventFile) => {
+  const results = listJsonFiles(eventsDir).map((eventFile): FixtureConformanceResult => {
     const stem = basename(eventFile, ".json");
     const rawEvent = readJson<RawEventInput>(join(eventsDir, eventFile), {
       type: "unknown",
@@ -160,4 +188,10 @@ export function runFixtureConformance(behaviorDir: string, pkg: BehaviorPackage)
       constructibility,
     };
   });
+
+  // A failing run records nothing; only the first passing one is kept.
+  if (options.authoring && fixtureConformancePassed(results)) {
+    recordAuthoringCompletion(options.authoring.rootDir, basename(resolve(behaviorDir)), options.authoring);
+  }
+  return results;
 }
