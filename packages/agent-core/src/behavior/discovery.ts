@@ -1,4 +1,5 @@
 import { BehaviorEvent } from "../events";
+import { matchesPathGlob } from "./path-glob";
 import { BehaviorManifest, BehaviorPackage, BehaviorTriggerPredicate } from "./schema";
 
 function predicateMatches(predicate: BehaviorTriggerPredicate | undefined, payload: Record<string, unknown>): boolean {
@@ -14,6 +15,11 @@ function predicateMatches(predicate: BehaviorTriggerPredicate | undefined, paylo
     }
     if (condition.equals !== undefined) {
       return value === condition.equals;
+    }
+    if (condition.glob !== undefined) {
+      // Fails closed on a non-string on either side: a glob that cannot be
+      // evaluated must not fall through to the match-anything default below.
+      return typeof value === "string" && typeof condition.glob === "string" && matchesPathGlob(value, condition.glob);
     }
     return true;
   });

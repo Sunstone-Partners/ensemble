@@ -125,10 +125,25 @@ export const HARNESS_EMITTED_EVENT_TYPES: readonly string[] = [
   "runtime.process.exited",
 ];
 
+/**
+ * Types a dedicated trigger-source adapter publishes (TRD-2026-b6db9749
+ * Option B): one module per source, each building its events through
+ * `normalizeEvent` exactly as the translator does.
+ *
+ * Separate from `TRANSLATED_EVENT_TYPES` because the translator never sees
+ * these: `file-source-adapter.ts` derives `artifact.changed` from content
+ * hashes taken at lifecycle points, not from any tool result's payload.
+ *
+ * The session hooks that call the adapter (`session_start`, `tool_result`,
+ * `agent_end`) are wired by TRD-003 in the same PR; until that lands, this
+ * entry is a claim about the PR, not about the build it sits in.
+ */
+export const ADAPTER_EMITTED_EVENT_TYPES: readonly string[] = ["artifact.changed"];
+
 export interface TriggerProducer {
   readonly eventType: string;
   /** How this type comes to exist. */
-  readonly producedBy: "translator" | "command" | "harness" | "dispatcher";
+  readonly producedBy: "translator" | "command" | "harness" | "dispatcher" | "adapter";
 }
 
 /** Every trigger type this build can actually produce, with its source. */
@@ -152,6 +167,11 @@ export function producibleTriggers(): readonly TriggerProducer[] {
   for (const eventType of DISPATCH_EMITTED_EVENT_TYPES) {
     if (!out.some((entry) => entry.eventType === eventType)) {
       out.push({ eventType, producedBy: "dispatcher" });
+    }
+  }
+  for (const eventType of ADAPTER_EMITTED_EVENT_TYPES) {
+    if (!out.some((entry) => entry.eventType === eventType)) {
+      out.push({ eventType, producedBy: "adapter" });
     }
   }
   return out;

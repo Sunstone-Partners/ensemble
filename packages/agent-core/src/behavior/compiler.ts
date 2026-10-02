@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { artifactTriggerViolation } from "./file-source-adapter";
 import { BehaviorManifest, BehaviorPackage } from "./schema";
 import { WorkflowDefinition, WorkflowDiagnostic, validateWorkflow } from "../workflow";
 
@@ -112,6 +113,13 @@ function compileOne(
   }
   if (!manifest.trigger?.event_type) {
     errors.push({ behaviorName: name, message: "field 'trigger.event_type' is required" });
+  }
+  // TRD-001/AC-001-2: an artifact trigger with no concrete path, or one that
+  // escapes the repository, is rejected here, so no watch is ever derived
+  // from it.
+  const artifactProblem = artifactTriggerViolation(manifest);
+  if (artifactProblem) {
+    errors.push({ behaviorName: name, message: artifactProblem });
   }
   if (!manifest.policy?.mode) {
     errors.push({ behaviorName: name, message: "field 'policy.mode' is required" });

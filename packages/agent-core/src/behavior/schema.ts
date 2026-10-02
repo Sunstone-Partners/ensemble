@@ -6,8 +6,14 @@
  * tool grant never implies mutation authority (TRD-011/AC-011-1).
  */
 
+/**
+ * One condition per payload field. `glob` matches a `/`-separated
+ * repo-relative path (`*`, `?`, `**`); it is how an `artifact.changed`
+ * trigger names a set of files (TRD-001), and its semantics live in
+ * `path-glob.ts` so the matcher and the adapter cannot disagree.
+ */
 export interface BehaviorTriggerPredicate {
-  [field: string]: { matches?: string; not?: unknown; equals?: unknown };
+  [field: string]: { matches?: string; not?: unknown; equals?: unknown; glob?: string };
 }
 
 export interface BehaviorTrigger {

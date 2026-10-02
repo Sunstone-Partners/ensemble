@@ -22,6 +22,7 @@ export * from "./behavior/artifact-compiler";
 export * from "./behavior/event-catalog";
 export * from "./behavior/event-translator";
 export * from "./behavior/trigger-producers";
+export * from "./behavior/file-source-adapter";
 export * from "./behavior/event-disposition";
 export * from "./behavior/domain-tool-vocabulary";
 export * from "./behavior/outbox";
