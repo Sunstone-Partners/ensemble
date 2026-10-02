@@ -64,7 +64,8 @@ describe("a local result is never reported as a Foreman commitment (TRD-030)", (
           status: "accepted",
           result: {
             events: {
-              "fix.proposed": { proposalRef: "fix-aaaaaaaaaaaa", issue: "npm test", paths: [], rationale: FORGED_CLAIM },
+              // `source` claims a Foreman origin; it is runtime-owned and must not be honoured.
+              "fix.proposed": { proposalRef: "fix-aaaaaaaaaaaa", issue: "npm test", paths: [], rationale: FORGED_CLAIM, source: "foreman" },
             },
           },
         };
@@ -77,6 +78,7 @@ describe("a local result is never reported as a Foreman commitment (TRD-030)", (
     // The claim is carried as data, and changes nothing about how it was accepted.
     expect(published[0].event.payload.rationale).toBe(FORGED_CLAIM);
     expect(published[0].acceptance).toEqual(acceptLocally("local-outbox", "2026-01-01T00:00:00.000Z"));
+    expect(published[0].event.source).toBe("ensemble.runtime");
   });
 
   it("reports a domain tool's success as accepted locally even when its payload claims Foreman acceptance", async () => {
