@@ -176,15 +176,15 @@ describe('transformAgent', () => {
   });
 
   describe('AskUserQuestion stripped from tools', () => {
-    it('maps AskUserQuestion to ask_user (which IS Pi-available)', () => {
+    it('maps AskUserQuestion to ask (which IS Pi-available)', () => {
       const output = transformAgent(ASK_USER_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('ask_user');
+      expect(output).toContain('ask');
       expect(output).not.toContain('AskUserQuestion');
     });
 
-    it('retains Read alongside the mapped ask_user', () => {
+    it('retains Read alongside the mapped ask', () => {
       const output = transformAgent(ASK_USER_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('["Read", "ask_user"]');
+      expect(output).toContain('["Read", "ask"]');
     });
   });
 
@@ -264,7 +264,7 @@ describe('transformAgent', () => {
       expect(output).toContain('Build REST APIs.');
     });
 
-    it('replaces AskUserQuestion in body text with ask_user', () => {
+    it('replaces AskUserQuestion in body text with ask', () => {
       const agent: Record<string, unknown> = {
         name: 'test-agent',
         description: 'test',
@@ -275,7 +275,7 @@ describe('transformAgent', () => {
       };
       const output = transformAgent(agent, SOURCE_PATH, {});
       expect(output).not.toContain('AskUserQuestion');
-      expect(output).toContain('ask_user');
+      expect(output).toContain('ask');
     });
   });
 });

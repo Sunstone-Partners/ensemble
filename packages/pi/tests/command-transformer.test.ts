@@ -2,7 +2,7 @@
  * Unit tests for command-transformer.ts (TRD-006-TEST)
  *
  * Covers: header, title, mission blockquote, constraints callout,
- * phase/step rendering, actionToString coercion, and AskUserQuestion → ask_user.
+ * phase/step rendering, actionToString coercion, and AskUserQuestion → ask.
  */
 
 import { transformCommand } from '../src/transformers/command-transformer';
@@ -308,7 +308,7 @@ describe('transformCommand', () => {
     });
   });
 
-  describe('AskUserQuestion → ask_user replacement', () => {
+  describe('AskUserQuestion → ask replacement', () => {
     it('replaces AskUserQuestion in action strings', () => {
       const cmd: CommandYaml = {
         ...MINIMAL_COMMAND,
@@ -329,7 +329,7 @@ describe('transformCommand', () => {
         },
       };
       const output = transformCommand(cmd, SOURCE_PATH, {});
-      expect(output).toContain('ask_user');
+      expect(output).toContain('ask');
       expect(output).not.toContain('AskUserQuestion');
     });
 
@@ -337,7 +337,7 @@ describe('transformCommand', () => {
       const output = transformCommand(FULL_COMMAND, SOURCE_PATH, {});
       // FULL_COMMAND has { 'AskUserQuestion: What is the target user?': null }
       expect(output).not.toContain('AskUserQuestion');
-      expect(output).toContain('ask_user');
+      expect(output).toContain('ask');
     });
 
     it('replaces AskUserQuestion in constraint strings', () => {

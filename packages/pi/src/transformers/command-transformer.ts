@@ -234,11 +234,13 @@ export function transformCommand(
   // Terminate with a single trailing newline for clean file output
   let output = sections.join('\n') + '\n';
 
-  // Map AskUserQuestion → ask_user throughout the rendered output.
-  // Pi uses the ask_user tool name; the Ensemble YAML sources use the
-  // Claude Code tool name (AskUserQuestion).  A global replacement here
-  // ensures no AskUserQuestion references survive into any Pi prompt.
-  output = output.replace(/AskUserQuestion/g, 'ask_user');
+  // Map AskUserQuestion → ask throughout the rendered output.
+  // Pi/OMP's native interactive-question tool is registered as "ask" (not
+  // "ask_user" — that name was never shipped by any Pi runtime; the Ensemble
+  // YAML sources use the Claude Code tool name (AskUserQuestion). A global
+  // replacement here ensures no AskUserQuestion references survive into any
+  // Pi prompt.
+  output = output.replace(/AskUserQuestion/g, 'ask');
 
   // Rewrite Claude-style command references (ensemble:<cmd>) to the Pi
   // invocation form (ensemble-<cmd>). Pi command names cannot contain ':'
