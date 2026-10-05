@@ -329,7 +329,7 @@ describe('transformCommand', () => {
         },
       };
       const output = transformCommand(cmd, SOURCE_PATH, {});
-      expect(output).toContain('ask');
+      expect(output).toMatch(/\bask\b/);
       expect(output).not.toContain('AskUserQuestion');
     });
 
@@ -337,7 +337,7 @@ describe('transformCommand', () => {
       const output = transformCommand(FULL_COMMAND, SOURCE_PATH, {});
       // FULL_COMMAND has { 'AskUserQuestion: What is the target user?': null }
       expect(output).not.toContain('AskUserQuestion');
-      expect(output).toContain('ask');
+      expect(output).toMatch(/\bask\b/);
     });
 
     it('replaces AskUserQuestion in constraint strings', () => {

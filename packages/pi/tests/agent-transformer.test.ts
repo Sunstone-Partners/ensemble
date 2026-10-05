@@ -178,7 +178,7 @@ describe('transformAgent', () => {
   describe('AskUserQuestion stripped from tools', () => {
     it('maps AskUserQuestion to ask (which IS Pi-available)', () => {
       const output = transformAgent(ASK_USER_AGENT, SOURCE_PATH, {});
-      expect(output).toContain('ask');
+      expect(output).toMatch(/\bask\b/);
       expect(output).not.toContain('AskUserQuestion');
     });
 
@@ -275,7 +275,7 @@ describe('transformAgent', () => {
       };
       const output = transformAgent(agent, SOURCE_PATH, {});
       expect(output).not.toContain('AskUserQuestion');
-      expect(output).toContain('ask');
+      expect(output).toMatch(/\bask\b/);
     });
   });
 });
