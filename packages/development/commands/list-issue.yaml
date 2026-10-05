@@ -1,0 +1,32 @@
+metadata:
+  name: ensemble:list-issue
+  description: List open Beads issues for triage using this repo's standard br/bv CLI tools
+  version: 1.0.0
+  lastUpdated: "2026-10-05"
+  category: implementation
+  output_path: ensemble/list-issue.md
+  source: sunstone
+  model: low
+  argument_hint: "[--ranked | --robot-triage]"
+
+mission:
+  summary: |
+    Thin passthrough with no ensemble-specific workflow, per AGENTS.md's existing br/bv
+    ownership of listing and triage. Integration section.
+
+workflow:
+  phases:
+    - name: Beads Work Discovery
+      order: 1
+      steps:
+        - order: 1
+          title: Run br/bv listing for ranked or flat output
+          description: "Run `br list --status=open --json` for a flat list, or `bv --robot-triage` for ranked/scored triage output, per the caller's preference (default to `br list --status=open --json` if $ARGUMENTS is empty)."
+          actions:
+            - "Present the result to the user as-is. Do not create, modify, or close any issues. Do not invoke bare `bv` without a --robot-* flag (it launches a blocking interactive TUI)."
+
+expectedOutput:
+  format: br/bv listing output, unmodified
+  structure:
+    - name: Issue List
+      description: Whatever br/bv printed for the requested mode (flat list or ranked triage)

@@ -30,10 +30,11 @@ const validateAgentJsonSchema = ajv.compile(agentSchema);
  * @param {object} commandData - Parsed command YAML
  * @param {string} filePath - Original file path (for errors)
  * @param {Set<string>} agentNames - Set of all known agent names
+ * @param {Set<string>} commandNames - Set of all known command names (ensemble: prefix stripped)
  * @returns {void}
  * @throws {ValidationError[]} Array of validation errors
  */
-function validateCommandSchema(commandData, filePath, agentNames = new Set()) {
+function validateCommandSchema(commandData, filePath, agentNames = new Set(), commandNames = new Set()) {
   const errors = [];
 
   // 1. JSON Schema validation
@@ -108,6 +109,19 @@ function validateCommandSchema(commandData, filePath, agentNames = new Set()) {
     });
   }
 
+  // 5. Semantic validation: dispatch subcommand refs exist
+  if (commandData.dispatch?.subcommands && commandNames.size > 0) {
+    commandData.dispatch.subcommands.forEach((sub, subIndex) => {
+      if (sub.ref && !commandNames.has(sub.ref)) {
+        errors.push(new ValidationError(
+          filePath,
+          `dispatch.subcommands[${subIndex}].ref`,
+          `Referenced command '${sub.ref}' not found in command ecosystem`
+        ));
+      }
+    });
+  }
+
   if (errors.length > 0) {
     throw errors;
   }
@@ -163,8 +177,34 @@ async function buildAgentNameSet(agentYamlPaths) {
   return agentNames;
 }
 
+/**
+ * Build set of all command names from discovered files, keyed by
+ * metadata.name with the "ensemble:" prefix stripped -- the same identity
+ * dispatch.subcommands[].ref uses.
+ * @param {string[]} commandYamlPaths - Paths to all command YAML files
+ * @returns {Promise<Set<string>>}
+ */
+async function buildCommandNameSet(commandYamlPaths) {
+  const commandNames = new Set();
+
+  for (const yamlPath of commandYamlPaths) {
+    try {
+      const content = await fs.readFile(yamlPath, 'utf8');
+      const data = yaml.load(content);
+      if (data?.metadata?.name) {
+        commandNames.add(data.metadata.name.replace(/^ensemble:/, ''));
+      }
+    } catch (error) {
+      // Skip files that can't be parsed (will be caught in main validation)
+    }
+  }
+
+  return commandNames;
+}
+
 module.exports = {
   validateCommandSchema,
   validateAgentSchema,
-  buildAgentNameSet
+  buildAgentNameSet,
+  buildCommandNameSet
 };
