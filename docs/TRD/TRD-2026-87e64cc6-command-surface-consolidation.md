@@ -46,7 +46,7 @@ No existing `kind: foundational` TRD declares a reusable `run-index`/`checkpoint
 ## System Architecture
 
 **Components:**
-- `packages/product/commands/feature.yaml` (`ensemble:feature`) — rewritten dispatcher content, replacing the retired linear pipeline in place.
+- `packages/development/commands/feature.yaml` (`ensemble:feature`) — new dispatcher command, replacing the retired `packages/product/commands/feature.yaml` linear pipeline (deleted, not rewritten in place -- see TRD-009).
 - `packages/pi-extension/src/extension.ts` — one new `registerDispatcherCommand(...)` call for `ensemble-feature`, identical shape to the existing prd/trd/issue registrations.
 - `packages/development/commands/new-feature.yaml` — gains a `--abandon` flag wired to the existing (currently unused by any CLI path) `RunIndexStore.abandon()`.
 - `packages/agent-core/src/run-index-core.ts` (new) — shared, stage-agnostic I/O primitives.
@@ -111,7 +111,7 @@ This is a platform split, not a cosmetic naming difference: Pi/OMP get a discove
   - Validates PRD ACs: AC-003-1, AC-010-2, AC-016-1, AC-016-2
   - Implementation AC:
     - [ ] Given `extension.ts`, when `registerDispatcherCommand` is called for `ensemble-feature`, then it forwards to `ensemble:feature` with zero new routing logic
-    - [ ] Given a repo without `packages/product/commands/feature.yaml`, when the extension loads, then `ensemble-feature` is not registered (existing no-op contract preserved)
+    - [ ] Given a repo without `packages/development/commands/feature.yaml`, when the extension loads, then `ensemble-feature` is not registered (existing no-op contract preserved)
 
 - [x] **TRD-003-TEST** Native feature command registration [Verifies TRD-003] [Satisfies REQ-003, REQ-010, REQ-016] [Depends: TRD-003] (2h)
   - Validates PRD ACs: AC-003-1, AC-010-2, AC-016-1, AC-016-2
