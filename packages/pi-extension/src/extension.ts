@@ -26,6 +26,7 @@ import {
   type WorkingTreeSnapshot,
   type RestoreResult,
 } from "./working-tree-snapshot";
+import { registerDispatcherCommand } from "./dispatcher-commands";
 
 /**
  * Capability check for AC-004-2: this extension only depends on
@@ -1216,6 +1217,30 @@ ${next.instruction}`,
         if (ctx.hasUI && ctx.ui?.notify) ctx.ui.notify(text);
         else console.log(text);
       },
+    });
+
+    // Native completion for the three markdown-prompt dispatcher commands
+    // (prd/trd/issue). Each registration is a no-op in any repo that
+    // doesn't have the corresponding YAML -- see registerDispatcherCommand's
+    // own doc comment -- so this extension loading globally in every
+    // session never pollutes an unrelated repo's command list.
+    registerDispatcherCommand(pi, repoRoot, {
+      name: "ensemble-prd",
+      yamlRelPath: "packages/product/commands/prd.yaml",
+      forwardTo: "ensemble:prd",
+      description: "Dispatch to a PRD-management subcommand (create, refine, ...)",
+    });
+    registerDispatcherCommand(pi, repoRoot, {
+      name: "ensemble-trd",
+      yamlRelPath: "packages/development/commands/trd.yaml",
+      forwardTo: "ensemble:trd",
+      description: "Dispatch to a TRD-management subcommand (create, refine, analyze, ...)",
+    });
+    registerDispatcherCommand(pi, repoRoot, {
+      name: "ensemble-issue",
+      yamlRelPath: "packages/development/commands/issue.yaml",
+      forwardTo: "ensemble:issue",
+      description: "Dispatch to an issue-management subcommand (fix, list)",
     });
 
     // Arm logging only once behaviours exist here. The extension loads in

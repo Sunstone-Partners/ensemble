@@ -44,7 +44,8 @@
   },
   "dependencies": {
     "@sunstone-partners/ensemble-agent-core": "^0.1.0",
-    "@sinclair/typebox": "^0.32.0"
+    "@sinclair/typebox": "^0.32.0",
+    "js-yaml": "^4.1.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.87.0"
@@ -52,6 +53,7 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.87.1",
     "@types/jest": "^29.0.0",
+    "@types/js-yaml": "^4.0.0",
     "@types/node": "^20.0.0",
     "jest": "^29.0.0",
     "ts-jest": "^29.0.0",
