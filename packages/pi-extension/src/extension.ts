@@ -1240,7 +1240,7 @@ ${next.instruction}`,
       name: "ensemble-issue",
       yamlRelPath: "packages/development/commands/issue.yaml",
       forwardTo: "ensemble:issue",
-      description: "Dispatch to an issue-management subcommand (fix, list)",
+      description: "Dispatch to an issue-management subcommand by keyword (fix, list, resume, status, abandon)",
     });
     registerDispatcherCommand(pi, repoRoot, {
       name: "ensemble-feature",
