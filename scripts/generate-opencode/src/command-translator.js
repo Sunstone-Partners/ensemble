@@ -394,7 +394,9 @@ class CommandTranslator {
       const siblingParsed = this.parseCommandYaml(siblingFile);
       const outputPath = this.getOutputPath(siblingParsed);
       const relOutputPath = path.relative(repoRoot, outputPath);
-      lines.push(`- **${sub.keyword}** - run \`${siblingParsed.metadata.name}\` (\`${relOutputPath}\`)`);
+      const description = sub.description ? sub.description.trim().replace(/\s+/g, ' ') : '';
+      const descPrefix = description ? `${description}. ` : '';
+      lines.push(`- **${sub.keyword}** - ${descPrefix}run \`${siblingParsed.metadata.name}\` (\`${relOutputPath}\`)`);
     }
     lines.push('');
     return lines.join('\n');
