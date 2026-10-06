@@ -115,6 +115,7 @@ describe("readRunFile (corrupt-file validation)", () => {
 
   it("throws RUN_INDEX_CORRUPT when the caller-supplied validator rejects the shape", () => {
     const filePath = join(testRunsDir(root), "wrong-shape.json");
+    mkdirSync(testRunsDir(root), { recursive: true });
     writeFileSync(filePath, JSON.stringify({ id: 123, revision: "not-a-number" }));
 
     expect(() => readRunFile(filePath, validateTestRecordShape)).toThrow(

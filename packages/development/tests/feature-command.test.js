@@ -90,14 +90,14 @@ describe('Feature Dispatcher Command', () => {
     test('`resume` constructs the bare invocation with no flags (resumes from the last recorded checkpoint)', () => {
       const text = actionsText(dispatchStep);
       expect(text).toContain(
-        'keyword `resume`: ignore any remaining text -- construct the bare invocation `/ensemble:new-feature` with no flags, matching new-feature\'s own existing no-arguments convention for resuming the project\'s active/paused run from its last recorded checkpoint (its Entry Point Resolution Step 4, status=false).'
+        'keyword `resume` with no remaining text (any remaining text is rejected above, REQ-015): construct the bare invocation `/ensemble:new-feature` with no flags, matching new-feature\'s own existing no-arguments convention for resuming the project\'s active/paused run from its last recorded checkpoint (its Entry Point Resolution Step 4, status=false).'
       );
     });
 
     test('`status` constructs `--status` and is documented read-only (no mutate() call)', () => {
       const text = actionsText(dispatchStep);
       expect(text).toContain(
-        'keyword `status`: ignore any remaining text (status takes no argument) -- construct the invocation `/ensemble:new-feature --status`, matching new-feature\'s own existing `--status` convention for its read-only run report (its Entry Point Resolution Step 4, status=true). That path makes no mutate() call.'
+        'keyword `status` with no remaining text (any remaining text is rejected above, REQ-015): construct the invocation `/ensemble:new-feature --status`, matching new-feature\'s own existing `--status` convention for its read-only run report (its Entry Point Resolution Step 4, status=true). That path makes no mutate() call.'
       );
     });
 
