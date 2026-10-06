@@ -60,6 +60,14 @@ No existing `kind: foundational` TRD declares a reusable `run-index`/`checkpoint
 
 **Technology choices:** No new technology. TypeScript/Node.js, same `fs`-based atomic-write-and-JSON-file convention as the existing feature run-index store.
 
+## Platform Availability (Native Command Surface)
+
+**The native, hyphenated command surface (`ensemble-feature`, `ensemble-issue`, `ensemble-prd`, `ensemble-trd`) exists only on the Pi and OMP hosts.** It is registered at runtime via `registerDispatcherCommand(...)` in `packages/pi-extension/src/extension.ts`, which provides live subcommand-argument completion (the dropdown noted in Domain Analysis above) and verbatim forwarding into the matching colon-named command.
+
+**Codex and OpenCode have no equivalent registration mechanism.** They only receive the colon-named, markdown-prompt commands generated from `packages/product/commands/*.yaml` and `packages/development/commands/*.yaml` into `packages/development/ensemble/*.md` — e.g. `/ensemble:feature`, `/ensemble:issue`, `/ensemble:prd`, `/ensemble:trd` — with no native completion dropdown and no hyphenated alias. A developer on Codex or OpenCode invokes the colon form directly; the hyphenated form does not exist there at all.
+
+This is a platform split, not a cosmetic naming difference: Pi/OMP get a discoverable, tab-completable native command backed by the same underlying workflow that Codex/OpenCode reach only through the full colon-named command, with no native-command-list entry and no completion. Nothing elsewhere in this TRD implies host-uniform discoverability — wherever "the native command" is discussed above (Architecture Decision, System Architecture), it refers specifically to the Pi/OMP registration path. Satisfies REQ-011/AC-011-2.
+
 ## Master Task List
 
 ### PR 1: Feature Front Door — Delegation, Guards, Concurrency Safety
