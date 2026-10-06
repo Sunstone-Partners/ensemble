@@ -306,13 +306,16 @@ workflow:
           instructions: |
             1. Call IssueRunIndexStore.mutate(projectRoot, runId, revision,
                (record) => { record.artifacts.push({ type: "fix-plan",
-               path: <fix plan output path>, recordedAt: now() }); }) to
-               record this phase's fix-plan artifact.
-            2. Call IssueRunIndexStore.mutate(projectRoot, runId, revision,
-               (record) => { record.stage = "execution"; record.stageOutcome
-               = { kind: "success", recordedAt: now() }; }) to advance the
-               run's stage from analysis_planning to execution.
-            3. On a thrown error (e.g. a revision conflict), halt the
+               path: <fix plan output path>, recordedAt: now() });
+               record.stage = "execution"; record.stageOutcome = { kind:
+               "success", recordedAt: now() }; }) in a single call to
+               record this phase's fix-plan artifact and advance the run's
+               stage from analysis_planning to execution together --
+               calling mutate() twice with the same `revision` would make
+               the second call always throw REVISION_CONFLICT against the
+               first call's own bump, so both changes belong in one
+               callback.
+            2. On a thrown error (e.g. a revision conflict), halt the
                workflow and report the error -- do not proceed to
                Execution with an unrecorded checkpoint.
 

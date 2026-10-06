@@ -283,6 +283,51 @@ describe('New-Feature Command', () => {
     });
   });
 
+  describe('AC-007-3: Abandon Confirmation Gate (TRD-001)', () => {
+    let abandonStep;
+    let noArgsStep;
+
+    beforeAll(() => {
+      const entryPhase = commandYaml.workflow.phases.find((p) => p.name === 'Entry Point Resolution');
+      abandonStep = entryPhase.steps.find((s) => s.title === 'Abandon Confirmation Gate');
+      noArgsStep = entryPhase.steps.find((s) => s.title === 'No Arguments -- Resume Active or Show Status');
+    });
+
+    test('the `abandon` parameter exists and documents its optional-reason/precedence contract', () => {
+      const param = commandYaml.parameters.find((p) => p.name === 'abandon');
+      expect(param).toBeDefined();
+      expect(param.required).toBe(false);
+      expect(param.description).toMatch(/optional reason/);
+      expect(param.description).toMatch(/idea.*or.*path.*is also given, that takes\s+precedence/);
+    });
+
+    test('AC-007-3: a confirmation is asked before RunIndexStore.abandon() is called', () => {
+      expect(abandonStep).toBeDefined();
+      expect(actionsText(abandonStep)).toMatch(/Found: ask the user for explicit confirmation/);
+      expect(actionsText(abandonStep)).toMatch(/before calling RunIndexStore\.abandon\(\)/);
+    });
+
+    test('AC-007-3: a decline leaves the run untouched -- no mutate()/abandon() call, no state change', () => {
+      expect(actionsText(abandonStep)).toMatch(/Declined or no response: make no\s+mutate\(\)\/abandon\(\) call/);
+      expect(actionsText(abandonStep)).toMatch(/the run is left completely\s+untouched, stage\/stageOutcome\/revision unchanged/);
+    });
+
+    test('AC-007-3: no active run exists -- reports nothing to abandon, makes no state change', () => {
+      expect(actionsText(abandonStep)).toMatch(/Not found: print 'No active run exists/);
+      expect(actionsText(abandonStep)).toMatch(/no mutate\(\)\/abandon\(\) call is made, no state is touched/);
+    });
+
+    test('a confirmed abandon calls RunIndexStore.abandon() with the given reason and retains history', () => {
+      expect(actionsText(abandonStep)).toMatch(/call RunIndexStore\.abandon\(projectRoot, runId, reason\)/);
+      expect(actionsText(abandonStep)).toMatch(/sets status to "abandoned"/);
+      expect(actionsText(abandonStep)).toMatch(/artifacts and history remain retained/);
+    });
+
+    test("Step 4's resume/status branch explicitly excludes abandon, so the two steps never both fire", () => {
+      expect(actionsText(noArgsStep)).toMatch(/`abandon` is not provided, and neither `idea` nor `path`/);
+    });
+  });
+
   describe('AC-013-2: generated command is discoverable in each runtime (TRD-021)', () => {
     const repoRoot = path.resolve(__dirname, '..', '..', '..');
     const markdownPath = path.join(repoRoot, 'packages/development/commands/ensemble/new-feature.md');

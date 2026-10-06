@@ -36,6 +36,18 @@ parameters:
     default: false
     description: Show the active/most-recent run's stage, outcome, and references without advancing it.
 
+  - name: abandon
+    type: string
+    required: false
+    description: >-
+      Terminate the project's active/paused run after explicit
+      confirmation. Any given text is an optional reason, recorded in
+      the run's terminal history alongside the retained artifacts/
+      references. If `idea` or `path` is also given, that takes
+      precedence -- Step 2/3 below run first and this step is never
+      reached (Steps 2-6 are evaluated in order, first match wins);
+      omit `idea`/`path`/`status` for `abandon` to take effect.
+
 constraints:
   - >-
     Stage order is fixed and never reordered at runtime: prd_create ->
@@ -117,7 +129,7 @@ workflow:
             - "If `status` is true: this is a read-only report (TRD-011) -- never a resume. No stage executes and no mutate() call is made regardless of what is found. Call RunIndexStore.findActive(projectRoot); if found, STATUS_RUN is that record. If not found, RunIndexStore's public interface has no dedicated \"most recent terminal run\" query (this step's Target File is this YAML only, not run-index.ts): read every run file under .ensemble/new-feature/ directly (excluding active.lock), pick the one with the latest updatedAt, and set STATUS_RUN to it, or to undefined if no run file exists at all."
             - "status=true, STATUS_RUN undefined: print 'No runs found for this project. Start one with --idea \"<description>\".' Stop here."
             - "status=true, STATUS_RUN found: print the five required fields (AC-012-1): run identifier, current stage, last stageOutcome.kind (with detail, when the outcome is a pending decision or a failure), and every recorded artifacts[] and beadRefs[] reference. If STATUS_RUN.status is \"completed\" or \"abandoned\": state that terminal outcome explicitly alongside the retained references. Never imply a PR was created or merged (AC-012-2) unless BOTH STATUS_RUN.prApprovedAt is non-null AND a PR reference is present among the recorded references -- specifically a beadRefs[] entry carrying TRD-017's \"pr:\" prefix (artifacts[] only ever holds type \"prd\"/\"trd\" per TRD-001's fixed schema, so a PR reference can only live in beadRefs[], and a bare bead ID there is never itself a PR reference); if either is missing, state plainly that no PR exists. Stop here -- status is always read-only and never proceeds to Stage Resolution."
-            - "If `status` is false and neither `idea` nor `path` is provided: call RunIndexStore.findActive(projectRoot)."
+            - "If `status` is false, `abandon` is not provided, and neither `idea` nor `path` is provided: call RunIndexStore.findActive(projectRoot)."
             - "status=false, not found: nothing to resume; print that no active run exists and how to start one (`--idea \"<description>\"`). Stop here."
             - "status=false, found, and ACTIVE_RUN.stageOutcome.kind is \"failure\": this is a paused-by-failure run. Print the parked stage, the recorded failure detail, and ask the user (AskUserQuestion or equivalent) 'Retry <stage>? [yes/no]' -- do NOT proceed to Stage Resolution on a bare invocation alone. Only an explicit 'yes' here (this is what TRD-008 means by \"explicit retry\") sets ACTIVE_RUN and proceeds to Stage Resolution; 'no' or no response stops here with stage/stageOutcome/revision completely unchanged -- no mutate() call is made merely by viewing this prompt (AC-006-3)."
             - "status=false, found, and ACTIVE_RUN.stageOutcome.kind is anything else (\"approval_wait\", \"decline\", or a freshly created run that has never run a stage yet): no confirmation gate applies -- set ACTIVE_RUN and proceed directly to Stage Resolution. Declined/approval-wait states are not failures; re-running them on resume is the normal, expected flow."
@@ -138,6 +150,20 @@ workflow:
             - "Accepted: present the event source and full payload to the user via AskUserQuestion for explicit review BEFORE any PRD-stage work begins (AC-009-2). This review is in addition to, not a substitute for, the same PRD elicitation manual /ensemble:create-prd invocation already requires -- the payload's `summary` only seeds elicitation, it is never treated as a complete PRD input by itself."
             - "On user decline: create no PRD, advance no run, and report that PRD elicitation review was declined as the pending step (AC-009-3). Stop here."
             - "On approval: proceed exactly as Step 2 (Idea Input) above, using `event.summary` as the `idea` argument -- same createRun() call, same TRD-010 single-active-run exclusivity, same full PRD elicitation. Event-triggered and manual starts converge on the identical entry path from this point on."
+
+        - order: 6
+          title: Abandon Confirmation Gate
+          description: >-
+            `--abandon` terminates the project's active/paused run after
+            explicit confirmation; any given text is an optional reason
+            recorded in the run's terminal history (AC-007-3). Checked
+            before Step 4's no-arguments handling -- when `abandon` is
+            provided, Step 4's resume/status branches never apply.
+          actions:
+            - "If `abandon` is provided (a non-empty string or an empty string both count as provided -- only an entirely omitted parameter skips this step): call RunIndexStore.findActive(projectRoot)."
+            - "Not found: print 'No active run exists for this project; nothing to abandon.' and stop -- no mutate()/abandon() call is made, no state is touched (AC-007-3 no-active-run case)."
+            - "Found: ask the user for explicit confirmation (AskUserQuestion or equivalent) before calling RunIndexStore.abandon() -- name the run's identifier and current stage in the prompt. Declined or no response: make no mutate()/abandon() call; the run is left completely untouched, stage/stageOutcome/revision unchanged (AC-007-3 decline case)."
+            - "On explicit confirmation: call RunIndexStore.abandon(projectRoot, runId, reason), where `reason` is the `abandon` parameter's own text value (empty string if none was given). This sets status to \"abandoned\" and records the terminal outcome via the same mutate() path abandon() already wraps, then releases active.lock -- artifacts and history remain retained, exactly as a later `--status` invocation would still report them (AC-007-3 confirmed case)."
 
     - name: Stage Resolution
       order: 2
