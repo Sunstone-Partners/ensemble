@@ -1,0 +1,30 @@
+{
+  "runId": "6289a830e6e08f07",
+  "projectRoot": "/fixture/pre-refactor-project",
+  "idea": "sample idea for fixture capture",
+  "status": "active",
+  "stage": "prd_refine",
+  "stageOutcome": {
+    "kind": "success",
+    "detail": "prd_create completed",
+    "recordedAt": "2026-10-06T16:19:05.755Z"
+  },
+  "artifacts": [
+    {
+      "type": "prd",
+      "path": "docs/PRD/PRD-sample.md",
+      "documentId": "PRD-sample",
+      "version": "1.0.0",
+      "producingStage": "prd_create",
+      "recordedAt": "2026-10-06T16:19:05.755Z"
+    }
+  ],
+  "beadRefs": [
+    "br-sample"
+  ],
+  "implementationApprovedAt": null,
+  "prApprovedAt": null,
+  "revision": 1,
+  "createdAt": "2026-10-06T16:19:05.754Z",
+  "updatedAt": "2026-10-06T16:19:05.755Z"
+}

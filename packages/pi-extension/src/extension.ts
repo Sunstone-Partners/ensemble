@@ -1219,9 +1219,9 @@ ${next.instruction}`,
       },
     });
 
-    // Native completion for the three markdown-prompt dispatcher commands
-    // (prd/trd/issue). Each registration is a no-op in any repo that
-    // doesn't have the corresponding YAML -- see registerDispatcherCommand's
+    // Native completion for the four markdown-prompt dispatcher commands
+    // (prd/trd/issue/feature). Each registration is a no-op in any repo
+    // that doesn't have the corresponding YAML -- see registerDispatcherCommand's
     // own doc comment -- so this extension loading globally in every
     // session never pollutes an unrelated repo's command list.
     registerDispatcherCommand(pi, repoRoot, {
@@ -1241,6 +1241,12 @@ ${next.instruction}`,
       yamlRelPath: "packages/development/commands/issue.yaml",
       forwardTo: "ensemble:issue",
       description: "Dispatch to an issue-management subcommand (fix, list)",
+    });
+    registerDispatcherCommand(pi, repoRoot, {
+      name: "ensemble-feature",
+      yamlRelPath: "packages/development/commands/feature.yaml",
+      forwardTo: "ensemble:feature",
+      description: "Dispatch to the feature-lifecycle workflow by keyword (new, resume, status, abandon)",
     });
 
     // Arm logging only once behaviours exist here. The extension loads in
