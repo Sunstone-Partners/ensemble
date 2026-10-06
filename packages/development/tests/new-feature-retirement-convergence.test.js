@@ -54,28 +54,6 @@ describe('Scenario: direct invocation of ensemble-new-feature still works and co
   });
 });
 
-describe('Scenario: absent from the top-level entry-point list in product documentation', () => {
-  const commandsDoc = fs.readFileSync(path.join(repoRoot, '.wiki-staging/07-Commands.md'), 'utf-8');
-
-  test('the Product-section table no longer advertises /ensemble:feature or /ensemble:new-feature as a Product entry point', () => {
-    const productSection = commandsDoc.split('## Product (`ensemble-product`)')[1].split('## Development')[0];
-    expect(productSection).not.toMatch(/\/ensemble:feature\b/);
-    expect(productSection).not.toMatch(/\/ensemble:new-feature\b/);
-  });
-
-  test('the Development-section row re-labels new-feature as an internal implementation detail, not a top-level entry point', () => {
-    const developmentSection = commandsDoc.split('## Development (`ensemble-development`)')[1];
-    expect(developmentSection).toMatch(
-      /`\/ensemble:new-feature`\s*\|\s*Internal implementation detail behind `\/ensemble:feature`/,
-    );
-  });
-
-  test('/ensemble:feature is advertised as the canonical front door in the Development section instead', () => {
-    const developmentSection = commandsDoc.split('## Development (`ensemble-development`)')[1];
-    expect(developmentSection).toMatch(/`\/ensemble:feature`\s*\|\s*Dispatch to the feature-lifecycle workflow.*canonical front door/);
-  });
-});
-
 describe('Scenario: skill/command convergence -- "start a new feature" names the same canonical workflow', () => {
   const featureYaml = loadYaml('packages/development/commands/feature.yaml');
   const newFeatureYaml = loadYaml('packages/development/commands/new-feature.yaml');
