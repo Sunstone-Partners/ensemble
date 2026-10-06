@@ -56,7 +56,7 @@ describe('every subagent_type dispatched by a command resolves to a real agent',
   // reference says an explicit `agents` array REPLACES auto-discovery of agents/, so a
   // file that is on disk but not listed is never registered and Task(subagent_type=...)
   // cannot reach it -- even on the latest release. The check is against THIS package's
-  // manifest, not any package's: `ensemble-full` and the Pi/Codex builds mirror or
+  // manifest, not any package's: `ensemble-full` and the Pi build mirror or
   // auto-discover every agent, which would mask a standalone ensemble-development
   // install that never registered the agent its own commands dispatch.
   const manifest = JSON.parse(
