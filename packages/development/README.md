@@ -20,6 +20,9 @@ Part of the ensemble plugin ecosystem for Claude Code. This plugin provides deve
 
 | Command | Description |
 |---------|-------------|
+| `/ensemble:feature` | Canonical front door for the feature lifecycle — `new`/`resume`/`status`/`abandon`, forwarding into `new-feature`'s existing idea-to-PR resumable workflow |
+| `/ensemble:issue` | Canonical front door for issue work — `fix`/`list`/`resume`/`status`/`abandon`, forwarding into `fix-issue`/`list-issue` |
+| `/ensemble:trd` | Canonical front door for TRD authoring, analysis, and implementation by keyword |
 | `/ensemble:implement-trd-beads` | TRD implementation with persistent beads project management — epic/story/task hierarchy, `bd ready` execution loop, cross-session resumability |
 | `/ensemble:refine-beads` | Approval-gated Beads graph refinement before execution — detects dependency, hierarchy, PR-boundary, traceability, and duplicate-task gaps; applies approved `br` repairs and revalidates with `bv --robot-*` |
 | `/ensemble:create-trd` | Create a Technical Requirements Document from a PRD |

@@ -174,14 +174,16 @@ After installation, plugins automatically register their agents, commands, and s
 
 ### Available Commands
 
-Commands are provided by specific plugins:
+Ensemble ships 48 slash-commands across six packages; this is a representative sample — see the [wiki Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) for the full list.
 
-- `/create-prd` - Product requirements (ensemble-product)
-- `/create-trd` - Technical requirements (ensemble-core)
-- `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation
-- `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*`
-- `/fold-prompt` - Project optimization (ensemble-core)
-- `/dashboard` - Metrics dashboard (ensemble-metrics)
+- `/ensemble:feature` - Canonical front door for the feature lifecycle: `new`/`resume`/`status`/`abandon` (ensemble-development)
+- `/ensemble:issue` - Canonical front door for issue work: `fix`/`list`/`resume`/`status`/`abandon` (ensemble-development)
+- `/ensemble:prd` - Canonical front door for PRD authoring: `create`/`create-meeting`/`refine`/`refine-meeting` (ensemble-product)
+- `/ensemble:trd` - Canonical front door for TRD authoring, analysis, and implementation (ensemble-development)
+- `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation (ensemble-development)
+- `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*` (ensemble-development)
+- `/ensemble:fold-prompt` - Project optimization (ensemble-core)
+- `/ensemble:manager-dashboard` - Metrics dashboard (ensemble-metrics)
 
 ### Collaborative Refinement Review
 
