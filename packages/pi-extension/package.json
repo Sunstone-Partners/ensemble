@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-pi-extension",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Thin Pi-specific extension providing native command completion for the prd/trd/issue/feature dispatcher commands via Pi's native extension mechanism",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

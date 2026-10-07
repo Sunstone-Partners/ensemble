@@ -1,6 +1,6 @@
 {
   "name": "ensemble-agent-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Shared, stage-agnostic run-index I/O primitives for the new-feature and fix-issue resumable workflows (npm library, no Claude Code skills/agents/commands)",
   "author": {
     "name": "Sunstone Partners",

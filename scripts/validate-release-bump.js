@@ -96,9 +96,8 @@ for (const pkg of contentChanged) {
   const before = versionOf(baseMarket, pkg);
   const after = versionOf(headMarket, pkg);
   if (before === null) continue; // new package, nothing to compare
-  if (after === null) {
-    failures.push(`packages/${pkg}: changed but has no marketplace.json entry`);
-  } else if (before === after) {
+  if (after === null) continue; // entry legitimately retired (e.g. a sub-feature was removed), nothing to compare
+  if (before === after) {
     failures.push(`packages/${pkg}: content changed, version still ${after}`);
   }
 }

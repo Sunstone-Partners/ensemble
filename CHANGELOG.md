@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.9.6] - 2026-10-07
+
+### Removed
+
+- **agent-core, pi-extension:** entire behavior-runtime/autofix-loop subsystem
+  removed from `dev` (`.ensemble/behaviors/`, `packages/agent-core/src/behavior/`,
+  the autofix/constitution-proposal/working-tree-snapshot wiring in
+  `packages/pi-extension`). A globally-loaded OMP/Pi extension was found to
+  wire this into every session on the operator's machine via a buggy
+  working-tree rollback mechanism that could silently drop uncommitted work.
+  Retained, unmodified, on the `pi-behaviors` branch for future development
+  once its known bugs are fixed upstream (#133). Bumps `ensemble-agent-core`
+  0.1.1 → 0.1.2 and `ensemble-pi-extension` 0.1.1 → 0.1.2.
+- **pi-extension:** restored a trimmed `scripts/smoke-activate.mjs` (the one
+  real-ESM-loader proof #133 had removed along with the echo tool it used to
+  assert) so AC-004-1 still has coverage jest structurally cannot provide
+  (#134).
+
+### Fixed
+
+- **development:** `beads-build-wave` preflight now hard-gates against
+  dispatching on the repository default branch (detached HEAD and
+  default-branch checks), and its lifecycle contract gained an independent
+  Commit Gate between subagent success and `br close` -- a subagent's
+  self-reported success is no longer sufficient evidence of a commit (#132).
+  Bumps `ensemble-development` 6.0.7 → 6.0.8, `ensemble-codex` 5.3.3 → 5.3.4,
+  `ensemble-product` 5.6.2 → 5.6.3.
+- **pi:** regenerated derived prompts/skills to match source YAML changes
+  across the above; `ensemble-pi` 1.6.11 → 1.6.12 (auto-bumped by
+  `postgenerate:pi`).
+
+`ensemble-full` 6.9.5 → 6.9.6.
+
 ## [6.9.5] - 2026-10-01
 
 ### Added
