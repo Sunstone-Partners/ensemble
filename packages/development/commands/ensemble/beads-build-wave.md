@@ -1,9 +1,9 @@
 ---
 name: "ensemble:beads-build-wave"
 description: "Run a single beads-build wave (one bv --robot-plan + concurrent Task() dispatch + barrier) and emit a JSON summary suitable for the parent loop"
-version: "1.0.0"
+version: "1.1.0"
 category: "implementation"
-last-updated: "2026-08-19"
+last-updated: "2026-10-07"
 allowed-tools: "Read, Write, Edit, Bash, Grep, Glob, Task"
 argument-hint: "--epic <id> [--max-parallel N] [--trd trd-path] [--strategy tdd|characterization|bug-fix|refactor|test-after|flexible] [--team-roles <json>]"
 model: "sonnet"
@@ -49,11 +49,14 @@ settles, regardless of remaining work. Callers re-invoke it themselves.
    - br list --status=open > /dev/null 2>&1 || { echo "ERROR: br not functional"; exit 1; }
    - which bv >/dev/null 2>&1 && BV_AVAILABLE=true || { echo "ERROR: bv (beads_viewer) is required (no fallback scheduler). Install from https://github.com/Dicklesworthstone/beads_viewer and retry."; exit 1; }
 
-**3. Working Directory Verification**
-   Confirm clean working directory; branch intent is owned by the caller (beads-build.yaml or implement-trd-beads.yaml Feature Branch Creation)
+**3. Working Directory and Branch Verification**
+   Confirm clean working directory AND that the caller already switched off the repository default branch; branch creation itself is still owned by the caller (beads-build.yaml or implement-trd-beads.yaml Feature Branch Creation) -- this step only verifies the precondition, it never creates or switches branches.
 
    - Run: git status --porcelain -- HALT if output non-empty (dirty working directory).
-   - Note: this command does NOT create or switch branches. The caller is responsible for branch setup. This file is branch-mutation-free.
+   - Run: git symbolic-ref --short HEAD to get CURRENT_BRANCH (HALT immediately with "ERROR: detached HEAD -- create or switch to a feature branch before dispatching a wave." if this fails/empty, i.e. detached HEAD).
+   - Run: git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed "s@^origin/@@" to get DEFAULT_BRANCH; if empty (no origin configured) fall back to DEFAULT_BRANCH=main.
+   - HARD PRECONDITION: if CURRENT_BRANCH == DEFAULT_BRANCH, print "ERROR: beads-build-wave refuses to dispatch on the repository default branch (<DEFAULT_BRANCH>). Run implement-trd-beads.yaml Feature Branch Creation (Preflight Step 10) first, or manually create/switch to a feature branch, then retry." and HALT. Do not implement work directly on <DEFAULT_BRANCH>.
+   - Note: this command does NOT create or switch branches itself; it only verifies the caller already did. This file remains branch-mutation-free.
 
 **4. Epic and TRD Resolution**
    Confirm ROOT_EPIC_ID exists; load TRD file when TRD_MODE=true; rebuild TASK_TRACEABILITY on resume
@@ -96,7 +99,7 @@ The caller owns the loop. Lowering the per-iteration decision cost
    -   scope: { ROOT_EPIC_ID, EPIC_SLUG, TRD_PATH (or null), STRATEGY }.
    -   team_roles: TEAM_ROLES object parsed from --team-roles or synthesized from deprecated --builder.
    -   track_beads: ordered string[] of bead IDs for this track only.
-   -   lifecycle_contract: literal br command sequence - claim via 'br update <BEAD_ID> --status=in_progress', close via 'br close <BEAD_ID>' after subagent success, sync via 'br sync --flush-only' between operations.
+   -   lifecycle_contract: literal command sequence per bead, in order: (1) claim via 'br update <BEAD_ID> --status=in_progress'; (2) dispatch the implementing subagent; (3) COMMIT GATE (hard, non-skippable): after the subagent reports success, run 'git status --porcelain' -- if non-empty, the subagent left uncommitted work, so commit it now ('git add -A && git commit -m "<conventional message referencing the bead/TRD task>"') before proceeding; NEVER call br close while git status --porcelain is non-empty; a subagent's self-reported success narrative is NOT sufficient evidence of a commit, the Commit Gate must independently verify git state; (4) close via 'br close <BEAD_ID>' only after the Commit Gate passes; (5) sync via 'br sync --flush-only' between operations.
    -   quality_loop: pointer to packages/development/agents/tech-lead-orchestrator.* Quality Loop Execution expertise (lines 99-104 of the YAML source) - the orchestrator follows claim, implement, run tests, delegate to code-reviewer, then if reviewer approves routes through advisor before QA. Architect is invoked on in_design, PM on in_clarification. On REJECTED with fixable issues, delegate back to original specialist with feedback (max 2 review rounds). Skip review only if strategy == 'flexible' or task type is docs/documentation-only.
    -   pm_clarification_guard: maximum 3 PM clarification rounds per task. On the 4th request, HALT that task path and escalate to the lead with the full clarification history instead of looping again.
    - The payload is constructed once by the parent and never mutated. The orchestrator inside the track runs beads sequentially; it does NOT re-call bv --robot-plan or re-partition.
