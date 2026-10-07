@@ -96,7 +96,21 @@ for (const pkg of contentChanged) {
   const before = versionOf(baseMarket, pkg);
   const after = versionOf(headMarket, pkg);
   if (before === null) continue; // new package, nothing to compare
-  if (after === null) continue; // entry legitimately retired (e.g. a sub-feature was removed), nothing to compare
+  if (after === null) {
+    // A package can legitimately retire its marketplace.json entry (e.g. the
+    // feature it advertised was removed, as pi-extension's "ensemble-behaviors"
+    // entry was in #133). That's not stale-version risk the way a kept entry
+    // with an unchanged version is -- there's no version field left to compare.
+    // But it's also exactly the shape of an ACCIDENTAL deletion of an
+    // actively-shipping plugin's entry, which this gate exists to catch.
+    // Never silently pass either case -- print it so a release-gate reviewer
+    // has to see and consciously accept it, same as any other finding below.
+    console.warn(
+      `  [warn] packages/${pkg}: marketplace.json entry removed (was ${before}) -- ` +
+        `verify this is an intentional retirement, not an accidental deletion.`,
+    );
+    continue;
+  }
   if (before === after) {
     failures.push(`packages/${pkg}: content changed, version still ${after}`);
   }
