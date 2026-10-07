@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.9.7] - 2026-10-07
+
+### Fixed
+
+- **scripts/validate-release-bump.js:** the v6.9.6 release's exemption for a
+  package that legitimately retires its only `marketplace.json` entry was a
+  silent `continue`, which could also mask a future *accidental* deletion of
+  an actively-shipping plugin's entry. Kept the exemption but made it a
+  visible `console.warn` naming the package and its last known version (#137).
+- **README.md, packages/development/README.md:** both had drifted out of
+  sync with the command-surface-consolidation work in 6.9.6 — a stale
+  `/ensemble:feature` description, missing `/ensemble:prd`/`/ensemble:trd`/
+  `/ensemble:issue`/`/ensemble:list-issue` rows, a fictional `/dashboard`
+  command, and missing `ensemble:` prefixes. Also found and fixed in the
+  README's Architecture section: three shipped skill packages
+  (`ensemble-ai`, `ensemble-dotnet`, `ensemble-reqnroll`) missing entirely,
+  and two packages listed that no longer exist
+  (`ensemble-agent-progress-pane`, `ensemble-task-progress-pane`, removed in
+  `14b37d9`). Bumps `ensemble-development` 6.0.8 → 6.0.9 (#138, #139).
+- **GitHub wiki** (`07-Commands.md`, `14-Example-Session.md`,
+  `02-Architecture.md`, `Home.md`): same command-surface drift as above, plus
+  a "Behavior Runtime" section and a "behavior-runtime layer" mention that
+  still described `agent-core`/`pi-extension` as hosting the autofix-dispatch
+  subsystem removed in 6.9.6 — rewritten to describe current reality (native
+  Pi/OMP command completion only). Published directly to the wiki, outside
+  this repo's PR flow.
+
 ## [6.9.6] - 2026-10-07
 
 ### Removed
