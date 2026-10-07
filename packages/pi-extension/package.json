@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc",
     "test": "jest",
+    "test:smoke": "node scripts/smoke-activate.mjs",
     "install:extension": "node scripts/install.mjs",
     "uninstall:extension": "node scripts/install.mjs --uninstall"
   },

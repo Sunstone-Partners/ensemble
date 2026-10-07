@@ -29,6 +29,12 @@ favor of `@earendil-works/*` — do not add a dependency on the
 
 - `npm test` runs the jest unit suite against `dispatcher-commands.ts` and
   `extension.ts`'s native command registration.
+- `npm run test:smoke` runs `scripts/smoke-activate.mjs`, a real Node ESM
+  subprocess that loads this extension through Pi's actual
+  `discoverAndLoadExtensions` loader (AC-004-1). This must run outside
+  jest: `@earendil-works/pi-coding-agent` ships ESM-only (no `require`
+  export condition), so jest's CommonJS resolver cannot load it even via
+  a dynamic `import()`.
 
 ## Installing globally
 
