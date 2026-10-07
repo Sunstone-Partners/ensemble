@@ -1,7 +1,7 @@
 {
   "name": "ensemble-pi-extension",
   "version": "0.1.1",
-  "description": "Thin Pi-specific extension loading the behavior runtime into a live Pi session via Pi's native extension mechanism (npm library, no Claude Code skills/agents/commands)",
+  "description": "Thin Pi-specific extension: native command completion for prd/trd/issue/feature dispatchers via Pi's extension mechanism (npm library, no Claude Code skills/agents/commands)",
   "author": {
     "name": "Sunstone Partners",
     "email": "info@sunstonepartners.com",
@@ -11,7 +11,6 @@
   "license": "MIT",
   "keywords": [
     "ensemble",
-    "pi-extension",
-    "behavior-runtime"
+    "pi-extension"
   ]
 }

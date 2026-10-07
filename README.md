@@ -59,8 +59,8 @@ competing with Foreman.
 This repository also contains an existing Elixir activation runner
 (`packages/core`). **That runner is not a Pi/OMP adapter** and must not be
 treated as the local agent-harness integration point; the Pi/OMP-facing
-integration is implemented as a TypeScript Pi extension (see
-`docs/architecture/ensemble-behavior-runtime-plan.md`).
+integration is implemented as a TypeScript Pi extension
+(`packages/pi-extension`).
 
 
 

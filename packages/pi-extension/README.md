@@ -1,13 +1,21 @@
 # @sunstone-partners/ensemble-pi-extension
 
-Thin Pi-specific extension that loads the behavior runtime (`@sunstone-partners/ensemble-agent-core`)
-into a live Pi session via Pi's native, documented extension mechanism
-(`pi.registerTool`, `pi.on` lifecycle events). No fork or patch of Pi's
-agent loop.
+Thin Pi-specific extension providing native command completion for the
+`prd`/`trd`/`issue`/`feature` dispatcher commands, via Pi's native,
+documented extension mechanism (`pi.registerCommand`, `pi.sendUserMessage`).
+No fork or patch of Pi's agent loop.
 
-See `docs/architecture/ensemble-behavior-runtime-plan.md` and
-`docs/TRD/TRD-2026-0fc1c1d0-behavior-runtime-pi-harness.md` (TRD-004) for
-the design.
+Each dispatcher registration (`registerDispatcherCommand` in
+`src/dispatcher-commands.ts`) is a no-op in any repo that doesn't have the
+corresponding YAML (`packages/product/commands/prd.yaml`,
+`packages/development/commands/{trd,issue,feature}.yaml`), so this
+extension loading globally in every session never pollutes an unrelated
+repo's command list.
+
+A previous version of this package also loaded a behavior-runtime/autofix
+loop (test-failure observation, automated fix dispatch, constitution
+proposals). That subsystem has been removed from `dev` and is retained on
+the `pi-behaviors` branch for future development.
 
 ## Dependency note
 
@@ -19,10 +27,12 @@ favor of `@earendil-works/*` — do not add a dependency on the
 
 ## Testing
 
-- `npm test` runs the jest unit suite (capability-guard behavior).
-- `npm run test:smoke` runs `scripts/smoke-activate.mjs`, a real Node ESM
-  subprocess that loads this extension through Pi's actual
-  `discoverAndLoadExtensions` loader. This must run outside jest:
-  `@earendil-works/pi-coding-agent` ships ESM-only (no `require` export
-  condition), so jest's CommonJS resolver cannot load it even via a
-  dynamic `import()`.
+- `npm test` runs the jest unit suite against `dispatcher-commands.ts` and
+  `extension.ts`'s native command registration.
+
+## Installing globally
+
+- `npm run install:extension` builds a bundle and installs a shim into
+  `~/.omp/agent/extensions/`, so the dispatcher commands are available in
+  every OMP/Pi session (see `scripts/install.mjs`).
+- `npm run uninstall:extension` removes it.

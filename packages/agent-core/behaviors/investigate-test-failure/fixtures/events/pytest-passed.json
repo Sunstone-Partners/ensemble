@@ -1,8 +1,0 @@
-{
-  "type": "test.failure.observed",
-  "source": "ci",
-  "payload": {
-    "command": "pytest tests/",
-    "isError": false
-  }
-}
