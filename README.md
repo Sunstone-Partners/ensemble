@@ -66,7 +66,7 @@ integration is implemented as a TypeScript Pi extension
 
 ## Architecture
 
-The plugin ecosystem is organized into 4 tiers across 24 packages:
+The plugin ecosystem is organized into 4 tiers; see the [wiki Architecture page](https://github.com/Sunstone-Partners/ensemble/wiki/02-Architecture) for the complete, current package count and dependency graph. Representative packages per tier:
 
 ### Tier 1: Core Foundation
 - **ensemble-core** (5.0.0) - Essential orchestration, agents, and utilities
@@ -86,6 +86,7 @@ The plugin ecosystem is organized into 4 tiers across 24 packages:
 - **ensemble-rails** - Ruby on Rails MVC
 - **ensemble-phoenix** - Phoenix LiveView patterns
 - **ensemble-blazor** - Blazor .NET components
+- **ensemble-dotnet** - Broader .NET / ASP.NET Core skills
 
 ### Tier 4: Testing Framework Integration
 - **ensemble-jest** - Jest testing patterns
@@ -93,11 +94,12 @@ The plugin ecosystem is organized into 4 tiers across 24 packages:
 - **ensemble-rspec** - RSpec testing patterns
 - **ensemble-xunit** - xUnit testing patterns
 - **ensemble-exunit** - ExUnit testing patterns
+- **ensemble-reqnroll** - Reqnroll BDD step definitions
 
 ### Utilities
-- **ensemble-agent-progress-pane** (5.1.0) - Real-time subagent monitoring in terminal panes
-- **ensemble-task-progress-pane** (5.0.0) - TodoWrite progress visualization
+- **ensemble-permitter** - Permission-expansion hook with allowlist (opt-out via `ENSEMBLE_PERMITTER_DISABLE=1`)
 - **ensemble-multiplexer-adapters** - Terminal multiplexer abstraction layer
+- **ensemble-ai** - AI SDK skills for OpenAI, Anthropic, Perplexity, and Weaviate
 
 ### Runtime Translation
 - **ensemble-opencode** (5.3.0) - OpenCode runtime support (translates Ensemble artifacts to OpenCode-compatible formats)
