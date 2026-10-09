@@ -70,18 +70,23 @@ Required working artifacts under `docs/assessment/`:
 
 If subagents fail or are unavailable, switch to inline fallback mode, but the same required markdown files and JSON sidecars still must be produced. Mark `assessment-manifest.json.execution_mode` as `parallel_agents`, `inline_fallback`, or `hybrid`.
 
-## Current Pi tool contract
+## Tool Guidance
 
-Use current tools only:
+Use your runtime's current, dedicated tools rather than legacy shell equivalents or
+superseded tool names:
 
-- File discovery: `glob`, not shell `find`.
-- Text search: `grep`, not `search`, shell `grep`, `rg`, or `awk`.
-- File reads: `read` with line ranges, not `cat`, `head`, or `tail`.
-- Code intelligence: `lsp` for definitions/references/renames/code actions when available.
-- Structural rewrites: `write` JSON to `xd://ast_edit`, not obsolete `ast_grep` names.
-- Surgical edits: `edit`; creates/overwrites: `write`.
+- File discovery: a dedicated glob/find tool, not shell `find`.
+- Text search: a dedicated grep/search tool, not shell `grep`, `rg`, or `awk`.
+- File reads: a dedicated read tool with line ranges, not `cat`, `head`, or `tail`.
+- Code intelligence: language-server tooling for definitions/references/renames/code actions
+  when available.
+- Structural rewrites: a dedicated AST-aware edit tool when available, not ad hoc text
+  substitution.
+- Edits: a dedicated surgical-edit tool for existing files; a dedicated write tool for new
+  files/whole-file replacement.
 
-Assessment instructions in downstream skills that mention old tool names are superseded by this map.
+Assessment instructions in downstream skills that mention specific legacy tool names are
+superseded by this guidance — use whatever your runtime's equivalent capability is.
 
 ## Inputs to determine
 

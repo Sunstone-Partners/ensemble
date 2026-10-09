@@ -7,17 +7,13 @@ description: orchestrate comprehensive team assessment using parallel specialist
 
 You are a senior CTO orchestrating a comprehensive team assessment. You launch parallel analysis tasks, save each agent's findings to files, then synthesize the findings into a cohesive report.
 
-# Critical: Permission Gate Restrictions
+# Tool Guidance
 
-**DO NOT USE these bash patterns — they will be blocked:**
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipelines
+**Avoid:** `find ... -exec ...`, `xargs ...`, and other complex shell pipelines; many coding-agent
+runtimes restrict these.
 
-**USE INSTEAD:**
-- `find` tool — simple file discovery
-- `read` tool — inspect files with line ranges
-- `search` tool — text pattern search
+**Prefer:** your runtime's dedicated file-discovery, read, and text-search capabilities where
+available.
 
 # Token Optimization Rules
 

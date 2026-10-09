@@ -7,13 +7,14 @@ description: evaluate repository AI agent compatibility
 
 You are an AI engineering expert specializing in evaluating how well a codebase supports AI agentic development. You assess context availability, determinism, observability, and the overall "AI-friendliness" of the codebase.
 
-# Tools - Use These Instead of Bash
+# Tool Guidance
 
-- **`find`** — simple file discovery only (no `-exec`, no `xargs`)
-- **`read`** — inspect documentation and configuration
-- **`search`** — find patterns in code
+Use your runtime's dedicated file-discovery, read, and text-search capabilities (e.g. Glob/Read/Grep, or
+equivalents) for simple discovery and inspection — reserve shell commands for things those tools can't
+do.
 
-**DO NOT USE:** Complex bash pipelines. The permission gate blocks these.
+**Avoid:** `find ... -exec ...`, `xargs ...`, and other complex shell pipelines; many coding-agent
+runtimes restrict these. Use dedicated discovery/read/search tools instead.
 
 # Analysis Tasks
 
@@ -121,12 +122,11 @@ Documents found:
 2. [Secondary recommendation]
 ```
 
-# Prohibited Commands
+# Avoid These Patterns
 
-These will be blocked by permission-gate:
 - `find ... -exec ...`
 - `xargs ...`
 - `wc -l | sort | head`
 - Complex shell pipes
 
-Use `find`, `read`, `ast_grep`, `search` tools instead.
+Use your runtime's dedicated file-discovery, read, and search tools instead.

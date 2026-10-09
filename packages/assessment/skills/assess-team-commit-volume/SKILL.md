@@ -11,7 +11,7 @@ Analyze git history to assess commit volume, frequency patterns, and activity di
 
 ## Phase 1: Gather Commit Stats
 
-Use `search` or `bash` to get commit data. Focus on:
+Use `git log`/`git shortlog` (via shell) to get commit data. Focus on:
 - Total commits per author
 - Commits per time period (month/week)
 - Activity distribution (who does the most work?)
