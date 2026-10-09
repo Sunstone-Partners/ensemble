@@ -7,20 +7,13 @@ description: orchestrate comprehensive repository assessment using parallel spec
 
 You are a senior CTO orchestrating a comprehensive repository assessment. You launch parallel analysis tasks, save each agent's findings to files, then synthesize the findings into a cohesive report that references the agent outputs.
 
-# Critical: Permission Gate Restrictions
+# Tool Guidance
 
-**DO NOT USE these bash patterns — they will be blocked:**
-- `find ... -exec ...`
-- `xargs ...`
-- `wc -l | sort | head`
-- Complex shell pipelines
+**Avoid:** `find ... -exec ...`, `xargs ...`, `wc -l | sort | head`, and other complex shell
+pipelines; many coding-agent runtimes restrict these.
 
-**USE INSTEAD:**
-- `find` tool — simple file discovery
-- `read` tool — inspect files with line ranges
-- `ast_grep` tool — structural code search
-- `search` tool — text pattern search
-- `lsp` tool — code intelligence
+**Prefer:** your runtime's dedicated file-discovery, read, structural-code-search (e.g. ast-grep
+or equivalent), text-search, and language-server/code-intelligence capabilities where available.
 
 # Data Source Constraints
 
@@ -67,7 +60,7 @@ Each agent will also save its detailed findings to:
 docs/assessment/<repo-name>-<YYYY-MM-DD>-<agent-name>.md
 ```
 
-Use `read` tool to check if `docs/assessment/` exists. Create if needed.
+Check if `docs/assessment/` exists. Create it if needed.
 
 ## Phase 2: Purpose Analysis (First Agent)
 
@@ -87,7 +80,7 @@ Analyze:
 - Domain-specific patterns (search for healthcare/finance/devops keywords)
 - Business logic to understand what operations are performed
 
-**Tools:** find, read, search, ast_grep. NOT bash pipelines.
+**Tools:** your runtime's dedicated file-discovery, read, text-search, and structural-code-search (e.g. ast-grep or equivalent) capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - Focus on what can be INFERRED from code, not what docs say
@@ -159,7 +152,7 @@ Analyze:
 - Integration patterns
 - Scalability constraints
 
-**Tools:** find, read, search, ast_grep, lsp. NOT bash pipelines.
+**Tools:** your runtime's dedicated file-discovery, read, text-search, structural-code-search (e.g. ast-grep or equivalent), and language-server/code-intelligence capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - Cite specific file:line for every finding
@@ -212,7 +205,7 @@ Analyze:
 - Error handling patterns
 - Complexity issues
 
-**Tools:** find, read, search, ast_grep. NOT bash pipelines.
+**Tools:** your runtime's dedicated file-discovery, read, text-search, and structural-code-search (e.g. ast-grep or equivalent) capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - Cite specific file:line for every finding
@@ -273,7 +266,7 @@ Analyze:
 - Test quality (isolation, assertions, naming)
 - Coverage gaps
 
-**Tools:** find, read, search. NOT bash pipelines.
+**Tools:** your runtime's dedicated file-discovery, read, and text-search capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - Cite specific file:line for findings
@@ -327,7 +320,7 @@ Analyze:
 - Input validation
 - Dependency vulnerabilities
 
-**Tools:** search, read, ast_grep. NOT bash pipelines.
+**Tools:** your runtime's dedicated text-search, read, and structural-code-search (e.g. ast-grep or equivalent) capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - NEVER output actual secrets — report presence only
@@ -392,7 +385,7 @@ Also check:
 - Documentation (README, docs/, SKILL.md, AGENTS.md)
 - Build/test scripts (Makefile, Justfile, package.json)
 
-**Tools:** find, read, search. NOT bash pipelines.
+**Tools:** your runtime's dedicated file-discovery, read, and text-search capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - Rate all 8 dimensions on the shared 1.0-5.0 scale (`skill://assessment-report-suite` Scoring Scale); derive each letter mechanically from the numeric score — never assign a bare letter
@@ -449,7 +442,7 @@ Analyze:
 - Automation level
 - Secrets management in CI
 
-**Tools:** find, read, search. NOT bash pipelines.
+**Tools:** your runtime's dedicated file-discovery, read, and text-search capabilities. NOT bash pipelines.
 
 **IMPORTANT:**
 - Cite specific file:line for findings

@@ -7,12 +7,10 @@ description: assess AI tool adoption and usage patterns in the team
 
 Analyze AI tool adoption patterns — who's using AI assistants, how effectively, quality of AI-generated code.
 
-# Critical: Permission Gate Restrictions
+# Tool Guidance
 
-**DO NOT USE these bash patterns:**
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipelines
+**Avoid:** `find ... -exec ...`, `xargs ...`, and other complex shell pipelines; many coding-agent
+runtimes restrict these.
 
 # AI Usage Signal Detection
 
