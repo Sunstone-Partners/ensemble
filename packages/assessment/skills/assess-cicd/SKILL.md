@@ -19,10 +19,9 @@ runtimes restrict these.
 
 ## 1. Pipeline Discovery
 
-Find CI/CD configuration:
-```
-find paths: [".github/workflows/", ".gitlab-ci.yml", "Jenkinsfile", "azure-pipelines.yml", ".circleci/"]
-```
+Discover CI/CD configuration: look for `.github/workflows/`, `.gitlab-ci.yml`,
+`Jenkinsfile`, `azure-pipelines.yml`, or `.circleci/` using your runtime's
+file-discovery tool.
 
 ## 2. Pipeline Structure Analysis
 

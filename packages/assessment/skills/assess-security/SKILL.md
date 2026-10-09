@@ -20,41 +20,31 @@ runtimes restrict these.
 
 ## 1. Authentication Assessment
 
-Search for auth patterns:
-```
-search pattern: "authorize|authentication|jwt|oauth"
-```
+Search for auth patterns using your runtime's text-search tool, matching
+`authorize|authentication|jwt|oauth`.
 
 Read auth configuration files.
 
 ## 2. Authorization Assessment
 
-Search for permission checks:
-```
-search pattern: "[Authorize]|[AllowAnonymous]|permission|access"
-```
+Search for permission checks using your runtime's text-search tool, matching
+`[Authorize]|[AllowAnonymous]|permission|access`.
 
 ## 3. Secrets Management
 
-Search for potential secrets (DO NOT output actual secrets):
-```
-search pattern: "password.*=|api.*key.*=|secret.*="
-search pattern: "connectionstring.*="
-```
+Search for potential secrets (DO NOT output actual secrets) using your runtime's
+text-search tool, matching `password.*=|api.*key.*=|secret.*=` and
+`connectionstring.*=`.
 
 ## 4. Input Validation
 
-Search for validation patterns:
-```
-search pattern: "validate|sanitize|htmlEncode|parameter"
-```
+Search for validation patterns using your runtime's text-search tool, matching
+`validate|sanitize|htmlEncode|parameter`.
 
 ## 5. Sensitive Data Handling
 
-Search for data protection patterns:
-```
-search pattern: "encrypt|decrypt|PII|PHI|HIPAA"
-```
+Search for data protection patterns using your runtime's text-search tool,
+matching `encrypt|decrypt|PII|PHI|HIPAA`.
 
 ## 6. Dependency Vulnerabilities
 

@@ -490,15 +490,13 @@ Return a summary (max 5 lines) with:
 
 ## Phase 3: Read Agent Outputs
 After all 7 tasks complete, read each agent's output file:
-```
-read path: docs/assessment/<REPORT_PREFIX>-purpose.md
-read path: docs/assessment/<REPORT_PREFIX>-architecture.md
-read path: docs/assessment/<REPORT_PREFIX>-code-quality.md
-read path: docs/assessment/<REPORT_PREFIX>-testing.md
-read path: docs/assessment/<REPORT_PREFIX>-security.md
-read path: docs/assessment/<REPORT_PREFIX>-ai-readiness.md
-read path: docs/assessment/<REPORT_PREFIX>-cicd.md
-```
+- `docs/assessment/<REPORT_PREFIX>-purpose.md`
+- `docs/assessment/<REPORT_PREFIX>-architecture.md`
+- `docs/assessment/<REPORT_PREFIX>-code-quality.md`
+- `docs/assessment/<REPORT_PREFIX>-testing.md`
+- `docs/assessment/<REPORT_PREFIX>-security.md`
+- `docs/assessment/<REPORT_PREFIX>-ai-readiness.md`
+- `docs/assessment/<REPORT_PREFIX>-cicd.md`
 
 ## Phase 4: Generate Final Report
 

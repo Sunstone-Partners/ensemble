@@ -20,28 +20,22 @@ runtimes restrict these. Use dedicated discovery/read/search tools instead.
 
 ## 1. Context Availability
 
-Find documentation:
-```
-find paths: ["README.md", "docs/", "SKILL.md", "AGENTS.md", "CLAUDE.md"]
-```
+Discover documentation: look for `README.md`, `docs/`, `SKILL.md`, `AGENTS.md`, and
+`CLAUDE.md` using your runtime's file-discovery tool.
 
 Read these files to assess documentation quality.
 
 ## 2. Skill Coverage
 
-Find build/test scripts:
-```
-find paths: ["Makefile", "Justfile", "package.json", "scripts/"]
-```
+Discover build/test scripts: look for `Makefile`, `Justfile`, `package.json`, and a
+`scripts/` directory using your runtime's file-discovery tool.
 
 Read to assess what operations are scripted.
 
 ## 3. Agent APIs
 
-Search for CLI interfaces:
-```
-search pattern: "main|entrypoint|CLI|command"
-```
+Search for CLI interfaces using your runtime's text-search tool, matching
+`main|entrypoint|CLI|command`.
 
 ## 4. Determinism
 
@@ -52,10 +46,8 @@ Look for:
 
 ## 5. Observability
 
-Search for logging patterns:
-```
-search pattern: "log|logger|trace|debug"
-```
+Search for logging patterns using your runtime's text-search tool, matching
+`log|logger|trace|debug`.
 
 ## 6. Testability
 

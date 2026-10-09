@@ -44,10 +44,8 @@ Look for:
 
 ## 5. Coverage Gaps Analysis
 
-Search for uncovered areas:
-```
-search pattern: "class $CLASS" (then check if corresponding *Test exists)
-```
+Search for uncovered areas: for each class/module found, check whether a
+corresponding test file exists.
 
 ## 6. Test Execution Assessment
 

@@ -460,16 +460,14 @@ Return summary (max 5 lines):
 ## Phase 3: Read Agent Outputs
 
 After all 8 tasks complete, read each agent's output file:
-```
-read path: docs/assessment/team-<REPORT_PREFIX>-commit-volume.md
-read path: docs/assessment/team-<REPORT_PREFIX>-commit-messages.md
-read path: docs/assessment/team-<REPORT_PREFIX>-code-quality.md
-read path: docs/assessment/team-<REPORT_PREFIX>-test-coverage.md
-read path: docs/assessment/team-<REPORT_PREFIX>-ai-adoption.md
-read path: docs/assessment/team-<REPORT_PREFIX>-documentation.md
-read path: docs/assessment/team-<REPORT_PREFIX>-incidents.md
-read path: docs/assessment/team-<REPORT_PREFIX>-code-review.md
-```
+- `docs/assessment/team-<REPORT_PREFIX>-commit-volume.md`
+- `docs/assessment/team-<REPORT_PREFIX>-commit-messages.md`
+- `docs/assessment/team-<REPORT_PREFIX>-code-quality.md`
+- `docs/assessment/team-<REPORT_PREFIX>-test-coverage.md`
+- `docs/assessment/team-<REPORT_PREFIX>-ai-adoption.md`
+- `docs/assessment/team-<REPORT_PREFIX>-documentation.md`
+- `docs/assessment/team-<REPORT_PREFIX>-incidents.md`
+- `docs/assessment/team-<REPORT_PREFIX>-code-review.md`
 
 ## Phase 4: Generate Final Report
 
