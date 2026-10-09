@@ -33,6 +33,11 @@
       "id": "utilities",
       "name": "Utilities",
       "description": "Productivity and monitoring tools"
+    },
+    {
+      "id": "assessment",
+      "name": "Assessment & Diagnostics",
+      "description": "Repository, team, and AI-readiness assessment and diagnostic reporting"
     }
   ],
   "plugins": [
@@ -481,6 +486,26 @@
       "author": {
         "name": "Sunstone Partners",
         "email": "info@sunstonepartners.com"
+      }
+    },
+    {
+      "name": "ensemble-assessment",
+      "version": "1.0.0",
+      "source": "./packages/assessment",
+      "description": "Repository, team, and AI-readiness assessment and diagnostic reporting skills",
+      "category": "assessment",
+      "tags": [
+        "assessment",
+        "diagnostic",
+        "audit",
+        "code-quality",
+        "security",
+        "ai-readiness",
+        "team"
+      ],
+      "author": {
+        "name": "Sunstone Partners",
+        "url": "https://github.com/Sunstone-Partners"
       }
     }
   ]
