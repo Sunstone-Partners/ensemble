@@ -15,14 +15,17 @@ const { GenerationError } = require('./error-handler');
  * @param {object} yamlData - Parsed YAML data
  * @param {'command'|'agent'} type - Type of YAML
  * @param {string} sourceYamlPath - Path to source YAML file
+ * @param {Map<string,string>} [commandPathsByRef] - Bare command name -> resolved
+ *   output path, for resolving dispatcher subcommand refs. Only needed for
+ *   dispatcher commands; omitted otherwise.
  * @returns {string} Generated Markdown content
  * @throws {GenerationError} If generation fails
  */
-function generateMarkdown(yamlData, type, sourceYamlPath) {
+function generateMarkdown(yamlData, type, sourceYamlPath, commandPathsByRef) {
   try {
     let markdown;
     if (type === 'command') {
-      markdown = transformCommandToMarkdown(yamlData, sourceYamlPath);
+      markdown = transformCommandToMarkdown(yamlData, sourceYamlPath, commandPathsByRef);
     } else if (type === 'agent') {
       markdown = transformAgentToMarkdown(yamlData, sourceYamlPath);
     } else {

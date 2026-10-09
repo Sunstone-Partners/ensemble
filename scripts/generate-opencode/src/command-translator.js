@@ -117,6 +117,31 @@ function replaceArguments(text, placeholder) {
   return text.replace(/\$ARGUMENTS/g, placeholder);
 }
 
+/**
+ * Render the parameters array as an "## Arguments" section.
+ * Each parameter renders as a single bullet: name, type, required/optional,
+ * default (if present), and description.
+ */
+function renderArguments(parameters) {
+  const lines = ['## Arguments', ''];
+  for (const param of parameters) {
+    const type = param.type || 'string';
+    const requirement = param.required ? 'required' : 'optional';
+    let tag = `${type}, ${requirement}`;
+    if (param.default !== undefined) {
+      tag += `, default: \`${JSON.stringify(param.default)}\``;
+    }
+    let line = `- **\`${param.name}\`** (${tag})`;
+    if (param.description) {
+      const desc = param.description.trim().replace(/\s+/g, ' ');
+      line += `: ${desc}`;
+    }
+    lines.push(line);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // CommandTranslator class
 // ---------------------------------------------------------------------------
@@ -167,7 +192,7 @@ class CommandTranslator {
    * @param {object} parsed - Parsed YAML object from parseCommandYaml
    * @returns {string} Generated Markdown content
    */
-  translateToMarkdown(parsed) {
+  translateToMarkdown(parsed, commandFilesByBaseName = new Map()) {
     const lines = [];
     const placeholder = getPlaceholder(parsed);
 
@@ -205,6 +230,16 @@ class CommandTranslator {
         lines.push(`- ${constraint}`);
       }
       lines.push('');
+    }
+
+    // --- Arguments ---
+    if (parsed.parameters && Array.isArray(parsed.parameters) && parsed.parameters.length > 0) {
+      lines.push(...renderArguments(parsed.parameters).split('\n'));
+    }
+
+    // --- Subcommands (dispatcher) ---
+    if (parsed.dispatch && Array.isArray(parsed.dispatch.subcommands) && parsed.dispatch.subcommands.length > 0) {
+      lines.push(...this.renderSubcommandsSection(parsed, commandFilesByBaseName).split('\n'));
     }
 
     // --- Workflow phases and steps (CMD-004 + CMD-007) ---
@@ -339,6 +374,35 @@ class CommandTranslator {
   }
 
   /**
+   * Render a "## Subcommands" section for a dispatcher command, resolving
+   * each subcommand's `ref` to its sibling command's own OpenCode output path.
+   * @param {object} parsed - Parsed dispatcher command YAML object (has parsed.dispatch.subcommands)
+   * @param {Map<string, string>} commandFilesByBaseName - Map of bare command slug (filename stem,
+   *   equal to the sibling's metadata.name with the namespace prefix stripped) -> absolute source YAML path
+   * @returns {string} Generated Markdown content for the section
+   */
+  renderSubcommandsSection(parsed, commandFilesByBaseName) {
+    const lines = ['## Subcommands', ''];
+    const repoRoot = path.dirname(this.packagesDir);
+    for (const sub of parsed.dispatch.subcommands) {
+      const siblingFile = commandFilesByBaseName.get(sub.ref);
+      if (!siblingFile) {
+        throw new Error(
+          `Dispatch subcommand ref "${sub.ref}" (keyword "${sub.keyword}") in command "${parsed.metadata.name}" does not match any discovered command file`
+        );
+      }
+      const siblingParsed = this.parseCommandYaml(siblingFile);
+      const outputPath = this.getOutputPath(siblingParsed);
+      const relOutputPath = path.relative(repoRoot, outputPath);
+      const description = sub.description ? sub.description.trim().replace(/\s+/g, ' ') : '';
+      const descPrefix = description ? `${description}. ` : '';
+      lines.push(`- **${sub.keyword}** - ${descPrefix}run \`${siblingParsed.metadata.name}\` (\`${relOutputPath}\`)`);
+    }
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  /**
    * Write a command Markdown file to disk.
    * @param {string} filePath - Output file path
    * @param {string} content - Markdown content
@@ -368,11 +432,15 @@ class CommandTranslator {
     const configBlock = {};
 
     const files = this.discoverCommandFiles();
+    const commandFilesByBaseName = new Map();
+    for (const f of files) {
+      commandFilesByBaseName.set(path.basename(f, '.yaml'), f);
+    }
 
     for (const filePath of files) {
       try {
         const parsed = this.parseCommandYaml(filePath);
-        const markdownContent = this.translateToMarkdown(parsed);
+        const markdownContent = this.translateToMarkdown(parsed, commandFilesByBaseName);
         const outputPath = this.getOutputPath(parsed);
         const configEntry = this.generateConfigEntry(parsed);
 

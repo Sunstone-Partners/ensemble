@@ -4,7 +4,7 @@ This combined plan has been replaced because Ensemble and Foreman are separate r
 
 Use these repository-local plans instead:
 
-- [Ensemble Behavior Runtime and Pi/OMP Harness](./ensemble-behavior-runtime-plan.md)
+- [Ensemble Behavior Runtime and Pi/OMP Harness](./ensemble-behavior-runtime-plan.md) (now itself superseded — see that file; functionality retained on the `pi-behaviors` branch)
 - [Foreman Behavior Control Plane](./foreman-behavior-control-plane-plan.md)
 
 ## Split decision

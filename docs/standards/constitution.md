@@ -13,7 +13,7 @@
 1. **No secrets in code** — All credentials via environment variables or secrets manager.
 2. **Input validation required** — Validate all external input at system boundaries.
 3. **Tests accompany features** — No feature is complete without tests covering its acceptance criteria.
-4. **Ownership boundary is preserved** — Ensemble must not implement durable production activation, scheduling, retries, recovery, or a second dispatcher competing with Foreman (see `docs/architecture/ensemble-behavior-runtime-plan.md` §1).
+4. **Ownership boundary is preserved** — Ensemble must not implement durable production activation, scheduling, retries, recovery, or a second dispatcher competing with Foreman.
 5. **Governed tool boundary is enforced at runtime, not at the model** — Tool grants and mutation-class authority are enforced by the harness/extension boundary; prompt text must never be able to bypass a denial.
 6. **A capability is not done until it is reachable from the product entry point** — Code that is implemented, exported, and unit-tested but has no call path from the real `activate()` (or equivalent entry point) is not complete, regardless of test coverage. Acceptance must assert *through* the entry point, not around it.
 7. **A verification must be able to fail** — Any check that gates acceptance of a change must be shown capable of failing: prove it by breaking the thing it guards and observing the check fail. A green signal from a check that cannot fail is worse than no check, because it manufactures confidence.
@@ -92,9 +92,3 @@ Every implementation must pass through:
 | 2026-09-24 | Initial constitution generated via `/init-project` | ensemble-create-prd workflow |
 | 2026-09-24 | Added Rules 6 (reachable from entry point) and 7 (a verification must be able to fail) | behavior-runtime work |
 | 2026-09-25 | Added Rule 8 (user-modifiable artifacts belong in prompts/skills, not TypeScript) | behavior-runtime work |
-
-## Amendment 2026-09-29: investigate-test-failure
-
-Rationale: Piping a build or test command into `tail` makes `$?` report `tail`'s exit status instead of the command's, and Jest's "Tests: N passed" line can look fine while suites that failed to compile ran no tests, so a verification step can pass while the build is broken.
-
-- Take a build or test verdict from the command's own exit status, never from a pipeline (`set -o pipefail`, or check `$?`/`PIPESTATUS` before any pipe). For Jest and similar runners, require `Test Suites: 0 failed` and zero compile errors, not just passing test counts.

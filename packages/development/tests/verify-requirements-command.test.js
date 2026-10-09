@@ -158,11 +158,11 @@ describe('verify-requirements command contract (v1.0.0 REQ->AC->code chain)', ()
     expect(missionBlock).toMatch(/commit evidence/);
   });
 
-  test('works for both implement-trd (checkbox) and implement-trd-beads (beads)', () => {
+  test('works for both beads-backed implementation and TRD checkbox state', () => {
     const text = fs.readFileSync(yamlPath, 'utf8');
     const missionBlock = text.slice(text.indexOf('mission:'), text.indexOf('workflow:'));
-    expect(missionBlock).toMatch(/implement-trd-beads \(beads track\)/);
-    expect(missionBlock).toMatch(/implement-trd\s*\(checkbox track\)/);
+    expect(missionBlock).toMatch(/beads-backed implementation/);
+    expect(missionBlock).toMatch(/TRD checkbox state/);
   });
 
   test('metadata and schema fields are valid', () => {

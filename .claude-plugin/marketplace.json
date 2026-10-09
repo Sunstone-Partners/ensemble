@@ -1,6 +1,6 @@
 {
   "name": "ensemble",
-  "version": "6.9.4",
+  "version": "6.9.7",
   "description": "Official Sunstone Ensemble plugin marketplace - AI-augmented development workflows",
   "owner": {
     "name": "Sunstone Partners",
@@ -33,12 +33,17 @@
       "id": "utilities",
       "name": "Utilities",
       "description": "Productivity and monitoring tools"
+    },
+    {
+      "id": "assessment",
+      "name": "Assessment & Diagnostics",
+      "description": "Repository, team, and AI-readiness assessment and diagnostic reporting"
     }
   ],
   "plugins": [
     {
       "name": "ensemble-core",
-      "version": "5.6.1",
+      "version": "5.6.2",
       "source": "./packages/core",
       "description": "Core utilities including framework detection and XDG-compliant configuration",
       "category": "core",
@@ -54,7 +59,7 @@
     },
     {
       "name": "ensemble-product",
-      "version": "5.6.1",
+      "version": "5.6.3",
       "source": "./packages/product",
       "description": "Product management workflows - PRD and TRD creation",
       "category": "workflow",
@@ -71,7 +76,7 @@
     },
     {
       "name": "ensemble-development",
-      "version": "6.0.6",
+      "version": "6.0.9",
       "source": "./packages/development",
       "description": "Development workflow orchestration and best practices",
       "category": "workflow",
@@ -119,7 +124,7 @@
     },
     {
       "name": "ensemble-git",
-      "version": "5.3.0",
+      "version": "5.3.1",
       "source": "./packages/git",
       "description": "Git workflow automation and best practices",
       "category": "workflow",
@@ -381,7 +386,7 @@
     },
     {
       "name": "ensemble-router",
-      "version": "5.2.1",
+      "version": "5.2.2",
       "source": "./packages/router",
       "description": "UserPromptSubmit routing hook for intelligent agent delegation and skill invocation",
       "category": "core",
@@ -399,7 +404,7 @@
     },
     {
       "name": "ensemble-full",
-      "version": "6.9.4",
+      "version": "6.9.7",
       "source": "./packages/full",
       "description": "Complete Ensemble suite - all plugins in one package",
       "category": "core",
@@ -433,7 +438,7 @@
     },
     {
       "name": "ensemble-opencode",
-      "version": "5.3.0",
+      "version": "5.3.1",
       "source": "./packages/opencode",
       "description": "OpenCode runtime support - translates ensemble artifacts to OpenCode-compatible formats",
       "category": "core",
@@ -450,7 +455,7 @@
     },
     {
       "name": "ensemble-pi",
-      "version": "1.6.11",
+      "version": "1.6.12",
       "source": "./packages/pi",
       "description": "Pi runtime support — translates ensemble artifacts for Pi coding agent",
       "category": "core",
@@ -467,7 +472,7 @@
     },
     {
       "name": "ensemble-codex",
-      "version": "5.3.2",
+      "version": "5.3.4",
       "source": "./packages/codex",
       "description": "Codex CLI runtime support - translates ensemble artifacts into Codex-compatible agents and skills",
       "category": "core",
@@ -484,16 +489,19 @@
       }
     },
     {
-      "name": "ensemble-behaviors",
-      "version": "0.1.0",
-      "source": "./packages/pi-extension",
-      "category": "workflow",
-      "description": "OPT-IN. Event-driven behavior runtime for Pi/OMP sessions. Observes test failures and can dispatch a fix: it injects an additional agent turn, may EDIT SOURCE FILES under the granted behavior's tool grants, re-runs the suite itself to verify, and reverts the change if verification fails. Installing this plugin activates that loop; ensemble commands are unaffected if you do not install it.",
+      "name": "ensemble-assessment",
+      "version": "1.0.0",
+      "source": "./packages/assessment",
+      "description": "Repository, team, and AI-readiness assessment and diagnostic reporting skills",
+      "category": "assessment",
       "tags": [
-        "behaviors",
-        "autofix",
-        "behavior-runtime",
-        "opt-in"
+        "assessment",
+        "diagnostic",
+        "audit",
+        "code-quality",
+        "security",
+        "ai-readiness",
+        "team"
       ],
       "author": {
         "name": "Sunstone Partners",

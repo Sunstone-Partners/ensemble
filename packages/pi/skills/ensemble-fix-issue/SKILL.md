@@ -1,0 +1,128 @@
+---
+name: ensemble-fix-issue
+description: >-
+  Orchestrate a complete bug fix workflow from analysis to PR creation,
+  assembling a virtual team of specialized agents (Product Manager, Tech Lead,
+  Architect, QA Lead) to ensure high-quality fixes with minimal user
+  intervention. Resumable and checkpointed (REQ-019): a run's stage and outcome
+  are recorded via issue-run-index.ts after each of the 3 named phases, so a
+  later invocation can resume, report status, or abandon it instead of
+  re-deriving progress from conversation history. --foreman also carries an
+  artifact contract: when FOREMAN_ARTIFACT_PATH is set and non-empty, write the
+  phase report to that exact path (creating parent directories as needed) IN
+  ADDITION TO any repo-local report this command already writes -- Foreman
+  computes that path and reads it back to confirm the phase produced an
+  artifact. Never invent, alter, or relocate the path, and never treat an unset
+  FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply
+  absent and behavior is unchanged).
+disable-model-invocation: true
+---
+<!-- Command: ensemble-fix-issue | Version: 1.2.0 -->
+<!-- Description: Lightweight workflow for bug fixes and small issues -->
+
+# ensemble-fix-issue
+
+> **Mission:** Orchestrate a complete bug fix workflow from analysis to PR creation, assembling a virtual team of specialized agents (Product Manager, Tech Lead, Architect, QA Lead) to ensure high-quality fixes with minimal user intervention. Resumable and checkpointed (REQ-019): a run's stage and outcome are recorded via issue-run-index.ts after each of the 3 named phases, so a later invocation can resume, report status, or abandon it instead of re-deriving progress from conversation history. --foreman also carries an artifact contract: when FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
+
+> **Constraints:**
+> - GitHub only (no GitLab/Bitbucket in v1.0)
+> - GitHub CLI (gh) must be installed and authenticated
+> - Tests must pass unless --skip-tests flag is used
+> - Maximum 2 auto-fix attempts for test failures
+> - User interview limited to 5 questions maximum
+> - Branch naming follows fixed convention (customizable via --branch)
+> - When --foreman is set, the user interview step is force-skipped and PR creation always proceeds without pausing for confirmation
+> - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
+
+## Arguments
+
+- **`description`** (string, optional): Issue description (free text or omit if using --issue)
+- **`issue`** (number, optional): GitHub issue number (e.g., --issue 34)
+- **`branch`** (string, optional): Custom branch name (default auto-generated)
+- **`skip-tests`** (boolean, optional, default: `false`): Skip test validation (not recommended)
+- **`draft-pr`** (boolean, optional, default: `false`): Create draft PR instead of ready-for-review
+- **`interactive`** (boolean, optional, default: `false`): Enable detailed user interviews during planning
+- **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the user interview step and always auto-commit + create the PR without pausing for confirmation (for automated Foreman orchestration). When --foreman is present and the FOREMAN_ARTIFACT_PATH environment variable is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes. Foreman computes that path and reads it back to confirm the phase produced an artifact; writing only to a repo-local convention leaves Foreman with no artifact. Never invent, alter, or relocate the path. Never treat an unset FOREMAN_ARTIFACT_PATH as an error — outside Foreman dispatch it is simply absent, and behavior must be unchanged.
+- **`status`** (boolean, optional, default: `false`): Show the active/most-recent issue run's stage, outcome, and references without advancing it.
+- **`abandon`** (boolean, optional, default: `false`): Abandon the project's active/paused issue run after explicit confirmation.
+
+## Phase 1: Entry Point Resolution
+
+### Step 1: Start New Run or Resume Active Run
+
+A `description` or `issue` argument with no active run for
+the project starts a fresh run at stage analysis_planning.
+With neither argument (and no --status/--abandon), resume
+the project's active/paused run from its last recorded
+checkpoint.
+
+### Step 2: --status -- Read-Only Run Report
+
+Report the active/most-recent run's stage, outcome, and
+references without advancing it. No stage executes and no
+mutate() call is made regardless of what is found (AC-019-3).
+
+### Step 3: --abandon -- Explicit Confirmation Required
+
+Terminate the project's active/paused run after explicit
+confirmation; the run reaches a terminal abandoned state
+with its history retained (AC-019-4, AC-007-3).
+
+## Phase 2: Analysis & Planning
+
+### Step 1: Codebase Analysis
+
+Explore codebase to identify affected files, patterns, and scope.
+Use Grep, Glob, and Read tools to understand context.
+
+### Step 2: Collaborative Planning
+
+Assemble virtual team of 4 specialized agents to create comprehensive
+fix plan with multiple perspectives.
+
+### Step 3: User Interview (Conditional)
+
+If issue description is ambiguous or --interactive flag is set,
+ask clarifying questions ONE AT A TIME (max 5) -- never batch questions.
+Use ask for each. Wait for each answer before asking the next.
+
+### Step 4: Record Stage Checkpoint
+
+Persist this phase's outcome and advance the run to the next
+stage via issue-run-index.ts (Implementation AC 2, REQ-019).
+
+## Phase 3: Execution
+
+### Step 1: Branch Creation
+
+Create git branch with conventional naming
+
+### Step 2: Task List Generation
+
+Break down plan into actionable tasks
+
+### Step 3: Task Execution
+
+Execute all tasks with appropriate agent delegation and
+real-time progress tracking.
+
+### Step 4: Record Stage Checkpoint
+
+Persist this phase's outcome and advance the run to the next
+stage via issue-run-index.ts (Implementation AC 2, REQ-019).
+
+## Phase 4: Validation & Delivery
+
+### Step 1: Test Validation
+
+Run test suite with auto-fix retry logic. Ensure all tests
+pass before creating PR.
+
+### Step 2: PR Creation
+
+Create comprehensive pull request with GitHub CLI
+
+### Step 3: Record Stage Checkpoint
+
+Persist this phase's outcome and mark the run complete via
+issue-run-index.ts (Implementation AC 2, REQ-019).

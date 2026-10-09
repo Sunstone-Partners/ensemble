@@ -1,9 +1,0 @@
-# Ensemble repository configuration.
-#
-# Arming is an explicit act, not a side effect of dependency layout (br-fvmq).
-# The extension activates in every omp session on this machine; it will only
-# DISCOVER AND RUN behaviors in a repository that says so here.
-#
-# Set `armed: false` to disarm without deleting any behavior packages.
-behaviors:
-  armed: true

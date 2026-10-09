@@ -71,7 +71,6 @@ cp agents/ensemble-orchestrator.yaml packages/core/agents/
 cp agents/general-purpose.yaml packages/core/agents/
 cp agents/context-fetcher.yaml packages/core/agents/
 cp commands/ensemble/create-trd.* packages/core/commands/
-cp commands/ensemble/implement-trd.* packages/core/commands/
 cp commands/ensemble/fold-prompt.* packages/core/commands/
 ```
 

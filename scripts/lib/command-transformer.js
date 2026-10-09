@@ -94,12 +94,81 @@ function generateCommandFrontmatter(data) {
 }
 
 /**
+ * Generate the Arguments section from a command's parameters[] list.
+ * Each parameter renders as a single bullet: name, type, required/optional,
+ * default (if present), and description. Descriptions may arrive as
+ * folded/literal YAML block scalars with embedded whitespace runs -- these
+ * are collapsed to a single line so one parameter never spans multiple
+ * bullets.
+ * @param {Array<object>} parameters - Parameter definitions
+ * @returns {string}
+ */
+function generateArgumentsSection(parameters) {
+  const lines = ['## Arguments', ''];
+
+  for (const param of parameters) {
+    const type = param.type || 'string';
+    const requirement = param.required ? 'required' : 'optional';
+    let tag = `${type}, ${requirement}`;
+    if (param.default !== undefined) {
+      tag += `, default: \`${JSON.stringify(param.default)}\``;
+    }
+
+    let line = `- **\`${param.name}\`** (${tag})`;
+    if (param.description) {
+      const desc = param.description.trim().replace(/\s+/g, ' ');
+      line += `: ${desc}`;
+    }
+    lines.push(line);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Generate the "## Subcommands" section for a dispatcher command. Each
+ * subcommand's `ref` resolves through the shared commandPathsByRef map
+ * (built once per generation run in generate-markdown.js) to that sibling
+ * command's own, already-generated output path -- the dispatcher never
+ * inlines the sibling's workflow, keeping per-invocation cost equal to
+ * today's single-command cost.
+ * @param {Array<object>} subcommands - dispatch.subcommands[] from the YAML
+ * @param {Map<string,string>} commandPathsByRef - bare command name -> resolved output path
+ * @param {string} sourceYamlPath - path to the dispatcher's own YAML (for errors)
+ * @returns {string}
+ */
+function generateSubcommandsSection(subcommands, commandPathsByRef, sourceYamlPath) {
+  const repoRoot = path.resolve(__dirname, '../..');
+  const lines = ['## Subcommands', ''];
+
+  for (const sub of subcommands) {
+    const outputPath = commandPathsByRef.get(sub.ref);
+    if (!outputPath) {
+      throw new Error(`dispatch.subcommands references unknown command '${sub.ref}' (${sourceYamlPath})`);
+    }
+    const relPath = path.relative(repoRoot, outputPath);
+    const description = sub.description ? sub.description.trim().replace(/\s+/g, ' ') : '';
+    const descPrefix = description ? `${description}. ` : '';
+    lines.push(
+      `- **\`${sub.keyword}\`** - ${descPrefix}Invoke \`/ensemble:${sub.ref}\` directly, or read and follow \`${relPath}\`, passing the remaining arguments through as its $ARGUMENTS.`
+    );
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
  * Transform command YAML to Markdown
  * @param {object} commandData - Validated command YAML
  * @param {string} sourceYamlPath - Path to source YAML (for header)
+ * @param {Map<string,string>} [commandPathsByRef] - Bare command name -> resolved
+ *   output path, for resolving dispatcher subcommand refs. Only required
+ *   when commandData.dispatch?.subcommands is present.
  * @returns {string} Generated Markdown
  */
-function transformCommandToMarkdown(commandData, sourceYamlPath) {
+function transformCommandToMarkdown(commandData, sourceYamlPath, commandPathsByRef) {
   const parts = [];
   const sourceFile = path.basename(sourceYamlPath);
 
@@ -115,7 +184,17 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
     parts.push('');
   }
 
-  // 4. Workflow phases
+  // 4. Arguments
+  if (commandData.parameters && commandData.parameters.length > 0) {
+    parts.push(generateArgumentsSection(commandData.parameters));
+  }
+
+  // 4b. Subcommands (dispatcher commands only)
+  if (commandData.dispatch?.subcommands) {
+    parts.push(generateSubcommandsSection(commandData.dispatch.subcommands, commandPathsByRef || new Map(), sourceYamlPath));
+  }
+
+  // 5. Workflow phases
   if (commandData.workflow?.phases) {
     parts.push('## Workflow');
     parts.push('');
@@ -181,7 +260,7 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
     }
   }
 
-  // 5. Expected Output
+  // 6. Expected Output
   if (commandData.expectedOutput) {
     parts.push('## Expected Output');
     parts.push('');
@@ -200,7 +279,7 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
     }
   }
 
-  // 6. Usage section
+  // 7. Usage section
   const name = commandData.metadata?.name || 'command';
   const argHint = commandData.metadata?.argument_hint || '';
   parts.push('## Usage');
@@ -216,5 +295,6 @@ function transformCommandToMarkdown(commandData, sourceYamlPath) {
 module.exports = {
   transformCommandToMarkdown,
   generateCommandFrontmatter,
-  generateDoNotEditHeader
+  generateDoNotEditHeader,
+  generateArgumentsSection
 };

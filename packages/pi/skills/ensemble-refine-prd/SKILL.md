@@ -24,6 +24,15 @@ disable-model-invocation: true
 > - --collab requires a human reviewer and cannot be combined with --foreman (non-interactive mode) -- HALT if both are passed
 > - When --foreman is set, skip the Synthesis selection prompt and Interview questions -- auto-apply all findings and [NEEDS CLARIFICATION: ...] resolutions using best-effort defaults (falling back to an inline [NEEDS CLARIFICATION: ...] marker when no safe default exists) and log what was auto-applied; the "stop and wait for user approval before implementation" constraint above is unaffected
 
+## Arguments
+
+- **`collab`** (boolean, optional, default: `false`): Opt into browser-based collaborative refinement (HTML review with sidebar questions and anchor-linked comments). When true, replaces the terminal ask interview with a local web session; the artifact captured during the session feeds the standard Enhancement phase below. When false (the default), the original terminal-based refinement workflow runs unchanged.
+- **`tunnel`** (string, optional, default: `""`): When set to `quick`, exposes the local refinement-review server over a Cloudflare Quick Tunnel (`*.trycloudflare.com`) so a reviewer on a different network can reach the share URL without any account, API token, or DNS change. Requires the `cloudflared` binary on `PATH` (or set `CLOUDFLARED_PATH` to its absolute path). The bootstrap launches `cloudflared` after the local server binds, captures the ephemeral `*.trycloudflare.com` URL, re-mints the share nonce against the tunnel origin, and tears down the tunnel on exit. When empty (the default), the share URL points at the local server and is reachable only from the same machine.
+- **`reviewers`** (integer, optional, default: `1`): Number of independent reviewer share URLs to mint for this session. Each URL carries its own single-use 10-minute exchange nonce and authenticates to the same underlying session/document, so multiple stakeholders can open the session simultaneously without colliding. `1` (the default) reproduces the original behavior: a single share URL on the public origin (or local origin when `--tunnel` is not set). Values greater than `1` add `(N - 1)` URLs minted via `server.createShareUrl()`, each bound to the same `publicUrl`. The bootstrap prints one URL per line, numbered `#1` (the original) through `#N` (the additional fan-out URLs). Each reviewer redeems exactly once; the server burns the nonce atomically on first use, so a leaked `#k` URL cannot be replayed by a second reviewer. Typical use: a Product Manager invites 3-5 stakeholders (security, design, ops, legal) to the same refinement session in parallel.
+- **`long-lived`** (boolean, optional, default: `false`): Long-lived review session: a single invite URL with a 6-hour TTL that any number of reviewers can exchange (no nonce burn, no fan-out). QuickTunnel is implicit — `cloudflared` is launched automatically so the invite URL works across networks without a Cloudflare account. Reviewers identify themselves with a display name (no uniqueness check, no provider login) before the document UI is served. Presence (who is currently viewing) is surfaced to other reviewers in real time. Completion terminates the listener so the port does not stay bound. Mutually exclusive with `--reviewers N` (a long-lived session already accepts arbitrary reviewers via one reusable invite URL). `--long-lived` implies `--tunnel=quick`; do not pass a separate `--tunnel` value with this flag.
+- **`ttl`** (string, optional, default: `"6h"`): Long-lived session lifetime as a duration string (e.g. `6h`, `12h`, `1d`). Parsed by the bootstrap to milliseconds; the minimum accepted value is `6h` and the default is `6h`. Only used when `--long-lived` is set; ignored otherwise.
+- **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the terminal interview/Synthesis selection step and automatically apply all findings/[NEEDS CLARIFICATION: ...] resolutions using best-effort defaults instead of waiting for the user to select which findings to apply. Mutually exclusive with --collab (which requires a human reviewer) -- passing both HALTs with an error. For automated Foreman orchestration.
+
 ## Phase 1: Collaborative Review
 
 ### Step 1: Session Bootstrap
@@ -309,7 +318,7 @@ any edits yet. Scan for the following issues:
 - Missing Implementation Readiness Gate scorecard
 - Acceptance criteria coverage gaps (Must requirements with fewer than 2 ACs, Should requirements with zero ACs)
 
-IF `--foreman` is present in $ARGUMENTS: skip the ask_user
+IF `--foreman` is present in $ARGUMENTS: skip the ask
 selection prompt below entirely. Instead, set SELECTED_ITEMS to
 every finding number (equivalent to the user replying "all") and
 print a log line: "Foreman mode: auto-applying N findings: <list>".
@@ -320,7 +329,7 @@ reusing the `[NEEDS CLARIFICATION: <specific question>]` marker
 convention for anything that cannot be safely resolved without
 human input rather than leaving it silently unresolved.
 
-Otherwise, use the ask_user tool to present a consolidated numbered list in this
+Otherwise, use the ask tool to present a consolidated numbered list in this
 exact format, then capture the user's selection as SELECTED_ITEMS:
 
 ---
@@ -357,7 +366,7 @@ Otherwise, run the original interview below.
 REQUIRED: Conduct a targeted user interview covering ONLY the topics
 corresponding to SELECTED_ITEMS. Skip any findings the user did not select.
 
-Use the ask_user tool to present questions interactively:
+Use the ask tool to present questions interactively:
 - Ask questions ONE AT A TIME (not all at once)
 - Wait for user answer before asking the next question
 - Do NOT just write questions in your response text

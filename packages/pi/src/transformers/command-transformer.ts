@@ -16,7 +16,7 @@
  */
 
 import * as path from 'path';
-import { CommandYaml, Phase, Step } from '../types';
+import { CommandYaml, CommandParameter, Phase, Step, DispatchSubcommand } from '../types';
 
 // ---------------------------------------------------------------------------
 // Internal rendering helpers
@@ -69,6 +69,69 @@ function renderConstraints(constraints: string[]): string {
   const lines: string[] = ['> **Constraints:**'];
   for (const constraint of constraints) {
     lines.push(`> - ${constraint.trim()}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Render the parameters array as an "## Arguments" section.
+ * Each parameter renders as a single bullet: name, type, required/optional,
+ * default (if present), and description.
+ */
+function renderArguments(parameters: CommandParameter[]): string {
+  const lines: string[] = ['## Arguments', ''];
+  for (const param of parameters) {
+    const type = param.type ?? 'string';
+    const requirement = param.required ? 'required' : 'optional';
+    let tag = `${type}, ${requirement}`;
+    if (param.default !== undefined) {
+      tag += `, default: \`${JSON.stringify(param.default)}\``;
+    }
+    let line = `- **\`${param.name}\`** (${tag})`;
+    if (param.description) {
+      const desc = param.description.trim().replace(/\s+/g, ' ');
+      line += `: ${desc}`;
+    }
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Render the dispatch.subcommands array as a "## Subcommands" section for a
+ * dispatcher command. Each subcommand's `ref` resolves through the
+ * commandPathsByRef map (built once per generation run in generator.ts's
+ * discovery loop, over its own existing discovery of packages/*\/commands/*.yaml)
+ * to that sibling command's own, already-generated Pi prompt output path --
+ * the dispatcher never inlines the sibling's workflow, keeping per-invocation
+ * cost equal to today's single-command cost.
+ *
+ * Mirrors scripts/lib/command-transformer.js's generateSubcommandsSection for
+ * Claude Code, but points at Pi's own `prompts/<name>.md` output path instead
+ * of Claude's `commands/ensemble/<name>.md`.
+ */
+function renderSubcommands(
+  subcommands: DispatchSubcommand[],
+  commandPathsByRef: Map<string, string>,
+  sourcePath: string
+): string {
+  const lines: string[] = ['## Subcommands', ''];
+  for (const sub of subcommands) {
+    const outputPath = commandPathsByRef.get(sub.ref);
+    if (!outputPath) {
+      throw new Error(
+        `dispatch.subcommands references unknown command '${sub.ref}' (${sourcePath})`
+      );
+    }
+    const description = sub.description ? sub.description.trim().replace(/\s+/g, ' ') : '';
+    const descPrefix = description ? `${description}. ` : '';
+    // Use the Claude-canonical "ensemble:<cmd>" form here; the global
+    // ensemble: → ensemble- rewrite at the end of transformCommand() already
+    // normalizes every such reference in the output, so no local rewrite is
+    // needed.
+    lines.push(
+      `- **\`${sub.keyword}\`** - ${descPrefix}run \`/ensemble:${sub.ref}\` (\`${outputPath}\`), passing the remaining arguments through as its $ARGUMENTS.`
+    );
   }
   return lines.join('\n');
 }
@@ -159,13 +222,16 @@ function renderPhase(phase: Phase, phaseNumber: number): string {
  *
  * @param commandYaml  - Parsed and validated CommandYaml object
  * @param sourcePath   - Absolute path to the source .yaml file (used in header comment)
- * @param options      - Runtime options (verbose: emit progress to stdout)
+ * @param options      - Runtime options (verbose: emit progress to stdout;
+ *   commandPathsByRef: bare command name -> resolved Pi prompt output path,
+ *   for resolving dispatcher subcommand refs — only required when
+ *   commandYaml.dispatch?.subcommands is present)
  * @returns            Rendered markdown string for the prompt template
  */
 export function transformCommand(
   commandYaml: CommandYaml,
   sourcePath: string,
-  options: { verbose?: boolean }
+  options: { verbose?: boolean; commandPathsByRef?: Map<string, string> }
 ): string {
   const { name, version } = commandYaml.metadata;
 
@@ -194,7 +260,25 @@ export function transformCommand(
     sections.push(renderConstraints(commandYaml.constraints));
   }
 
-  // 5. Workflow phases
+  // 5. Arguments (optional)
+  if (commandYaml.parameters && commandYaml.parameters.length > 0) {
+    sections.push('');
+    sections.push(renderArguments(commandYaml.parameters));
+  }
+
+  // 5b. Subcommands (dispatcher commands only)
+  if (commandYaml.dispatch?.subcommands && commandYaml.dispatch.subcommands.length > 0) {
+    sections.push('');
+    sections.push(
+      renderSubcommands(
+        commandYaml.dispatch.subcommands,
+        options.commandPathsByRef ?? new Map(),
+        sourcePath
+      )
+    );
+  }
+
+  // 6. Workflow phases
   const phases = commandYaml.workflow?.phases ?? [];
   for (let i = 0; i < phases.length; i++) {
     sections.push('');
@@ -204,11 +288,13 @@ export function transformCommand(
   // Terminate with a single trailing newline for clean file output
   let output = sections.join('\n') + '\n';
 
-  // Map AskUserQuestion → ask_user throughout the rendered output.
-  // Pi uses the ask_user tool name; the Ensemble YAML sources use the
-  // Claude Code tool name (AskUserQuestion).  A global replacement here
-  // ensures no AskUserQuestion references survive into any Pi prompt.
-  output = output.replace(/AskUserQuestion/g, 'ask_user');
+  // Map AskUserQuestion → ask throughout the rendered output.
+  // Pi/OMP's native interactive-question tool is registered as "ask" (not
+  // "ask_user" — that name was never shipped by any Pi runtime; the Ensemble
+  // YAML sources use the Claude Code tool name (AskUserQuestion). A global
+  // replacement here ensures no AskUserQuestion references survive into any
+  // Pi prompt.
+  output = output.replace(/AskUserQuestion/g, 'ask');
 
   // Rewrite Claude-style command references (ensemble:<cmd>) to the Pi
   // invocation form (ensemble-<cmd>). Pi command names cannot contain ':'

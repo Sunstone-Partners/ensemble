@@ -61,12 +61,12 @@ describe('resolveDefaultTeamRoles', () => {
       caller: 'implement-trd-beads',
     });
 
-    const noBeadsRoles = resolveDefaultTeamRoles({
+    const otherCallerRoles = resolveDefaultTeamRoles({
       complexity: 'complex',
       domains: ['backend', 'frontend'],
-      caller: 'implement-trd',
+      caller: 'beads-build',
     });
 
-    expect(noBeadsRoles).toEqual(beadsRoles);
+    expect(otherCallerRoles).toEqual(beadsRoles);
   });
 });

@@ -1,37 +1,22 @@
 /**
  * Command Skill Transformer
  *
- * Generates SKILL.md wrappers for targeted command files so they appear in
- * Pi's skill inventory with the full workflow content embedded directly.
+ * Generates SKILL.md wrappers for every command prompt so each one appears
+ * in Pi's skill inventory with the full workflow content embedded directly.
  *
- * Only wraps commands that need explicit skill registration — does not flood
- * the inventory with every command prompt.
+ * Mirrors the codex generator's discovery (scripts/generate-codex/index.js
+ * generateCommandSkills): dynamically globs the prompt sources instead of a
+ * hardcoded allowlist, so a new command prompt gets a SKILL.md wrapper
+ * automatically with no source change required.
  *
  * @module ensemble-pi/transformers/command-skill-transformer
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GeneratorOptions, TransformResult } from '../types';
+import { glob } from 'glob';
+import { TransformResult } from '../types';
 import matter from 'gray-matter';
-
-/**
- * Commands that get SKILL.md wrappers. These heavy workflows are surfaced in
- * pi's skill inventory in addition to their /ensemble-<cmd> prompt template.
- * Key = skill name (matches the prompt stem; distinguished by the /skill: prefix),
- * Value = prompt filename stem in prompts/.
- */
-const TARGET_COMMANDS: Record<string, string> = {
-  'ensemble-create-prd': 'ensemble-create-prd',
-  'ensemble-refine-prd': 'ensemble-refine-prd',
-  'ensemble-create-trd': 'ensemble-create-trd',
-  'ensemble-refine-trd': 'ensemble-refine-trd',
-  'ensemble-implement-trd': 'ensemble-implement-trd',
-  'ensemble-implement-trd-beads': 'ensemble-implement-trd-beads',
-  'ensemble-create-trd-foreman': 'ensemble-create-trd-foreman',
-  'ensemble-beads-build': 'ensemble-beads-build',
-  'ensemble-pr-merge': 'ensemble-pr-merge',
-};
 
 /**
  * Strip the HTML comment header block (lines starting with `<!--`) from prompt
@@ -54,11 +39,10 @@ function extractDescription(promptContent: string, skillName: string): string {
 }
 
 /**
- * Generate SKILL.md wrappers for targeted commands.
+ * Generate SKILL.md wrappers for every command prompt.
  *
- * Reads the already-generated command files from outputRoot/commands/, extracts
- * the full command body (stripping the HTML header comment), and writes a
- * SKILL.md with that content embedded directly so the skill is self-contained.
+ * Discovers every prompts/*.md file dynamically and writes a SKILL.md with
+ * the full command body embedded directly so each skill is self-contained.
  *
  * Files are written directly (like copySkills) and results returned with
  * type: 'skill' so the main write loop skips them.
@@ -77,17 +61,12 @@ export async function generateCommandSkills(
   const skillsOutputDir = path.join(outputRoot, 'skills');
   const results: TransformResult[] = [];
 
-  for (const [skillName, promptSuffix] of Object.entries(TARGET_COMMANDS)) {
-    const promptPath = path.join(promptsDir, `${promptSuffix}.md`);
+  const promptFiles = (
+    await glob(path.join(promptsDir, '*.md').split(path.sep).join('/'), { absolute: true })
+  ).sort();
 
-    if (!fs.existsSync(promptPath)) {
-      if (verbose) {
-        process.stderr.write(
-          `  command-skill: skipping ${skillName} — prompt not found at ${promptPath}\n`
-        );
-      }
-      continue;
-    }
+  for (const promptPath of promptFiles) {
+    const skillName = path.basename(promptPath, '.md');
 
     let promptContent: string;
     try {

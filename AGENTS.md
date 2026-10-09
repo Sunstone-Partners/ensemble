@@ -15,58 +15,6 @@ The ensemble repo has a GitHub wiki at `https://github.com/Sunstone-Partners/ens
 - Only touch generated artifacts directly when the user explicitly asks for that generated file itself to be edited or when no source file exists.
 
 
-## Foreman and Ensemble: the relationship
-
-**Read this before designing anything that crosses the two systems. It has been inverted by a
-previous session and the mistake is expensive.**
-
-**Foreman owns the session. Ensemble runs inside it.** Foreman kicks off work by launching a
-headless session that it controls; the session runs; it ends; Foreman collects the artifacts.
-Parent and child process.
-
-**Neither attaches to the other's sessions.** Foreman does not attach to an Ensemble session, and
-Ensemble does not attach to Foreman's.
-
-### What follows from this
-
-- **There is no event subscription in either direction.** Do not design pull loops, push
-  endpoints, webhooks, cursors, git-carried inboxes or HTTP polling between them. A previous
-  session designed several of these in detail. They solve a delivery problem that does not exist.
-- **Context arrives as launch input.** Anything Ensemble needs — the governing TRD, the branch,
-  acceptance criteria, the mode — is passed when Foreman starts the session. Foreman does not
-  need to send Ensemble facts it already owns.
-- **Results are collected afterwards**, from the outbox and artifacts of the session Foreman
-  started. That is not a "feedback loop" between peers; it is a parent reading its child's output.
-- **Ensemble has no inbound event path, by design.** Exactly two sources reach the dispatcher:
-  Pi host events plus their translations (`session.ts`), and command handler output re-published
-  into the same sink (`extension.ts`). No listener, no tailer, no IPC. See
-  `packages/agent-core/src/event-sinks.ts`: *"Foreman owns durable event ingestion."*
-- **Do not add durable scheduling, leases, retries or recovery to Ensemble** (REQ-RUN-002). Local
-  dispatch is session-scoped execution only. Those are Foreman's responsibilities.
-
-### Do not infer the architecture from the event catalog
-
-`packages/agent-core/src/behavior/event-catalog.ts` lists ~54 trigger types including `prd.*`,
-`trd.*`, `review.*`, `pull_request.*` and `release.*`. **Only about 10 are ever emitted, and the
-Foreman-domain families cannot arrive at all.** They are aspirational vocabulary, not evidence of
-an integration.
-
-That catalog is precisely what misled a previous session into designing an ingestion layer. If you
-find yourself reasoning "Ensemble must receive these from somewhere", stop: it does not. Tracked as
-`br-jgxo` (inert triggers now warn at load) and `br-d7lm` (catalog split).
-
-### The integration seam is session lifetime
-
-The boundary that actually matters is that a Foreman-launched session **ends on a clock Ensemble
-does not control**. A governed run still executing when the session ends dies with it, and because
-dispatch/invocation/outcome records are written only after a run resolves, Foreman sees a clean
-termination with an empty outbox — indistinguishable from "the behavior matched nothing and
-correctly did nothing". A silent false negative, in the direction that looks like success.
-
-Tracked as `br-mr22` (P0). Treat session-lifetime behaviour as integration-critical, not an
-internal detail.
-
-
 ## Beads Workflow Integration
 
 This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/` and tracked in git.

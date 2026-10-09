@@ -29,7 +29,7 @@ Examples:
 - Create `docs/standards/constitution.md` with project guardrails
 - Set up `docs/PRD/` and `docs/TRD/` directories
 - Configure `.gitignore` for state files
-- Provide foundation for `/create-prd`, `/create-trd`, and `/implement-trd` workflows
+- Provide foundation for `/create-prd`, `/create-trd`, and `/implement-trd-beads` workflows
 
 ---
 
@@ -257,7 +257,7 @@ Next steps:
   1. Review docs/standards/constitution.md and customize as needed
   2. Create a PRD with /create-prd for new features
   3. Generate TRD with /create-trd from approved PRD
-  4. Implement with /implement-trd
+  4. Implement with /implement-trd-beads
 
 Tech stack detected:
   [summary of detected stack]

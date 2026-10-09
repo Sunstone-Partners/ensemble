@@ -1,6 +1,6 @@
 {
   "name": "ensemble-plugins",
-  "version": "6.9.4",
+  "version": "6.9.7",
   "private": true,
   "description": "Ensemble Plugin Ecosystem - Modular Claude Code plugins for development workflows",
   "workspaces": [
@@ -27,8 +27,7 @@
     "version:codex": "node scripts/sync-codex-version.js",
     "release-notes": "node scripts/generate-release-notes.js",
     "release-notes:codex": "node scripts/generate-codex-release-notes.js",
-    "publish:changed": "node scripts/publish-plugin.js",
-    "hooks:install": "git config core.hooksPath .githooks && echo \"hooks installed (.githooks)\""
+    "publish:changed": "node scripts/publish-plugin.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -10,17 +10,16 @@ This workflow uses the **full Ensemble pipeline** rather than invoking Claude Co
 2. GitHub Actions spins up a runner and installs Claude Code + Ensemble
 3. **Phase 1: PRD** — `/ensemble:create-prd` generates a Product Requirements Document from the issue
 4. **Phase 2: TRD** — `/ensemble:create-trd` converts the PRD into a Technical Requirements Document
-5. **Phase 3: Implement** — `/ensemble:implement-trd` implements the TRD following project conventions
-6. Changes (including PRD + TRD docs) are committed to a `feat/issue-{number}` branch
-7. A PR is created linking back to the original issue
-8. A comment is posted on the issue with the PR link
+5. The PRD + TRD docs are committed to a `feat/issue-{number}` branch
+6. A PR is created linking back to the original issue, with a note to run `/ensemble:implement-trd-beads` against the TRD as a manual follow-up
+7. A comment is posted on the issue with the PR link
 
 ### Why the Pipeline?
 
 Running the full Ensemble flow ensures:
 - **Structured requirements** before any code is written
 - **Traceability** — every implementation has a PRD and TRD on record
-- **Better implementations** — Claude Code works from a detailed TRD, not a vague issue description
+- **Better requirements** — Claude Code works from the issue directly, producing a detailed TRD for the eventual implementer
 - **Review artifacts** — reviewers can check the PRD/TRD reasoning, not just the code
 
 ## Setup
@@ -67,7 +66,7 @@ Add the `auto-implement` label to any existing issue to trigger implementation.
 
 ### Timeout
 - **Job timeout**: 30 minutes total (configurable in workflow)
-- **Phase timeout**: 10 minutes per phase (PRD, TRD, Implementation)
+- **Phase timeout**: 10 minutes per phase (PRD, TRD)
 
 ### Concurrency & Rate Limiting
 - Only one auto-implement job runs per issue at a time. Re-labeling cancels any in-progress run.
@@ -95,9 +94,9 @@ The workflow creates a `.claude/settings.json` that restricts Claude Code to:
 
 ## Limitations
 
-- **Review required** — AI-generated code should always be reviewed before merging
+- **Review required** — AI-generated PRD/TRD should always be reviewed before merging or implementing
 - **Complex issues** — Multi-step or ambiguous issues may produce incomplete implementations
-- **Cost** — Each run consumes Anthropic API credits. Expect ~$1-3 for simple issues (single file changes), ~$3-8 for moderate issues (multi-file features), and potentially more for complex architectural changes. The 3-phase pipeline uses more tokens than a single-shot approach but produces better results.
+- **Cost** — Each run consumes Anthropic API credits. Expect ~$0.50-2 per issue for the PRD/TRD planning pipeline. The 2-phase pipeline uses more tokens than a single-shot approach but produces better-scoped requirements.
 - **No iteration** — The bot makes one pass; it doesn't respond to PR review comments (yet)
 
 ## Troubleshooting

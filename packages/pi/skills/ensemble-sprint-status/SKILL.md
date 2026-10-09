@@ -1,0 +1,30 @@
+---
+name: ensemble-sprint-status
+description: >-
+  Generate a comprehensive sprint status report including task completion
+  percentages, blockers, team velocity, and projected completion date based on
+  current TRD progress.
+disable-model-invocation: true
+---
+<!-- Command: ensemble-sprint-status | Version: 1.0.0 -->
+<!-- Description: Generate current sprint status report with task completion and blockers -->
+
+# ensemble-sprint-status
+
+> **Mission:** Generate a comprehensive sprint status report including task completion percentages, blockers, team velocity, and projected completion date based on current TRD progress.
+
+## Phase 1: Data Collection
+
+### Step 1: TRD Analysis
+
+Scan TRD files for task checkboxes
+
+### Step 2: Progress Calculation
+
+Calculate completion percentages
+
+## Phase 2: Report Generation
+
+### Step 1: Status Report
+
+Generate formatted status report

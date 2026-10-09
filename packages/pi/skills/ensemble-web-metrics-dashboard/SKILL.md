@@ -1,0 +1,30 @@
+---
+name: ensemble-web-metrics-dashboard
+description: >-
+  Generate a comprehensive web performance metrics dashboard including Core Web
+  Vitals, Lighthouse scores, bundle sizes, and performance recommendations for
+  frontend applications.
+disable-model-invocation: true
+---
+<!-- Command: ensemble-web-metrics-dashboard | Version: 1.0.0 -->
+<!-- Description: Generate web performance metrics dashboard with Core Web Vitals -->
+
+# ensemble-web-metrics-dashboard
+
+> **Mission:** Generate a comprehensive web performance metrics dashboard including Core Web Vitals, Lighthouse scores, bundle sizes, and performance recommendations for frontend applications.
+
+## Phase 1: Metrics Collection
+
+### Step 1: Performance Testing
+
+Run Lighthouse audits and collect metrics
+
+### Step 2: Bundle Analysis
+
+Analyze JavaScript bundle sizes
+
+## Phase 2: Dashboard Generation
+
+### Step 1: Metrics Dashboard
+
+Generate visual dashboard with metrics

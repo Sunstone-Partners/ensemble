@@ -79,6 +79,24 @@ describe('beads-build-wave command contract (v1.2.0 wave-runner primitive)', () 
     expect(text).toMatch(/pm_clarification_guard/);
   });
 
+  test('Preflight refuses to dispatch on the repository default branch (hard precondition, no self-serve branch creation)', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toMatch(/title: Working Directory and Branch Verification/);
+    expect(text).toMatch(/CURRENT_BRANCH/);
+    expect(text).toMatch(/DEFAULT_BRANCH/);
+    expect(text).toMatch(/HARD PRECONDITION/);
+    expect(text).toMatch(/refuses to dispatch on the repository default branch/);
+    expect(text).toMatch(/detached HEAD/);
+    expect(text).toMatch(/does NOT create or switch branches itself/);
+  });
+
+  test('lifecycle_contract has a Commit Gate that blocks br close until git status is clean (self-reported success is not sufficient evidence)', () => {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    expect(text).toMatch(/COMMIT GATE/);
+    expect(text).toMatch(/NEVER call br close while git status --porcelain is non-empty/);
+    expect(text).toMatch(/self-reported success narrative is NOT sufficient evidence of a commit/);
+  });
+
   test('cross-platform: works with Task() on claude/pi/codex/opencode (mentioned in mission)', () => {
     const text = fs.readFileSync(yamlPath, 'utf8');
     expect(text).toMatch(/claude\/pi\/codex\/opencode/);

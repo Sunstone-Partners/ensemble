@@ -12,7 +12,7 @@ All ensemble commands use the `/ensemble:` namespace:
 /ensemble:create-prd           # Create Product Requirements Document
 /ensemble:create-trd           # Create Technical Requirements Document
 /ensemble:create-trd-foreman   # Create Foreman-native structured Technical Requirements Document
-/ensemble:implement-trd        # Implement TRD with git-town workflow
+/ensemble:implement-trd-beads  # Implement TRD via Beads-backed graph execution (sole supported method)
 /ensemble:fix-issue            # Lightweight bug fix workflow (analysis → PR)
 /ensemble:release              # Orchestrate release workflow
 /ensemble:playwright-test      # Run E2E tests with Playwright
@@ -45,14 +45,6 @@ This generates OpenCode-compatible skills, commands, and config in `dist/opencod
 translation layer implementation.
 
 ## Architecture Overview
-
-> **Foreman owns the session; Ensemble runs inside it as a child process.** Neither attaches to
-> the other's sessions, there is no event subscription in either direction, and context arrives as
-> launch input rather than as events. Do not design pull/push/webhook ingestion between them, and
-> do not infer an integration from `event-catalog.ts` — most of its ~54 trigger types are never
-> emitted and the Foreman-domain ones cannot arrive at all. Full detail, including why this keeps
-> getting inverted, is in [AGENTS.md](./AGENTS.md#foreman-and-ensemble-the-relationship).
-
 
 ```
 Tier 1: Core Foundation

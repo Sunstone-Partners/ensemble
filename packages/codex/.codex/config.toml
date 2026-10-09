@@ -64,10 +64,6 @@ config_file = "agents/documentation-specialist.toml"
 description = "Framework-agnostic front-end implementation (JS/TS, React, Vue, Angular, Svelte) with accessibility and performance optimization"
 config_file = "agents/frontend-developer.toml"
 
-[agents."implement-trd-task"]
-description = "Depth-1 task-runner subagent for /ensemble:implement-trd. Runs exactly ONE TRD task by executing the ensemble:implement-trd-task command, then emits the single-line JSON summary its caller's loop reads."
-config_file = "agents/implement-trd-task.toml"
-
 [agents."pm"]
 description = "Answer requirements questions raised during implementation; clarify ambiguous acceptance criteria; resolve scope disputes between agents."
 config_file = "agents/pm.toml"

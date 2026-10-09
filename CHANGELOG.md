@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.9.7] - 2026-10-07
+
+### Fixed
+
+- **scripts/validate-release-bump.js:** the v6.9.6 release's exemption for a
+  package that legitimately retires its only `marketplace.json` entry was a
+  silent `continue`, which could also mask a future *accidental* deletion of
+  an actively-shipping plugin's entry. Kept the exemption but made it a
+  visible `console.warn` naming the package and its last known version (#137).
+- **README.md, packages/development/README.md:** both had drifted out of
+  sync with the command-surface-consolidation work in 6.9.6 — a stale
+  `/ensemble:feature` description, missing `/ensemble:prd`/`/ensemble:trd`/
+  `/ensemble:issue`/`/ensemble:list-issue` rows, a fictional `/dashboard`
+  command, and missing `ensemble:` prefixes. Also found and fixed in the
+  README's Architecture section: three shipped skill packages
+  (`ensemble-ai`, `ensemble-dotnet`, `ensemble-reqnroll`) missing entirely,
+  and two packages listed that no longer exist
+  (`ensemble-agent-progress-pane`, `ensemble-task-progress-pane`, removed in
+  `14b37d9`). Bumps `ensemble-development` 6.0.8 → 6.0.9 (#138, #139).
+- **GitHub wiki** (`07-Commands.md`, `14-Example-Session.md`,
+  `02-Architecture.md`, `Home.md`): same command-surface drift as above, plus
+  a "Behavior Runtime" section and a "behavior-runtime layer" mention that
+  still described `agent-core`/`pi-extension` as hosting the autofix-dispatch
+  subsystem removed in 6.9.6 — rewritten to describe current reality (native
+  Pi/OMP command completion only). Published directly to the wiki, outside
+  this repo's PR flow.
+
+## [6.9.6] - 2026-10-07
+
+### Removed
+
+- **agent-core, pi-extension:** entire behavior-runtime/autofix-loop subsystem
+  removed from `dev` (`.ensemble/behaviors/`, `packages/agent-core/src/behavior/`,
+  the autofix/constitution-proposal/working-tree-snapshot wiring in
+  `packages/pi-extension`). A globally-loaded OMP/Pi extension was found to
+  wire this into every session on the operator's machine via a buggy
+  working-tree rollback mechanism that could silently drop uncommitted work.
+  Retained, unmodified, on the `pi-behaviors` branch for future development
+  once its known bugs are fixed upstream (#133). Bumps `ensemble-agent-core`
+  0.1.1 → 0.1.2 and `ensemble-pi-extension` 0.1.1 → 0.1.2.
+- **pi-extension:** restored a trimmed `scripts/smoke-activate.mjs` (the one
+  real-ESM-loader proof #133 had removed along with the echo tool it used to
+  assert) so AC-004-1 still has coverage jest structurally cannot provide
+  (#134).
+
+### Fixed
+
+- **development:** `beads-build-wave` preflight now hard-gates against
+  dispatching on the repository default branch (detached HEAD and
+  default-branch checks), and its lifecycle contract gained an independent
+  Commit Gate between subagent success and `br close` -- a subagent's
+  self-reported success is no longer sufficient evidence of a commit (#132).
+  Bumps `ensemble-development` 6.0.7 → 6.0.8, `ensemble-codex` 5.3.3 → 5.3.4,
+  `ensemble-product` 5.6.2 → 5.6.3.
+- **pi:** regenerated derived prompts/skills to match source YAML changes
+  across the above; `ensemble-pi` 1.6.11 → 1.6.12 (auto-bumped by
+  `postgenerate:pi`).
+
+`ensemble-full` 6.9.5 → 6.9.6.
+
+## [6.9.5] - 2026-10-01
+
+### Added
+
+- **development, product:** `new-feature` command adopts a PRD, orchestrating
+  `create → refine → create → refine → implement` end to end, replacing
+  `implement-trd` (#113, #114).
+
+### Fixed
+
+- **agent-core:** `isRestorationToHistory()` in the write-boundary guard now recognizes
+  a path-scoped restore (`git checkout <good-sha> -- <path>`) as a revert instead of a
+  fresh violation, so an agent can correct a bad protected-path commit without the guard
+  reverting its own correction (br-suoh, #109). Bumps `ensemble-agent-core` 0.1.0 → 0.1.1.
+- **core, git, router, codex:** OMP command discovery fix and parameters-rendering fix
+  for the new-feature workflow (#114). Bumps `ensemble-core` 5.6.1 → 5.6.2,
+  `ensemble-git` 5.3.0 → 5.3.1, `ensemble-router` 5.2.1 → 5.2.2,
+  `ensemble-codex` 5.3.2 → 5.3.3, `ensemble-product` 5.6.1 → 5.6.2,
+  `ensemble-development` 6.0.6 → 6.0.7.
+- **opencode:** version sync restored between `package.json`/`plugin.json` and the
+  plugin's own `ENSEMBLE_META` constant, which had drifted from the package's
+  hardcoded-scaffolding version. Bumps `ensemble-opencode` 5.3.0 → 5.3.1.
+- **pi-extension:** `ensemble-pi-extension` 0.1.0 → 0.1.1, carrying the accumulated
+  isolation, consent, and dispatch hardening already merged to `dev` since v6.9.4.
+
+### Removed
+
+- **development, product:** `implement-trd` command, superseded by `new-feature` (#114).
+
+`ensemble-full` 6.9.4 → 6.9.5.
+
 ## [6.9.4] - 2026-09-26
 
 ### Fixed

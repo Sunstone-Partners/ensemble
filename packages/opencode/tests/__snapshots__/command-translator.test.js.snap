@@ -91,6 +91,12 @@ Orchestrate a complete bug fix workflow from analysis to PR creation.
 - GitHub CLI (gh) must be installed and authenticated
 - Tests must pass unless --skip-tests flag is used
 
+## Arguments
+
+- **\`description\`** (string, optional): Issue description (free text or omit if using --issue)
+- **\`issue\`** (number, optional): GitHub issue number (e.g., --issue 34)
+- **\`branch\`** (string, optional): Custom branch name (default auto-generated)
+
 ## Phase 1: Analysis & Planning
 
 ### Step 1.1: Codebase Analysis

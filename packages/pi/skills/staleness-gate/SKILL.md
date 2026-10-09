@@ -15,7 +15,7 @@ Detect whether a TRD is stale before implementation begins. If stale, invoke
 |-------------|---------|-------------|
 | `TRD_PATH`  | string  | Absolute or repo-relative path to the TRD `.md` file |
 | `IS_RESUME` | boolean | `true` when implementation is resuming an existing scaffold; `false` on first invocation |
-| `FLAVOR`    | string  | Calling command name (for diagnostic messages): `implement-trd-beads`, `implement-trd`, or `beads-build` |
+| `FLAVOR`    | string  | Calling command name (for diagnostic messages): `implement-trd-beads` or `beads-build` |
 
 ---
 
@@ -24,7 +24,6 @@ Detect whether a TRD is stale before implementation begins. If stale, invoke
 | Flavor | `IS_RESUME = true` when |
 |--------|------------------------|
 | `implement-trd-beads` | `ROOT_EPIC_ID` found in `br list --json` for this TRD slug (Preflight step 6 — Resume Detection) |
-| `implement-trd` | `git branch --list feature/<TRD_SLUG>-sprint-1` returns a branch name (checked before branch creation) |
 | `beads-build --trd` | `ROOT_EPIC_ID` found in Epic Discovery step (Preflight step 4) |
 
 ---

@@ -16,6 +16,15 @@
 > - When --foreman is set, the Synthesis and Interview steps are force-skipped and every finding is auto-applied using a best-effort default (or an inline [NEEDS CLARIFICATION: ...] marker when no confident default exists), with every choice logged instead of requested from the user
 > - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
 
+## Arguments
+
+- **`collab`** (boolean, optional, default: `false`): Opt into browser-based collaborative refinement (HTML review with sidebar questions and anchor-linked comments). When true, replaces the terminal ask interview with a local web session; the artifact captured during the session feeds the standard Enhancement phase below. When false (the default), the original terminal-based refinement workflow runs unchanged.
+- **`tunnel`** (string, optional, default: `""`): When set to `quick`, exposes the local refinement-review server over a Cloudflare Quick Tunnel (`*.trycloudflare.com`) so a reviewer on a different network can reach the share URL without any account, API token, or DNS change. Requires the `cloudflared` binary on `PATH` (or set `CLOUDFLARED_PATH` to its absolute path). The bootstrap launches `cloudflared` after the local server binds, captures the ephemeral `*.trycloudflare.com` URL, re-mints the share nonce against the tunnel origin, and tears down the tunnel on exit. When empty (the default), the share URL points at the local server and is reachable only from the same machine.
+- **`reviewers`** (integer, optional, default: `1`): Number of independent reviewer share URLs to mint for this session. Each URL carries its own single-use 10-minute exchange nonce and authenticates to the same underlying session/document, so multiple stakeholders can open the session simultaneously without colliding. `1` (the default) reproduces the original behavior: a single share URL on the public origin (or local origin when `--tunnel` is not set). Values greater than `1` add `(N - 1)` URLs minted via `server.createShareUrl()`, each bound to the same `publicUrl`. The bootstrap prints one URL per line, numbered `#1` (the original) through `#N` (the additional fan-out URLs). Each reviewer redeems exactly once; the server burns the nonce atomically on first use, so a leaked `#k` URL cannot be replayed by a second reviewer. Typical use: a Tech Lead invites 3-5 reviewers (architect, security, SRE, on-call) to the same refinement session in parallel.
+- **`long-lived`** (boolean, optional, default: `false`): Long-lived review session: a single invite URL with a 6-hour TTL that any number of reviewers can exchange (no nonce burn, no fan-out). QuickTunnel is implicit — `cloudflared` is launched automatically so the invite URL works across networks without a Cloudflare account. Reviewers identify themselves with a display name (no uniqueness check, no provider login) before the document UI is served. Presence (who is currently viewing) is surfaced to other reviewers in real time. Completion terminates the listener so the port does not stay bound. Mutually exclusive with `--reviewers N` (a long-lived session already accepts arbitrary reviewers via one reusable invite URL). `--long-lived` implies `--tunnel=quick`; do not pass a separate `--tunnel` value with this flag.
+- **`ttl`** (string, optional, default: `"6h"`): Long-lived session lifetime as a duration string (e.g. `6h`, `12h`, `1d`). Parsed by the bootstrap to milliseconds; the minimum accepted value is `6h` and the default is `6h`. Only used when `--long-lived` is set; ignored otherwise.
+- **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the terminal interview/Synthesis selection step and automatically apply all findings/[NEEDS CLARIFICATION: ...] resolutions using best-effort defaults instead of waiting for the user to select which findings to apply. Mutually exclusive with --collab (which requires a human reviewer) -- passing both HALTs with an error. For automated Foreman orchestration. When --foreman is present and the FOREMAN_ARTIFACT_PATH environment variable is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes. Foreman computes that path and reads it back to confirm the phase produced an artifact; writing only to a repo-local convention leaves Foreman with no artifact. Never invent, alter, or relocate the path. Never treat an unset FOREMAN_ARTIFACT_PATH as an error — outside Foreman dispatch it is simply absent, and behavior must be unchanged.
+
 ## Phase 1: Collaborative Review
 
 ### Step 1: Session Bootstrap
@@ -252,7 +261,7 @@ any edits yet.
 
 IF `--foreman` is present (guaranteed not combined with --collab or
 --long-lived per the HALT check above): still generate the full
-numbered findings list below, but SKIP the ask_user call
+numbered findings list below, but SKIP the ask call
 entirely — do not pause for a human reply. Auto-select EVERY
 finding as SELECTED_ITEMS (equivalent to a user reply of "all")
 and log: "Foreman mode: auto-applying <N> findings:" followed by
@@ -283,7 +292,7 @@ Scan the TRD for the following categories of issues:
 - "(PR_FORMAT=true only) Tasks in PR N that [depends: TRD-XXX] where TRD-XXX belongs to PR N+1 or later — forward dependency violates the shippability guarantee of PR N"
 - "(PR_FORMAT=false only) TRD uses legacy ### Phase N: or ### Sprint N: headings — offer optional conversion to ### PR N: format with Shippable State annotations to enable implement-trd-beads PR-stack mode (present as a low-priority suggestion, not an error)"
 
-Use the ask_user tool to present a consolidated findings list and capture
+Use the ask tool to present a consolidated findings list and capture
 the user's selection. Format the question body exactly as follows:
 
 ```
@@ -310,7 +319,7 @@ step entirely — the Collaborative Review phase already collected
 interactive answers. Otherwise, run the original interview below.
 
 IF `--foreman` is present: SKIP the entire interactive
-ask_user loop below — there is no human present to answer
+ask loop below — there is no human present to answer
 in Foreman-native automated execution. Instead, for each
 SELECTED_ITEM, apply a best-effort default resolution inline
 using the same guidance listed below as a guide to what a good
@@ -330,7 +339,7 @@ in place of interview answers.
 Conduct a focused follow-up interview ONLY about the SELECTED_ITEMS from the
 Synthesis step. Skip any topic the user did not select.
 
-Use the ask_user tool to present questions interactively:
+Use the ask tool to present questions interactively:
 - Ask questions ONE AT A TIME (not all at once)
 - Wait for the user's answer before asking the next question
 - Do NOT just write questions in your response text
@@ -382,7 +391,7 @@ If --list is passed, show available TRDs and exit
 
 **Actions:**
 1. If $ARGUMENTS contains '--list': Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR 'which node' fails: print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present.' and HALT.
-2. If $ARGUMENTS contains '--list': run node "$TRD_CLI" list --type trd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of TRDs (columns: ID/Name, Status, Score, Last Modified). If $ARGUMENTS also contains '--foreman': skip the ask_user prompt below entirely -- auto-select the item with the highest design_readiness_score (fallback: most recently modified when scores are absent or tied), log 'Foreman mode: auto-selected <TRD_SLUG> (score: <score>)', and proceed directly to path derivation. Otherwise, call ask_user with id='trd_select', question='Select a TRD to refine:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected TRD_SLUG. Then derive TRD_FILE_PATH as docs/TRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <TRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS positional and continue.
+2. If $ARGUMENTS contains '--list': run node "$TRD_CLI" list --type trd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of TRDs (columns: ID/Name, Status, Score, Last Modified). If $ARGUMENTS also contains '--foreman': skip the ask prompt below entirely -- auto-select the item with the highest design_readiness_score (fallback: most recently modified when scores are absent or tied), log 'Foreman mode: auto-selected <TRD_SLUG> (score: <score>)', and proceed directly to path derivation. Otherwise, call ask with id='trd_select', question='Select a TRD to refine:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected TRD_SLUG. Then derive TRD_FILE_PATH as docs/TRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <TRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS positional and continue.
 
 ### Step 2: Content Refinement
 

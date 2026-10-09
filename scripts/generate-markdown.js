@@ -11,9 +11,9 @@ const { Command } = require('commander');
 const path = require('path');
 const chokidar = require('chokidar');
 
-const { discoverYamlFiles, getOutputPath } = require('./lib/file-discovery');
+const { discoverYamlFiles, getOutputPath, buildCommandPathMap } = require('./lib/file-discovery');
 const { parseYamlFile } = require('./lib/yaml-parser');
-const { validateCommandSchema, validateAgentSchema, buildAgentNameSet } = require('./lib/schema-validator');
+const { validateCommandSchema, validateAgentSchema, buildAgentNameSet, buildCommandNameSet } = require('./lib/schema-validator');
 const { generateMarkdown } = require('./lib/markdown-generator');
 const { writeFileAtomic } = require('./lib/file-utils');
 const { cleanupOrphans } = require('./lib/orphan-cleanup');
@@ -103,17 +103,20 @@ async function runGeneration(options, errorCollector) {
       return 0;
     }
 
-    // Build agent name set for delegation validation
+    // Build agent and command name sets for reference validation
     const agentNames = await buildAgentNameSet(discovered.agents);
+    const commandNames = await buildCommandNameSet(discovered.commands);
+    const commandPathsByRef = await buildCommandPathMap(discovered.commands);
     if (options.verbose) {
       console.log(`  Built agent name set with ${agentNames.size} agents`);
+      console.log(`  Built command name set with ${commandNames.size} commands`);
     }
 
     // Process commands
     if (types.includes('commands') && discovered.commands.length > 0) {
       console.log('\nProcessing commands...');
       for (const yamlPath of discovered.commands) {
-        const result = await processYamlFile(yamlPath, 'command', agentNames, errorCollector, options);
+        const result = await processYamlFile(yamlPath, 'command', agentNames, errorCollector, options, commandNames, commandPathsByRef);
         if (result.success) {
           generatedFiles.add(result.outputPath);
           processedCount++;
@@ -189,14 +192,18 @@ async function processSingleFile(filePath, errorCollector, options) {
     // Parse YAML
     const { type, data } = await parseYamlFile(absolutePath);
 
-    // Build agent names if processing a command
+    // Build agent/command names if processing a command
     let agentNames = new Set();
+    let commandNames = new Set();
+    let commandPathsByRef = new Map();
     if (type === 'command') {
-      const discovered = await discoverYamlFiles(PACKAGES_DIR, { types: ['agents'] });
+      const discovered = await discoverYamlFiles(PACKAGES_DIR, { types: ['agents', 'commands'] });
       agentNames = await buildAgentNameSet(discovered.agents);
+      commandNames = await buildCommandNameSet(discovered.commands);
+      commandPathsByRef = await buildCommandPathMap(discovered.commands);
     }
 
-    return processYamlFile(absolutePath, type, agentNames, errorCollector, options);
+    return processYamlFile(absolutePath, type, agentNames, errorCollector, options, commandNames, commandPathsByRef);
   } catch (error) {
     errorCollector.addError(error);
     return { success: false, skipped: false };
@@ -206,7 +213,7 @@ async function processSingleFile(filePath, errorCollector, options) {
 /**
  * Process a single YAML file through the pipeline
  */
-async function processYamlFile(yamlPath, type, agentNames, errorCollector, options) {
+async function processYamlFile(yamlPath, type, agentNames, errorCollector, options, commandNames = new Set(), commandPathsByRef = new Map()) {
   const relativePath = path.relative(PACKAGES_DIR, yamlPath);
 
   if (options.verbose) {
@@ -219,7 +226,7 @@ async function processYamlFile(yamlPath, type, agentNames, errorCollector, optio
 
     // 2. Validate schema
     if (type === 'command') {
-      validateCommandSchema(data, yamlPath, agentNames);
+      validateCommandSchema(data, yamlPath, agentNames, commandNames);
     } else {
       validateAgentSchema(data, yamlPath);
     }
@@ -233,7 +240,7 @@ async function processYamlFile(yamlPath, type, agentNames, errorCollector, optio
     }
 
     // 3. Generate Markdown
-    const markdown = generateMarkdown(data, type, yamlPath);
+    const markdown = generateMarkdown(data, type, yamlPath, commandPathsByRef);
 
     // 4. Write file
     const outputPath = getOutputPath(yamlPath, data.metadata);
@@ -268,9 +275,11 @@ async function runWatchMode(options) {
   console.log('\n\x1b[36mWatching for YAML changes...\x1b[0m');
   console.log('Press Ctrl+C to stop\n');
 
-  // Discover initial files to build agent names
+  // Discover initial files to build agent/command name sets
   const discovered = await discoverYamlFiles(PACKAGES_DIR);
   let agentNames = await buildAgentNameSet(discovered.agents);
+  let commandNames = await buildCommandNameSet(discovered.commands);
+  let commandPathsByRef = await buildCommandPathMap(discovered.commands);
 
   // Watch patterns
   const watchPatterns = [
@@ -298,13 +307,20 @@ async function runWatchMode(options) {
         agentNames = await buildAgentNameSet(discovered.agents);
       }
 
+      // Rebuild command name/path sets if a command file changed (a
+      // dispatcher's sibling refs may have been added/renamed)
+      if (filePath.includes('/commands/')) {
+        commandNames = await buildCommandNameSet(discovered.commands);
+        commandPathsByRef = await buildCommandPathMap(discovered.commands);
+      }
+
       // Determine type
       const type = filePath.includes('/agents/') ? 'agent' : 'command';
 
       const result = await processYamlFile(filePath, type, agentNames, errorCollector, {
         ...options,
         verbose: true
-      });
+      }, commandNames, commandPathsByRef);
 
       if (errorCollector.hasErrors()) {
         errorCollector.report();
