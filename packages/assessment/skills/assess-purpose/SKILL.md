@@ -26,11 +26,11 @@ or equivalent), text-search, and language-server/code-intelligence capabilities 
 
 ## Phase 1: Tech Stack Identification
 
-Look for dependency files to identify stack:
-```
-find paths: ["."] gitignore: false
-pattern: "package.json|Cargo.toml|go.mod|requirements.txt|pom.xml|build.gradle|Gemfile|*.csproj|*.sln|flake.nix|default.nix|setup.py|Cargo.lock|package-lock.json|yarn.lock|pnpm-lock.yaml"
-```
+Discover dependency files to identify the stack (ignoring gitignored paths),
+matching filenames like `package.json`, `Cargo.toml`, `go.mod`,
+`requirements.txt`, `pom.xml`, `build.gradle`, `Gemfile`, `*.csproj`, `*.sln`,
+`flake.nix`, `default.nix`, `setup.py`, `Cargo.lock`, `package-lock.json`,
+`yarn.lock`, or `pnpm-lock.yaml`.
 
 Read each found file to extract:
 - Language ecosystem
@@ -39,17 +39,10 @@ Read each found file to extract:
 
 ## Phase 2: Entry Point Discovery
 
-Find main entry points:
-```
-find paths: ["."] gitignore: false
-pattern: "main.go|main.rs|main.ts|main.py|index.js|index.ts|main.kt|main.swift|program.cs|App.tsx|app.py|__main__.py"
-```
-
-Also find:
-```
-find paths: ["."] gitignore: false
-pattern: "**/main.*|**/app.*|**/*.[ch]"
-```
+Discover main entry points (ignoring gitignored paths), matching filenames like
+`main.go`, `main.rs`, `main.ts`, `main.py`, `index.js`, `index.ts`, `main.kt`,
+`main.swift`, `program.cs`, `App.tsx`, `app.py`, or `__main__.py`. Also check
+broader patterns such as `**/main.*`, `**/app.*`, or `**/*.[ch]`.
 
 Read key entry points to understand initialization and domain registration.
 
@@ -58,41 +51,26 @@ Read key entry points to understand initialization and domain registration.
 Search for domain-specific patterns:
 
 ### For API/Web services:
-```
-search pattern: "api|route|endpoint|handler|controller|router|request|response|GET|POST|PUT|DELETE"
-```
+Search for `api|route|endpoint|handler|controller|router|request|response|GET|POST|PUT|DELETE`.
 
 ### For Data/Analytics:
-```
-search pattern: "query|transform|aggregate|metric|dashboard|chart|report|analytics|event|stream"
-```
+Search for `query|transform|aggregate|metric|dashboard|chart|report|analytics|event|stream`.
 
 ### For Infrastructure/DevOps:
-```
-search pattern: "deploy|kubernetes|k8s|docker|container|orchestrate|pod|service|config"
-```
+Search for `deploy|kubernetes|k8s|docker|container|orchestrate|pod|service|config`.
 
 ### For Business Logic:
-```
-search pattern: "customer|user|order|invoice|payment|transaction|account|balance"
-```
+Search for `customer|user|order|invoice|payment|transaction|account|balance`.
 
 ### For Healthcare:
-```
-search pattern: "patient|diagnosis|prescription|medical|health|clinical|ehr|emr"
-```
+Search for `patient|diagnosis|prescription|medical|health|clinical|ehr|emr`.
 
 ### For Finance:
-```
-search pattern: "portfolio|trading|asset|equity|bond|derivative|settlement|ledger"
-```
+Search for `portfolio|trading|asset|equity|bond|derivative|settlement|ledger`.
 
 ## Phase 4: Directory Structure Analysis
 
-Read the top-level directory structure to understand organization:
-```
-read path: "."
-```
+Read the top-level directory structure to understand organization.
 
 Identify patterns:
 - Monorepo vs single package
@@ -101,11 +79,8 @@ Identify patterns:
 
 ## Phase 5: Documentation Discovery
 
-Check for any existing docs:
-```
-find paths: ["."] gitignore: false
-pattern: "README*|*.md|CHANGELOG|CONTRIBUTING|LICENSE|TODO|NOTES"
-```
+Discover existing docs (ignoring gitignored paths), matching filenames like
+`README*`, `*.md`, `CHANGELOG`, `CONTRIBUTING`, `LICENSE`, `TODO`, or `NOTES`.
 
 If found, read them — but note they may be stale or missing.
 

@@ -39,17 +39,11 @@ runtimes restrict these.
 
 ## Phase 1: Code Style Analysis
 
-Search for AI indicators:
-```
-search pattern: "// TODO:|# TODO:|// Generated"
-search pattern: "// AI|// Artificial"
-```
+Search for AI indicators using your runtime's text-search tool, matching
+`// TODO:|# TODO:|// Generated` and `// AI|// Artificial`.
 
-Check for formatting consistency:
-```
-search pattern: "const\\s+\\w+\\s*="
-search pattern: "function\\s+\\w+\\s*\\("
-```
+Check for formatting consistency by searching for `const\s+\w+\s*=` and
+`function\s+\w+\s*\(`.
 
 ## Phase 2: Commit Pattern Analysis
 
