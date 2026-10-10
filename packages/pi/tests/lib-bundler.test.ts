@@ -208,8 +208,9 @@ describe('bundleLibs against real packages directory', () => {
     const results = await bundleLibs(repoRoot, outputRoot, { dryRun: true });
     // 3 entry points + trd-parser, prd-parser, phase-tracker, scaffold-planner,
     // workstream-planner, cross-trd-deps, workstream-status, workstream-trd,
-    // pr-strategy, quickstart-generator, trd-graph (closure) + validate-git-town.sh
-    expect(results.length).toBe(15);
+    // pr-strategy, quickstart-generator, beads-label, beads-stage, trd-graph (closure) +
+    // validate-git-town.sh
+    expect(results.length).toBe(17);
   });
 
   it('all results have type === "lib"', async () => {
@@ -233,6 +234,8 @@ describe('bundleLibs against real packages directory', () => {
       'workstream-trd.js',
       'pr-strategy.js',
       'quickstart-generator.js',
+      'beads-label.js',
+      'beads-stage.js',
     ]) {
       expect(vendoredNames).toContain(expected);
     }
