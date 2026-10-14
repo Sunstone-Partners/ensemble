@@ -18,7 +18,7 @@
 
 ## Arguments
 
-- **`collab`** (boolean, optional, default: `false`): Opt into browser-based collaborative refinement (HTML review with sidebar questions and anchor-linked comments). When true, replaces the terminal ask_user interview with a local web session; the artifact captured during the session feeds the standard Enhancement phase below. When false (the default), the original terminal-based refinement workflow runs unchanged.
+- **`collab`** (boolean, optional, default: `false`): Opt into browser-based collaborative refinement (HTML review with sidebar questions and anchor-linked comments). When true, replaces the terminal ask interview with a local web session; the artifact captured during the session feeds the standard Enhancement phase below. When false (the default), the original terminal-based refinement workflow runs unchanged.
 - **`tunnel`** (string, optional, default: `""`): When set to `quick`, exposes the local refinement-review server over a Cloudflare Quick Tunnel (`*.trycloudflare.com`) so a reviewer on a different network can reach the share URL without any account, API token, or DNS change. Requires the `cloudflared` binary on `PATH` (or set `CLOUDFLARED_PATH` to its absolute path). The bootstrap launches `cloudflared` after the local server binds, captures the ephemeral `*.trycloudflare.com` URL, re-mints the share nonce against the tunnel origin, and tears down the tunnel on exit. When empty (the default), the share URL points at the local server and is reachable only from the same machine.
 - **`reviewers`** (integer, optional, default: `1`): Number of independent reviewer share URLs to mint for this session. Each URL carries its own single-use 10-minute exchange nonce and authenticates to the same underlying session/document, so multiple stakeholders can open the session simultaneously without colliding. `1` (the default) reproduces the original behavior: a single share URL on the public origin (or local origin when `--tunnel` is not set). Values greater than `1` add `(N - 1)` URLs minted via `server.createShareUrl()`, each bound to the same `publicUrl`. The bootstrap prints one URL per line, numbered `#1` (the original) through `#N` (the additional fan-out URLs). Each reviewer redeems exactly once; the server burns the nonce atomically on first use, so a leaked `#k` URL cannot be replayed by a second reviewer. Typical use: a Tech Lead invites 3-5 reviewers (architect, security, SRE, on-call) to the same refinement session in parallel.
 - **`long-lived`** (boolean, optional, default: `false`): Long-lived review session: a single invite URL with a 6-hour TTL that any number of reviewers can exchange (no nonce burn, no fan-out). QuickTunnel is implicit — `cloudflared` is launched automatically so the invite URL works across networks without a Cloudflare account. Reviewers identify themselves with a display name (no uniqueness check, no provider login) before the document UI is served. Presence (who is currently viewing) is surfaced to other reviewers in real time. Completion terminates the listener so the port does not stay bound. Mutually exclusive with `--reviewers N` (a long-lived session already accepts arbitrary reviewers via one reusable invite URL). `--long-lived` implies `--tunnel=quick`; do not pass a separate `--tunnel` value with this flag.
@@ -261,7 +261,7 @@ any edits yet.
 
 IF `--foreman` is present (guaranteed not combined with --collab or
 --long-lived per the HALT check above): still generate the full
-numbered findings list below, but SKIP the ask_user call
+numbered findings list below, but SKIP the ask call
 entirely — do not pause for a human reply. Auto-select EVERY
 finding as SELECTED_ITEMS (equivalent to a user reply of "all")
 and log: "Foreman mode: auto-applying <N> findings:" followed by
@@ -292,7 +292,7 @@ Scan the TRD for the following categories of issues:
 - "(PR_FORMAT=true only) Tasks in PR N that [depends: TRD-XXX] where TRD-XXX belongs to PR N+1 or later — forward dependency violates the shippability guarantee of PR N"
 - "(PR_FORMAT=false only) TRD uses legacy ### Phase N: or ### Sprint N: headings — offer optional conversion to ### PR N: format with Shippable State annotations to enable implement-trd-beads PR-stack mode (present as a low-priority suggestion, not an error)"
 
-Use the ask_user tool to present a consolidated findings list and capture
+Use the ask tool to present a consolidated findings list and capture
 the user's selection. Format the question body exactly as follows:
 
 ```
@@ -319,7 +319,7 @@ step entirely — the Collaborative Review phase already collected
 interactive answers. Otherwise, run the original interview below.
 
 IF `--foreman` is present: SKIP the entire interactive
-ask_user loop below — there is no human present to answer
+ask loop below — there is no human present to answer
 in Foreman-native automated execution. Instead, for each
 SELECTED_ITEM, apply a best-effort default resolution inline
 using the same guidance listed below as a guide to what a good
@@ -339,7 +339,7 @@ in place of interview answers.
 Conduct a focused follow-up interview ONLY about the SELECTED_ITEMS from the
 Synthesis step. Skip any topic the user did not select.
 
-Use the ask_user tool to present questions interactively:
+Use the ask tool to present questions interactively:
 - Ask questions ONE AT A TIME (not all at once)
 - Wait for the user's answer before asking the next question
 - Do NOT just write questions in your response text
@@ -391,7 +391,7 @@ If --list is passed, show available TRDs and exit
 
 **Actions:**
 1. If $ARGUMENTS contains '--list': Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR 'which node' fails: print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present.' and HALT.
-2. If $ARGUMENTS contains '--list': run node "$TRD_CLI" list --type trd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of TRDs (columns: ID/Name, Status, Score, Last Modified). If $ARGUMENTS also contains '--foreman': skip the ask_user prompt below entirely -- auto-select the item with the highest design_readiness_score (fallback: most recently modified when scores are absent or tied), log 'Foreman mode: auto-selected <TRD_SLUG> (score: <score>)', and proceed directly to path derivation. Otherwise, call ask_user with id='trd_select', question='Select a TRD to refine:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected TRD_SLUG. Then derive TRD_FILE_PATH as docs/TRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <TRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS positional and continue.
+2. If $ARGUMENTS contains '--list': run node "$TRD_CLI" list --type trd and parse {ok,type,items}. If ok is false or JSON is malformed, print the error and HALT. Print a formatted table of TRDs (columns: ID/Name, Status, Score, Last Modified). If $ARGUMENTS also contains '--foreman': skip the ask prompt below entirely -- auto-select the item with the highest design_readiness_score (fallback: most recently modified when scores are absent or tied), log 'Foreman mode: auto-selected <TRD_SLUG> (score: <score>)', and proceed directly to path derivation. Otherwise, call ask with id='trd_select', question='Select a TRD to refine:', options=items.map(i => ({id:i.slug, label:i.id||i.slug, description: 'Status: ' + i.status + (i.design_readiness_score != null ? ' | Score: ' + i.design_readiness_score : '') + (i.version ? ' | Version: ' + i.version : '') + (i.last_modified ? ' | Modified: ' + i.last_modified.split('T')[0] : '')})), multi=false, recommended=0. Parse answer id as the selected TRD_SLUG. Then derive TRD_FILE_PATH as docs/TRD/<basename matching the selected slug>.md (find by suffix/prefix match). If derived path does not exist, print 'ERROR: Could not resolve path for slug <TRD_SLUG>' and HALT. Set the derived path as the $ARGUMENTS positional and continue.
 
 ### Step 2: Content Refinement
 
@@ -479,3 +479,21 @@ Write the refined TRD with version history and changelog
 4. Add changelog entry at the bottom: date, version, list of changes made
 5. Save the updated TRD to the same file path (overwrite)
 6. Print summary: changes made, new version, task count delta, hour estimate delta
+7. If the task count changed by more than 20%, include a line recommending /ensemble-configure-team be re-run. This is the only place that recommendation is emitted; expectedOutput declares it, so it has to come from somewhere.
+
+### Step 2: Implementation Go / No-Go
+
+Close the refinement with an explicit go/no-go decision on implementing the TRD
+
+**Actions:**
+1. This step ALWAYS runs, and it is the last thing this command does. The run does not end on a printed summary.
+2. Before asking, confirm the TRD's source PRD is locked: read the PRD at this TRD's `prd_reference` and check its frontmatter `status`. If it is not Locked, say so in the question body -- implementing against an unlocked PRD means the requirements can still move underneath the build.
+3. If the source PRD's `version` is higher than the version this TRD was refined against, do NOT offer implementation at all. Report that the PRD moved and that the correct action is /ensemble-create-trd to re-create this TRD from the current PRD. A TRD refined against a PRD that has since changed is a refined copy of the wrong document.
+4. Present the close-out through ask, not prose. Put the design readiness score, its delta, the task count and the hour estimate in the question body, plus any genuine open question the refinement could not settle. A few lines: the person answering has not read the TRD and is not going to.
+5. Option 1, and the recommendation: GO. Print the next step as '/ensemble-implement-trd-beads <trd path>'. Cost: the full build. Risk: whatever the open questions above carry.
+6. Option 2: another refine pass. Cost: one more run. Risk: none beyond time. Offer this first when the design readiness score fell.
+7. Option 3: NO-GO, stop here. Cost: none. Risk: none.
+8. Do NOT print any implement command before this question is answered, and print it only on the GO branch.
+9. Prefer implement-trd-beads over implement-trd. They are separate commands, not a flag: implement-trd makes no beads calls and tracks progress in the TRD's own checkboxes, so it cannot resume across sessions. Name plain implement-trd only when the whole TRD lands as one PR in one sitting.
+10. Ask genuine open questions ONLY. Anything the TRD or the constitution already contains a rule for is a finding, and findings were applied during Synthesis, not asked about here.
+11. If --foreman is set, skip the question, record GO, and log the decision.

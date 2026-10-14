@@ -145,6 +145,38 @@
         }
       }
     },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["subcommands"],
+      "description": "Marks this command as a thin dispatcher that routes to sibling commands by keyword",
+      "properties": {
+        "subcommands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["keyword", "ref"],
+            "additionalProperties": true,
+            "properties": {
+              "keyword": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "description": "First-argument token the user types to select this subcommand"
+              },
+              "ref": {
+                "type": "string",
+                "description": "Referenced sibling command's metadata.name with the 'ensemble:' prefix stripped"
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional override; defaults to the referenced command's own description"
+              }
+            }
+          }
+        }
+      }
+    },
     "expectedOutput": {
       "type": "object",
       "additionalProperties": true,

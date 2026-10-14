@@ -282,8 +282,41 @@ function copyFrameworkSkills({ dryRun, verbose }) {
   return count;
 }
 
+/**
+ * Generate the "## Subcommands" section for a Codex dispatcher command,
+ * mirroring Claude Code's `generateSubcommandsSection` (scripts/lib/command-transformer.js)
+ * section order and content pattern, but pointing at each sibling's Codex
+ * SKILL.md output path instead of its Claude Code .md path.
+ * @param {Array<{keyword: string, ref: string, description?: string}>} subcommands
+ * @param {Map<string, string>} baseNameToYamlFile - bare command name -> its source YAML path
+ * @param {string} sourceYamlPath - the dispatcher's own YAML path, for error messages
+ * @returns {string}
+ */
+function generateCodexSubcommandsSection(subcommands, baseNameToYamlFile, sourceYamlPath) {
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const lines = ['## Subcommands', ''];
+
+  for (const sub of subcommands) {
+    if (!baseNameToYamlFile.has(sub.ref)) {
+      throw new Error(`dispatch.subcommands references unknown command '${sub.ref}' (${sourceYamlPath})`);
+    }
+    const codexSkillName = `ensemble-${sub.ref}`;
+    const outputPath = path.join(OUTPUT_DIR, 'skills', 'commands', codexSkillName, 'SKILL.md');
+    const relPath = path.relative(repoRoot, outputPath);
+    const description = sub.description ? sub.description.trim().replace(/\s+/g, ' ') : '';
+    const descPrefix = description ? `${description}. ` : '';
+    lines.push(`- **\`${sub.keyword}\`** - ${descPrefix}see the \`${codexSkillName}\` skill (\`${relPath}\`).`);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
 function generateCommandSkills({ dryRun, verbose }) {
   const commandYamlFiles = globSync(toGlobPattern(path.join(PACKAGES_DIR, '*/commands/*.yaml'))).sort();
+  // Resolves each dispatch.subcommands[].ref to its sibling's own YAML path,
+  // so we can validate the ref and derive that sibling's Codex output path.
+  const baseNameToYamlFile = new Map(commandYamlFiles.map((f) => [path.basename(f, '.yaml'), f]));
   let count = 0;
 
   for (const yamlFile of commandYamlFiles) {
@@ -296,6 +329,26 @@ function generateCommandSkills({ dryRun, verbose }) {
     const dest = path.join(OUTPUT_DIR, 'skills', 'commands', codexSkillName, 'SKILL.md');
     const description = data.description || `Run Ensemble command /ensemble:${baseName}`;
     const commandName = data.name || `ensemble:${baseName}`;
+
+    // Whichever prose source we prefer above (Claude's generated .md
+    // frontmatter-only fields, or the raw YAML) never carries `dispatch` in
+    // its frontmatter -- Claude's frontmatter is name/description/version/
+    // category/last-updated/allowed-tools/argument-hint/model only, so a
+    // dispatcher's subcommand table is invisible unless we additionally read
+    // the raw YAML directly.
+    const yamlData = yaml.load(normalizeLineEndings(readFile(yamlFile))) || {};
+    const subcommandsSection = yamlData.dispatch?.subcommands
+      ? generateCodexSubcommandsSection(yamlData.dispatch.subcommands, baseNameToYamlFile, yamlFile)
+      : null;
+
+    // When `content` is mirrored from Claude's already-generated .md, a
+    // dispatcher command's body already embeds Claude's OWN "## Subcommands"
+    // section (pointing at Claude Code .md paths, not Codex SKILL.md paths).
+    // Strip it so we splice in exactly one, Codex-correct version below,
+    // instead of rendering both.
+    const mirroredContent = subcommandsSection
+      ? content.replace(/## Subcommands\n\n[\s\S]*?\n\n(?=## |$)/, '')
+      : content;
 
     const frontmatter = {
       name: codexSkillName,
@@ -311,7 +364,8 @@ function generateCommandSkills({ dryRun, verbose }) {
       `This Codex skill mirrors the Ensemble slash command \`/${commandName}\`.`,
       'Follow the workflow below, adapt to the current repository, and keep outputs structured.',
       '',
-      normalizeSkillBody(content),
+      ...(subcommandsSection ? [subcommandsSection] : []),
+      normalizeSkillBody(mirroredContent),
       '',
     ].join('\n');
 
@@ -415,4 +469,6 @@ module.exports = {
   detectAgentSkills,
   normalizeSkillBody,
   normalizeLineEndings,
+  generateCodexSubcommandsSection,
+  generateCommandSkills,
 };

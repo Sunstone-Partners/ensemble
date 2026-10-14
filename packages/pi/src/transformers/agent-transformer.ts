@@ -8,7 +8,7 @@
  * nested `metadata.*` pattern used across the Ensemble monorepo.
  *
  * Pi/OMP-available tools (allowlist):
- *   Read, Write, Edit, Bash, ask_user, task
+ *   Read, Write, Edit, Bash, ask, task
  *
  * Stripped Claude Code-only tools:
  *   TodoWrite, Agent, NotebookEdit, ExitPlanMode, EnterPlanMode,
@@ -30,7 +30,7 @@ const PI_AVAILABLE_TOOLS: Record<string, true> = {
   Write: true,
   Edit: true,
   Bash: true,
-  ask_user: true,
+  ask: true,
   task: true,
 };
 
@@ -90,13 +90,13 @@ function normalizeAgentFields(raw: Record<string, unknown>): {
  * Filter the tools list to only Pi/OMP-available tools.
  * Task must use the native lowercase name: OMP also uses it to infer spawn
  * permission. Preserve source opt-in rather than granting it to every agent.
- * AskUserQuestion is mapped to ask_user before filtering.
+ * AskUserQuestion is mapped to ask (OMP's native interactive-question tool) before filtering.
  */
 function filterTools(tools: string[]): string[] {
   return tools
     .map(t => {
       if (t === 'Task') return 'task';
-      if (t === 'AskUserQuestion') return 'ask_user';
+      if (t === 'AskUserQuestion') return 'ask';
       return t;
     })
     .filter(t => PI_AVAILABLE_TOOLS[t] === true);
@@ -149,7 +149,7 @@ function renderFrontmatter(
  * Sections are rendered in a consistent order: mission, responsibilities,
  * plus any other top-level keys that aren't metadata/tools/model.
  *
- * AskUserQuestion references in text are replaced with ask_user.
+ * AskUserQuestion references in text are replaced with ask.
  */
 function renderBody(raw: Record<string, unknown>, agentName: string): string {
   const sections: string[] = [];
@@ -239,8 +239,8 @@ function renderBody(raw: Record<string, unknown>, agentName: string): string {
 
   const body = sections.join('\n');
 
-  // Replace AskUserQuestion tool references in body text with ask_user
-  return body.replace(/\bAskUserQuestion\b/g, 'ask_user');
+  // Replace AskUserQuestion tool references in body text with ask
+  return body.replace(/\bAskUserQuestion\b/g, 'ask');
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ function renderBody(raw: Record<string, unknown>, agentName: string): string {
  *
  * Produces YAML frontmatter (name, description, tools, model) followed by
  * markdown body (mission, responsibilities). Claude Code-only tools are
- * stripped; Task is mapped to task and AskUserQuestion to ask_user.
+ * stripped; Task is mapped to task and AskUserQuestion to ask.
  *
  * @param agentYaml  Parsed YAML object from agent source file
  * @param sourcePath Absolute path to the source .yaml file (for logging)

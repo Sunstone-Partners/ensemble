@@ -58,6 +58,51 @@ async function discoverYamlFiles(pattern: string): Promise<string[]> {
   return files.sort();
 }
 
+/**
+ * Build a map from bare command name (metadata.name with "ensemble:"
+ * stripped) to that command's own resolved Pi prompt output path, relative
+ * to sourceRoot (the monorepo root) -- NOT an absolute filesystem path,
+ * since this map's values get embedded verbatim into generated, committed
+ * .md artifacts and must be portable across machines/checkouts/CI. Used to
+ * render dispatcher commands' "## Subcommands" references without guessing
+ * at another command's output location.
+ *
+ * Mirrors scripts/lib/file-discovery.js's buildCommandPathMap for Claude
+ * Code, but applies Pi's own output-path formula (outputRoot/prompts/<name>.md,
+ * see buildCommandResult below) instead of Claude's commands/ensemble/<name>.md.
+ *
+ * Parses each file independently and skips any that fail to parse or lack
+ * metadata.name — such files are already caught with a hard error by
+ * validateCommandYaml() in the main discovery loop below, so silently
+ * skipping them here just means their ref is simply unavailable to any
+ * dispatcher that tries to reference them (which itself throws).
+ */
+function buildCommandPathMap(
+  commandFiles: string[],
+  outputRoot: string,
+  sourceRoot: string
+): Map<string, string> {
+  const pathsByRef = new Map<string, string>();
+  for (const filePath of commandFiles) {
+    try {
+      const raw = yaml.load(fs.readFileSync(filePath, 'utf-8')) as
+        | { metadata?: { name?: unknown } }
+        | undefined;
+      const name = raw?.metadata?.name;
+      if (typeof name === 'string' && name) {
+        const ref = name.replace(/^ensemble:/, '');
+        const piName = name.replace(/^ensemble:/, 'ensemble-');
+        const absolutePath = path.join(outputRoot, 'prompts', `${piName}.md`);
+        pathsByRef.set(ref, path.relative(sourceRoot, absolutePath));
+      }
+    } catch {
+      // Skip files that can't be parsed; validateCommandYaml() in the main
+      // discovery loop will raise a proper error for this file.
+    }
+  }
+  return pathsByRef;
+}
+
 // ---------------------------------------------------------------------------
 // Structural validation
 // ---------------------------------------------------------------------------
@@ -280,12 +325,13 @@ function buildCommandResult(
   commandYaml: CommandYaml,
   sourcePath: string,
   outputRoot: string,
-  verbose: boolean
+  verbose: boolean,
+  commandPathsByRef: Map<string, string>
 ): TransformResult {
   const name = commandYaml.metadata.name;
   const piName = name.replace(/^ensemble:/, 'ensemble-');
   const outputPath = path.join(outputRoot, 'prompts', `${piName}.md`);
-  const content = transformCommand(commandYaml, sourcePath, { verbose });
+  const content = transformCommand(commandYaml, sourcePath, { verbose, commandPathsByRef });
   return { sourcePath, outputPath, content, type: 'command' };
 }
 
@@ -402,6 +448,13 @@ export async function generate(options: GeneratorOptions): Promise<void> {
     process.stdout.write(`Discovered ${commandFiles.length} command YAML file(s).\n`);
   }
 
+  // Built once per run, over the same already-discovered commandFiles, so
+  // dispatcher commands can resolve dispatch.subcommands[].ref to a sibling
+  // command's own Pi prompt output path (see command-transformer.ts's
+  // renderSubcommands). File-order independent: every command's path is
+  // resolvable regardless of which one is processed first below.
+  const commandPathsByRef = buildCommandPathMap(commandFiles, outputRoot, sourceRoot);
+
   for (const filePath of commandFiles) {
     let raw: unknown;
     try {
@@ -412,7 +465,7 @@ export async function generate(options: GeneratorOptions): Promise<void> {
 
     // Structural validation runs BEFORE any transformation (TRD-005 requirement)
     const commandYaml = validateCommandYaml(raw, filePath);
-    const result = buildCommandResult(commandYaml, filePath, outputRoot, verbose);
+    const result = buildCommandResult(commandYaml, filePath, outputRoot, verbose, commandPathsByRef);
 
     if (verbose) {
       process.stdout.write(`  command: ${filePath} → ${result.outputPath}\n`);

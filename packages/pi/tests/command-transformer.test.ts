@@ -2,7 +2,7 @@
  * Unit tests for command-transformer.ts (TRD-006-TEST)
  *
  * Covers: header, title, mission blockquote, constraints callout,
- * phase/step rendering, actionToString coercion, and AskUserQuestion → ask_user.
+ * phase/step rendering, actionToString coercion, and AskUserQuestion → ask.
  */
 
 import { transformCommand } from '../src/transformers/command-transformer';
@@ -308,7 +308,7 @@ describe('transformCommand', () => {
     });
   });
 
-  describe('AskUserQuestion → ask_user replacement', () => {
+  describe('AskUserQuestion → ask replacement', () => {
     it('replaces AskUserQuestion in action strings', () => {
       const cmd: CommandYaml = {
         ...MINIMAL_COMMAND,
@@ -329,7 +329,7 @@ describe('transformCommand', () => {
         },
       };
       const output = transformCommand(cmd, SOURCE_PATH, {});
-      expect(output).toContain('ask_user');
+      expect(output).toMatch(/\bask\b/);
       expect(output).not.toContain('AskUserQuestion');
     });
 
@@ -337,7 +337,7 @@ describe('transformCommand', () => {
       const output = transformCommand(FULL_COMMAND, SOURCE_PATH, {});
       // FULL_COMMAND has { 'AskUserQuestion: What is the target user?': null }
       expect(output).not.toContain('AskUserQuestion');
-      expect(output).toContain('ask_user');
+      expect(output).toMatch(/\bask\b/);
     });
 
     it('replaces AskUserQuestion in constraint strings', () => {
@@ -393,6 +393,92 @@ describe('transformCommand', () => {
       transformCommand(MINIMAL_COMMAND, SOURCE_PATH, { verbose: false });
       expect(writeSpy).not.toHaveBeenCalled();
       writeSpy.mockRestore();
+    });
+  });
+
+  describe('## Subcommands (dispatcher commands)', () => {
+    const DISPATCHER_COMMAND: CommandYaml = {
+      metadata: {
+        name: 'ensemble:prd',
+        description: 'Dispatch to PRD-authoring subcommand',
+        version: '1.0.0',
+      },
+      mission: {
+        summary: 'Thin routing layer over the existing create-prd command.',
+      },
+      dispatch: {
+        subcommands: [
+          { keyword: 'create', ref: 'create-prd', description: 'Author a new PRD' },
+          { keyword: 'refine', ref: 'refine-prd' },
+        ],
+      },
+      workflow: { phases: [] },
+    };
+
+    const PATHS_BY_REF = new Map<string, string>([
+      ['create-prd', '/workspace/packages/pi/prompts/ensemble-create-prd.md'],
+      ['refine-prd', '/workspace/packages/pi/prompts/ensemble-refine-prd.md'],
+    ]);
+
+    it('renders a "## Subcommands" heading', () => {
+      const output = transformCommand(DISPATCHER_COMMAND, SOURCE_PATH, {
+        commandPathsByRef: PATHS_BY_REF,
+      });
+      expect(output).toContain('## Subcommands');
+    });
+
+    it('renders one bullet per subcommand with keyword, invocation, and resolved path', () => {
+      const output = transformCommand(DISPATCHER_COMMAND, SOURCE_PATH, {
+        commandPathsByRef: PATHS_BY_REF,
+      });
+      expect(output).toContain(
+        '- **`create`** - Author a new PRD. run `/ensemble-create-prd` (`/workspace/packages/pi/prompts/ensemble-create-prd.md`), passing the remaining arguments through as its $ARGUMENTS.'
+      );
+      expect(output).toContain(
+        '- **`refine`** - run `/ensemble-refine-prd` (`/workspace/packages/pi/prompts/ensemble-refine-prd.md`), passing the remaining arguments through as its $ARGUMENTS.'
+      );
+    });
+
+    it('normalizes the ensemble: invocation form to ensemble- in subcommand bullets', () => {
+      const output = transformCommand(DISPATCHER_COMMAND, SOURCE_PATH, {
+        commandPathsByRef: PATHS_BY_REF,
+      });
+      expect(output).not.toContain('/ensemble:create-prd');
+      expect(output).not.toContain('/ensemble:refine-prd');
+    });
+
+    it('places Subcommands after Arguments and before Workflow phases', () => {
+      const withArgs: CommandYaml = {
+        ...DISPATCHER_COMMAND,
+        parameters: [{ name: 'foo', type: 'string', required: false }],
+        workflow: {
+          phases: [{ id: 1, name: 'Dispatch', steps: [{ id: 1, title: 'Route' }] }],
+        },
+      };
+      const output = transformCommand(withArgs, SOURCE_PATH, { commandPathsByRef: PATHS_BY_REF });
+      const argsIdx = output.indexOf('## Arguments');
+      const subsIdx = output.indexOf('## Subcommands');
+      const phaseIdx = output.indexOf('## Phase 1');
+      expect(argsIdx).toBeGreaterThan(-1);
+      expect(subsIdx).toBeGreaterThan(argsIdx);
+      expect(phaseIdx).toBeGreaterThan(subsIdx);
+    });
+
+    it('does not render a Subcommands section when dispatch is absent', () => {
+      const output = transformCommand(MINIMAL_COMMAND, SOURCE_PATH, {});
+      expect(output).not.toContain('## Subcommands');
+    });
+
+    it('throws a clear error when a subcommand ref is not in commandPathsByRef', () => {
+      expect(() =>
+        transformCommand(DISPATCHER_COMMAND, SOURCE_PATH, { commandPathsByRef: new Map() })
+      ).toThrow(/dispatch\.subcommands references unknown command 'create-prd'/);
+    });
+
+    it('throws when commandPathsByRef is omitted entirely but dispatch.subcommands is present', () => {
+      expect(() => transformCommand(DISPATCHER_COMMAND, SOURCE_PATH, {})).toThrow(
+        /references unknown command/
+      );
     });
   });
 });

@@ -70,8 +70,8 @@ describe('PRD template structural equivalence', () => {
     expect(phaseCount).toBeGreaterThanOrEqual(4);
   });
 
-  it('has ask_user tool reference for interview steps', () => {
-    expect(createPrd).toMatch(/ask_user|INTERVIEW PROTOCOL/);
+  it('has ask tool reference for interview steps', () => {
+    expect(createPrd).toMatch(/\bask\b|INTERVIEW PROTOCOL/);
   });
 
   it('has no AskUserQuestion references', () => {
@@ -133,7 +133,7 @@ describe('Refine-PRD template structural equivalence', () => {
   });
 
   it('has interview protocol for gathering feedback', () => {
-    expect(refinePrd).toMatch(/ask_user|INTERVIEW PROTOCOL/);
+    expect(refinePrd).toMatch(/\bask\b|INTERVIEW PROTOCOL/);
   });
 
   it('has file update instructions', () => {

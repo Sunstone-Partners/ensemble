@@ -189,7 +189,7 @@ proceed, and refuses to save outright on FAIL. Neither of those fits this
 command: there is no live user to ask, and this command's entire purpose is
 producing a starting draft for a human's later refine-prd pass, so refusing
 to save a low-scoring async draft would defeat that purpose. Do NOT invoke
-ask_user for this branch. Instead, report the FAIL/CONCERNS/PASS
+ask for this branch. Instead, report the FAIL/CONCERNS/PASS
 result plainly, list the specific concerns (same categories create-prd would
 list), and say clearly that a human refine-prd pass is expected next given
 the score.

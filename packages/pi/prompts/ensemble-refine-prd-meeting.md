@@ -64,7 +64,7 @@ it. Sort every finding into exactly one of two buckets:
 - "RESOLVABLE_FROM_MEETING: the summary directly states an answer"
 - "STILL_OPEN: the summary does not address this finding"
 
-Do NOT use ask_user here -- there is no live interview in this
+Do NOT use ask here -- there is no live interview in this
 command. Print both buckets as a report to the user (not a prompt): what got
 resolved from the meeting and what's still open.
 

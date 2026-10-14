@@ -29,6 +29,7 @@ disable-model-invocation: true
 - **`idea`** (string, optional): Free-text description of the feature to build. Starts a new run at stage prd_create. Mutually exclusive with `path`; omit both to resume the project's active run or show its status.
 - **`path`** (string, optional): An indexed PRD or TRD artifact path to resume from (resolved via RunIndexStore.resolveByArtifact; never globbed). If `path` is not indexed by any run but is itself a readable PRD document (frontmatter `document_id` matching `PRD-*`), it is adopted as a new run's source via RunIndexStore.createRunFromArtifact, entering at prd_refine instead of prd_create -- any other unindexed path is still rejected.
 - **`status`** (boolean, optional, default: `false`): Show the active/most-recent run's stage, outcome, and references without advancing it.
+- **`abandon`** (string, optional): Terminate the project's active/paused run after explicit confirmation. Any given text is an optional reason, recorded in the run's terminal history alongside the retained artifacts/ references. If `idea` or `path` is also given, that takes precedence -- Step 2/3 below run first and this step is never reached (Steps 2-6 are evaluated in order, first match wins); omit `idea`/`path`/`status` for `abandon` to take effect.
 
 ## Phase 1: Entry Point Resolution
 
@@ -39,6 +40,7 @@ disable-model-invocation: true
 **Actions:**
 1. If the invocation includes `--skip-refine` or any documented equivalent flag that would bypass prd_refine or trd_refine: reject immediately with 'Both PRD and TRD refinement are mandatory in new-feature's fixed stage order. To skip orchestration but not refinement, run the standalone /ensemble-refine-prd or /ensemble-refine-trd commands directly -- they are unmodified by new-feature.' and HALT. No stage executes, no run is created or mutated (AC-003-1, AC-003-2).
 2. This check runs before Steps 2-4 below -- a rejected invocation never reaches createRun/resolveByArtifact.
+3. De-advertisement pointer (REQ-009): this workflow is the internal implementation behind the canonical front door `/ensemble-feature` (keywords `new`/`resume`/`status`/`abandon`). Direct invocation of this command still works and behaves identically -- same createRun/resolveByArtifact/mutate calls, same run record, same stage machine, zero behavior change. The only addition is one informational line appended after whichever of Steps 2-4 below prints its own output: 'Driven directly via /ensemble-new-feature; /ensemble-feature is the canonical front door for this workflow.' This line never gates, delays, or alters any step's own decision.
 
 ### Step 2: Idea Input -- Start a New Run
 
@@ -70,9 +72,9 @@ Neither idea nor path resumes the project's active/paused run, or (with --status
 1. If `status` is true: this is a read-only report (TRD-011) -- never a resume. No stage executes and no mutate() call is made regardless of what is found. Call RunIndexStore.findActive(projectRoot); if found, STATUS_RUN is that record. If not found, RunIndexStore's public interface has no dedicated "most recent terminal run" query (this step's Target File is this YAML only, not run-index.ts): read every run file under .ensemble/new-feature/ directly (excluding active.lock), pick the one with the latest updatedAt, and set STATUS_RUN to it, or to undefined if no run file exists at all.
 2. status=true, STATUS_RUN undefined: print 'No runs found for this project. Start one with --idea "<description>".' Stop here.
 3. status=true, STATUS_RUN found: print the five required fields (AC-012-1): run identifier, current stage, last stageOutcome.kind (with detail, when the outcome is a pending decision or a failure), and every recorded artifacts[] and beadRefs[] reference. If STATUS_RUN.status is "completed" or "abandoned": state that terminal outcome explicitly alongside the retained references. Never imply a PR was created or merged (AC-012-2) unless BOTH STATUS_RUN.prApprovedAt is non-null AND a PR reference is present among the recorded references -- specifically a beadRefs[] entry carrying TRD-017's "pr:" prefix (artifacts[] only ever holds type "prd"/"trd" per TRD-001's fixed schema, so a PR reference can only live in beadRefs[], and a bare bead ID there is never itself a PR reference); if either is missing, state plainly that no PR exists. Stop here -- status is always read-only and never proceeds to Stage Resolution.
-4. If `status` is false and neither `idea` nor `path` is provided: call RunIndexStore.findActive(projectRoot).
+4. If `status` is false, `abandon` is not provided, and neither `idea` nor `path` is provided: call RunIndexStore.findActive(projectRoot).
 5. status=false, not found: nothing to resume; print that no active run exists and how to start one (`--idea "<description>"`). Stop here.
-6. status=false, found, and ACTIVE_RUN.stageOutcome.kind is "failure": this is a paused-by-failure run. Print the parked stage, the recorded failure detail, and ask the user (ask_user or equivalent) 'Retry <stage>? [yes/no]' -- do NOT proceed to Stage Resolution on a bare invocation alone. Only an explicit 'yes' here (this is what TRD-008 means by "explicit retry") sets ACTIVE_RUN and proceeds to Stage Resolution; 'no' or no response stops here with stage/stageOutcome/revision completely unchanged -- no mutate() call is made merely by viewing this prompt (AC-006-3).
+6. status=false, found, and ACTIVE_RUN.stageOutcome.kind is "failure": this is a paused-by-failure run. Print the parked stage, the recorded failure detail, and ask the user (ask or equivalent) 'Retry <stage>? [yes/no]' -- do NOT proceed to Stage Resolution on a bare invocation alone. Only an explicit 'yes' here (this is what TRD-008 means by "explicit retry") sets ACTIVE_RUN and proceeds to Stage Resolution; 'no' or no response stops here with stage/stageOutcome/revision completely unchanged -- no mutate() call is made merely by viewing this prompt (AC-006-3).
 7. status=false, found, and ACTIVE_RUN.stageOutcome.kind is anything else ("approval_wait", "decline", or a freshly created run that has never run a stage yet): no confirmation gate applies -- set ACTIVE_RUN and proceed directly to Stage Resolution. Declined/approval-wait states are not failures; re-running them on resume is the normal, expected flow.
 
 ### Step 5: Event-Triggered Entry (Opt-In)
@@ -83,9 +85,19 @@ A project may opt into event-triggered starts via .ensemble/new-feature/event-ma
 1. Call EventMappingConfig.loadEventMapping(projectRoot) (agent-core new-feature/event-mapping.ts). If it returns null: default-deny -- no run starts, nothing under RunIndexStore is touched (AC-009-1). Stop here; this is not an error, it is the normal state for a project that has not opted in.
 2. If a config exists: call validateEventPayload(mapping, event) BEFORE any RunIndexStore call is made (TRD-018's ordering guarantee -- validation always precedes createRun()/mutate(), never after a partial state change). validateEventPayload is a pure function; it has no RunIndexStore side effect of its own.
 3. Rejected (`ok: false`, e.g. disallowed event type, missing source, or missing summary): create no PRD, advance no run, and report the exact `reason` string as the pending step (AC-009-3). Stop here.
-4. Accepted: present the event source and full payload to the user via ask_user for explicit review BEFORE any PRD-stage work begins (AC-009-2). This review is in addition to, not a substitute for, the same PRD elicitation manual /ensemble-create-prd invocation already requires -- the payload's `summary` only seeds elicitation, it is never treated as a complete PRD input by itself.
+4. Accepted: present the event source and full payload to the user via ask for explicit review BEFORE any PRD-stage work begins (AC-009-2). This review is in addition to, not a substitute for, the same PRD elicitation manual /ensemble-create-prd invocation already requires -- the payload's `summary` only seeds elicitation, it is never treated as a complete PRD input by itself.
 5. On user decline: create no PRD, advance no run, and report that PRD elicitation review was declined as the pending step (AC-009-3). Stop here.
 6. On approval: proceed exactly as Step 2 (Idea Input) above, using `event.summary` as the `idea` argument -- same createRun() call, same TRD-010 single-active-run exclusivity, same full PRD elicitation. Event-triggered and manual starts converge on the identical entry path from this point on.
+
+### Step 6: Abandon Confirmation Gate
+
+`--abandon` terminates the project's active/paused run after explicit confirmation; any given text is an optional reason recorded in the run's terminal history (AC-007-3). Checked before Step 4's no-arguments handling -- when `abandon` is provided, Step 4's resume/status branches never apply.
+
+**Actions:**
+1. If `abandon` is provided (a non-empty string or an empty string both count as provided -- only an entirely omitted parameter skips this step): call RunIndexStore.findActive(projectRoot).
+2. Not found: print 'No active run exists for this project; nothing to abandon.' and stop -- no mutate()/abandon() call is made, no state is touched (AC-007-3 no-active-run case).
+3. Found: ask the user for explicit confirmation (ask or equivalent) before calling RunIndexStore.abandon() -- name the run's identifier and current stage in the prompt. Declined or no response: make no mutate()/abandon() call; the run is left completely untouched, stage/stageOutcome/revision unchanged (AC-007-3 decline case).
+4. On explicit confirmation: call RunIndexStore.abandon(projectRoot, runId, reason), where `reason` is the `abandon` parameter's own text value (empty string if none was given). This sets status to "abandoned" and records the terminal outcome via the same mutate() path abandon() already wraps, then releases active.lock -- artifacts and history remain retained, exactly as a later `--status` invocation would still report them (AC-007-3 confirmed case).
 
 ## Phase 2: Stage Resolution
 
@@ -154,7 +166,7 @@ Only Entry Point Resolution step 4's explicit 'yes' confirmation reaches this ph
 The implementation_approval stage is a bespoke human checkpoint, not one of the five document-producing stages Step 1 dispatches to -- nothing past this point runs without a recorded approval timestamp.
 
 **Actions:**
-1. Present the run's accepted PRD/TRD references (the artifacts[] entries recorded by prd_refine/trd_refine) and the bead plan (beadRefs[], recorded by beads_plan) to the user via ask_user, exactly matching what is in the run record -- never a re-derived or re-globbed summary (AC-010-1).
+1. Present the run's accepted PRD/TRD references (the artifacts[] entries recorded by prd_refine/trd_refine) and the bead plan (beadRefs[], recorded by beads_plan) to the user via ask, exactly matching what is in the run record -- never a re-derived or re-globbed summary (AC-010-1).
 2. Wait for an explicit approval response.
 3. On explicit approval: call RunIndexStore.mutate() setting implementationApprovedAt = now() and advancing stage to "implementation", both inside the same mutate() call (no window where one is set without the other).
 4. On absent or declined approval: perform no implementation work. Do not call mutate() at all -- the run stays parked at implementation_approval with implementationApprovedAt still null, exactly as before this invocation, ready for a later resume (AC-010-2).
@@ -166,7 +178,7 @@ PR creation is optional, entered only after the user opts in following implement
 **Actions:**
 1. PR creation is entered only if the user opts in after implementation completes; declining records the outcome with no PrProvider call made at all (not even isAvailable()) -- this is a separate checkpoint, never folded into implementation_approval's approval step.
 2. On opt-in: construct a GhCliPrProvider and call isAvailable(). If false: create no PR, call RunIndexStore.mutate() to record the outcome (stageOutcome detail names "no PR provider available"), and leave the completed implementation record otherwise untouched (AC-011-3) -- advance stage to "done" (no PR requested is a valid terminal state).
-3. If isAvailable() === true: present the target repo/branch/title/body (repo/branch from the run's recorded references, title/body proposed from the accepted PRD/TRD) to the user via ask_user, then require a separate, immediate explicit approval before calling createPullRequest() -- distinct from implementation's approval step (AC-011-2).
+3. If isAvailable() === true: present the target repo/branch/title/body (repo/branch from the run's recorded references, title/body proposed from the accepted PRD/TRD) to the user via ask, then require a separate, immediate explicit approval before calling createPullRequest() -- distinct from implementation's approval step (AC-011-2).
 4. On absent/declined approval: create no PR, report the outcome, leave the completed implementation record untouched, and advance stage to "done" (AC-011-1).
 5. On explicit approval: call RunIndexStore.mutate() setting prApprovedAt = now() and advancing stage to "pr_create", immediately before the create call -- never in the same mutate() call as implementationApprovedAt.
 

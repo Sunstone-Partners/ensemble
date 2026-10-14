@@ -43,6 +43,16 @@ export interface CommandParameter {
   description?: string;
 }
 
+/** One entry in a dispatcher command's dispatch.subcommands[] list. */
+export interface DispatchSubcommand {
+  /** First-argument token the user types to select this subcommand. */
+  keyword: string;
+  /** Referenced sibling command's metadata.name with "ensemble:" stripped. */
+  ref: string;
+  /** Optional override; defaults to the referenced command's own description. */
+  description?: string;
+}
+
 export interface CommandYaml {
   metadata: {
     name: string;
@@ -57,6 +67,10 @@ export interface CommandYaml {
     summary?: string;
   };
   parameters?: CommandParameter[];
+  /** Marks this command as a thin dispatcher routing to sibling commands. */
+  dispatch?: {
+    subcommands: DispatchSubcommand[];
+  };
 }
 
 export interface AgentYaml {

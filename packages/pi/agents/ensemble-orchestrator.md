@@ -1,7 +1,7 @@
 ---
 name: "ensemble-orchestrator"
 description: "Chief orchestrator for agent mesh coordination, task delegation, and conflict resolution"
-tools: ["Read", "task", "Write", "Edit", "Bash", "ask_user"]
+tools: ["Read", "task", "Write", "Edit", "Bash", "ask"]
 model: "high"
 ---
 
