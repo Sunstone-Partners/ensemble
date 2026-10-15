@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ensemble-new-feature` now reads its invocation from `$ARGUMENTS`. The pi prompt contained no argument placeholder, and pi substitutes arguments only where one appears, so `/ensemble-new-feature --foreman <idea>` silently dropped both the flag and the idea.
+
 - Runner subagent dispatches now resolve. `beads-build.yaml` dispatched `Task(subagent_type=beads-build-wave)` and `implement-trd.yaml` dispatched `Task(subagent_type=implement-trd-task)`, but both targets shipped only as commands, never as agents — so neither dispatch could resolve and `/ensemble:beads-build`'s Execute phase and `/ensemble:implement-trd`'s Task Loop were both unreachable. Added thin runner agents that load their command as the single source of truth rather than duplicating the procedure.
 
 ## [6.9.2] - 2026-06-23
