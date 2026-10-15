@@ -59,7 +59,7 @@
     },
     {
       "name": "ensemble-product",
-      "version": "5.6.4",
+      "version": "5.6.5",
       "source": "./packages/product",
       "description": "Product management workflows - PRD and TRD creation",
       "category": "workflow",
