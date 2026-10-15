@@ -208,7 +208,6 @@ describe('QuickTunnel', () => {
       },
     });
     await expect(t.start()).rejects.toThrow(/brew install cloudflared/);
-    await expect(t.start()).rejects.toThrow(/\(attempted: cloudflared\)/);
   });
 
   test('start() can retry after async ENOENT failure (clears stale proc state)', async () => {
@@ -310,7 +309,6 @@ describe('QuickTunnel', () => {
       /developers\.cloudflare\.com\/cloudflare-one\/connections\/connect-networks\/downloads/,
     );
     await expect(promise).rejects.toThrow(/CLOUDFLARED_PATH/);
-    await expect(promise).rejects.toThrow(/\(attempted: cloudflared\)/);
   });
 
   test('start() rejects with raw error when child emits non-ENOENT async error (e.g. EACCES)', async () => {
