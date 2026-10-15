@@ -3,11 +3,11 @@
   "projectRoot": "/Users/ldangelo/Development/Sunstone/ensemble.dev",
   "idea": "Add a --foreman flag to new-feature.yaml (and the feature front door) that passes --foreman to the underlying skills/commands, so Foreman can run the workflow with no user present and the model never stops to ask the user questions.",
   "status": "active",
-  "stage": "implementation",
+  "stage": "done",
   "stageOutcome": {
-    "kind": "approval_wait",
-    "detail": "Implementation finished locally on feature/trd-2026-1d3e0dd6-new-feature-foreman-flag (22 task beads and story br-tx0g closed; epic br-x9ch stays open until the PR merges). Awaiting the publication decision: nothing is pushed and no PR exists.",
-    "recordedAt": "2026-10-15T18:11:17.302Z"
+    "kind": "success",
+    "detail": "PR #165 opened (not merged). Epic br-x9ch stays open until it merges.",
+    "recordedAt": "2026-10-15T18:53:12.479Z"
   },
   "artifacts": [
     {
@@ -45,11 +45,12 @@
   ],
   "beadRefs": [
     "br-x9ch",
-    "br-tx0g"
+    "br-tx0g",
+    "pr:https://github.com/Sunstone-Partners/ensemble/pull/165"
   ],
   "implementationApprovedAt": "2026-10-15T18:03:18.845Z",
-  "prApprovedAt": null,
-  "revision": 8,
+  "prApprovedAt": "2026-10-15T18:52:59.489Z",
+  "revision": 10,
   "createdAt": "2026-10-15T17:28:14.716Z",
-  "updatedAt": "2026-10-15T18:11:17.302Z"
+  "updatedAt": "2026-10-15T18:53:12.479Z"
 }
