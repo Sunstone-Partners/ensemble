@@ -17,7 +17,7 @@ const prd = parsePRD(markdown);
 const temporaryDirectories = [];
 const cli = path.join(__dirname, '../lib/reqnroll-cli.js');
 function fixture() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'binding-migration-'));
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'binding-migration-'));
   temporaryDirectories.push(directory);
   const prdPath = path.join(directory, 'PRD-literals.md');
   fs.writeFileSync(prdPath, markdown);
@@ -175,6 +175,18 @@ describe('migrate-bindings CLI', () => {
       .toThrow('Binding source changed during migration');
     expect(fs.readFileSync(file, 'utf8')).toBe(changed);
     expect(fs.readdirSync(steps)).toEqual(['Changed.cs']);
+  });
+
+  test.each(['root', 'ancestor'])('refuses a symlink at the binding-directory %s', (location) => {
+    const { directory, prdPath, steps } = fixture();
+    const target = path.join(steps, 'Original.cs');
+    const original = '[Given(@"a paused/canceled plan")] public void G() {}';
+    fs.writeFileSync(target, original);
+    const alias = path.join(directory, 'alias');
+    fs.symlinkSync(location === 'root' ? steps : directory, alias, 'dir');
+    const requested = location === 'root' ? alias : path.join(alias, 'custom-steps');
+    expect(() => runMigrate([prdPath, '--steps-dir', requested])).toThrow('Refusing a symlink');
+    expect(fs.readFileSync(target, 'utf8')).toBe(original);
   });
 
   test('refuses symlink traversal and never changes the linked source', () => {

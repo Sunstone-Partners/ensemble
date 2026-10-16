@@ -40,6 +40,7 @@ node packages/product/lib/reqnroll-cli.js check-binding-drift docs/PRD/example.m
 ```
 
 The migration scans nested `.cs` files, changes only recognized generated verbatim attributes and preserves every other byte, including method bodies and line endings. Attribute-shaped comments, strings and collection expressions are not bindings. Unknown custom expressions remain untouched. Symlink traversal, unterminated literals and ambiguous old/current expressions fail closed; inspect such input rather than guessing its meaning. Logical step text and fingerprints remain the drift identity, not the regex encoding.
+Supply a physical directory path: symbolic links at the directory root, in its ancestors, or among its entries are refused before migration writes any files.
 
 Without `--steps-dir`, migration and drift checking use `<out>/<PRD-slug>/Steps`, with `tests` as the default output root. A second migration is a no-op.
 

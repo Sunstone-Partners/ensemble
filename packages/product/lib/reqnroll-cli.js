@@ -81,6 +81,8 @@ function runGenerate(argv) {
 
 function listStepFiles(stepsDir) {
   if (!fs.existsSync(stepsDir)) return [];
+  if (fs.realpathSync(stepsDir) !== path.resolve(stepsDir))
+    throw new Error(`Refusing a symlink in the binding directory path: ${stepsDir}`);
   const files = [];
   for (const entry of fs.readdirSync(stepsDir, { withFileTypes: true })
     .sort((a, b) => a.name.localeCompare(b.name))) {
