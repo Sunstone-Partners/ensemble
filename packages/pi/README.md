@@ -50,11 +50,24 @@ routing or change approval gates.
 |-----------------|-------|-------------|
 | `prompts/` | 43 files | Prompt templates (one per Ensemble command; invoked `/ensemble-<cmd>`) |
 | `agents/` | 28 files | Agent definition markdown (one per Ensemble agent) |
-| `skills/` | 49 directories | Skill documentation copied from all packages |
+| `skills/` | one per skill | Skill documentation copied from all packages except `assessment` (see below) |
 | `AGENTS.md` | 1 file | Agent mesh reference extracted from the monorepo |
 
 All artifact counts reflect the current state after running `npm run generate:pi` from
-the monorepo root.
+the monorepo root. The `skills/` count is not pinned here; it varies as skills are added.
+
+> **Assessment skills are not bundled.** The `assessment` package (`assess-*`,
+> `architecture-overview-report`, `ai-readiness-diagnostic-report`,
+> `assessment-report-suite`, `assessment-scoring-conflation-audit`) is excluded from
+> `skills/` by the skill-copier (`EXCLUDED_PACKAGES`). It ships as its own Pi package,
+> `@sunstone-partners/ensemble-assessment`. There is no dependency between the two
+> packages, so install both if you want the workflow skills and assessments:
+>
+> ```bash
+> pi install @sunstone-partners/ensemble-pi
+> pi install @sunstone-partners/ensemble-assessment
+> ```
+
 ## Usage
 
 **Standard (via monorepo root):**
@@ -125,7 +138,8 @@ Ensemble YAML sources (packages/*/commands/*.yaml, agents/*.yaml, skills/)
   prompt template markdown
 - **agent-transformer** — converts YAML agent definitions into Pi agent markdown with
   Pi-compatible tool lists
-- **skill-copier** — propagates `SKILL.md` files from all packages into `skills/`
+- **skill-copier** — propagates `SKILL.md` files from all packages (except `pi`, `full`
+  and `assessment`) into `skills/`
 - **agents-md-generator** — extracts the agent mesh overview from `packages/CLAUDE.md`
 ## Contributing
 

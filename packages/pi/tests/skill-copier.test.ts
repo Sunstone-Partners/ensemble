@@ -166,6 +166,35 @@ describe('copySkills', () => {
   });
 
   // -------------------------------------------------------------------------
+  // 2b. Explicit exclusion: packages/assessment ships as its own Pi package
+  // -------------------------------------------------------------------------
+  it('does not copy skills from the assessment package, but still copies other packages', async () => {
+    const assessSkill = path.join(
+      sourceRoot,
+      'packages',
+      'assessment',
+      'skills',
+      'assess-repo'
+    );
+    fs.mkdirSync(assessSkill, { recursive: true });
+    fs.writeFileSync(path.join(assessSkill, 'SKILL.md'), '# Assess Repo\nAssessment content.\n', 'utf-8');
+    fs.writeFileSync(path.join(assessSkill, 'REFERENCE.md'), '# Assess Ref\n', 'utf-8');
+
+    const results = await copySkills(sourceRoot, outputRoot, {});
+
+    // Nothing sourced from packages/assessment
+    const assessmentPkgPath = path.join(sourceRoot, 'packages', 'assessment');
+    for (const result of results) {
+      expect(result.sourcePath.startsWith(assessmentPkgPath)).toBe(false);
+    }
+    expect(fs.existsSync(path.join(outputRoot, 'skills', 'assess-repo'))).toBe(false);
+
+    // Other packages' skills are still copied
+    expect(fs.existsSync(path.join(outputRoot, 'skills', 'my-skill', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(outputRoot, 'skills', 'alpha', 'SKILL.md'))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
   // 3. Deduplication: same real file copied only once
   // -------------------------------------------------------------------------
   it('deduplicates when two paths resolve to the same real file', async () => {
@@ -369,6 +398,14 @@ describe('copySkills against real packages directory', () => {
     const piPkgPath = path.join(repoRoot, 'packages', 'pi');
     for (const result of results) {
       expect(result.sourcePath.startsWith(piPkgPath)).toBe(false);
+    }
+  });
+
+  it('does not include any source from packages/assessment', async () => {
+    const results = await copySkills(repoRoot, outputRoot, { dryRun: true });
+    const assessmentPkgPath = path.join(repoRoot, 'packages', 'assessment');
+    for (const result of results) {
+      expect(result.sourcePath.startsWith(assessmentPkgPath)).toBe(false);
     }
   });
 

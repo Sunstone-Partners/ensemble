@@ -4,8 +4,30 @@ Repository, team, and AI-readiness assessment and diagnostic reporting skills.
 
 ## Installation
 
+### Claude Code
+
+Install the `ensemble-assessment` marketplace plugin:
+
 ```bash
 claude plugin install @sunstone-partners/ensemble-assessment
+```
+
+### Pi / Oh My Pi (OMP)
+
+This package is installable as its own Pi package (it declares a `pi` manifest with
+`skills: ["./skills"]`):
+
+```bash
+pi install @sunstone-partners/ensemble-assessment
+```
+
+The assessment skills are **not** bundled into `@sunstone-partners/ensemble-pi`, and the
+two packages have no dependency on each other. To get both the Ensemble workflow
+skills/commands and the assessment skills, install both:
+
+```bash
+pi install @sunstone-partners/ensemble-pi
+pi install @sunstone-partners/ensemble-assessment
 ```
 
 ## Description

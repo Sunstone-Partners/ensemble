@@ -8,7 +8,15 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint ."
   },
+  "files": [
+    "lib/",
+    "skills/",
+    ".claude-plugin/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "keywords": [
+    "pi-package",
     "assessment",
     "diagnostic",
     "audit",
@@ -18,6 +26,11 @@
     "team",
     "ensemble"
   ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
   "author": "Sunstone Partners",
   "license": "MIT",
   "repository": {

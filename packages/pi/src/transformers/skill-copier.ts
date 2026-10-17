@@ -12,7 +12,10 @@
  *   - Subdirectory layout: packages/pi/skills/<subdir>/<filename>
  *   - Top-level layout:    packages/pi/skills/<package-name>/<filename>
  *
- * The `pi` package itself is excluded from scanning to avoid self-referential copies.
+ * Packages named in EXCLUDED_PACKAGES are not scanned: `pi` (the output target, avoids
+ * self-referential copies), `full` (symlink mirror of other packages' skills) and
+ * `assessment` (distributed as its own Pi package, @sunstone-partners/ensemble-assessment,
+ * not bundled into ensemble-pi).
  * Symlinks (e.g. packages/full/skills/) are resolved before copying; if two paths
  * resolve to the same real file, the second is skipped.
  *
@@ -118,8 +121,11 @@ export function normalizeSkillMd(content: string, skillDirName: string): string 
   return matter.stringify(parsed.content, parsed.data);
 }
 
-/** Package directories to skip during scanning (output targets, not sources). */
-const SKIP_PACKAGES = new Set(['pi', 'full']);
+/**
+ * Package directories to skip during scanning. `pi` and `full` are output/mirror
+ * targets, not sources; `assessment` ships as its own Pi package.
+ */
+const EXCLUDED_PACKAGES: Record<string, true> = { pi: true, full: true, assessment: true };
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -149,7 +155,7 @@ interface SkillFileEntry {
  *   2. Top-level layout: packages/<pkg>/skills/SKILL.md
  *      → skillDirName = <pkg>
  *
- * Skips packages in SKIP_PACKAGES (pi, full).
+ * Skips packages in EXCLUDED_PACKAGES (pi, full, assessment).
  */
 function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
   const entries: SkillFileEntry[] = [];
@@ -167,7 +173,7 @@ function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
 
   for (const pkgDirent of packageDirents) {
     if (!pkgDirent.isDirectory() && !pkgDirent.isSymbolicLink()) continue;
-    if (SKIP_PACKAGES.has(pkgDirent.name)) continue;
+    if (Object.prototype.hasOwnProperty.call(EXCLUDED_PACKAGES, pkgDirent.name)) continue;
 
     const pkgName = pkgDirent.name;
     const skillsDir = path.join(packagesDir, pkgName, 'skills');
