@@ -98,6 +98,52 @@ describe('body-preserving expression migration', () => {
     expect(rewriteBindingExpressions(prd, source)).toEqual({ content: source, changes: [] });
   });
 
+  test('ignores preprocessor directives containing an apostrophe', () => {
+    const source = "#region Don't touch\n[Given(@\"a paused/canceled plan\")] public void G() { }\n#endregion\n";
+    expect(scanBindingAttributes(source).map(({ text }) => text)).toEqual(['a paused/canceled plan']);
+    expect(rewriteBindingExpressions(prd, source).content)
+      .toBe(source.replace('a paused/canceled plan', literalStepExpression('a paused/canceled plan')));
+  });
+
+  test.each([
+    ['modifier-less void', 'void G() { }'],
+    ['modifier-less int return', 'int G() { return 1; }'],
+    ['modifier-less string return', 'string G() { return ""; }'],
+    ['public int return', 'public int G() { return 1; }'],
+    ['generic return', 'List<Dictionary<string, int>> G() { return null; }'],
+    ['qualified generic return', 'System.Collections.Generic.List<string> G() { return null; }'],
+    ['array return', 'string[] G() { return null; }'],
+    ['multi-dimensional array return', 'int[,] G() { return null; }'],
+    ['nullable return', 'int? G() { return null; }'],
+    ['tuple return', '(int a, string b) G() { return default; }'],
+    ['modified tuple return', 'public static (int, string) G() { return default; }'],
+    ['generic method with constraint', 'T G<T>(T value) where T : class { return value; }'],
+    ['expression-bodied', 'string G() => "";'],
+    ['comment between attribute and declaration', '/* note */ int G() { return 1; }'],
+    ['other attribute in between', '[Obsolete] string G() { return ""; }'],
+  ])('detects a binding declared with %s', (_name, declaration) => {
+    const source = `[Given(@"a paused/canceled plan")] ${declaration}`;
+    expect(scanBindingAttributes(source)).toEqual([{ keyword: 'Given', text: 'a paused/canceled plan' }]);
+    expect(diffBindingDrift(prd, [source]).unbound.map(({ text }) => text))
+      .not.toContain('a paused/canceled plan');
+    expect(rewriteBindingExpressions(prd, source).changes)
+      .toEqual([{ keyword: 'Given', text: 'a paused/canceled plan' }]);
+  });
+
+  test.each([
+    ['collection return', 'return [Given(@"a paused/canceled plan")];'],
+    ['collection assignment', 'var x = [Given(@"a paused/canceled plan")];'],
+    ['collection argument', 'Use([Given(@"a paused/canceled plan")], 1);'],
+    ['collection element', 'var x = [[Given(@"a paused/canceled plan")], 2];'],
+    ['lambda attribute', 'Action a = [Given(@"a paused/canceled plan")] () => { };'],
+    ['dangling attribute before block', '{ [Given(@"a paused/canceled plan")] }'],
+    ['field-like statement', '[Given(@"a paused/canceled plan")] int value = Compute();'],
+  ])('still refuses an attribute-shaped expression that is not a declaration: %s', (_name, statement) => {
+    const source = `class C { void M() { ${statement} } }`;
+    expect(scanBindingAttributes(source)).toEqual([]);
+    expect(rewriteBindingExpressions(prd, source)).toEqual({ content: source, changes: [] });
+  });
+
   test('refuses ambiguous old/current expressions without guessing the intended clause', () => {
     const ambiguous = parsePRD('### REQ-001: Ambiguous\n'
       + '- AC-001-1: Given x, when ^x$, then done.\n');

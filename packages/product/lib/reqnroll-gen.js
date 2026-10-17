@@ -339,6 +339,11 @@ function writeBindingArtifacts(prd, slug, outRoot, opts = {}) {
 const ATTR_RE = /\[\s*(Given|When|Then|And)\s*\(\s*@"((?:[^"]|"")*)"\s*\)\s*\]/y;
 
 function skipComment(source, start) {
+  if (source[start] === '#' && /^[ \t]*$/.test(source.slice(source.lastIndexOf('\n', start - 1) + 1, start))) {
+    // Preprocessor directive (`#region Don't`): a lone apostrophe is not a literal.
+    const end = source.indexOf('\n', start);
+    return end < 0 ? source.length : end + 1;
+  }
   if (source.startsWith('//', start)) {
     const end = source.indexOf('\n', start + 2);
     return end < 0 ? source.length : end + 1;
@@ -412,6 +417,100 @@ function skipLiteral(source, start) {
   throw new Error('Unterminated C# literal');
 }
 
+const IDENTIFIER_RE = /@?[\p{L}_][\p{L}\p{N}_]*/uy;
+const RANK_SPECIFIER_RE = /\[[\s,]*\]/y;
+
+function skipTrivia(source, start) {
+  let i = start;
+  while (i < source.length) {
+    if (/\s/.test(source[i])) { i++; continue; }
+    const end = skipComment(source, i);
+    if (end === i) break;
+    i = end;
+  }
+  return i;
+}
+
+// Balanced scan of `open`...`close` (generic arguments, tuple types). Returns
+// the index after the closer, or -1 when it never balances before a statement
+// or block boundary (so a stray `<` cannot swallow the rest of the file).
+function skipBalanced(source, start, open, close) {
+  let depth = 0;
+  for (let i = start; i < source.length;) {
+    const trivia = skipTrivia(source, i);
+    if (trivia !== i) { i = trivia; continue; }
+    const literalEnd = skipLiteral(source, i);
+    if (literalEnd !== i) { i = literalEnd; continue; }
+    if (source[i] === open) depth++;
+    else if (source[i] === close) { if (--depth === 0) return i + 1; }
+    else if (source[i] === ';' || source[i] === '{' || source[i] === '}') return -1;
+    i++;
+  }
+  return -1;
+}
+
+function matchIdentifier(source, start) {
+  IDENTIFIER_RE.lastIndex = start;
+  const match = IDENTIFIER_RE.exec(source);
+  return match ? start + match[0].length : -1;
+}
+
+// One modifier, or one (qualified, generic, nullable, array/pointer) type or
+// name. Returns the index after the item, or -1 if none starts at `start`.
+function skipTypeLike(source, start) {
+  let i = matchIdentifier(source, start);
+  if (i < 0) return -1;
+  for (;;) {
+    if (source[i] === '<') {
+      i = skipBalanced(source, i, '<', '>');
+      if (i < 0) return -1;
+    }
+    if (source.startsWith('::', i)) i += 2;
+    else if (source[i] === '.') i++;
+    else break;
+    const next = matchIdentifier(source, i);
+    if (next < 0) return -1;
+    i = next;
+  }
+  for (;;) {
+    const next = skipTrivia(source, i);
+    if (source[next] === '?' || source[next] === '*') { i = next + 1; continue; }
+    RANK_SPECIFIER_RE.lastIndex = next;
+    const rank = RANK_SPECIFIER_RE.exec(source);
+    if (!rank) return i;
+    i = next + rank[0].length;
+  }
+}
+
+// After the attribute lists: is this `[modifiers] ReturnType Name[<T>](`, i.e.
+// a method (or constructor) declaration with any return type, with or without
+// modifiers? Anything else (`;`, `,`, `)`, a lambda, a statement) is not a
+// declaration, so collection expressions like `return [Given(@"x")];` stay out.
+function startsMethodDeclaration(source, start) {
+  let i = skipTrivia(source, start);
+  let items = 0;
+  for (;;) {
+    if (source[i] === '(') {
+      // Either a tuple type or the parameter list. Only a parameter list can
+      // be followed by something other than another identifier (`where`
+      // constraints aside), so a following identifier means a tuple type.
+      const end = skipBalanced(source, i, '(', ')');
+      if (end < 0) return false;
+      const after = skipTrivia(source, end);
+      const wordEnd = matchIdentifier(source, after);
+      if (wordEnd < 0 || source.slice(after, wordEnd) === 'where') return items >= 2;
+      items++;
+      i = after;
+      continue;
+    }
+    const end = skipTypeLike(source, i);
+    if (end < 0) return false;
+    items++;
+    i = skipTrivia(source, end);
+    if (source[i] !== '(' && matchIdentifier(source, i) < 0) return false;
+  }
+}
+
 function hasBindingDeclaration(source, start) {
   let i = start;
   while (i < source.length) {
@@ -435,9 +534,7 @@ function hasBindingDeclaration(source, start) {
     }
     if (depth) throw new Error('Unterminated C# attribute list');
   }
-  return i === source.length
-    || /^(public|private|protected|internal|static|async|partial|virtual|override|sealed|abstract|extern|unsafe|new|void|Task|ValueTask)\b/
-      .test(source.slice(i, i + 16));
+  return i === source.length || startsMethodDeclaration(source, i);
 }
 
 function bindingAttributeSpans(csText) {
