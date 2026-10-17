@@ -357,7 +357,7 @@ separateChangelogs: false
 
 ## Integration Examples
 
-### Integration with release-agent
+### Integration with the release command
 
 ```javascript
 // In release workflow

@@ -227,7 +227,7 @@ Plugins provide 28 specialized agents across domains:
 - **Developers**: frontend-developer, backend-developer, infrastructure-developer
 - **Quality**: code-reviewer, test-runner, playwright-tester, deep-debugger
 - **Specialists**: documentation-specialist, api-documentation-specialist, postgresql-specialist, github-specialist, helm-chart-specialist
-- **Utilities**: git-workflow, file-creator, context-fetcher, directory-monitor, release-agent, agent-meta-engineer
+- **Utilities**: git-workflow, file-creator, context-fetcher, directory-monitor, agent-meta-engineer
 
 ## OpenCode Support
 

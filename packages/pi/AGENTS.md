@@ -67,7 +67,6 @@ Meta: ensemble-full (complete bundle)
 - `context-fetcher` - Documentation retrieval
 - `directory-monitor` - File system surveillance
 - `agent-meta-engineer` - Agent ecosystem management
-- `release-agent` - Automated release orchestration
 
 ## Agent Delegation Protocol
 
@@ -107,4 +106,4 @@ ensemble-orchestrator (chief)
 | Test failures | test-runner | deep-debugger |
 | Database changes | postgresql-specialist | backend-developer |
 | CI/CD issues | build-orchestrator | infrastructure-developer |
-| Release process | release-agent | git-workflow |
+| Release process | git-workflow | github-specialist |

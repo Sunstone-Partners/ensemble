@@ -6,7 +6,7 @@ and deployment coordination. Supports standard, hotfix, and rollback release typ
 
 # ensemble-release
 
-> **Mission:** This command orchestrates the complete release workflow from quality gates through deployment and verification. It delegates to release-agent for workflow orchestration, coordinating with specialized agents (code-reviewer, test-runner, playwright-tester, deployment-orchestrator) to ensure safe, reliable releases with comprehensive smoke test coverage and automated rollback.
+> **Mission:** This command orchestrates the complete release workflow from quality gates through deployment and verification. It orchestrates the workflow directly, coordinating with specialized agents (code-reviewer, test-runner, playwright-tester, deployment-orchestrator) to ensure safe, reliable releases with comprehensive smoke test coverage and automated rollback.
 
 ## Phase 1: Release Initialization
 

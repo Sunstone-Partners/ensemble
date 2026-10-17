@@ -19,7 +19,6 @@
   "skills": "./skills",
   "agents": [
     "./agents/git-workflow.md",
-    "./agents/github-specialist.md",
-    "./agents/release-agent.md"
+    "./agents/github-specialist.md"
   ]
 }

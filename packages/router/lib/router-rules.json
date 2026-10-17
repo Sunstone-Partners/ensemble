@@ -146,11 +146,6 @@
           "name": "playwright-tester",
           "purpose": "E2E tests with Playwright MCP, capture traces and screenshots for regression",
           "tools": ["Read", "Write", "Edit", "Bash"]
-        },
-        {
-          "name": "test-reader-agent",
-          "purpose": "Test file reading and analysis for test coverage understanding",
-          "tools": ["Read"]
         }
       ]
     },
@@ -182,11 +177,6 @@
           "name": "build-orchestrator",
           "purpose": "CI/CD pipeline optimization, artifact creation, dependency management, build automation",
           "tools": ["Read", "Write", "Edit", "Bash"]
-        },
-        {
-          "name": "release-agent",
-          "purpose": "Automated release orchestration with quality gates, smoke test integration",
-          "tools": ["Read", "Write", "Edit", "Bash", "Task", "Skill"]
         },
         {
           "name": "helm-chart-specialist",

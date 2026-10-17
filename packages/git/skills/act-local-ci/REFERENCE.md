@@ -560,7 +560,7 @@ act --bind
 ### Pre-Release Validation
 
 ```javascript
-// In release-agent workflow
+// In release workflow
 Task({
   subagent_type: "test-runner",
   prompt: `Run local CI validation using act:
@@ -656,7 +656,6 @@ act -j test --matrix node:20  # Test primary version only
 
 - **changelog-generator**: Generate changelogs from conventional commits
 - **smoke-test-runner**: Execute smoke tests before release
-- **release-agent**: Automated release orchestration
 
 ## References
 

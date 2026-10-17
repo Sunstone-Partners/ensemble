@@ -1,6 +1,6 @@
 # Ensemble for Codex
 
-Use this bundle to bring Ensemble into Codex CLI. It provides 36 custom agents, 47 command skills, and 12 framework/testing skills.
+Use this bundle to bring Ensemble into Codex CLI. It provides 34 custom agents, 44 command skills, and 12 framework/testing skills.
 
 ## What Codex Should Know
 
@@ -22,7 +22,7 @@ Use this bundle to bring Ensemble into Codex CLI. It provides 36 custom agents, 
 - Product/spec work: `product-management-orchestrator`, `documentation-specialist`
 - Application code: `backend-developer`, `frontend-developer`, `tech-lead-orchestrator`
 - Quality: `code-reviewer`, `deep-debugger`, `test-runner`, `playwright-tester`
-- Infra/release: `infrastructure-developer`, `build-orchestrator`, `deployment-orchestrator`, `release-agent`
+- Infra/release: `infrastructure-developer`, `build-orchestrator`, `deployment-orchestrator`
 - Research/general tasks: `general-purpose`, `context-fetcher`
 
 ## Key Skills
