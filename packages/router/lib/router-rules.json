@@ -475,35 +475,10 @@
       "patterns": ["run.*rspec", "rspec.*spec", "bundle.*exec.*rspec"],
       "purpose": "Execute and generate RSpec tests for Ruby/Rails projects"
     },
-    "smoke-test-api": {
-      "triggers": ["api smoke test", "test api endpoints", "api health"],
-      "patterns": ["smoke.*api", "api.*smoke"],
-      "purpose": "Smoke test API endpoints for health and basic functionality"
-    },
-    "smoke-test-auth": {
-      "triggers": ["auth smoke test", "test authentication", "login test"],
-      "patterns": ["smoke.*auth", "auth.*smoke"],
-      "purpose": "Smoke test authentication flows"
-    },
-    "smoke-test-critical-paths": {
-      "triggers": ["critical path test", "happy path test", "core flow test"],
-      "patterns": ["critical.*path", "happy.*path"],
-      "purpose": "Smoke test critical user paths and core application flows"
-    },
-    "smoke-test-database": {
-      "triggers": ["database smoke test", "db smoke test", "test database connection"],
-      "patterns": ["smoke.*db", "database.*smoke"],
-      "purpose": "Smoke test database connectivity and basic operations"
-    },
-    "smoke-test-external-services": {
-      "triggers": ["external service test", "third party test", "integration smoke test"],
-      "patterns": ["external.*service", "third.*party.*test"],
-      "purpose": "Smoke test external service integrations"
-    },
     "smoke-test-runner": {
-      "triggers": ["smoke test", "sanity test", "quick test", "health check test", "critical path test"],
-      "patterns": ["smoke.*test", "sanity.*check"],
-      "purpose": "Orchestrates smoke test categories for API, auth, database, and critical path validation"
+      "triggers": ["smoke test", "sanity test", "quick test", "health check test", "critical path test", "api smoke test", "test api endpoints", "api health", "auth smoke test", "test authentication", "login test", "happy path test", "core flow test", "database smoke test", "db smoke test", "test database connection", "external service test", "third party test", "integration smoke test"],
+      "patterns": ["smoke.*test", "sanity.*check", "smoke.*api", "api.*smoke", "smoke.*auth", "auth.*smoke", "critical.*path", "happy.*path", "smoke.*db", "database.*smoke", "external.*service", "third.*party.*test"],
+      "purpose": "Orchestrates and documents smoke tests for API, database, external services, auth, and critical path validation"
     },
     "styling-with-tailwind": {
       "triggers": ["tailwind", "tailwindcss", "tailwind config", "utility class", "tailwind theme"],

@@ -355,3 +355,919 @@ smokeTests:
 # ${PRODUCT_ID} - Product ID for details view
 # ${POST_ID} - Post ID from creation step
 # ${ADMIN_PASSWORD} - Admin user password
+
+# =============================================================================
+# Standalone per-category templates
+# Merged from the former per-category smoke-test skills. Each block under
+# `categoryTemplates.<category>` is a complete, self-contained configuration for
+# running that category on its own (keyed by environment: preRelease, staging,
+# canary5, canary25, canary100, production, rollback, slaTargets).
+# =============================================================================
+categoryTemplates:
+  api:
+    # API Smoke Test Configuration Template
+    #
+    # This template provides comprehensive examples for configuring API smoke tests
+    # across multiple environments with health checks, CRUD operations, and error handling.
+    #
+    # Usage:
+    #   1. Copy this template to your project
+    #   2. Update environment-specific URLs and credentials
+    #   3. Customize endpoints for your API
+    #   4. Run tests: node execute-health-checks.js --config health-check-config.yaml
+
+    # Pre-Release Environment
+    preRelease:
+      environment: pre-release
+      baseUrl: https://pre-release.example.com
+      timeout: 5000
+      retries: 2
+      retryDelay: 1000
+      validateSSL: true
+      followRedirects: true
+      stopOnFirstFailure: false
+
+      # Authentication configuration
+      auth:
+        type: bearer  # Options: bearer, basic, apikey
+        token: ${PRE_RELEASE_AUTH_TOKEN}  # Environment variable
+
+      # Global headers
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+        Content-Type: application/json
+
+      # Endpoints to test
+      endpoints:
+        # 1. System Health Checks
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100  # Target: ≤100ms
+          validateResponse:
+            - field: status
+              value: ok
+            - field: version
+              type: string
+
+        - name: database-health
+          path: /health/db
+          method: GET
+          expectedStatus: 200
+          sla: 200
+          validateResponse:
+            - field: connected
+              value: true
+            - field: responseTime
+              type: number
+              max: 100
+
+        - name: cache-health
+          path: /health/cache
+          method: GET
+          expectedStatus: 200
+          sla: 200
+          validateResponse:
+            - field: connected
+              value: true
+
+        # 2. Critical API Endpoints
+        - name: list-users
+          path: /api/v1/users
+          method: GET
+          expectedStatus: 200
+          sla: 500
+          validateResponse:
+            - field: data
+              type: array
+            - field: pagination.total
+              type: number
+
+        - name: search-users
+          path: /api/v1/search
+          method: GET
+          expectedStatus: 200
+          sla: 2000
+          query:
+            q: test
+            limit: 10
+          validateResponse:
+            - field: results
+              type: array
+
+        # 3. Error Handling Tests
+        - name: not-found-test
+          path: /api/v1/nonexistent
+          method: GET
+          expectedStatus: 404
+          sla: 100
+
+    # Staging Environment
+    staging:
+      environment: staging
+      baseUrl: https://staging.example.com
+      timeout: 5000
+      retries: 2
+      retryDelay: 1000
+      validateSSL: true
+      followRedirects: true
+
+      auth:
+        type: bearer
+        token: ${STAGING_AUTH_TOKEN}
+
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+        Content-Type: application/json
+
+      endpoints:
+        # Health checks
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100
+
+        - name: database-health
+          path: /health/db
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        # CRUD operations
+        - name: create-resource
+          path: /api/v1/resources
+          method: POST
+          expectedStatus: 201
+          sla: 1000
+          body:
+            name: Smoke Test Resource
+            type: test
+          validateResponse:
+            - field: id
+              type: string
+            - field: name
+              value: Smoke Test Resource
+
+        - name: read-resource
+          path: /api/v1/resources
+          method: GET
+          expectedStatus: 200
+          sla: 500
+          validateResponse:
+            - field: data
+              type: array
+
+        # Authentication tests
+        - name: protected-endpoint
+          path: /api/v1/protected
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+    # Canary Environment (5% traffic)
+    canary5:
+      environment: canary-5
+      baseUrl: https://canary.example.com
+      timeout: 5000
+      retries: 2
+      validateSSL: true
+
+      auth:
+        type: bearer
+        token: ${CANARY_AUTH_TOKEN}
+
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+
+      # Critical endpoints only for canary testing
+      endpoints:
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100
+
+        - name: critical-api
+          path: /api/v1/critical
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+    # Canary Environment (25% traffic)
+    canary25:
+      environment: canary-25
+      baseUrl: https://canary.example.com
+      timeout: 5000
+      retries: 2
+      validateSSL: true
+
+      auth:
+        type: bearer
+        token: ${CANARY_AUTH_TOKEN}
+
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+
+      endpoints:
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100
+
+        - name: database-health
+          path: /health/db
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        - name: critical-api
+          path: /api/v1/critical
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+        - name: list-users
+          path: /api/v1/users
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+    # Canary Environment (100% traffic)
+    canary100:
+      environment: canary-100
+      baseUrl: https://canary.example.com
+      timeout: 5000
+      retries: 2
+      validateSSL: true
+
+      auth:
+        type: bearer
+        token: ${CANARY_AUTH_TOKEN}
+
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+
+      # Full smoke test suite for 100% canary
+      endpoints:
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100
+
+        - name: database-health
+          path: /health/db
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        - name: cache-health
+          path: /health/cache
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        - name: list-users
+          path: /api/v1/users
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+        - name: search-users
+          path: /api/v1/search
+          method: GET
+          expectedStatus: 200
+          sla: 2000
+          query:
+            q: test
+            limit: 10
+
+        - name: create-resource
+          path: /api/v1/resources
+          method: POST
+          expectedStatus: 201
+          sla: 1000
+          body:
+            name: Canary Test Resource
+
+    # Production Environment
+    production:
+      environment: production
+      baseUrl: https://api.example.com
+      timeout: 5000
+      retries: 3  # More retries in production
+      retryDelay: 2000
+      validateSSL: true
+      followRedirects: true
+      stopOnFirstFailure: true  # Stop immediately on production failure
+
+      auth:
+        type: bearer
+        token: ${PRODUCTION_AUTH_TOKEN}
+
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+        Content-Type: application/json
+
+      endpoints:
+        # Critical health checks only in production
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100
+
+        - name: database-health
+          path: /health/db
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        - name: cache-health
+          path: /health/cache
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        # Critical API endpoints
+        - name: list-users
+          path: /api/v1/users
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+        # Authentication validation
+        - name: protected-endpoint
+          path: /api/v1/protected
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+    # Post-Rollback Environment (validates rollback success)
+    rollback:
+      environment: rollback
+      baseUrl: https://api.example.com  # Production URL after rollback
+      timeout: 5000
+      retries: 2
+      validateSSL: true
+
+      auth:
+        type: bearer
+        token: ${PRODUCTION_AUTH_TOKEN}
+
+      headers:
+        User-Agent: SmokeTestAPI/1.0
+        Accept: application/json
+
+      # Comprehensive validation after rollback
+      endpoints:
+        - name: system-health
+          path: /health
+          method: GET
+          expectedStatus: 200
+          sla: 100
+
+        - name: database-health
+          path: /health/db
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        - name: cache-health
+          path: /health/cache
+          method: GET
+          expectedStatus: 200
+          sla: 200
+
+        - name: list-users
+          path: /api/v1/users
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+        - name: search-users
+          path: /api/v1/search
+          method: GET
+          expectedStatus: 200
+          sla: 2000
+          query:
+            q: test
+            limit: 10
+
+        - name: protected-endpoint
+          path: /api/v1/protected
+          method: GET
+          expectedStatus: 200
+          sla: 500
+
+    # Performance SLA Targets
+    slaTargets:
+      health: 100       # Health endpoints: ≤100ms
+      read: 500         # Read operations: ≤500ms
+      write: 1000       # Write operations: ≤1000ms
+      search: 2000      # Search operations: ≤2000ms
+      default: 5000     # Default timeout: ≤5000ms
+
+  database:
+    # Database Smoke Test Configuration Template
+    #
+    # This template provides comprehensive examples for configuring database smoke tests
+    # across multiple environments with connectivity, performance, schema, and integrity validation.
+    #
+    # Usage:
+    #   1. Copy this template to your project
+    #   2. Update environment-specific connection details and credentials
+    #   3. Customize tests for your database schema
+    #   4. Run tests: node test-connectivity.js --config database-config.yaml
+
+    # Pre-Release Environment
+    preRelease:
+      environment: pre-release
+      database:
+        type: postgresql
+        host: pre-release-db.example.com
+        port: 5432
+        database: app_pre_release
+        username: app_user
+        password: ${PRE_RELEASE_DB_PASSWORD}
+        ssl: true
+        pool:
+          min: 2
+          max: 10
+          idleTimeout: 30000
+          connectionTimeout: 5000
+
+      tests:
+        - connectivity
+        - query-performance
+        - schema-validation
+        - data-integrity
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: user-lookup
+          sql: SELECT * FROM users WHERE id = $1 LIMIT 1
+          params: ['123e4567-e89b-12d3-a456-426614174000']
+          sla: 50
+        - name: join-query
+          sql: |
+            SELECT u.id, u.email, COUNT(o.id) as order_count
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            GROUP BY u.id, u.email
+            LIMIT 10
+          sla: 200
+
+      tables:
+        - users
+        - orders
+        - products
+
+      checks:
+        - name: user-count
+          description: Verify minimum user count
+          query: SELECT COUNT(*) as count FROM users
+          validation:
+            field: count
+            operator: '>='
+            value: 100
+
+    # Staging Environment
+    staging:
+      environment: staging
+      database:
+        type: postgresql
+        host: staging-db.example.com
+        port: 5432
+        database: app_staging
+        username: app_user
+        password: ${STAGING_DB_PASSWORD}
+        ssl: true
+        pool:
+          min: 2
+          max: 10
+
+      tests:
+        - connectivity
+        - query-performance
+        - schema-validation
+        - data-integrity
+        - replication-health
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: table-scan
+          sql: SELECT * FROM users LIMIT 1
+          sla: 50
+        - name: write-operation
+          sql: |
+            INSERT INTO smoke_test_logs (message, created_at)
+            VALUES ('Smoke test', NOW())
+            RETURNING id
+          sla: 100
+          cleanup: DELETE FROM smoke_test_logs WHERE message = 'Smoke test'
+
+      tables:
+        - users
+        - orders
+        - products
+        - smoke_test_logs
+
+      checks:
+        - name: user-count
+          description: Verify minimum user count
+          query: SELECT COUNT(*) as count FROM users
+          validation:
+            field: count
+            operator: '>='
+            value: 100
+        - name: orphaned-orders
+          description: Check for orders without users
+          query: |
+            SELECT COUNT(*) as count FROM orders o
+            WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)
+          validation:
+            field: count
+            operator: '='
+            value: 0
+
+      replication:
+        maxLag: 1000
+        replicas:
+          - host: staging-db-replica-1.example.com
+            port: 5432
+          - host: staging-db-replica-2.example.com
+            port: 5432
+
+    # Canary Environment (5% traffic)
+    canary5:
+      environment: canary-5
+      database:
+        type: postgresql
+        host: canary-db.example.com
+        port: 5432
+        database: app_production
+        username: app_user
+        password: ${CANARY_DB_PASSWORD}
+        ssl: true
+
+      tests:
+        - connectivity
+        - query-performance
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: table-scan
+          sql: SELECT * FROM users LIMIT 1
+          sla: 50
+
+    # Canary Environment (25% traffic)
+    canary25:
+      environment: canary-25
+      database:
+        type: postgresql
+        host: canary-db.example.com
+        port: 5432
+        database: app_production
+        username: app_user
+        password: ${CANARY_DB_PASSWORD}
+        ssl: true
+
+      tests:
+        - connectivity
+        - query-performance
+        - data-integrity
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: table-scan
+          sql: SELECT * FROM users LIMIT 1
+          sla: 50
+        - name: join-query
+          sql: |
+            SELECT u.id, u.email, COUNT(o.id) as order_count
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            GROUP BY u.id, u.email
+            LIMIT 10
+          sla: 200
+
+      checks:
+        - name: user-count
+          description: Verify minimum user count
+          query: SELECT COUNT(*) as count FROM users
+          validation:
+            field: count
+            operator: '>='
+            value: 100
+
+    # Canary Environment (100% traffic)
+    canary100:
+      environment: canary-100
+      database:
+        type: postgresql
+        host: canary-db.example.com
+        port: 5432
+        database: app_production
+        username: app_user
+        password: ${CANARY_DB_PASSWORD}
+        ssl: true
+
+      tests:
+        - connectivity
+        - query-performance
+        - schema-validation
+        - data-integrity
+        - replication-health
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: table-scan
+          sql: SELECT * FROM users LIMIT 1
+          sla: 50
+        - name: join-query
+          sql: |
+            SELECT u.id, u.email, COUNT(o.id) as order_count
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            GROUP BY u.id, u.email
+            LIMIT 10
+          sla: 200
+
+      tables:
+        - users
+        - orders
+        - products
+
+      checks:
+        - name: user-count
+          description: Verify minimum user count
+          query: SELECT COUNT(*) as count FROM users
+          validation:
+            field: count
+            operator: '>='
+            value: 100
+        - name: orphaned-orders
+          description: Check for orders without users
+          query: |
+            SELECT COUNT(*) as count FROM orders o
+            WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)
+          validation:
+            field: count
+            operator: '='
+            value: 0
+
+      replication:
+        maxLag: 1000
+        replicas:
+          - host: production-db-replica-1.example.com
+            port: 5432
+
+    # Production Environment
+    production:
+      environment: production
+      database:
+        type: postgresql
+        host: production-db.example.com
+        port: 5432
+        database: app_production
+        username: app_user
+        password: ${PRODUCTION_DB_PASSWORD}
+        ssl: true
+        pool:
+          min: 5
+          max: 20
+
+      tests:
+        - connectivity
+        - query-performance
+        - replication-health
+        - backup-validation
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: table-scan
+          sql: SELECT * FROM users LIMIT 1
+          sla: 50
+
+      replication:
+        maxLag: 1000
+        replicas:
+          - host: production-db-replica-1.example.com
+            port: 5432
+          - host: production-db-replica-2.example.com
+            port: 5432
+
+      backup:
+        maxAge: 86400000  # 24 hours
+        path: /backups/postgres
+        verifyChecksum: true
+
+    # Post-Rollback Environment
+    rollback:
+      environment: rollback
+      database:
+        type: postgresql
+        host: production-db.example.com
+        port: 5432
+        database: app_production
+        username: app_user
+        password: ${PRODUCTION_DB_PASSWORD}
+        ssl: true
+
+      tests:
+        - connectivity
+        - query-performance
+        - schema-validation
+        - data-integrity
+        - replication-health
+
+      queries:
+        - name: simple-query
+          sql: SELECT 1
+          sla: 10
+        - name: table-scan
+          sql: SELECT * FROM users LIMIT 1
+          sla: 50
+        - name: join-query
+          sql: |
+            SELECT u.id, u.email, COUNT(o.id) as order_count
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            GROUP BY u.id, u.email
+            LIMIT 10
+          sla: 200
+
+      tables:
+        - users
+        - orders
+        - products
+
+      checks:
+        - name: user-count
+          description: Verify user count maintained
+          query: SELECT COUNT(*) as count FROM users
+          validation:
+            field: count
+            operator: '>='
+            value: 100
+        - name: orphaned-orders
+          description: Check for orders without users
+          query: |
+            SELECT COUNT(*) as count FROM orders o
+            WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)
+          validation:
+            field: count
+            operator: '='
+            value: 0
+
+      replication:
+        maxLag: 1000
+        replicas:
+          - host: production-db-replica-1.example.com
+            port: 5432
+
+    # Performance SLA Targets
+    slaTargets:
+      connectivity: 1000      # Connection: ≤1000ms
+      simpleQuery: 10         # SELECT 1: ≤10ms
+      tableQuery: 50          # Table scan: ≤50ms
+      joinQuery: 200          # Multi-table join: ≤200ms
+      writeOperation: 100     # INSERT/UPDATE/DELETE: ≤100ms
+      replicationLag: 1000    # Replication lag: ≤1000ms
+      default: 30000          # Default timeout: ≤30000ms
+
+  externalServices:
+    # External Services Smoke Test Configuration Template
+    #
+    # Configures smoke tests for third-party service integrations including
+    # payment gateways, communication services, cloud storage, and monitoring.
+
+    # Pre-Release Environment
+    preRelease:
+      environment: pre-release
+      services:
+        - name: stripe
+          type: payment
+          baseUrl: https://api.stripe.com
+          apiKey: ${STRIPE_TEST_API_KEY}
+          tests:
+            - connectivity
+            - authentication
+        - name: sendgrid
+          type: email
+          baseUrl: https://api.sendgrid.com
+          apiKey: ${SENDGRID_TEST_API_KEY}
+          tests:
+            - connectivity
+            - authentication
+
+    # Staging Environment
+    staging:
+      environment: staging
+      services:
+        - name: stripe
+          type: payment
+          baseUrl: https://api.stripe.com
+          apiKey: ${STRIPE_TEST_API_KEY}
+          tests:
+            - connectivity
+            - authentication
+            - basic-operation
+        - name: sendgrid
+          type: email
+          baseUrl: https://api.sendgrid.com
+          apiKey: ${SENDGRID_API_KEY}
+          tests:
+            - connectivity
+            - authentication
+            - basic-operation
+
+    # Production Environment
+    production:
+      environment: production
+      services:
+        - name: stripe
+          type: payment
+          baseUrl: https://api.stripe.com
+          apiKey: ${STRIPE_LIVE_API_KEY}
+          tests:
+            - connectivity
+            - authentication
+        - name: sendgrid
+          type: email
+          baseUrl: https://api.sendgrid.com
+          apiKey: ${SENDGRID_API_KEY}
+          tests:
+            - connectivity
+            - authentication
+
+  auth:
+    # Auth Smoke Test Configuration Template
+
+    # Staging Environment
+    staging:
+      environment: staging
+      baseUrl: https://staging.example.com
+      testCredentials:
+        email: test@example.com
+        password: ${TEST_USER_PASSWORD}
+      tests:
+        - login
+        - token-validation
+        - protected-resource
+
+    # Production Environment
+    production:
+      environment: production
+      baseUrl: https://api.example.com
+      testCredentials:
+        email: prod-test@example.com
+        password: ${PROD_TEST_USER_PASSWORD}
+      tests:
+        - login
+        - token-validation
+        - protected-resource
+
+  criticalPaths:
+    # Critical Paths Smoke Test Configuration Template
+
+    # Staging Environment
+    staging:
+      environment: staging
+      baseUrl: https://staging.example.com
+      journeys:
+        - registration
+        - checkout
+        - search
+        - profile
+
+    # Production Environment
+    production:
+      environment: production
+      baseUrl: https://api.example.com
+      journeys:
+        - registration
+        - checkout
+        - search
