@@ -3,7 +3,11 @@
  *
  * Discovers Ensemble YAML sources across packages/*, validates structural
  * requirements, calls transformers, and writes Pi-compatible artifacts to
- * packages/pi/commands/, agents/, skills/, and AGENTS.md.
+ * packages/pi/prompts/, agents/, skills/, and AGENTS.md.
+ *
+ * Packages listed in SELF_CONTAINED_PI_PACKAGES are distributed as Pi packages of
+ * their own: their commands are kept out of packages/pi and generated into the
+ * package itself (see generateSelfContainedPackages).
  *
  * Supports --dry-run (collect without writing), --verbose (log paths),
  * and --validate (parse output .md files after generation).
@@ -12,6 +16,7 @@
  */
 
 import { generateCommandSkills } from './transformers/command-skill-transformer';
+import { SELF_CONTAINED_PI_PACKAGES } from './self-contained-packages';
 import { GeneratorOptions, TransformResult, CommandYaml } from './types';
 import { transformCommand } from './transformers/command-transformer';
 import { buildAgentResult } from './transformers/agent-transformer';
@@ -397,6 +402,49 @@ function buildCommandResult(
   return { sourcePath, outputPath, content, type: 'command' };
 }
 
+/**
+ * Transform every command YAML in `commandFiles` into a Pi prompt under
+ * `outputRoot`. Dispatcher refs resolve only against `commandFiles` themselves, so
+ * a command can never point at a prompt this output root does not contain: a ref
+ * across a Pi package boundary (ensemble-pi to a self-contained package, or back)
+ * fails loudly instead of rendering a path the installed package cannot resolve.
+ */
+function buildCommandResults(
+  commandFiles: string[],
+  outputRoot: string,
+  sourceRoot: string,
+  verbose: boolean
+): TransformResult[] {
+  // Built once per run, over the same already-discovered commandFiles, so
+  // dispatcher commands can resolve dispatch.subcommands[].ref to a sibling
+  // command's own Pi prompt output path (see command-transformer.ts's
+  // renderSubcommands). File-order independent: every command's path is
+  // resolvable regardless of which one is processed first below.
+  const commandPathsByRef = buildCommandPathMap(commandFiles, outputRoot, sourceRoot);
+  const results: TransformResult[] = [];
+
+  for (const filePath of commandFiles) {
+    let raw: unknown;
+    try {
+      raw = yaml.load(fs.readFileSync(filePath, 'utf-8'));
+    } catch (err) {
+      throw new Error(`YAML parse error in ${filePath}: ${(err as Error).message}`, { cause: err });
+    }
+
+    // Structural validation runs BEFORE any transformation (TRD-005 requirement)
+    const commandYaml = validateCommandYaml(raw, filePath);
+    const result = buildCommandResult(commandYaml, filePath, outputRoot, verbose, commandPathsByRef);
+
+    if (verbose) {
+      process.stdout.write(`  command: ${filePath} → ${result.outputPath}\n`);
+    }
+
+    results.push(result);
+  }
+
+  return results;
+}
+
 // transformAgent is now provided by ./transformers/agent-transformer (TRD-007)
 
 // ---------------------------------------------------------------------------
@@ -504,37 +552,18 @@ export async function generate(options: GeneratorOptions): Promise<void> {
   // 1. Discover and process command YAML files
   // ------------------------------------------------------------------
   const commandPattern = path.join(sourceRoot, 'packages/*/commands/*.yaml');
-  const commandFiles = await discoverYamlFiles(commandPattern);
+  // Self-contained Pi packages ship their own prompts (generateSelfContainedPackages);
+  // none of their commands belong in ensemble-pi.
+  const commandFiles = (await discoverYamlFiles(commandPattern)).filter((file) => {
+    const packageName = path.basename(path.dirname(path.dirname(file)));
+    return !Object.prototype.hasOwnProperty.call(SELF_CONTAINED_PI_PACKAGES, packageName);
+  });
 
   if (verbose) {
     process.stdout.write(`Discovered ${commandFiles.length} command YAML file(s).\n`);
   }
 
-  // Built once per run, over the same already-discovered commandFiles, so
-  // dispatcher commands can resolve dispatch.subcommands[].ref to a sibling
-  // command's own Pi prompt output path (see command-transformer.ts's
-  // renderSubcommands). File-order independent: every command's path is
-  // resolvable regardless of which one is processed first below.
-  const commandPathsByRef = buildCommandPathMap(commandFiles, outputRoot, sourceRoot);
-
-  for (const filePath of commandFiles) {
-    let raw: unknown;
-    try {
-      raw = yaml.load(fs.readFileSync(filePath, 'utf-8'));
-    } catch (err) {
-      throw new Error(`YAML parse error in ${filePath}: ${(err as Error).message}`);
-    }
-
-    // Structural validation runs BEFORE any transformation (TRD-005 requirement)
-    const commandYaml = validateCommandYaml(raw, filePath);
-    const result = buildCommandResult(commandYaml, filePath, outputRoot, verbose, commandPathsByRef);
-
-    if (verbose) {
-      process.stdout.write(`  command: ${filePath} → ${result.outputPath}\n`);
-    }
-
-    results.push(result);
-  }
+  results.push(...buildCommandResults(commandFiles, outputRoot, sourceRoot, verbose));
 
   // ------------------------------------------------------------------
   // 2. Discover and process agent YAML files
@@ -668,4 +697,64 @@ export async function generate(options: GeneratorOptions): Promise<void> {
       `Generator complete. ${results.length} artifact(s) processed.\n`
     );
   }
+}
+
+/**
+ * Generate the Pi artifacts of every self-contained Pi package
+ * (SELF_CONTAINED_PI_PACKAGES): each package's command prompts under
+ * packages/<name>/prompts/ and their command-wrapper skills under
+ * packages/<name>/skills/ensemble-*, i.e. the layout ensemble-pi itself uses, rooted
+ * at the package. The package's own skills are already in packages/<name>/skills/
+ * and are never copied.
+ *
+ * Writes only inside each package directory under `sourceRoot`, never `outputRoot`
+ * (ensemble-pi), so `generate()` stays confined to the output root it is given. A
+ * package without commands/*.yaml is skipped and nothing is created for it.
+ */
+export async function generateSelfContainedPackages(
+  options: Omit<GeneratorOptions, 'outputRoot'>
+): Promise<void> {
+  const { dryRun, verbose, validate, sourceRoot } = options;
+  const results: TransformResult[] = [];
+
+  for (const packageName of Object.keys(SELF_CONTAINED_PI_PACKAGES)) {
+    const packageRoot = path.join(sourceRoot, 'packages', packageName);
+    const commandFiles = await discoverYamlFiles(path.join(packageRoot, 'commands', '*.yaml'));
+    if (commandFiles.length === 0) continue;
+
+    if (verbose) {
+      process.stdout.write(
+        `Self-contained Pi package ${packageName}: ${commandFiles.length} command YAML file(s) → ${packageRoot}\n`
+      );
+    }
+
+    const commandResults = buildCommandResults(commandFiles, packageRoot, sourceRoot, verbose);
+    if (!dryRun) {
+      for (const result of commandResults) {
+        writeResult(result);
+        removeSupersededCommandArtifacts(result.outputPath, packageRoot);
+      }
+    }
+    results.push(...commandResults);
+
+    // After the write loop so the prompt files exist on disk, as in generate(). The package is
+    // also a Claude Code plugin whose real /ensemble:<cmd> command is generated from the same
+    // YAML, so the Pi/OMP wrapper must not be listed beside it there.
+    results.push(
+      ...(await generateCommandSkills(packageRoot, { dryRun, verbose, hideFromClaudeCode: true }))
+    );
+  }
+
+  if (validate) {
+    validateResults(results, { verbose });
+  }
+}
+
+/**
+ * Everything `npm run generate:pi` produces: ensemble-pi into `outputRoot`, then each
+ * self-contained Pi package into its own directory.
+ */
+export async function generateAll(options: GeneratorOptions): Promise<void> {
+  await generate(options);
+  await generateSelfContainedPackages(options);
 }

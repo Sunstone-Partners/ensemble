@@ -13,9 +13,9 @@
  *   - Top-level layout:    packages/pi/skills/<package-name>/<filename>
  *
  * Packages named in EXCLUDED_PACKAGES are not scanned: `pi` (the output target, avoids
- * self-referential copies), `full` (symlink mirror of other packages' skills) and
- * `assessment` (distributed as its own Pi package, @sunstone-partners/ensemble-assessment,
- * not bundled into ensemble-pi).
+ * self-referential copies), `full` (symlink mirror of other packages' skills) and every
+ * self-contained Pi package (SELF_CONTAINED_PI_PACKAGES, currently `assessment`), which is
+ * distributed as its own Pi package and not bundled into ensemble-pi.
  * Symlinks (e.g. packages/full/skills/) are resolved before copying; if two paths
  * resolve to the same real file, the second is skipped.
  *
@@ -32,6 +32,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import matter from 'gray-matter';
 import { TransformResult } from '../types';
+import { SELF_CONTAINED_PI_PACKAGES } from '../self-contained-packages';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -123,9 +124,15 @@ export function normalizeSkillMd(content: string, skillDirName: string): string 
 
 /**
  * Package directories to skip during scanning. `pi` and `full` are output/mirror
- * targets, not sources; `assessment` ships as its own Pi package.
+ * targets, not sources; self-contained Pi packages ship as their own Pi package, so the
+ * generator also writes their command prompts into the package itself (see
+ * ../self-contained-packages.ts).
  */
-const EXCLUDED_PACKAGES: Record<string, true> = { pi: true, full: true, assessment: true };
+const EXCLUDED_PACKAGES: Record<string, true> = {
+  pi: true,
+  full: true,
+  ...SELF_CONTAINED_PI_PACKAGES,
+};
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -155,7 +162,7 @@ interface SkillFileEntry {
  *   2. Top-level layout: packages/<pkg>/skills/SKILL.md
  *      → skillDirName = <pkg>
  *
- * Skips packages in EXCLUDED_PACKAGES (pi, full, assessment).
+ * Skips packages in EXCLUDED_PACKAGES (pi, full and the self-contained Pi packages).
  */
 function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
   const entries: SkillFileEntry[] = [];

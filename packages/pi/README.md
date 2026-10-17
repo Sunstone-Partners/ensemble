@@ -48,7 +48,7 @@ routing or change approval gates.
 
 | Directory / File | Count | Description |
 |-----------------|-------|-------------|
-| `prompts/` | 38 files + `prompts/_hidden/` (8) | Prompt templates (one per Ensemble command; invoked `/ensemble-<cmd>`). `_hidden/` holds commands that are reachable only through a dispatcher; `package.json` `pi.prompts` is `./prompts/*.md` (non-recursive) so Pi does not register them |
+| `prompts/` | 38 files + `prompts/_hidden/` (8) | Prompt templates (one per Ensemble command outside the self-contained packages below; invoked `/ensemble-<cmd>`). `_hidden/` holds commands that are reachable only through a dispatcher; `package.json` `pi.prompts` is `./prompts/*.md` (non-recursive) so Pi does not register them |
 | `agents/` | 34 files | Agent definition markdown (one per Ensemble agent) |
 | `skills/` | one per skill | Skill documentation copied from all packages except `assessment` (see below) |
 | `AGENTS.md` | 1 file | Agent mesh reference extracted from the monorepo |
@@ -56,17 +56,41 @@ routing or change approval gates.
 All artifact counts reflect the current state after running `npm run generate:pi` from
 the monorepo root. The `skills/` count is not pinned here; it varies as skills are added.
 
-> **Assessment skills are not bundled.** The `assessment` package (`assess-*`,
+> **Assessment is not bundled.** The `assessment` package (`assess-*`,
 > `architecture-overview-report`, `ai-readiness-diagnostic-report`,
 > `assessment-report-suite`, `assessment-scoring-conflation-audit`) is excluded from
-> `skills/` by the skill-copier (`EXCLUDED_PACKAGES`). It ships as its own Pi package,
-> `@sunstone-partners/ensemble-assessment`. There is no dependency between the two
+> `skills/` by the skill-copier. It ships as its own Pi package,
+> `@sunstone-partners/ensemble-assessment`, together with its `/ensemble-assess` command
+> (generated into `packages/assessment/prompts/`, not into `prompts/` here, because that prompt
+> names skills this package does not contain). There is no dependency between the two
 > packages, so install both if you want the workflow skills and assessments:
 >
 > ```bash
 > pi install @sunstone-partners/ensemble-pi
 > pi install @sunstone-partners/ensemble-assessment
 > ```
+
+### Self-contained packages
+
+`SELF_CONTAINED_PI_PACKAGES` (`src/self-contained-packages.ts`) names the packages that are
+installed as Pi packages of their own; today that is `assessment`. Listing a package there does two
+things together, keyed by package directory and never by command name:
+
+- the skill-copier skips its skills, so installing both packages never registers a skill twice;
+- its commands are generated into the package itself (`<package>/prompts/` and the wrapper skills
+  in `<package>/skills/`) by `generateSelfContainedPackages`, and `generate()` leaves them out of
+  this package. Dispatcher refs resolve only within one package's own commands, so a command can
+  never point at a prompt that package does not ship.
+
+The wrapper skills of a self-contained package carry `user-invocable: false`: that package is also
+a Claude Code plugin whose real command comes from the same YAML, and Claude Code would otherwise
+list the Pi/OMP wrapper beside it. Pi and OMP ignore the key.
+
+To add a package: list it in `SELF_CONTAINED_PI_PACKAGES`, give its `package.json` the `pi-package`
+keyword and a `pi` manifest with `skills: ["./skills"]` and `prompts: ["./prompts/*.md"]` (the
+non-recursive glob; a bare `./prompts` also registers `prompts/_hidden/`), and add `prompts/` to
+its `files`. `tests/self-contained-packages.test.ts` checks the manifest and that nothing of the
+package reaches this one. `npm run generate:pi` runs both generators (`generateAll`).
 
 ## Usage
 
@@ -135,11 +159,12 @@ Ensemble YAML sources (packages/*/commands/*.yaml, agents/*.yaml, skills/)
 **Transformer responsibilities:**
 
 - **command-transformer** — converts Ensemble YAML `phases`/`steps`/`actions` into Pi
-  prompt template markdown
+  prompt template markdown (for a self-contained Pi package, into that package's own
+  `prompts/`)
 - **agent-transformer** — converts YAML agent definitions into Pi agent markdown with
   Pi-compatible tool lists
 - **skill-copier** — propagates `SKILL.md` files from all packages (except `pi`, `full`
-  and `assessment`) into `skills/`
+  and the self-contained Pi packages) into `skills/`
 - **agents-md-generator** — extracts the agent mesh overview from `packages/CLAUDE.md`
 ## Contributing
 

@@ -17,7 +17,7 @@
  */
 
 import { GeneratorOptions } from './types';
-import { generate } from './generator';
+import { generateAll } from './generator';
 import * as path from 'path';
 
 const args = process.argv.slice(2);
@@ -30,7 +30,7 @@ const options: GeneratorOptions = {
   outputRoot: path.join(__dirname, '..'),
 };
 
-generate(options)
+generateAll(options)
   .then(() => {
     process.exit(0);
   })

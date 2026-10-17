@@ -10,6 +10,8 @@
   },
   "files": [
     "lib/",
+    "commands/",
+    "prompts/",
     "skills/",
     ".claude-plugin/",
     "README.md",
@@ -29,6 +31,9 @@
   "pi": {
     "skills": [
       "./skills"
+    ],
+    "prompts": [
+      "./prompts/*.md"
     ]
   },
   "author": "Sunstone Partners",

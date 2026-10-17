@@ -1,6 +1,7 @@
 # @sunstone-partners/ensemble-assessment
 
-Repository, team, and AI-readiness assessment and diagnostic reporting skills.
+Repository, team, and AI-readiness assessment and diagnostic reporting skills, plus one entry
+point, `/ensemble:assess`, that routes to them.
 
 ## Installation
 
@@ -15,11 +16,16 @@ claude plugin install @sunstone-partners/ensemble-assessment
 ### Pi / Oh My Pi (OMP)
 
 This package is installable as its own Pi package (it declares a `pi` manifest with
-`skills: ["./skills"]`):
+`skills: ["./skills"]` and `prompts: ["./prompts/*.md"]`):
 
 ```bash
 pi install @sunstone-partners/ensemble-assessment
 ```
+
+That registers every assessment skill and the `/ensemble-assess` command. Pi loads the command
+from the prompt template `prompts/ensemble-assess.md`. OMP does not read a package's
+`pi.prompts`, so on OMP the same entry point is the generated wrapper skill
+`skills/ensemble-assess/`, invoked as `/skill:ensemble-assess`.
 
 The assessment skills are **not** bundled into `@sunstone-partners/ensemble-pi`, and the
 two packages have no dependency on each other. To get both the Ensemble workflow
@@ -29,6 +35,40 @@ skills/commands and the assessment skills, install both:
 pi install @sunstone-partners/ensemble-pi
 pi install @sunstone-partners/ensemble-assessment
 ```
+
+## Command: `/ensemble:assess`
+
+One consistent front door, like `/ensemble:prd` and `/ensemble:trd`. It owns no assessment
+logic: it reads the first argument, loads the matching skill by name, and follows it with the
+rest of your arguments.
+
+| Invocation | Loads | Does |
+|---|---|---|
+| `/ensemble:assess repo` | `assess-repo` | Full repository assessment (all dimensions in parallel, one report) |
+| `/ensemble:assess team` | `assess-team` | Full team assessment |
+| `/ensemble:assess config` | `assess-config` | Create portfolio-local assessment configuration |
+| `/ensemble:assess report` | `assessment-report-suite` | End-to-end executive package (Excel, markdown summary, PowerPoint) |
+| `/ensemble:assess repo --only <dimension>` | the dimension's leaf skill | One repository dimension, without the parallel run or the combined report |
+
+`--only` takes the dimensions `assess-repo` itself dispatches to: `purpose`, `architecture`
+(or `architect`), `code-quality`, `testing`, `security`, `ai-readiness`, `cicd`. It is accepted
+with `repo` only.
+
+An empty or unknown first argument prints the keyword table and stops without doing anything;
+so does `--only` with another keyword, or with a missing or unknown dimension. If a runtime
+cannot load a skill by name, the command reads that skill's `SKILL.md` and follows it
+directly.
+
+The command is spelled per runtime: `/ensemble:assess` on Claude Code, `/ensemble-assess` on
+Pi, `/skill:ensemble-assess` on OMP. The leaf skills stay directly invokable
+(`/skill:assess-security`), so the command is an addition, not a replacement.
+
+Three files are generated from `commands/assess.yaml` and must not be edited by hand:
+`commands/ensemble/assess.md` (`npm run generate`), and `prompts/ensemble-assess.md` plus
+`skills/ensemble-assess/SKILL.md` (`npm run generate:pi`). Both commands run from the
+repository root. `skills/ensemble-assess/` is the Pi/OMP command wrapper, not a 23rd
+assessment skill; it carries `user-invocable: false` (ignored by Pi and OMP) so Claude Code,
+where `/ensemble:assess` is the entry point, does not list it a second time.
 
 ## Description
 
@@ -124,7 +164,7 @@ the skill's prompt when neither is configured.
 
 ## Usage
 
-After installation, this plugin's skills will be automatically available in
-Claude Code. Start with `/skill:assess-config` for a new portfolio, then
-`/skill:assess-repo` (single repo) or `/skill:assessment-report-suite`
-(full executive package across a repo or portfolio).
+After installation this package's skills and its command are available. Start with
+`/ensemble:assess config` for a new portfolio, then `/ensemble:assess repo` (single repo) or
+`/ensemble:assess report` (full executive package across a repo or portfolio). The same skills
+can be invoked directly, for example `/skill:assess-config` and `/skill:assess-repo`.

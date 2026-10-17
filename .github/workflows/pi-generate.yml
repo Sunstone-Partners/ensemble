@@ -54,9 +54,15 @@ jobs:
       # version bump) -- without this, a version bump could be silently missed
       # and `pi install` would gate on an unchanged version, serving stale
       # content forever.
+      #
+      # A self-contained Pi package (SELF_CONTAINED_PI_PACKAGES in
+      # packages/pi/src/self-contained-packages.ts, today `assessment`) gets its
+      # own generated prompts and command-wrapper skills inside the package, not
+      # in packages/pi, so those paths are compared too. Add a package's
+      # prompts/ and skills/ensemble-* paths here when it joins that list.
       - name: Check for stale generated output
         run: |
-          PATHS="packages/pi/prompts packages/pi/agents packages/pi/skills packages/pi/AGENTS.md packages/pi/package.json packages/pi/.claude-plugin/plugin.json"
+          PATHS="packages/pi/prompts packages/pi/agents packages/pi/skills packages/pi/AGENTS.md packages/pi/package.json packages/pi/.claude-plugin/plugin.json packages/assessment/prompts packages/assessment/skills/ensemble-assess"
           git diff --exit-code $PATHS || {
             echo "ERROR: Generated Pi artifacts (or version files) are stale. Run 'npm run generate:pi' and commit the results (including the version bump)."
             echo "If you already did and still see this: your packages/pi/dist/ was a stale local build. dist/ is gitignored and 'generate' now builds first, so re-run on an up-to-date checkout."

@@ -19,5 +19,6 @@
     "team",
     "ensemble"
   ],
+  "commands": "./commands",
   "skills": "./skills"
 }

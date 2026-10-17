@@ -47,15 +47,24 @@ function extractDescription(promptContent: string, skillName: string): string {
  * Files are written directly (like copySkills) and results returned with
  * type: 'skill' so the main write loop skips them.
  *
- * @param outputRoot  Pi package root (packages/pi)
- * @param options     Runtime options
+ * @param outputRoot  Package root whose prompts/ holds the command prompts and whose
+ *                    skills/ receives the wrappers (packages/pi, or a self-contained
+ *                    Pi package's directory)
+ * @param options     Runtime options. `hideFromClaudeCode` adds `user-invocable: false`
+ *                    to each wrapper (Pi and OMP ignore the key; verified on pi 1.3.0 and
+ *                    omp 18.12.0, where `skill:<name>` stays registered). Set it for a
+ *                    package that is also a Claude Code plugin with the real
+ *                    /ensemble:<cmd> command: Claude Code scans that package's skills/
+ *                    and would otherwise list the Pi/OMP wrapper beside the command.
+ *                    Leave it unset where the wrapper is the only entry point (packages/pi
+ *                    has no Claude commands).
  * @returns           Array of TransformResult entries, one per skill generated
  */
 export async function generateCommandSkills(
   outputRoot: string,
-  options: { dryRun?: boolean; verbose?: boolean }
+  options: { dryRun?: boolean; verbose?: boolean; hideFromClaudeCode?: boolean }
 ): Promise<TransformResult[]> {
-  const { dryRun = false, verbose = false } = options;
+  const { dryRun = false, verbose = false, hideFromClaudeCode = false } = options;
 
   const promptsDir = path.join(outputRoot, 'prompts');
   const skillsOutputDir = path.join(outputRoot, 'skills');
@@ -91,6 +100,7 @@ export async function generateCommandSkills(
       description,
       // Prevent auto-trigger from description matching; invoke via explicit /skill-name only
       'disable-model-invocation': true,
+      ...(hideFromClaudeCode ? { 'user-invocable': false } : {}),
     });
 
     const outputPath = path.join(skillsOutputDir, skillName, 'SKILL.md');

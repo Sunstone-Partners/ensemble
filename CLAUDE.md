@@ -10,6 +10,7 @@ All ensemble commands use the `/ensemble:` namespace:
 /ensemble:fold-prompt          # Optimize Claude environment
 /ensemble:standards            # Coding standards front door: discover | inject | fold
 /ensemble:reqnroll             # PRD acceptance tests front door: features | feature-drift | bindings | binding-drift | tdd
+/ensemble:assess               # Assessment front door: repo | team | config | report (repo --only <dimension>)
 /ensemble:reinstall-plugins    # Force-refresh installed plugins (stopgap for version-gated updates)
 /ensemble:create-prd           # Create Product Requirements Document
 /ensemble:create-trd           # Create Technical Requirements Document

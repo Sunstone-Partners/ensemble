@@ -100,7 +100,7 @@ The plugin ecosystem is organized into 4 tiers; see the [wiki Architecture page]
 - **ensemble-permitter** - Permission-expansion hook with allowlist (opt-out via `ENSEMBLE_PERMITTER_DISABLE=1`)
 - **ensemble-multiplexer-adapters** - Terminal multiplexer abstraction layer
 - **ensemble-ai** - AI SDK skills for OpenAI, Anthropic, Perplexity, and Weaviate
-- **ensemble-assessment** - Repository, team, and AI-readiness assessment and diagnostic reporting
+- **ensemble-assessment** - Repository, team, and AI-readiness assessment and diagnostic reporting; adds `/ensemble:assess`. Installable on Pi/OMP as its own package (not bundled into `ensemble-pi`)
 
 ### Runtime Translation
 - **ensemble-opencode** (5.3.0) - OpenCode runtime support (translates Ensemble artifacts to OpenCode-compatible formats)
@@ -177,7 +177,7 @@ After installation, plugins automatically register their agents, commands, and s
 
 ### Available Commands
 
-Ensemble ships 48 slash-commands across six packages; this is a representative sample — see the [wiki Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) for the full list.
+Ensemble ships 47 slash-commands across seven packages (39 directly typable; the rest are reachable only through the front-door command that dispatches to them). This is a representative sample — see the [wiki Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) for the full list.
 
 - `/ensemble:feature` - Canonical front door for the feature lifecycle: `new`/`resume`/`status`/`abandon` (ensemble-development)
 - `/ensemble:issue` - Canonical front door for issue work: `fix`/`list`/`resume`/`status`/`abandon` (ensemble-development)
@@ -185,6 +185,7 @@ Ensemble ships 48 slash-commands across six packages; this is a representative s
 - `/ensemble:trd` - Canonical front door for TRD authoring, analysis, and implementation (ensemble-development)
 - `/ensemble:reqnroll` - Front door for PRD-to-Reqnroll acceptance tests: `features`/`feature-drift`/`bindings`/`binding-drift`/`tdd` (ensemble-product)
 - `/ensemble:standards` - Front door for project coding standards: `discover`/`inject`/`fold` (ensemble-core)
+- `/ensemble:assess` - Front door for assessments: `repo`/`team`/`config`/`report`, plus `repo --only <dimension>` for a single repository dimension (ensemble-assessment)
 - `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation (ensemble-development)
 - `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*` (ensemble-development)
 - `/ensemble:fold-prompt` - Project optimization (ensemble-core)
