@@ -176,7 +176,7 @@ mission: |
   Blazor Detection:
   - .csproj with Microsoft.AspNetCore.Components.*
   - .razor files with @page or component markup
-  - Load skills/blazor-framework/SKILL.md
+  - Load skills/blazor/SKILL.md
 ```
 
 ### Skill Benefits

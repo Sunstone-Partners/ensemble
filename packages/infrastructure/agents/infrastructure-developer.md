@@ -249,14 +249,6 @@ if [ "$DETECTED" = "true" ]; then
       echo "📚 Loading AWS cloud skill..."
       SKILL_PATH="skills/aws-cloud/SKILL.md"
       ;;
-    gcp)
-      echo "📚 Loading GCP cloud skill..."
-      SKILL_PATH="skills/gcp-cloud/SKILL.md"
-      ;;
-    azure)
-      echo "📚 Loading Azure cloud skill..."
-      SKILL_PATH="skills/azure-cloud/SKILL.md"
-      ;;
   esac
 
   # Read skill (quick reference)
@@ -445,7 +437,7 @@ locals {
       enable_nat_gateway   = true
     }
 
-    # GCP-specific (from skills/gcp-cloud/SKILL.md - future)
+    # GCP-specific
     gcp = {
       auto_create_subnetworks = false
       routing_mode           = "REGIONAL"

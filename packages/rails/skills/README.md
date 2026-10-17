@@ -173,7 +173,7 @@ mission: |
   Rails Detection:
   - Gemfile with rails gem
   - .rb files with Rails imports
-  - Load skills/rails-framework/SKILL.md
+  - Load skills/rails/SKILL.md
 ```
 
 ### Skill Benefits

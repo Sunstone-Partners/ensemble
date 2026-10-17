@@ -172,7 +172,7 @@ mission: |
   Phoenix Detection:
   - mix.exs with :phoenix dependency
   - .ex files with Phoenix imports
-  - Load skills/phoenix-framework/SKILL.md
+  - Load skills/phoenix/SKILL.md
 ```
 
 ### Skill Benefits

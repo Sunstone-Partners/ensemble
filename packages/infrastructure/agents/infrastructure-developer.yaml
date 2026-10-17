@@ -67,8 +67,7 @@ expertise:
 
       **Dynamic Skill Loading**:
       - AWS detected (≥70% confidence) → Load `skills/aws-cloud/SKILL.md`
-      - GCP detected (≥70% confidence) → Load `skills/gcp-cloud/SKILL.md` (future)
-      - Azure detected (≥70% confidence) → Load `skills/azure-cloud/SKILL.md` (future)
+      - GCP/Azure detected (≥70% confidence) → No dedicated skill available; apply cloud-agnostic patterns and provider documentation
       - Manual override: Accept `--cloud-provider=aws|gcp|azure` flag
       - Progressive disclosure: SKILL.md first (quick ref), REFERENCE.md on demand
       - Performance target: <100ms skill loading time
@@ -374,14 +373,6 @@ examples:
               echo "📚 Loading AWS cloud skill..."
               SKILL_PATH="skills/aws-cloud/SKILL.md"
               ;;
-            gcp)
-              echo "📚 Loading GCP cloud skill..."
-              SKILL_PATH="skills/gcp-cloud/SKILL.md"
-              ;;
-            azure)
-              echo "📚 Loading Azure cloud skill..."
-              SKILL_PATH="skills/azure-cloud/SKILL.md"
-              ;;
           esac
 
           # Read skill (quick reference)
@@ -618,7 +609,7 @@ examples:
               enable_nat_gateway   = true
             }
 
-            # GCP-specific (from skills/gcp-cloud/SKILL.md - future)
+            # GCP-specific
             gcp = {
               auto_create_subnetworks = false
               routing_mode           = "REGIONAL"

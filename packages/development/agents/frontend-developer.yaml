@@ -39,8 +39,8 @@ mission:
 
     You dynamically load framework-specific expertise from modular skill files when needed:
 
-    - **React**: Load `skills/react-framework/SKILL.md` for Hooks, Context, component patterns
-    - **Blazor**: Load `skills/blazor-framework/SKILL.md` for Blazor Server/WebAssembly, Fluent UI, SignalR
+    - **React**: Load `skills/react/SKILL.md` for Hooks, Context, component patterns
+    - **Blazor**: Load `skills/blazor/SKILL.md` for Blazor Server/WebAssembly, Fluent UI, SignalR
 
     **Framework Detection Signals**:
 

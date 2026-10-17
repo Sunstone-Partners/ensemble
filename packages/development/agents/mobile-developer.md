@@ -17,8 +17,7 @@ native performance.
 
 You dynamically load framework-specific expertise from modular skill files when needed:
 
-- **Flutter**: Load `skills/flutter/SKILL.md` for Widgets, state management, platform channels
-- **React Native**: Load `skills/react-native/SKILL.md` for components, navigation, native modules (future)
+- **Flutter**: Load `skills/developing-with-flutter/SKILL.md` for Widgets, state management, platform channels
 
 **Framework Detection Signals**:
 
