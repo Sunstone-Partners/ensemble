@@ -162,7 +162,7 @@ The deep-debugger agent uses this skill for:
 Example workflow:
 ```markdown
 1. deep-debugger receives bug report
-2. Invokes test-detector to identify Jest
+2. Invokes detect-stack (test axis) to identify Jest
 3. Invokes jest-test/generate-test.js to create failing test
 4. Invokes jest-test/run-test.js to validate test fails
 5. Delegates fix to appropriate specialist agent

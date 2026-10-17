@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 
 /**
- * Performance Benchmark for Tooling Detection
+ * Performance Benchmark for the detect-stack tooling axis
  *
  * Tests detection performance with and without optimizations:
  * - Baseline (no cache, sequential)
  * - With caching
  * - Parallel detection
  * - Combined optimizations
+ *
+ * Run it from the root of a project that contains a fly.toml: the accuracy
+ * check at the end expects Fly.io to be detected in the current directory.
  */
 
-const { detectTooling, detectTool, detectionCache } = require('./detect-tooling');
-const path = require('path');
+const { detect, detectionCache } = require('./detect-stack');
 
 /**
  * Run multiple iterations and calculate average
@@ -34,6 +36,21 @@ async function benchmark(iterations, fn) {
 }
 
 /**
+ * Detect Fly.io only (the old detectTool('flyio') call): the envelope of a
+ * single-tool run keeps the tool in all_results even when it is not detected.
+ */
+async function detectFlyio(projectPath, options = {}) {
+  const result = await detect('tooling', projectPath, { ...options, tools: ['flyio'] });
+  const flyio = result.all_results[0];
+  return {
+    detected: result.detected,
+    confidence: flyio.confidence,
+    signals: flyio.signals,
+    signal_count: flyio.signal_count
+  };
+}
+
+/**
  * Test Fly.io detection performance
  */
 async function testFlyioDetection() {
@@ -46,7 +63,7 @@ async function testFlyioDetection() {
   console.log('Test 1: Detection without cache (10 iterations)');
   const noCacheResults = await benchmark(iterations, async () => {
     detectionCache.clear();
-    await detectTool(projectPath, 'flyio', { useCache: false });
+    await detectFlyio(projectPath, { useCache: false });
   });
   console.log(`  Average: ${noCacheResults.avg.toFixed(2)}ms`);
   console.log(`  Min: ${noCacheResults.min}ms, Max: ${noCacheResults.max}ms`);
@@ -56,7 +73,7 @@ async function testFlyioDetection() {
   console.log('\nTest 2: Detection with cache (10 iterations, cache persists)');
   detectionCache.clear();
   const withCacheResults = await benchmark(iterations, async () => {
-    await detectTool(projectPath, 'flyio', { useCache: true });
+    await detectFlyio(projectPath, { useCache: true });
   });
   console.log(`  Average: ${withCacheResults.avg.toFixed(2)}ms`);
   console.log(`  Min: ${withCacheResults.min}ms, Max: ${withCacheResults.max}ms`);
@@ -67,12 +84,12 @@ async function testFlyioDetection() {
   console.log('\nTest 3: Single detection performance');
   detectionCache.clear();
   const start1 = Date.now();
-  const result1 = await detectTool(projectPath, 'flyio');
+  await detectFlyio(projectPath);
   const duration1 = Date.now() - start1;
   console.log(`  First run (cold): ${duration1}ms`);
 
   const start2 = Date.now();
-  const result2 = await detectTool(projectPath, 'flyio');
+  await detectFlyio(projectPath);
   const duration2 = Date.now() - start2;
   console.log(`  Second run (warm): ${duration2}ms`);
   console.log(`  Cache speedup: ${((1 - duration2 / duration1) * 100).toFixed(1)}%`);
@@ -82,7 +99,7 @@ async function testFlyioDetection() {
   detectionCache.clear();
   const allToolsResults = await benchmark(5, async () => {
     detectionCache.clear();
-    await detectTooling(projectPath, { useCache: false });
+    await detect('tooling', projectPath, { useCache: false });
   });
   console.log(`  Average: ${allToolsResults.avg.toFixed(2)}ms`);
   console.log(`  Min: ${allToolsResults.min}ms, Max: ${allToolsResults.max}ms`);
@@ -113,7 +130,7 @@ async function testDetectionAccuracy() {
   const projectPath = process.cwd();
 
   // Test Fly.io detection
-  const flyioResult = await detectTool(projectPath, 'flyio');
+  const flyioResult = await detectFlyio(projectPath);
   console.log('Fly.io Detection:');
   console.log(`  Detected: ${flyioResult.detected}`);
   console.log(`  Confidence: ${(flyioResult.confidence * 100).toFixed(1)}%`);

@@ -353,10 +353,14 @@
       "patterns": ["generate.*changelog", "changelog.*generate"],
       "purpose": "Parse conventional commits and generate categorized changelog"
     },
-    "cloud-provider-detector": {
-      "triggers": ["detect cloud", "which cloud", "aws or gcp", "cloud provider"],
-      "patterns": ["detect.*cloud", "cloud.*provider"],
-      "purpose": "Auto-detect AWS, GCP, or Azure usage with multi-signal analysis"
+    "detect-stack": {
+      "triggers": ["detect cloud", "which cloud", "aws or gcp", "cloud provider",
+                   "detect framework", "what framework", "identify framework", "which framework",
+                   "detect test framework", "what test framework", "which testing",
+                   "detect tooling", "which tools", "infrastructure tools", "detect helm", "detect kubernetes"],
+      "patterns": ["detect.*cloud", "cloud.*provider", "detect.*framework", "which.*framework",
+                   "detect.*test", "which.*test.*framework", "detect.*tool", "which.*infrastructure"],
+      "purpose": "Detect a project's framework, test runner, infrastructure tooling, and cloud provider with multi-signal confidence scoring"
     },
     "flutter": {
       "triggers": ["flutter", "dart", "flutter widget", "flutter build", "flutter state"],
@@ -402,11 +406,6 @@
       "triggers": ["fly.io", "fly", "flyctl", "fly deploy", "fly scale", "fly launch"],
       "patterns": ["fly.*deploy", "flyctl.*"],
       "purpose": "Fly.io deployment and application scaling"
-    },
-    "framework-detector": {
-      "triggers": ["detect framework", "what framework", "identify framework", "which framework"],
-      "patterns": ["detect.*framework", "which.*framework"],
-      "purpose": "Multi-signal framework detection with confidence scoring"
     },
     "helm": {
       "triggers": ["helm", "helm chart", "helm install", "helm upgrade", "helm values", "values.yaml"],
@@ -484,16 +483,6 @@
       "triggers": ["tailwind", "tailwindcss", "tailwind config", "utility class", "tailwind theme"],
       "patterns": ["tailwind.*config", "@tailwind"],
       "purpose": "Utility-first CSS styling patterns using Tailwind CSS 3.x"
-    },
-    "test-detector": {
-      "triggers": ["detect test framework", "what test framework", "which testing"],
-      "patterns": ["detect.*test", "which.*test.*framework"],
-      "purpose": "Automatically detect test frameworks in projects"
-    },
-    "tooling-detector": {
-      "triggers": ["detect tooling", "which tools", "infrastructure tools", "detect helm", "detect kubernetes"],
-      "patterns": ["detect.*tool", "which.*infrastructure"],
-      "purpose": "Automatic detection of infrastructure tooling (Helm, Kubernetes, Kustomize, ArgoCD)"
     },
     "anthropic": {
       "triggers": ["anthropic", "claude api", "claude sdk", "messages api", "tool use", "extended thinking"],

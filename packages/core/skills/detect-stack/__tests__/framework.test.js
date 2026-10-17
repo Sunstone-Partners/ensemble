@@ -1,5 +1,6 @@
 /**
- * Unit tests for FrameworkDetector
+ * Unit tests for FrameworkDetector, the engine behind the `framework` axis of
+ * detect-stack (ported from framework-detector/__tests__/detect-framework.test.js).
  * Target: 80% code coverage
  *
  * Related: TRD-015, docs/TRD/skills-based-framework-agents-trd.md
@@ -7,7 +8,7 @@
 
 const fs = require('fs').promises;
 const path = require('path');
-const FrameworkDetector = require('../detect-framework');
+const { FrameworkDetector } = require('../detect-stack');
 const { glob } = require('glob');
 
 // Mock dependencies
@@ -24,7 +25,7 @@ jest.mock('glob', () => ({
 
 describe('FrameworkDetector', () => {
   let detector;
-  const mockPatternsPath = '/test/framework-patterns.json';
+  const mockPatternsPath = '/test/patterns/framework.json';
   const mockProjectRoot = '/test/project';
 
   const mockPatterns = {
@@ -96,7 +97,7 @@ describe('FrameworkDetector', () => {
     test('should initialize with default values', () => {
       const defaultDetector = new FrameworkDetector();
       expect(defaultDetector.projectRoot).toBe(process.cwd());
-      expect(defaultDetector.patternsPath).toContain('framework-patterns.json');
+      expect(defaultDetector.patternsPath).toContain(path.join('patterns', 'framework.json'));
       expect(defaultDetector.detectionResults).toBeInstanceOf(Map);
     });
 
@@ -783,7 +784,7 @@ describe('FrameworkDetector', () => {
   describe('Integration: Full detection workflow', () => {
     beforeEach(() => {
       fs.readFile.mockImplementation(async filePath => {
-        if (filePath.includes('framework-patterns.json')) {
+        if (filePath.includes('patterns/framework.json')) {
           return JSON.stringify(mockPatterns);
         }
         if (filePath.includes('package.json')) {
@@ -821,7 +822,7 @@ describe('FrameworkDetector', () => {
 
     test('should return null when no frameworks detected', async () => {
       fs.readFile.mockImplementation(async filePath => {
-        if (filePath.includes('framework-patterns.json')) {
+        if (filePath.includes('patterns/framework.json')) {
           return JSON.stringify(mockPatterns);
         }
         throw new Error('File not found');
@@ -846,7 +847,7 @@ describe('FrameworkDetector', () => {
       };
 
       fs.readFile.mockImplementation(async filePath => {
-        if (filePath.includes('framework-patterns.json')) {
+        if (filePath.includes('patterns/framework.json')) {
           return JSON.stringify(multiFrameworkPatterns);
         }
         if (filePath.includes('package.json')) {

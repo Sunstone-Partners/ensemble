@@ -15,6 +15,7 @@
     "testing",
     "ensemble"
   ],
+  "dependencies": ["ensemble-core"],
   "commands": "./commands",
   "skills": "./skills",
   "agents": [

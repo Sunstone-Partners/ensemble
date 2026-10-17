@@ -8,6 +8,19 @@ Quality assurance, code review, and DoD enforcement
 claude plugin install @sunstone-partners/ensemble-quality
 ```
 
+## Dependencies
+
+Stack detection (`detect-stack`: framework, test runner, infrastructure tooling and cloud provider) ships in
+`@sunstone-partners/ensemble-core`, not in this package. `deep-debugger` runs
+`skills/detect-stack/detect-stack.js --axis=test` to find the project's test runner, so install
+`ensemble-core` as well:
+
+```bash
+claude plugin install @sunstone-partners/ensemble-core
+```
+
+Pi has no plugin dependency mechanism, so there too `ensemble-core` must be installed alongside this package.
+
 ## Description
 
 Part of the ensemble plugin ecosystem for Claude Code. This plugin provides quality assurance, code review, and dod enforcement.

@@ -54,7 +54,7 @@ mission:
       Direct code implementation (delegate to specialist agents: rails-backend-expert, nestjs-backend-expert, dotnet-backend-expert,
       react-component-architect, dotnet-blazor-expert, elixir-phoenix-expert, frontend-developer, backend-developer), manual bug
       reproduction (automated test recreation only), architectural decisions (delegate to tech-lead-orchestrator), security auditing
-      (delegate to code-reviewer), test framework implementation (uses test framework skills via Skill tool: test-detector, jest-test,
+      (delegate to code-reviewer), test framework implementation (uses test framework skills via Skill tool: detect-stack, jest-test,
       pytest-test, rspec-test, xunit-test, exunit-test), infrastructure debugging (delegate to infrastructure-specialist)
 
     collaboratesOn: |
@@ -71,8 +71,8 @@ mission:
 
     - name: Automated Test Recreation (Skills-Based)
       description: |
-        Multi-framework test recreation using Claude Code Skills architecture. Invokes test-detector skill to identify framework
-        (Jest, pytest, RSpec, xUnit, ExUnit) with confidence scoring. Delegates to framework-specific test generation skills
+        Multi-framework test recreation using Claude Code Skills architecture. Invokes the detect-stack skill (test axis) to identify the
+        framework (Jest, pytest, RSpec, xUnit, ExUnit) with confidence scoring. Delegates to framework-specific test generation skills
         (jest-test, pytest-test, rspec-test, xunit-test, exunit-test) via Skill tool. Generates failing test cases that consistently
         reproduce bugs. Validates test failure via test-runner before fix implementation to prevent false positives. Documents test
         environment setup requirements. Achieves ≥80% automated recreation success rate within ≤5 minutes P95. Skills return JSON
@@ -127,8 +127,9 @@ responsibilities:
   - priority: high
     title: Automated Bug Recreation (Skills-Based)
     description: |
-      **STEP 1 - Framework Detection**: Invoke test-detector skill via Skill tool to detect project test framework. Skill returns JSON
-      with detected framework, confidence score, and config file paths. Supports Jest, pytest, RSpec, xUnit, ExUnit with pattern-based
+      **STEP 1 - Framework Detection**: Invoke the detect-stack skill via Skill tool with the test axis (`--axis=test`) to detect the
+      project test framework. Skill returns JSON with the detected runner (`primary`), confidence score, and config file paths
+      (`results[0].config_files`). Supports Jest, pytest, RSpec, xUnit, ExUnit with pattern-based
       detection (config files, package indicators, test directories). **STEP 2 - Test Generation**: Based on detected framework, invoke
       appropriate test skill (jest-test, pytest-test, rspec-test, xunit-test, exunit-test) with bug context (source file, bug description,
       expected/actual behavior). Skills generate failing test cases using framework-specific templates. **STEP 3 - Validation**: Execute
@@ -232,7 +233,7 @@ examples:
            - Session: Created session-uuid-1234
 
         2. RECREATING: Generate failing test (Skills-Based)
-           - Invoke: test-detector skill → {"framework": "jest", "confidence": 0.95}
+           - Invoke: detect-stack skill (test axis) → {"primary": "jest", "confidence": 0.95}
            - Invoke: jest-test skill with bug context
            - Generate: tests/debug/issue-1234.test.js
            - Validate: Test fails consistently ✓

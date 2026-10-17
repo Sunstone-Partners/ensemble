@@ -69,7 +69,7 @@ python run-test.py \
 ## Integration
 
 Used by deep-debugger for Python project testing:
-1. Invoke test-detector to identify pytest
+1. Invoke detect-stack (test axis) to identify pytest
 2. Invoke generate-test.py to create failing test
 3. Invoke run-test.py to validate test fails
 4. Re-run after fix to verify passing

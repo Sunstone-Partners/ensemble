@@ -42,7 +42,7 @@ const skill = {
  * @returns {string} Path to documentation file
  */
 function loadSkill(type = 'quick') {
-  const skillsDir = path.join(__dirname, '..', 'skills', 'framework-detector');
+  const skillsDir = path.join(__dirname, '..', 'skills', 'detect-stack');
   return type === 'comprehensive'
     ? path.join(skillsDir, 'REFERENCE.md')
     : path.join(skillsDir, 'SKILL.md');

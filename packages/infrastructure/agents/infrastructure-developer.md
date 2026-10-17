@@ -56,7 +56,7 @@ Core Strengths:
 ### High Priority
 
 - **Cloud Provider Detection & Skill Loading**: **At Task Start**:
-1. Run cloud provider detection: `node skills/cloud-provider-detector/detect-cloud-provider.js`
+1. Run cloud provider detection: `node skills/detect-stack/detect-stack.js --axis=cloud`
 2. Analyze detection results (confidence, provider, signals)
 3. Load appropriate skill(s) based on detected provider(s)
 4. Log detection results and loaded skills for transparency
@@ -64,11 +64,11 @@ Core Strengths:
 **Detection Workflow**:
 ```bash
 # Detect cloud provider
-DETECTION=$(node skills/cloud-provider-detector/detect-cloud-provider.js /path/to/project)
+DETECTION=$(node skills/detect-stack/detect-stack.js --axis=cloud /path/to/project)
 
 # Parse results
-PROVIDER=$(echo $DETECTION | jq -r '.provider')
-CONFIDENCE=$(echo $DETECTION | jq -r '.confidence')
+PROVIDER=$(echo $DETECTION | jq -r '.primary')
+CONFIDENCE=$(echo $DETECTION | jq -r '.all_results[0].confidence')
 
 # Load skill if confidence ≥70%
 if [ "$CONFIDENCE" -ge 0.7 ]; then
@@ -86,12 +86,12 @@ fi
 - Load specified skill regardless of detection results
 
 **Multi-Cloud Projects**:
-- Check `all_results` array for multiple providers
+- Check the `results` array for multiple providers (every provider at or above the threshold)
 - Load all relevant skills if multiple providers detected
 - Provide unified interface for cross-cloud operations
 
 - **Tooling Detection & Skill Loading**: **At Task Start**:
-1. Run tooling detection: `node skills/tooling-detector/detect-tooling.js`
+1. Run tooling detection: `node skills/detect-stack/detect-stack.js --axis=tooling`
 2. Analyze detection results (tools detected, confidence, signals)
 3. Load appropriate skill(s) for each detected tool
 4. Log detection results and loaded skills for transparency
@@ -99,12 +99,12 @@ fi
 **Detection Workflow**:
 ```bash
 # Detect infrastructure tooling
-TOOLING=$(node skills/tooling-detector/detect-tooling.js /path/to/project)
+TOOLING=$(node skills/detect-stack/detect-stack.js --axis=tooling /path/to/project)
 
 # Parse results
-FLYIO_DETECTED=$(echo $TOOLING | jq -r '.tools[] | select(.tool=="flyio") | .confidence')
-HELM_DETECTED=$(echo $TOOLING | jq -r '.tools[] | select(.tool=="helm") | .confidence')
-K8S_DETECTED=$(echo $TOOLING | jq -r '.tools[] | select(.tool=="kubernetes") | .confidence')
+FLYIO_DETECTED=$(echo $TOOLING | jq -r '.results[] | select(.name=="flyio") | .confidence')
+HELM_DETECTED=$(echo $TOOLING | jq -r '.results[] | select(.name=="helm") | .confidence')
+K8S_DETECTED=$(echo $TOOLING | jq -r '.results[] | select(.name=="kubernetes") | .confidence')
 
 # Load Fly.io skill if detected (≥70% confidence)
 if [ ! -z "$FLYIO_DETECTED" ]; then
@@ -232,13 +232,13 @@ Automatic cloud provider detection with dynamic skill loading
 
 # Detect cloud provider
 echo "🔍 Detecting cloud provider..."
-DETECTION=$(node skills/cloud-provider-detector/detect-cloud-provider.js .)
+DETECTION=$(node skills/detect-stack/detect-stack.js --axis=cloud .)
 
 # Parse results
 DETECTED=$(echo $DETECTION | jq -r '.detected')
-PROVIDER=$(echo $DETECTION | jq -r '.provider')
-CONFIDENCE=$(echo $DETECTION | jq -r '.confidence')
-SIGNALS=$(echo $DETECTION | jq -r '.signal_count')
+PROVIDER=$(echo $DETECTION | jq -r '.primary')
+CONFIDENCE=$(echo $DETECTION | jq -r '.all_results[0].confidence')
+SIGNALS=$(echo $DETECTION | jq -r '.results[0].signal_count')
 
 if [ "$DETECTED" = "true" ]; then
   echo "✅ Detected: $PROVIDER (confidence: ${CONFIDENCE}%, signals: $SIGNALS)"
@@ -283,17 +283,17 @@ Automatic tooling detection with dynamic skill loading
 
 # Detect infrastructure tooling
 echo "🔍 Detecting infrastructure tooling..."
-TOOLING=$(node skills/tooling-detector/detect-tooling.js .)
+TOOLING=$(node skills/detect-stack/detect-stack.js --axis=tooling .)
 
 # Parse results
 DETECTED=$(echo $TOOLING | jq -r '.detected')
-TOOL_COUNT=$(echo $TOOLING | jq -r '.tools | length')
+TOOL_COUNT=$(echo $TOOLING | jq -r '.results | length')
 
 if [ "$DETECTED" = "true" ]; then
   echo "✅ Detected $TOOL_COUNT tool(s)"
 
   # Check for Helm
-  HELM_CONF=$(echo $TOOLING | jq -r '.tools[] | select(.tool=="helm") | .confidence')
+  HELM_CONF=$(echo $TOOLING | jq -r '.results[] | select(.name=="helm") | .confidence')
   if [ ! -z "$HELM_CONF" ]; then
     echo "📦 Helm detected (confidence: ${HELM_CONF})"
     echo "   Loading Helm skill..."
@@ -301,7 +301,7 @@ if [ "$DETECTED" = "true" ]; then
   fi
 
   # Check for Kubernetes
-  K8S_CONF=$(echo $TOOLING | jq -r '.tools[] | select(.tool=="kubernetes") | .confidence')
+  K8S_CONF=$(echo $TOOLING | jq -r '.results[] | select(.name=="kubernetes") | .confidence')
   if [ ! -z "$K8S_CONF" ]; then
     echo "☸️  Kubernetes detected (confidence: ${K8S_CONF})"
     echo "   Loading Kubernetes skill..."
@@ -309,7 +309,7 @@ if [ "$DETECTED" = "true" ]; then
   fi
 
   # Check for Kustomize
-  KUSTOMIZE_CONF=$(echo $TOOLING | jq -r '.tools[] | select(.tool=="kustomize") | .confidence')
+  KUSTOMIZE_CONF=$(echo $TOOLING | jq -r '.results[] | select(.name=="kustomize") | .confidence')
   if [ ! -z "$KUSTOMIZE_CONF" ]; then
     echo "🔧 Kustomize detected (confidence: ${KUSTOMIZE_CONF})"
     echo "   Using Kubernetes skill with Kustomize patterns"

@@ -191,7 +191,7 @@ cp templates/streaming.template.py src/stream.py
 
 The backend-developer agent uses this skill by:
 
-1. **Detection Phase**: Runs framework-detector to identify OpenAI
+1. **Detection Phase**: Runs detect-stack to identify OpenAI
 2. **Loading Phase**: Loads SKILL.md for quick patterns
 3. **Deep Dive Phase**: Loads REFERENCE.md for complex scenarios
 4. **Code Generation**: Uses templates for boilerplate reduction

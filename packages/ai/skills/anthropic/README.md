@@ -206,7 +206,7 @@ cp templates/streaming.template.py src/stream.py
 
 The backend-developer agent uses this skill by:
 
-1. **Detection Phase**: Runs framework-detector to identify Anthropic
+1. **Detection Phase**: Runs detect-stack to identify Anthropic
 2. **Loading Phase**: Loads SKILL.md for quick patterns
 3. **Code Generation**: Uses templates for boilerplate reduction
 4. **Learning Phase**: References examples for best practices
