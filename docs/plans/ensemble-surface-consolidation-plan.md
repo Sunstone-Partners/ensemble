@@ -102,3 +102,22 @@ Each phase: edit sources, run `npm run generate` from the repo root, run `script
 - **Decided:** execution starts with the independent fixes (section 7, step 1).
 - Assessment packaging (S6) - **decided:** `ensemble-full` includes everything, so it keeps assessment; assessment is Pi-installable as `ensemble-assessment` itself (no separate `ensemble-pi-assessment` package).
 - Assessment packaging (S6) - **decided:** no dependency between `ensemble-pi` and `ensemble-assessment`; users install both. Document this in both READMEs and the install docs.
+
+## 9. Execution status (branch `chore/surface-consolidation-prework`)
+
+Surface now: **68 source skills** (was 77), **47 commands** (was 48), **37 agents** (unchanged). Each phase below is its own commit and passed `npm run validate` plus the pi, codex, core, scripts and router test suites.
+
+| Phase | Status | Notes |
+|---|---|---|
+| Fixes (dangling references, `full/skills/react`) | Done | `faba445` |
+| S2 smoke tests 6 -> 1 | Done | `453e72f` |
+| S6a assessment packaging (Pi-installable, excluded from `ensemble-pi`, whole-dir mirror in full) | Done | `d82ffae`; commands and the per-package prompt output root (S6 step 4) are **not** done |
+| S1 assessment leaves as single source | Done | `52dbac6`; Pi/OMP subagent skill-loading gate passed, Claude Code and Codex not tested; orchestrators carry a fallback sentence |
+| S3 frameworks + S5 vendor renames | Done | `30c82c8`; also fixed a Codex path-rewrite regression caused by the earlier reference fixes |
+| H0 hide mechanism | **Blocked** | Claude spike not run (CLI hangs in the agent environment); procedure in section 3. Pi/OMP and Codex unverified |
+| C-H remove `claude-changelog` | Done | `c1ff12f` |
+| S4 detectors 4 -> 1 | Done | `fe942c3`; infra and quality manifests depend on `ensemble-core` |
+| C-A/C-B/C-C command merges, C-D/E/F dispatchers, `assess` dispatcher (S6 step 4) | Not started | C-D/E/F add surface until H0 picks a hide mechanism; C-A/B/C each need a behavior-equivalence check first |
+| Agent trim | Not started | Needs per-agent caller checks; realistic target about 30, not 24 |
+
+Follow-ups found during execution: (1) the Pi generator never deletes mirrors of removed or renamed skills, so each phase needed manual orphan cleanup (find them by file age after generating); consider making `copySkills` prune. (2) `ensemble-dotnet` has no entry in `configure-team.yaml` (`domain_to_plugins`, `framework_keyword_to_plugin`) and `packages/full/package.json` peerDependencies lacks it. (3) The `ensemble-blazor` marketplace description ("Blazor/.NET framework skills") now overstates since `dotnet` moved out. (4) `rspec` and `xunit` skills are 22-line stubs. (5) Plugin versions were not bumped for the changed packages (only `ensemble-pi` auto-bumped); bump at release. (6) `packages/core/lib/index.js` calls a class without `new` in `detect()` (pre-existing).
