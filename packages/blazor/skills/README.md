@@ -27,7 +27,7 @@ This skill provides comprehensive Blazor frontend expertise for the `frontend-de
 ## Architecture
 
 ```
-skills/blazor-framework/
+skills/blazor/
 ├── README.md                    # This file - overview and usage
 ├── SKILL.md                     # Quick reference guide (~18KB)
 ├── REFERENCE.md                 # Comprehensive guide (~40KB)

@@ -79,7 +79,7 @@ CONFIDENCE=$(echo $DETECTION | jq -r '.confidence')
 if [ "$CONFIDENCE" -ge 0.7 ]; then
   if [ "$PROVIDER" = "aws" ]; then
     # Load AWS skill (SKILL.md for quick ref)
-    cat skills/aws-cloud/SKILL.md
+    cat skills/aws/SKILL.md
     # Load REFERENCE.md if complex patterns needed
   fi
 fi
@@ -252,7 +252,7 @@ if [ "$DETECTED" = "true" ]; then
   case $PROVIDER in
     aws)
       echo "📚 Loading AWS cloud skill..."
-      SKILL_PATH="skills/aws-cloud/SKILL.md"
+      SKILL_PATH="skills/aws/SKILL.md"
       ;;
   esac
 
@@ -436,7 +436,7 @@ locals {
     provider = local.detected_provider.provider
     region   = var.region
 
-    # AWS-specific (from skills/aws-cloud/SKILL.md)
+    # AWS-specific (from skills/aws/SKILL.md)
     aws = {
       enable_dns_hostnames = true
       enable_nat_gateway   = true

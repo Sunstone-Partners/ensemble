@@ -2,7 +2,7 @@
  * Blazor Framework Plugin
  * @sunstone-partners/ensemble-blazor
  *
- * Blazor and .NET framework skills for web development
+ * Blazor framework skills for web development
  */
 
 const path = require('path');
@@ -35,19 +35,16 @@ const skill = {
     confidence: 0.8
   },
 
-  skills: ['blazor-framework', 'dotnet-framework']
+  skills: ['blazor']
 };
 
 /**
  * Load skill documentation
- * @param {string} skillName - 'blazor-framework' or 'dotnet-framework'
  * @param {string} type - 'quick' for SKILL.md, 'comprehensive' for REFERENCE.md
  * @returns {string} Path to documentation file
  */
-function loadSkill(skillName = 'blazor-framework', type = 'quick') {
-  const skillsDir = skillName === 'dotnet-framework'
-    ? path.join(__dirname, '..', 'skills', 'dotnet-framework')
-    : path.join(__dirname, '..', 'skills');
+function loadSkill(type = 'quick') {
+  const skillsDir = path.join(__dirname, '..', 'skills');
 
   return type === 'comprehensive'
     ? path.join(skillsDir, 'REFERENCE.md')
@@ -57,27 +54,19 @@ function loadSkill(skillName = 'blazor-framework', type = 'quick') {
 /**
  * Get template path
  * @param {string} templateName - Name of the template
- * @param {string} skillName - 'blazor-framework' or 'dotnet-framework'
  * @returns {string} Path to template file
  */
-function getTemplate(templateName, skillName = 'blazor-framework') {
-  const templatesDir = skillName === 'dotnet-framework'
-    ? path.join(__dirname, '..', 'skills', 'dotnet-framework', 'templates')
-    : path.join(__dirname, '..', 'skills', 'templates');
-  return path.join(templatesDir, templateName);
+function getTemplate(templateName) {
+  return path.join(__dirname, '..', 'skills', 'templates', templateName);
 }
 
 /**
  * Get example path
  * @param {string} exampleName - Name of the example
- * @param {string} skillName - 'blazor-framework' or 'dotnet-framework'
  * @returns {string} Path to example file
  */
-function getExample(exampleName, skillName = 'blazor-framework') {
-  const examplesDir = skillName === 'dotnet-framework'
-    ? path.join(__dirname, '..', 'skills', 'dotnet-framework', 'examples')
-    : path.join(__dirname, '..', 'skills', 'examples');
-  return path.join(examplesDir, exampleName);
+function getExample(exampleName) {
+  return path.join(__dirname, '..', 'skills', 'examples', exampleName);
 }
 
 /**

@@ -1,5 +1,5 @@
 ---
-name: Rails Framework
+name: rails
 description: Quick-reference Ruby on Rails 7+ patterns for MVC structure, RESTful controllers, Active Record, migrations, and background jobs. Use when working in a Rails codebase.
 version: 1.0.0
 ---

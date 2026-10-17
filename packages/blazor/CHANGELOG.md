@@ -15,3 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Plugin extraction and population (in progress)
+
+### Changed
+
+- `skills/SKILL.md` frontmatter `name` is now `blazor` (was `Blazor Framework`), matching the package and directory name.
+
+### Removed
+
+- The `dotnet-framework` skill moved to the `ensemble-dotnet` package as the `dotnet` skill. `lib/index.js` no longer takes a `skillName` argument in `loadSkill`, `getTemplate`, and `getExample`, and `skill.skills` is now `['blazor']`.

@@ -14,8 +14,11 @@ const fs = require('fs');
 const path = require('path');
 const {
   parseFrontmatter,
+  buildCodexAgentsMd,
+  detectAgentSkills,
   generateCodexSubcommandsSection,
   generateCommandSkills,
+  normalizeSkillBody,
 } = require('../generate-codex/index.js');
 
 describe('parseFrontmatter — CRLF line endings', () => {
@@ -160,5 +163,43 @@ describe('generateCommandSkills — dispatcher commands (live smoke run, throwaw
     // command's output is unchanged by this generator run.
     const afterContent = fs.readFileSync(KNOWN_LEAF_SKILL, 'utf-8');
     expect(afterContent).toBe(beforeContent);
+  });
+});
+
+describe('detectAgentSkills — dotnet skill is separate from blazor', () => {
+  test.each([
+    ['an ASP.NET mention', 'Builds ASP.NET Core APIs'],
+    ['a .NET mention', 'Targets .NET 8'],
+    ['a dotnet mention', 'Runs the dotnet CLI'],
+  ])('%s selects dotnet but not blazor', (_label, content) => {
+    const skills = detectAgentSkills('api-helper', content);
+    expect(skills).toContain('dotnet');
+    expect(skills).not.toContain('blazor');
+  });
+
+  test('a Blazor mention selects blazor without implying dotnet', () => {
+    const skills = detectAgentSkills('ui-helper', 'Builds Blazor components');
+    expect(skills).toContain('blazor');
+    expect(skills).not.toContain('dotnet');
+  });
+
+  test('backend-named agents get dotnet (not blazor) with the other backend framework skills', () => {
+    expect(detectAgentSkills('backend-developer', 'generic agent text')).toEqual(['dotnet', 'nestjs', 'phoenix', 'rails']);
+  });
+});
+
+describe('normalizeSkillBody / buildCodexAgentsMd — dotnet skill', () => {
+  test('rewrites a bare skills/<name>/ path to the Codex skill directory', () => {
+    expect(normalizeSkillBody('Load `skills/dotnet/SKILL.md`')).toBe('Load `.codex/skills/dotnet/SKILL.md`');
+    expect(normalizeSkillBody('Load skills/nestjs/SKILL.md')).toBe('Load .codex/skills/nestjs/SKILL.md');
+  });
+
+  test('does not double-prefix an already Codex-relative path or rewrite a longer path', () => {
+    expect(normalizeSkillBody('Load .codex/skills/react/SKILL.md')).toBe('Load .codex/skills/react/SKILL.md');
+    expect(normalizeSkillBody('see packages/react/skills/react/SKILL.md')).toBe('see packages/react/skills/react/SKILL.md');
+  });
+
+  test('lists dotnet among the framework skills in the generated AGENTS.md', () => {
+    expect(buildCodexAgentsMd(1, 1, 1)).toContain('`blazor`, `dotnet`');
   });
 });

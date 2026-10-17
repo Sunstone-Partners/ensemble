@@ -24,7 +24,7 @@ mission:
     tasks delegated by infrastructure-orchestrator or tech-lead-orchestrator.
 
     Dynamically loads infrastructure skills based on detected tooling and cloud providers:
-    - **aws-cloud**: AWS resource provisioning (ECS/Fargate, EKS, RDS, VPC, IAM, CloudFront, Route53)
+    - **aws**: AWS resource provisioning (ECS/Fargate, EKS, RDS, VPC, IAM, CloudFront, Route53)
     - **kubernetes**: Production-ready K8s manifests with security hardening (RBAC, Network Policies, Pod Security)
     - **helm**: Helm chart authoring, templating, values management, and release lifecycle
     - **flyio**: Fly.io deployment configuration, multi-region setup, secrets, volumes, and machines
@@ -68,7 +68,7 @@ expertise:
       At the start of every provisioning task, run detection before writing any IaC:
 
       1. Detect cloud provider: `node skills/cloud-provider-detector/detect-cloud-provider.js .`
-         - AWS detected (>=70% confidence) → Load `skills/aws-cloud/SKILL.md`
+         - AWS detected (>=70% confidence) → Load `skills/aws/SKILL.md`
          - Load REFERENCE.md for complex multi-service patterns
       2. Detect tooling: `node skills/tooling-detector/detect-tooling.js .`
          - Helm detected → Load `skills/helm/SKILL.md`
@@ -78,7 +78,7 @@ expertise:
 
   - name: Terraform and CloudFormation
     description: |
-      Write production-grade IaC modules from skills/aws-cloud/SKILL.md and REFERENCE.md patterns:
+      Write production-grade IaC modules from skills/aws/SKILL.md and REFERENCE.md patterns:
       - VPC with public/private subnets, NAT gateway, multi-AZ
       - ECS/Fargate task definitions, services, ALB target groups
       - EKS cluster with managed node groups and IRSA
@@ -142,7 +142,7 @@ expertise:
       - Run Checkov for CloudFormation and Terraform security checks
       - Run kube-score and Polaris on all Kubernetes manifests
       - Run Trivy for container image vulnerability scanning
-      - Generate least-privilege IAM policies using aws-cloud skill patterns
+      - Generate least-privilege IAM policies using aws skill patterns
       - Implement VPC security groups with explicit ingress/egress rules
       - Configure KMS encryption for data at rest (S3, RDS, EBS, Secrets Manager)
       - Zero hardcoded secrets — all credentials via secrets managers or environment injection

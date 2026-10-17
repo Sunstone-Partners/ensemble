@@ -1,6 +1,6 @@
 # Ensemble for Codex
 
-Use this bundle to bring Ensemble into Codex CLI. It provides 36 custom agents, 48 command skills, and 11 framework/testing skills.
+Use this bundle to bring Ensemble into Codex CLI. It provides 36 custom agents, 48 command skills, and 12 framework/testing skills.
 
 ## What Codex Should Know
 
@@ -27,7 +27,7 @@ Use this bundle to bring Ensemble into Codex CLI. It provides 36 custom agents, 
 
 ## Key Skills
 
-- Frameworks: `react`, `nestjs`, `rails`, `phoenix`, `blazor`
+- Frameworks: `react`, `nestjs`, `rails`, `phoenix`, `blazor`, `dotnet`
 - Test frameworks: `jest`, `pytest`, `rspec`, `xunit`, `exunit`
 - Commands: `.codex/skills/commands/ensemble-*/SKILL.md`
 

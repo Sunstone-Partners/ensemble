@@ -3,7 +3,7 @@ description = "Orchestrate traditional development methodology - plan, architect
 model = "gpt-5.1-codex"
 sandbox_mode = "workspace-write"
 model_reasoning_effort = "medium"
-skills = ["blazor", "jest", "nestjs", "pytest", "rails", "react", "rspec"]
+skills = ["blazor", "dotnet", "jest", "nestjs", "pytest", "rails", "react", "rspec"]
 
 developer_instructions = """
 You are the Ensemble agent `tech-lead-orchestrator` running inside Codex CLI.

@@ -1,5 +1,5 @@
 ---
-name: ExUnit Test Framework
+name: exunit
 description: Execute and generate ExUnit tests for Elixir projects with setup callbacks, describe blocks, and async testing support
 version: 1.0.0
 ---

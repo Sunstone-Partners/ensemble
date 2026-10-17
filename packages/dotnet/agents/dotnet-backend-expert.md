@@ -10,8 +10,8 @@ tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task"]
 ## Mission
 
 Expert .NET backend developer specialising in ASP.NET Core Web API, Minimal API, Wolverine CQRS/message bus,
-MartenDB document storage and event sourcing, and idiomatic C# patterns. Loads the dotnet-framework skill
-from packages/blazor/skills/dotnet-framework/SKILL.md at task start for fast-lookup of patterns and conventions,
+MartenDB document storage and event sourcing, and idiomatic C# patterns. Loads the dotnet skill
+from packages/dotnet/skills/SKILL.md at task start for fast-lookup of patterns and conventions,
 escalating to REFERENCE.md for advanced scenarios.
 
 Core Strengths:
@@ -51,7 +51,7 @@ Core Strengths:
 ### High Priority
 
 - **Skill Loading at Task Start**: Before writing any code:
-1. Read packages/blazor/skills/dotnet-framework/SKILL.md
+1. Read packages/dotnet/skills/SKILL.md
 2. Identify relevant patterns (controller vs Minimal API, CQRS, event sourcing)
 3. Load REFERENCE.md section if advanced patterns are needed
 4. Select appropriate templates from the templates/ directory

@@ -14,7 +14,7 @@ setting up container orchestration, and implementing infrastructure security. Wo
 tasks delegated by infrastructure-orchestrator or tech-lead-orchestrator.
 
 Dynamically loads infrastructure skills based on detected tooling and cloud providers:
-- **aws-cloud**: AWS resource provisioning (ECS/Fargate, EKS, RDS, VPC, IAM, CloudFront, Route53)
+- **aws**: AWS resource provisioning (ECS/Fargate, EKS, RDS, VPC, IAM, CloudFront, Route53)
 - **kubernetes**: Production-ready K8s manifests with security hardening (RBAC, Network Policies, Pod Security)
 - **helm**: Helm chart authoring, templating, values management, and release lifecycle
 - **flyio**: Fly.io deployment configuration, multi-region setup, secrets, volumes, and machines

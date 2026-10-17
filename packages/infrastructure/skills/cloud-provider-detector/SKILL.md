@@ -139,7 +139,7 @@ const detection = await detectCloudProvider(projectPath);
 // 2. Load appropriate skill
 if (detection.detected) {
   if (detection.provider === 'aws') {
-    await loadSkill('skills/aws-cloud/SKILL.md');
+    await loadSkill('skills/aws/SKILL.md');
   } else if (detection.provider === 'gcp') {
     await loadSkill('skills/gcp-cloud/SKILL.md');
   } else if (detection.provider === 'azure') {

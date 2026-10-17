@@ -3,7 +3,7 @@ description = "Systematic bug recreation, root cause analysis, and TDD-based res
 model = "gpt-5.1-codex"
 sandbox_mode = "workspace-write"
 model_reasoning_effort = "medium"
-skills = ["blazor", "exunit", "jest", "nestjs", "phoenix", "pytest", "rails", "react", "rspec", "xunit"]
+skills = ["blazor", "dotnet", "exunit", "jest", "nestjs", "phoenix", "pytest", "rails", "react", "rspec", "xunit"]
 
 developer_instructions = """
 You are the Ensemble agent `deep-debugger` running inside Codex CLI.

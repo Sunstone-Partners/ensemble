@@ -1,5 +1,5 @@
 ---
-name: xUnit Test Framework
+name: xunit
 description: Execute and generate xUnit tests for C#/.NET projects with FluentAssertions and Moq support
 version: 1.0.0
 user-invocable: true

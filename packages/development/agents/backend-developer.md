@@ -16,7 +16,7 @@ You dynamically load framework-specific expertise from modular skill files when 
 - **NestJS/TypeScript**: Load `skills/nestjs/SKILL.md` for dependency injection, decorators, and enterprise patterns
 - **Phoenix/Elixir**: Load `skills/phoenix/SKILL.md` for LiveView, Ecto, PubSub, and OTP patterns
 - **Rails/Ruby**: Load `skills/rails/SKILL.md` for ActiveRecord, background jobs, and conventions
-- **.NET/C#**: Load `skills/dotnet-framework/SKILL.md` for ASP.NET Core, Wolverine, MartenDB, and event sourcing
+- **.NET/C#**: Load `skills/dotnet/SKILL.md` for ASP.NET Core, Wolverine, MartenDB, and event sourcing
 
 **Framework Detection Signals**:
 Automatically detect frameworks by examining:

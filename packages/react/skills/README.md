@@ -12,7 +12,7 @@ Progressive disclosure documentation for React development with modern patterns 
 ## Architecture
 
 ```
-react-framework/
+react/
 ├── README.md              # This file - overview and usage
 ├── SKILL.md               # Quick reference (<100KB) - Essential patterns
 ├── REFERENCE.md           # Comprehensive guide (<1MB) - Deep dive
@@ -119,10 +119,10 @@ The frontend-developer agent loads this skill when:
 
 ```typescript
 // Embedded in frontend-developer.yaml
-const skill = await skillLoader.loadSkill('react-framework', 'quick');
+const skill = await skillLoader.loadSkill('react', 'quick');
 // Returns SKILL.md content for fast reference
 
-const comprehensiveGuide = await skillLoader.loadSkill('react-framework', 'comprehensive');
+const comprehensiveGuide = await skillLoader.loadSkill('react', 'comprehensive');
 // Returns REFERENCE.md content for deep dives
 ```
 

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The `dotnet` skill (formerly `dotnet-framework` in `packages/blazor/skills/`) now lives in this package as `skills/SKILL.md` with `REFERENCE.md`, `templates/`, and `examples/`, and gained `name`/`description` frontmatter.
+- `dotnet-backend-expert` loads `packages/dotnet/skills/` instead of `packages/blazor/skills/dotnet-framework/`.
+- `lib/index.js` `skillPath` resolves to this package's own `skills/` directory.
+
 ## [1.0.0] - 2026-05-27
 
 ### Added

@@ -1,5 +1,5 @@
 ---
-name: React Framework
+name: react
 description: Quick-reference React 18+ patterns for hooks, state management, component structure, and Next.js/Vite projects. Use when working in a codebase with a react dependency or .jsx/.tsx components.
 version: 1.0.0
 ---
@@ -48,11 +48,9 @@ export const MyComponent: FC<Props> = ({ title, onAction }) => {
 
 ---
 
-## Core Patterns
+## 1. Component Design
 
-### 1. Component Design
-
-#### Functional Component Structure
+### Functional Component Structure
 
 ```tsx
 // 1. Imports (grouped and sorted)
@@ -87,7 +85,7 @@ export const Component: FC<Props> = ({ children, className }) => {
 };
 ```
 
-#### Component Composition
+### Component Composition
 
 ```tsx
 // Container/Presentational Pattern
@@ -128,7 +126,7 @@ export const UserProfile: FC<UserProfileProps> = ({ user }) => {
 };
 ```
 
-#### Compound Components
+### Compound Components
 
 ```tsx
 interface TabsProps {
@@ -189,9 +187,9 @@ Tabs.Panel = ({ id, children }) => {
 
 ---
 
-### 2. Hooks
+## 2. Hooks
 
-#### useState - Local State
+### useState - Local State
 
 ```tsx
 // Basic usage
@@ -207,7 +205,7 @@ const [data, setData] = useState(() => {
 });
 ```
 
-#### useEffect - Side Effects
+### useEffect - Side Effects
 
 ```tsx
 // Run once on mount
@@ -235,7 +233,7 @@ useEffect(() => {
 }, []);
 ```
 
-#### useContext - Consume Context
+### useContext - Consume Context
 
 ```tsx
 // Context definition
@@ -277,7 +275,7 @@ const MyComponent = () => {
 };
 ```
 
-#### useReducer - Complex State
+### useReducer - Complex State
 
 ```tsx
 interface State {
@@ -325,7 +323,7 @@ const Counter = () => {
 };
 ```
 
-#### useMemo - Expensive Computations
+### useMemo - Expensive Computations
 
 ```tsx
 const ExpensiveComponent = ({ items, filter }: Props) => {
@@ -343,7 +341,7 @@ const ExpensiveComponent = ({ items, filter }: Props) => {
 };
 ```
 
-#### useCallback - Stable Function References
+### useCallback - Stable Function References
 
 ```tsx
 const Parent = () => {
@@ -365,7 +363,7 @@ const MemoizedChild = memo(({ onClick }: { onClick: () => void }) => {
 });
 ```
 
-#### Custom Hooks
+### Custom Hooks
 
 ```tsx
 // Custom hook for fetching data
@@ -403,9 +401,9 @@ const UserProfile = ({ userId }: { userId: number }) => {
 
 ---
 
-### 3. State Management
+## 3. State Management
 
-#### Local State (useState)
+### Local State (useState)
 
 ```tsx
 // Simple local state
@@ -421,7 +419,7 @@ const [form, setForm] = useState({
 setForm(prev => ({ ...prev, email: 'new@email.com' }));
 ```
 
-#### Global State (Context API)
+### Global State (Context API)
 
 ```tsx
 // Store definition
@@ -455,7 +453,7 @@ export const useStore = () => {
 };
 ```
 
-#### Form State
+### Form State
 
 ```tsx
 const LoginForm = () => {
@@ -503,9 +501,9 @@ const LoginForm = () => {
 
 ---
 
-### 4. Accessibility (WCAG 2.1 AA)
+## 4. Accessibility (WCAG 2.1 AA)
 
-#### Semantic HTML
+### Semantic HTML
 
 ```tsx
 // ✅ Good: Semantic HTML
@@ -516,7 +514,7 @@ const LoginForm = () => {
 <div onClick={handleClick}>Click me</div>
 ```
 
-#### ARIA Attributes
+### ARIA Attributes
 
 ```tsx
 // Labels for screen readers
@@ -538,7 +536,7 @@ const LoginForm = () => {
 <span className="sr-only">Loading...</span>
 ```
 
-#### Keyboard Navigation
+### Keyboard Navigation
 
 ```tsx
 const Modal = ({ isOpen, onClose, children }: ModalProps) => {
@@ -574,7 +572,7 @@ const Modal = ({ isOpen, onClose, children }: ModalProps) => {
 };
 ```
 
-#### Focus Management
+### Focus Management
 
 ```tsx
 const Dropdown = () => {
@@ -620,9 +618,9 @@ const Dropdown = () => {
 
 ---
 
-### 5. Performance Optimization
+## 5. Performance Optimization
 
-#### React.memo - Component Memoization
+### React.memo - Component Memoization
 
 ```tsx
 // Prevents re-render if props haven't changed
@@ -643,7 +641,7 @@ export const CustomMemoComponent = memo(
 );
 ```
 
-#### Code Splitting
+### Code Splitting
 
 ```tsx
 import { lazy, Suspense } from 'react';
@@ -672,7 +670,7 @@ const routes = [
 ];
 ```
 
-#### Debouncing User Input
+### Debouncing User Input
 
 ```tsx
 function useDebounce<T>(value: T, delay: number): T {
@@ -707,9 +705,9 @@ const SearchInput = () => {
 
 ---
 
-### 6. Testing
+## 6. Testing
 
-#### React Testing Library Basics
+### React Testing Library Basics
 
 ```tsx
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -750,7 +748,7 @@ describe('Button', () => {
 });
 ```
 
-#### Testing Hooks
+### Testing Hooks
 
 ```tsx
 import { renderHook, act } from '@testing-library/react';

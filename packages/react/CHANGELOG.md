@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `skills/SKILL.md` frontmatter `name` is now `react` (was `React Framework`), matching the package and directory name.
+- `skills/SKILL.md`: the six Core Patterns sections are promoted to H2 (`## 1. Component Design` through `## 6. Testing`), the same layout the rails and blazor skills use.
+- `skills/REFERENCE.md`: added the Quick Reference pointer and Navigation block.
+
+### Removed
+
+- `packages/development/skills/developing-with-react` was folded into this package; its templates and examples were byte-identical. Use the `react` skill.
+
 ## [4.0.0] - 2025-12-10
 
 ### Added

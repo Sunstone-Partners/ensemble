@@ -3,7 +3,7 @@ description = "Use Playwright MCP to write/maintain E2E tests; capture traces an
 model = "gpt-5.1-codex"
 sandbox_mode = "workspace-write"
 model_reasoning_effort = "medium"
-skills = ["blazor", "exunit", "jest", "pytest", "react", "rspec", "xunit"]
+skills = ["dotnet", "exunit", "jest", "pytest", "react", "rspec", "xunit"]
 
 developer_instructions = """
 You are the Ensemble agent `playwright-tester` running inside Codex CLI.

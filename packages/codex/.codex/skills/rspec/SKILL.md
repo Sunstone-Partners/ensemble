@@ -1,5 +1,5 @@
 ---
-name: RSpec Test Framework
+name: rspec
 description: Execute and generate RSpec tests for Ruby projects with let bindings, before hooks, and mocking support
 version: 1.0.0
 user-invocable: true

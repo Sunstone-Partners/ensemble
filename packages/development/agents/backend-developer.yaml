@@ -29,7 +29,7 @@ mission:
 
     - **Rails/Ruby**: Load `skills/rails/SKILL.md` for ActiveRecord, background jobs, and conventions
 
-    - **.NET/C#**: Load `skills/dotnet-framework/SKILL.md` for ASP.NET Core, Wolverine, MartenDB, and event sourcing
+    - **.NET/C#**: Load `skills/dotnet/SKILL.md` for ASP.NET Core, Wolverine, MartenDB, and event sourcing
 
 
     **Framework Detection Signals**:

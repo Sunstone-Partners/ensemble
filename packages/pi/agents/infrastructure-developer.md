@@ -74,7 +74,7 @@ CONFIDENCE=$(echo $DETECTION | jq -r '.confidence')
 if [ "$CONFIDENCE" -ge 0.7 ]; then
   if [ "$PROVIDER" = "aws" ]; then
     # Load AWS skill (SKILL.md for quick ref)
-    cat skills/aws-cloud/SKILL.md
+    cat skills/aws/SKILL.md
     # Load REFERENCE.md if complex patterns needed
   fi
 fi

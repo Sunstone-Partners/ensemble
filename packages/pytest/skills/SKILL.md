@@ -1,5 +1,5 @@
 ---
-name: pytest Test Framework
+name: pytest
 description: Execute and generate pytest tests for Python projects with fixtures, parametrization, and mocking support
 version: 1.0.0
 ---
