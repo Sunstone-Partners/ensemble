@@ -44,7 +44,7 @@
       "./skills"
     ],
     "prompts": [
-      "./prompts"
+      "./prompts/*.md"
     ],
     "agents": [
       "./agents"

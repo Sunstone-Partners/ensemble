@@ -1,7 +1,7 @@
 ---
 name: ensemble-beads-build-wave
 description: Run a single beads-build wave (one bv --robot-plan + concurrent Task() dispatch + barrier) and emit a JSON summary suitable for the parent loop (Codex skill for /ensemble:beads-build-wave)
-user-invocable: true
+user-invocable: false
 argument-hint: '--epic <id> [--max-parallel N] [--trd trd-path] [--strategy tdd|characterization|bug-fix|refactor|test-after|flexible] [--label <label>] [--team-roles <json>]'
 model: gpt-5.1-codex
 ---

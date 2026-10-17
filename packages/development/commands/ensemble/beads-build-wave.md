@@ -1,6 +1,7 @@
 ---
 name: "ensemble:beads-build-wave"
 description: "Run a single beads-build wave (one bv --robot-plan + concurrent Task() dispatch + barrier) and emit a JSON summary suitable for the parent loop"
+user-invocable: false
 version: "1.1.0"
 category: "implementation"
 last-updated: "2026-10-07"

@@ -1,6 +1,7 @@
 ---
 name: "ensemble:check-feature-drift"
 description: "Detect drift between a PRD's acceptance criteria and its generated Gherkin feature files"
+user-invocable: false
 version: "1.0.0"
 category: "quality"
 last-updated: "2026-06-29"
@@ -12,7 +13,7 @@ model: "haiku"
 
 
 Re-parse a PRD and compare its current acceptance criteria against the
-.prd-trace.json manifest produced by /ensemble:generate-feature-tests. Reports
+.prd-trace.json manifest produced by /ensemble:reqnroll features. Reports
 ADDED acceptance criteria with no feature scenario, REMOVED criteria whose
 feature scenario is now orphaned, and CHANGED criteria whose wording has
 materially diverged from the generated feature. This makes requirement/test
@@ -42,8 +43,8 @@ traceability continuous rather than a one-time snapshot, and the CLI exit code
 
 - If IN_SYNC: confirm the feature files match the PRD
 - If ADDED/REMOVED/CHANGED: list the affected AC ids under each category
-- If no manifest exists: tell the user to run /ensemble:generate-feature-tests first
-- Recommend re-running /ensemble:generate-feature-tests to resync, then committing the updated features and manifest
+- If no manifest exists: tell the user to run /ensemble:reqnroll features first
+- Recommend re-running /ensemble:reqnroll features to resync, then committing the updated features and manifest
 
 ## Expected Output
 

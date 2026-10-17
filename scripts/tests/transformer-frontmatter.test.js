@@ -152,3 +152,22 @@ describe('every emitted frontmatter value is quoted', () => {
     expect(toolsLine).toBe('tools: ["Read", "Write"]');
   });
 });
+
+describe('command frontmatter: metadata.visibility', () => {
+  const meta = (visibility) => ({
+    metadata: { name: 'ensemble:x', description: 'd', ...(visibility ? { visibility } : {}) }
+  });
+
+  test('hidden emits user-invocable: false, parseable as boolean false', () => {
+    const parsed = parse(generateCommandFrontmatter(meta('hidden')));
+    expect(parsed['user-invocable']).toBe(false);
+    // Hiding must not drop the identity keys the command is read by.
+    expect(parsed.name).toBe('ensemble:x');
+    expect(parsed.description).toBe('d');
+  });
+
+  test.each([['visible'], [undefined]])('visibility %s emits no user-invocable key', (visibility) => {
+    expect(generateCommandFrontmatter(meta(visibility))).not.toContain('user-invocable');
+  });
+});
+

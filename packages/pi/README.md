@@ -48,8 +48,8 @@ routing or change approval gates.
 
 | Directory / File | Count | Description |
 |-----------------|-------|-------------|
-| `prompts/` | 43 files | Prompt templates (one per Ensemble command; invoked `/ensemble-<cmd>`) |
-| `agents/` | 28 files | Agent definition markdown (one per Ensemble agent) |
+| `prompts/` | 38 files + `prompts/_hidden/` (8) | Prompt templates (one per Ensemble command; invoked `/ensemble-<cmd>`). `_hidden/` holds commands that are reachable only through a dispatcher; `package.json` `pi.prompts` is `./prompts/*.md` (non-recursive) so Pi does not register them |
+| `agents/` | 34 files | Agent definition markdown (one per Ensemble agent) |
 | `skills/` | one per skill | Skill documentation copied from all packages except `assessment` (see below) |
 | `AGENTS.md` | 1 file | Agent mesh reference extracted from the monorepo |
 

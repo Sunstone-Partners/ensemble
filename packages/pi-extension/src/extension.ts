@@ -20,8 +20,8 @@ function resolveRepoRoot(startDir: string): string {
 }
 
 /**
- * Registers native Pi/OMP completion for the four markdown-prompt
- * dispatcher commands (prd/trd/issue/feature). Each registration is a
+ * Registers native Pi/OMP completion for the six markdown-prompt
+ * dispatcher commands (prd/trd/issue/feature/reqnroll/standards). Each registration is a
  * no-op in any repo that doesn't have the corresponding YAML -- see
  * registerDispatcherCommand's own doc comment -- so this extension
  * loading globally in every session never pollutes an unrelated
@@ -56,6 +56,18 @@ function activate(pi: ExtensionAPI): void {
     yamlRelPath: "packages/development/commands/feature.yaml",
     forwardTo: "ensemble:feature",
     description: "Dispatch to the feature-lifecycle workflow by keyword (new, resume, status, abandon)",
+  });
+  registerDispatcherCommand(pi, repoRoot, {
+    name: "ensemble-reqnroll",
+    yamlRelPath: "packages/product/commands/reqnroll.yaml",
+    forwardTo: "ensemble:reqnroll",
+    description: "Dispatch to a PRD-to-Reqnroll acceptance-test subcommand by keyword (features, feature-drift, bindings, binding-drift, tdd)",
+  });
+  registerDispatcherCommand(pi, repoRoot, {
+    name: "ensemble-standards",
+    yamlRelPath: "packages/core/commands/standards.yaml",
+    forwardTo: "ensemble:standards",
+    description: "Dispatch to a coding-standards subcommand by keyword (discover, inject, fold)",
   });
 
   registerLifecycleHooks(pi, repoRoot);

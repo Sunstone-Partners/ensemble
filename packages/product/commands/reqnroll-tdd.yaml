@@ -8,6 +8,7 @@ metadata:
   source: sunstone
   model: high
   argument_hint: "[prd-path] [--sut <csproj>] [--out <dir>]"
+  visibility: hidden
 
 constraints:
   - "Test-first is mandatory: a freshly authored scenario MUST be observed RED before any implementation. If it is green or empty immediately, reject it as vacuous and send it back."

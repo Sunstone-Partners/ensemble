@@ -15,14 +15,14 @@ Reqnroll + xUnit BDD binding layer for the Ensemble PRD → test pipeline.
 ## Where it fits
 
 ```
-PRD ──(deterministic, ensemble-product)──▶ .feature files                [/ensemble:generate-feature-tests]
+PRD ──(deterministic, ensemble-product)──▶ .feature files                [/ensemble:reqnroll features]
  │
- ├──(deterministic, ensemble-product)──▶ Reqnroll/xUnit project + step STUBS   [/ensemble:generate-reqnroll-bindings]
+ ├──(deterministic, ensemble-product)──▶ Reqnroll/xUnit project + step STUBS   [/ensemble:reqnroll bindings]
  │                                            │
  │                                            └──(agentic, THIS plugin)──▶ filled step BODIES, test-first
  │
- ├── PRD ↔ .feature drift               [/ensemble:check-feature-drift]
- └── .feature ↔ bindings drift          [/ensemble:check-binding-drift]
+ ├── PRD ↔ .feature drift               [/ensemble:reqnroll feature-drift]
+ └── .feature ↔ bindings drift          [/ensemble:reqnroll binding-drift]
 ```
 
 The deterministic codegen lives in `@sunstone-partners/ensemble-product`
@@ -33,9 +33,9 @@ agent + the Reqnroll knowledge it loads.
 
 Step-matching `[Given(@"…")]` attributes are **generated and authoritative**. Bindings
 are filled by editing method **bodies only**. Wrong/missing attributes are drift
-(`/ensemble:check-binding-drift`), never hand-edited.
+(`/ensemble:reqnroll binding-drift`), never hand-edited.
 
 ## Orchestration
 
-`/ensemble:reqnroll-tdd` runs the red-gated loop: scaffold → author binding (red gate)
+`/ensemble:reqnroll tdd` runs the red-gated loop: scaffold → author binding (red gate)
 → implement (inner TDD) → green gate → review.

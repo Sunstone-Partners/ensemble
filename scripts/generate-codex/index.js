@@ -348,7 +348,10 @@ function generateCommandSkills({ dryRun, verbose }) {
     const frontmatter = {
       name: codexSkillName,
       description: `${description} (Codex skill for /${commandName})`,
-      'user-invocable': true,
+      // Hidden commands keep their wrapper skill (dispatchers reference it by
+      // path) but are not user-invocable. The YAML is authoritative; Claude's
+      // generated .md carries the same flag and is accepted when the YAML is not.
+      'user-invocable': !(yamlData.metadata?.visibility === 'hidden' || data['user-invocable'] === false),
       ...(data['argument-hint'] ? { 'argument-hint': data['argument-hint'] } : {}),
       ...(data.model ? { model: ANTHROPIC_ALIASES.has(data.model) ? DEFAULT_MODEL : data.model } : {}),
     };

@@ -50,6 +50,13 @@ function generateCommandFrontmatter(data) {
     lines.push(`description: ${yamlScalar(meta.description)}`);
   }
 
+  // Visibility (optional). 'hidden' keeps the file generated and readable by
+  // path (dispatchers read it) but removes it from the slash menu. Visible
+  // (the default) emits nothing so existing output is unchanged.
+  if (meta.visibility === 'hidden') {
+    lines.push('user-invocable: false');
+  }
+
   // Version (optional)
   if (meta.version) {
     lines.push(`version: ${yamlScalar(meta.version)}`);

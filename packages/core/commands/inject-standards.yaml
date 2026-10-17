@@ -8,6 +8,7 @@ metadata:
   source: sunstone
   model: medium
   argument_hint: "<task-description>"
+  visibility: hidden
 
 constraints:
   - DO NOT implement, build, or execute any application code
@@ -32,7 +33,7 @@ workflow:
           description: Verify the standards index exists before proceeding
           actions:
             - Check if standards/index.yml exists in the project root
-            - 'If standards/index.yml does not exist: print "ERROR: No standards index found. Run /ensemble:discover-standards first." and stop'
+            - 'If standards/index.yml does not exist: print "ERROR: No standards index found. Run /ensemble:standards discover first." and stop'
             - If the file exists, read standards/index.yml fully into memory
             - Note the stack metadata (language, framework) and the full list of categories and rules
 
@@ -41,7 +42,7 @@ workflow:
           description: Parse the task description and extract keyword signals for relevance matching
           actions:
             - Read $ARGUMENTS as TASK_DESCRIPTION
-            - 'If TASK_DESCRIPTION is empty: print "ERROR: Provide a task description, e.g., /ensemble:inject-standards ''implement user authentication endpoint''" and stop'
+            - 'If TASK_DESCRIPTION is empty: print "ERROR: Provide a task description, e.g., /ensemble:standards inject ''implement user authentication endpoint''" and stop'
             - Convert TASK_DESCRIPTION to lowercase and extract individual keywords
             - Identify technology terms (language names, framework names, library names)
             - Identify domain nouns (user, order, payment, product, auth, session, etc.)
@@ -94,7 +95,7 @@ workflow:
           description: Print instructions for the agent to proceed with the injected context
           actions:
             - 'Print: "Standards injected. Proceed with task using the above conventions."'
-            - 'Print: "Run /ensemble:discover-standards to refresh the index if the codebase has changed."'
+            - 'Print: "Run /ensemble:standards discover to refresh the index if the codebase has changed."'
 
 expectedOutput:
   format: Stdout block containing filtered standards relevant to the provided task description

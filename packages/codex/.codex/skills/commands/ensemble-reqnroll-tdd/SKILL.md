@@ -1,7 +1,7 @@
 ---
 name: ensemble-reqnroll-tdd
 description: Drive PRD acceptance criteria to green via an outside-in, red-gated Reqnroll + xUnit test-first loop (Codex skill for /ensemble:reqnroll-tdd)
-user-invocable: true
+user-invocable: false
 argument-hint: '[prd-path] [--sut <csproj>] [--out <dir>]'
 model: gpt-5.1-codex
 ---

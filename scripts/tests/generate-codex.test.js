@@ -166,6 +166,80 @@ describe('generateCommandSkills — dispatcher commands (live smoke run, throwaw
   });
 });
 
+describe('generateCommandSkills — metadata.visibility (live smoke run, throwaway fixture)', () => {
+  const yaml = require('js-yaml');
+  const ROOT = path.resolve(__dirname, '..', '..');
+  const FIXTURE_PACKAGE_DIR = path.join(ROOT, 'packages', '__codex_visibility_fixture__');
+  const FIXTURE_COMMANDS_DIR = path.join(FIXTURE_PACKAGE_DIR, 'commands');
+  const SKILLS_DIR = path.join(ROOT, 'packages', 'codex', '.codex', 'skills', 'commands');
+  const names = ['vis-hub-fixture', 'vis-hidden-fixture', 'vis-shown-fixture'];
+
+  const skillDir = (n) => path.join(SKILLS_DIR, `ensemble-${n}`);
+  const readSkill = (n) => fs.readFileSync(path.join(skillDir(n), 'SKILL.md'), 'utf-8');
+  const frontmatterOf = (n) => yaml.load(readSkill(n).split('---\n')[1]);
+
+  function cleanupFixtures() {
+    fs.rmSync(FIXTURE_PACKAGE_DIR, { recursive: true, force: true });
+    names.forEach((n) => fs.rmSync(skillDir(n), { recursive: true, force: true }));
+  }
+
+  beforeAll(() => {
+    cleanupFixtures();
+    fs.mkdirSync(FIXTURE_COMMANDS_DIR, { recursive: true });
+    const write = (n, body) =>
+      fs.writeFileSync(path.join(FIXTURE_COMMANDS_DIR, `${n}.yaml`), body.join('\n') + '\n');
+    write('vis-hub-fixture', [
+      'metadata:',
+      '  name: ensemble:vis-hub-fixture',
+      '  description: Fixture dispatcher',
+      'dispatch:',
+      '  subcommands:',
+      '    - keyword: hidden',
+      '      ref: vis-hidden-fixture',
+      '      description: Hidden leaf',
+      '    - keyword: shown',
+      '      ref: vis-shown-fixture',
+      '      description: Shown leaf',
+    ]);
+    write('vis-hidden-fixture', [
+      'metadata:',
+      '  name: ensemble:vis-hidden-fixture',
+      '  description: Fixture hidden leaf',
+      '  visibility: hidden',
+    ]);
+    write('vis-shown-fixture', [
+      'metadata:',
+      '  name: ensemble:vis-shown-fixture',
+      '  description: Fixture visible leaf',
+    ]);
+    generateCommandSkills({ dryRun: false, verbose: false });
+  });
+
+  afterAll(() => {
+    cleanupFixtures();
+  });
+
+  test('a hidden command still gets a wrapper skill, marked not user-invocable', () => {
+    expect(fs.existsSync(path.join(skillDir('vis-hidden-fixture'), 'SKILL.md'))).toBe(true);
+    expect(frontmatterOf('vis-hidden-fixture')['user-invocable']).toBe(false);
+  });
+
+  test('a visible command (control) stays user-invocable', () => {
+    expect(frontmatterOf('vis-shown-fixture')['user-invocable']).toBe(true);
+  });
+
+  test('the dispatcher references the hidden command at its real skill path, and stays invocable', () => {
+    expect(frontmatterOf('vis-hub-fixture')['user-invocable']).toBe(true);
+    const hub = readSkill('vis-hub-fixture');
+    expect(hub).toContain(
+      '`packages/codex/.codex/skills/commands/ensemble-vis-hidden-fixture/SKILL.md`'
+    );
+    expect(hub).toContain(
+      '`packages/codex/.codex/skills/commands/ensemble-vis-shown-fixture/SKILL.md`'
+    );
+  });
+});
+
 describe('detectAgentSkills — dotnet skill is separate from blazor', () => {
   test.each([
     ['an ASP.NET mention', 'Builds ASP.NET Core APIs'],

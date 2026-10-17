@@ -58,6 +58,8 @@ export interface CommandYaml {
     name: string;
     description: string;
     version: string;
+    /** 'hidden' routes the prompt to prompts/_hidden/ (not registered, no wrapper skill). */
+    visibility?: 'visible' | 'hidden';
   };
   workflow: {
     phases: Phase[];

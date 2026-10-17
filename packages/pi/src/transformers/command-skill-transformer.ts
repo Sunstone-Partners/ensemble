@@ -61,6 +61,8 @@ export async function generateCommandSkills(
   const skillsOutputDir = path.join(outputRoot, 'skills');
   const results: TransformResult[] = [];
 
+  // NON-recursive on purpose: hidden commands live in prompts/_hidden/ and must
+  // not get a wrapper skill (nor be registered by Pi's prompts/*.md scan).
   const promptFiles = (
     await glob(path.join(promptsDir, '*.md').split(path.sep).join('/'), { absolute: true })
   ).sort();

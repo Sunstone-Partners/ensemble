@@ -86,13 +86,16 @@ function buildCommandPathMap(
   for (const filePath of commandFiles) {
     try {
       const raw = yaml.load(fs.readFileSync(filePath, 'utf-8')) as
-        | { metadata?: { name?: unknown } }
+        | { metadata?: { name?: unknown; visibility?: unknown } }
         | undefined;
       const name = raw?.metadata?.name;
       if (typeof name === 'string' && name) {
         const ref = name.replace(/^ensemble:/, '');
-        const piName = name.replace(/^ensemble:/, 'ensemble-');
-        const absolutePath = path.join(outputRoot, 'prompts', `${piName}.md`);
+        const absolutePath = promptOutputPath(
+          outputRoot,
+          name,
+          raw?.metadata?.visibility === 'hidden'
+        );
         pathsByRef.set(ref, path.relative(sourceRoot, absolutePath));
       }
     } catch {
@@ -101,6 +104,62 @@ function buildCommandPathMap(
     }
   }
   return pathsByRef;
+}
+
+/**
+ * Single source of truth for a command's Pi prompt output path. Visible
+ * commands live at prompts/ensemble-<cmd>.md (registered by the non-recursive
+ * prompts/*.md scan, and wrapped as skills). Hidden commands live one level
+ * down at prompts/_hidden/ensemble-<cmd>.md: still on disk and readable by
+ * path (dispatchers point at it) but invisible to that scan.
+ */
+export const HIDDEN_PROMPTS_DIR = '_hidden';
+
+export function promptOutputPath(
+  outputRoot: string,
+  commandName: string,
+  hidden: boolean
+): string {
+  const piName = commandName.replace(/^ensemble:/, 'ensemble-');
+  return hidden
+    ? path.join(outputRoot, 'prompts', HIDDEN_PROMPTS_DIR, `${piName}.md`)
+    : path.join(outputRoot, 'prompts', `${piName}.md`);
+}
+
+/**
+ * A command that flips visibility must not leave its previous artifacts behind:
+ * a stale prompts/ensemble-<cmd>.md would still be registered (and wrapped as a
+ * skill) after the command became hidden, and a stale _hidden copy would go
+ * out of date after it became visible. Given the command's NEW output path,
+ * remove the counterpart prompt and, for a hidden command, the wrapper skill
+ * generateCommandSkills produced for the old visible prompt. The wrapper is
+ * recognised by its `disable-model-invocation` marker so a same-named
+ * hand-authored skill is never deleted.
+ */
+function removeSupersededCommandArtifacts(newOutputPath: string, outputRoot: string): void {
+  const fileName = path.basename(newOutputPath);
+  const hidden = path.basename(path.dirname(newOutputPath)) === HIDDEN_PROMPTS_DIR;
+  const promptsDir = path.join(outputRoot, 'prompts');
+  const counterpart = hidden
+    ? path.join(promptsDir, fileName)
+    : path.join(promptsDir, HIDDEN_PROMPTS_DIR, fileName);
+  fs.rmSync(counterpart, { force: true });
+
+  if (!hidden) return;
+  const skillDir = path.join(outputRoot, 'skills', path.basename(fileName, '.md'));
+  const skillFile = path.join(skillDir, 'SKILL.md');
+  try {
+    const { data } = matter(fs.readFileSync(skillFile, 'utf-8'));
+    if (data['disable-model-invocation'] !== true) return;
+  } catch {
+    return; // no readable wrapper skill to supersede
+  }
+  fs.rmSync(skillFile, { force: true });
+  try {
+    fs.rmdirSync(skillDir); // only removes the directory if the wrapper was its sole file
+  } catch {
+    // directory holds other files: leave it
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,8 +388,11 @@ function buildCommandResult(
   commandPathsByRef: Map<string, string>
 ): TransformResult {
   const name = commandYaml.metadata.name;
-  const piName = name.replace(/^ensemble:/, 'ensemble-');
-  const outputPath = path.join(outputRoot, 'prompts', `${piName}.md`);
+  const outputPath = promptOutputPath(
+    outputRoot,
+    name,
+    commandYaml.metadata.visibility === 'hidden'
+  );
   const content = transformCommand(commandYaml, sourcePath, { verbose, commandPathsByRef });
   return { sourcePath, outputPath, content, type: 'command' };
 }
@@ -557,6 +619,9 @@ export async function generate(options: GeneratorOptions): Promise<void> {
       // agents-md, skill, and lib files are already written by their respective transformers
       if (result.type !== 'agents-md' && result.type !== 'skill' && result.type !== 'lib') {
         writeResult(result);
+        if (result.type === 'command') {
+          removeSupersededCommandArtifacts(result.outputPath, outputRoot);
+        }
       }
     }
   } else if (verbose) {

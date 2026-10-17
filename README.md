@@ -183,6 +183,8 @@ Ensemble ships 48 slash-commands across six packages; this is a representative s
 - `/ensemble:issue` - Canonical front door for issue work: `fix`/`list`/`resume`/`status`/`abandon` (ensemble-development)
 - `/ensemble:prd` - Canonical front door for PRD authoring: `create`/`create-meeting`/`refine`/`refine-meeting` (ensemble-product)
 - `/ensemble:trd` - Canonical front door for TRD authoring, analysis, and implementation (ensemble-development)
+- `/ensemble:reqnroll` - Front door for PRD-to-Reqnroll acceptance tests: `features`/`feature-drift`/`bindings`/`binding-drift`/`tdd` (ensemble-product)
+- `/ensemble:standards` - Front door for project coding standards: `discover`/`inject`/`fold` (ensemble-core)
 - `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation (ensemble-development)
 - `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*` (ensemble-development)
 - `/ensemble:fold-prompt` - Project optimization (ensemble-core)

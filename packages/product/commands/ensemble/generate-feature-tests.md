@@ -1,6 +1,7 @@
 ---
 name: "ensemble:generate-feature-tests"
 description: "Generate Gherkin .feature files and a traceability manifest from a PRD's acceptance criteria"
+user-invocable: false
 version: "1.0.0"
 category: "quality"
 last-updated: "2026-06-29"
@@ -43,7 +44,7 @@ its PRD document id and AC id.
 - Report the output directory, number of feature files, and total scenarios
 - List every AC tagged @needs-clarification (free-form or carrying a [NEEDS CLARIFICATION] marker) so the author can fix the PRD
 - Echo any parser warnings (e.g. requirements with no acceptance criteria)
-- Remind the user to commit the generated features and run /ensemble:check-feature-drift after future PRD edits
+- Remind the user to commit the generated features and run /ensemble:reqnroll feature-drift after future PRD edits
 
 ## Expected Output
 
