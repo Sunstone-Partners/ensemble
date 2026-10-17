@@ -444,7 +444,8 @@ function runWorkstreamPlan(argv, env) {
 
 /**
  * `beads-label --label <l> --match <substr>` -> { ok:true, label, matched, labeled, already }
- * Labels every bead whose title contains <substr> (e.g. "[trd:<slug>") that lacks <l>.
+ * Labels every bead whose title contains <substr> that lacks <l>. A "[trd:<slug>" substring (no
+ * closing bracket) matches only that exact slug, not "[trd:<slug>-other...".
  */
 function runBeadsLabel(argv) {
   const { flags } = parseArgs(argv, new Set(['label', 'match']));

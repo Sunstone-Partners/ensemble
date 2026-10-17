@@ -22,6 +22,20 @@ const DEFAULT_FILE = '.beads/issues.jsonl';
 // Pure scoping
 // ---------------------------------------------------------------------------
 
+/**
+ * Does `title` belong to the scope entry `m`? A TRD scope entry such as "[trd:foo" (no closing
+ * bracket) must not also match "[trd:foo-bar]...", so it only matches when followed by "]" or ":".
+ * Any other entry is a plain substring match.
+ */
+function titleMatches(title, m) {
+  if (!m.startsWith('[trd:') || m.endsWith(']')) return title.includes(m);
+  for (let i = title.indexOf(m); i !== -1; i = title.indexOf(m, i + 1)) {
+    const next = title[i + m.length];
+    if (next === ']' || next === ':') return true;
+  }
+  return false;
+}
+
 /** Split JSONL into records, keeping each raw line (CR stripped) so nothing is re-serialised. */
 function parseRecords(jsonl) {
   const records = [];
@@ -55,7 +69,7 @@ const toText = (records) => (records.length ? records.map((r) => r.raw).join('\n
  */
 function buildScopedExport(headText, workText, { matches = [], labels = [] } = {}) {
   const isOurs = (r) =>
-    matches.some((m) => r.title.includes(m)) || labels.some((l) => r.labels.includes(l));
+    matches.some((m) => titleMatches(r.title, m)) || labels.some((l) => r.labels.includes(l));
 
   const head = parseRecords(headText);
   const work = parseRecords(workText).filter((r) => r.id !== null);
@@ -148,7 +162,7 @@ function checkStagedExport({ cwd = process.cwd(), file = DEFAULT_FILE, matches =
   const { root, tracked } = locate(cwd, file);
   if (!tracked) return { ok: true, tracked: false, skipped: true, foreign: [] };
 
-  const isOurs = (r) => matches.some((m) => r.title.includes(m)) || labels.some((l) => r.labels.includes(l));
+  const isOurs = (r) => matches.some((m) => titleMatches(r.title, m)) || labels.some((l) => r.labels.includes(l));
   const head = new Map(parseRecords(tryGit(root, ['show', `HEAD:${file}`]) || '').filter((r) => r.id).map((r) => [r.id, r]));
   const staged = new Map(parseRecords(tryGit(root, ['show', `:0:${file}`]) || '').filter((r) => r.id).map((r) => [r.id, r]));
 
@@ -163,4 +177,4 @@ function checkStagedExport({ cwd = process.cwd(), file = DEFAULT_FILE, matches =
   return { ok: foreign.length === 0, tracked: true, foreign: foreign.sort() };
 }
 
-module.exports = { buildScopedExport, stageBeadsExport, checkStagedExport, DEFAULT_FILE };
+module.exports = { buildScopedExport, stageBeadsExport, checkStagedExport, titleMatches, DEFAULT_FILE };

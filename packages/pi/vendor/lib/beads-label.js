@@ -9,6 +9,7 @@
  */
 
 const { execFileSync } = require('child_process');
+const { titleMatches } = require('./beads-stage');
 
 const IDS_PER_CALL = 50; // keeps the `br label add` command line short on Windows
 
@@ -28,7 +29,7 @@ function ensureLabel({ label, match } = {}, run = runBr) {
   if (!label || !match) throw new Error('beads-label needs --label and --match');
 
   const mine = issuesOf(JSON.parse(run(['list', '--all', '--limit', '0', '--json']))).filter((b) =>
-    String(b.title || '').includes(match)
+    titleMatches(String(b.title || ''), match)
   );
   const missing = mine.filter((b) => !(Array.isArray(b.labels) && b.labels.includes(label)));
 

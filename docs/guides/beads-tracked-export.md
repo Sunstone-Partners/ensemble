@@ -33,8 +33,10 @@ node "$TRD_CLI" beads-stage --match "[trd:<slug>" --check  # fail if the staged 
 It builds the export as HEAD has it, with this TRD's beads replaced or appended, and writes that
 into the git **index**. Other TRDs' additions, reorderings and status changes are left out. The working
 `issues.jsonl` is not modified, so `br` is not fighting you; after you commit, it still differs from
-HEAD, which is expected. `--match` takes a bead-title substring (comma-separated for several) and
-`--label <l>` matches by label. If the export is not tracked it does nothing.
+HEAD, which is expected. `--match` takes a bead-title substring (comma-separated for several); a
+`[trd:<slug>` entry (no closing bracket) matches only that exact slug, i.e. when followed by `]` or `:`,
+so `[trd:foo` does not capture `[trd:foo-bar...]`. `--label <l>` matches by label. If the export is not
+tracked it does nothing.
 
 If you commit by hand, run `beads-stage` first, then `git commit`. If you already ran
 `git add .beads/`, run `beads-stage --check`; it names any bead that is not part of this TRD, and
