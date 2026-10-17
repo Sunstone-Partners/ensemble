@@ -7,7 +7,7 @@
  * be labelled before anything passes --label to bv. `beads-label` does that, idempotently.
  */
 
-const { ensureLabel } = require('../lib/beads-label');
+const { ensureLabel, titleMatches } = require('../lib/beads-label');
 const { runBeadsLabel, main } = require('../lib/trd-cli');
 
 const LABEL = 'trd-2026-aaaaaaaa-demo';
@@ -59,6 +59,17 @@ describe('ensureLabel', () => {
     expect(br.writes()).toEqual([]);
   });
 
+  test('does not label a TRD whose slug merely starts with this slug', () => {
+    const issues = [
+      { id: 'b-1', title: `${MATCH}:task:TRD-001] mine`, labels: [] },
+      { id: 'b-9', title: `${MATCH}-v2] Implement TRD: sibling`, labels: [] },
+      { id: 'b-10', title: `${MATCH}-v2:task:TRD-001] sibling task`, labels: [] },
+    ];
+    const br = fakeBr(issues);
+    expect(ensureLabel({ label: LABEL, match: MATCH }, br.run)).toMatchObject({ matched: 1, labeled: 1 });
+    expect(br.writes()).toEqual([['label', 'add', 'b-1', '-l', LABEL, '--json']]);
+  });
+
   test('matches nothing when no title carries the token', () => {
     const br = fakeBr(ISSUES);
     expect(ensureLabel({ label: LABEL, match: '[trd:nope' }, br.run)).toMatchObject({ matched: 0, labeled: 0 });
@@ -90,5 +101,21 @@ describe('trd-cli beads-label', () => {
       spy.mockRestore();
     }
     expect(JSON.parse(out.join(''))).toEqual({ error: expect.stringMatching(/--label and --match/) });
+  });
+});
+
+describe('titleMatches', () => {
+  test('requires the match to end at ], : or end-of-title', () => {
+    expect(titleMatches('[trd:foo] Implement', '[trd:foo')).toBe(true);
+    expect(titleMatches('[trd:foo:task:T-1] x', '[trd:foo')).toBe(true);
+    expect(titleMatches('prefix [trd:foo', '[trd:foo')).toBe(true);
+    expect(titleMatches('[trd:foo-v2] Implement', '[trd:foo')).toBe(false);
+    expect(titleMatches('[trd:foobar:task:T-1] x', '[trd:foo')).toBe(false);
+  });
+
+  test('a match that already ends with a delimiter is a plain substring', () => {
+    expect(titleMatches('[trd:foo] Implement', '[trd:foo]')).toBe(true);
+    expect(titleMatches('[trd:foo:task:T-1] x', '[trd:foo:')).toBe(true);
+    expect(titleMatches('[trd:foo-v2] x', '[trd:foo]')).toBe(false);
   });
 });

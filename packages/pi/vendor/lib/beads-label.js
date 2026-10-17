@@ -20,6 +20,20 @@ function runBr(args) {
 }
 
 /**
+ * Substring match that stops at a token boundary: "[trd:foo" must not match the beads of a
+ * sibling TRD "[trd:foo-v2]". The match has to be followed by `]`, `:` or the end of the title
+ * unless it already ends with one of them.
+ */
+function titleMatches(title, match) {
+  if (/[\]:]$/.test(match)) return title.includes(match);
+  for (let at = title.indexOf(match); at !== -1; at = title.indexOf(match, at + 1)) {
+    const next = title[at + match.length];
+    if (next === undefined || next === ']' || next === ':') return true;
+  }
+  return false;
+}
+
+/**
  * @param {{label: string, match: string}} opts  match = substring of the TRD's bead titles, e.g. "[trd:<slug>"
  * @param {(args: string[]) => string} [run]     stand-in for `br`, for tests
  * @returns {{label: string, matched: number, labeled: number, already: number}}
@@ -28,7 +42,7 @@ function ensureLabel({ label, match } = {}, run = runBr) {
   if (!label || !match) throw new Error('beads-label needs --label and --match');
 
   const mine = issuesOf(JSON.parse(run(['list', '--all', '--limit', '0', '--json']))).filter((b) =>
-    String(b.title || '').includes(match)
+    titleMatches(String(b.title || ''), match)
   );
   const missing = mine.filter((b) => !(Array.isArray(b.labels) && b.labels.includes(label)));
 
@@ -38,4 +52,4 @@ function ensureLabel({ label, match } = {}, run = runBr) {
   return { label, matched: mine.length, labeled: missing.length, already: mine.length - missing.length };
 }
 
-module.exports = { ensureLabel };
+module.exports = { ensureLabel, titleMatches };
