@@ -32,8 +32,8 @@ Search for permission checks using your runtime's text-search tool, matching
 
 ## 3. Secrets Management
 
-Search for potential secrets (DO NOT output actual secrets) using your runtime's
-text-search tool, matching `password.*=|api.*key.*=|secret.*=` and
+Search for potential secrets (DO NOT output actual secrets — report presence, NOT values) using
+your runtime's text-search tool, matching `password.*=|api.*key.*=|secret.*=` and
 `connectionstring.*=`.
 
 ## 4. Input Validation
@@ -50,53 +50,76 @@ matching `encrypt|decrypt|PII|PHI|HIPAA`.
 
 Read package files (package.json, csproj, requirements.txt) for dependency lists.
 
+# Important
+
+- NEVER output actual secrets, passwords, or API keys found — report presence only
+- Report the presence of hardcoded secrets (with file:line), not their values
+
+# Quality Criteria
+
+- Cite specific file:line for findings
+- Use tables for structured data
+- Focus on practical, actionable recommendations
+
+# Output Location
+
+If the caller supplies an output path or a `REPORT_PREFIX` (e.g. an orchestrating skill such as
+`assess-repo`), save the full report there — the caller's path, or
+`docs/assessment/<REPORT_PREFIX>-security.md` for a `REPORT_PREFIX` (creating `docs/assessment/` if
+needed) — and return a summary only (see Return Summary). If neither is supplied, report the full
+findings in your response and save them to `docs/assessment/security.md` only if asked.
+
 # Output Format
 
 ```markdown
-## Security Assessment
+# Security Analysis
 
-### Authentication
+## Authentication
 | Pattern | Status | Notes |
 |---------|--------|-------|
 | JWT | ✓/✗ | ... |
 | Session | ✓/✗ | ... |
 | OAuth | ✓/✗ | ... |
 
-### Authorization
+## Authorization
 [Findings on permission checks and access control]
 
-### Secrets Management
+## Secrets Management
+[Findings - presence only, no values]
+
 | Type | Status | Concern |
 |------|--------|---------|
 | Hardcoded secrets | ✓/✗ | ... |
 | Env variables | ✓/✗ | ... |
 | Vault usage | ✓/✗ | ... |
 
-### Input Validation
+## Input Validation
 [Assessment of input sanitization]
 
-### Key Findings
+## Sensitive Data Handling
+[Encryption, PII/PHI protection, and compliance-relevant (e.g. HIPAA) patterns found]
+
+## Vulnerabilities
+| Type | Severity | Location |
+|------|----------|----------|
+| ... | HIGH/MEDIUM/LOW | file:line |
+
+## Key Findings
 1. [Finding - severity: HIGH/MEDIUM/LOW]
 2. [Finding - severity: HIGH/MEDIUM/LOW]
 
-### Score: A-F
-[Overall security grade with rationale]
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
-### Recommendations
+## Recommendations
 1. [Priority recommendation]
 2. [Secondary recommendation]
 ```
 
-# Important
+# Return Summary
 
-- DO NOT output actual secrets, passwords, or API keys found
-- Report the presence of hardcoded secrets, not their values
-- Focus on practical, actionable recommendations
-
-# Avoid These Patterns
-
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipes
-
-Use your runtime's dedicated file-discovery, read, and search tools instead.
+When the full report was saved to a file, return a summary only (max 5 lines):
+- Auth patterns found
+- Secret management issues
+- Top 3 security issues (severity)
+- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
+- Top 2 recommendations

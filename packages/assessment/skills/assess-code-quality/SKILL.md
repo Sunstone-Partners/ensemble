@@ -13,8 +13,8 @@ Use your runtime's dedicated file-discovery, read, text-search, structural-code-
 ast-grep or equivalent), and language-server/code-intelligence capabilities where available,
 rather than ad hoc shell pipelines.
 
-**Avoid:** `find ... -exec ...`, `xargs ...`, shell substitution, and other complex shell
-pipelines; many coding-agent runtimes restrict these.
+**Avoid:** `find ... -exec ...`, `xargs ...`, `wc -l | sort | head`, shell substitution, and other
+complex shell pipelines; many coding-agent runtimes restrict these.
 
 # Analysis Tasks
 
@@ -25,8 +25,8 @@ naming convention under test.
 
 ## 2. Class/Function Size Analysis
 
-Discover files (e.g. `src/**/*.cs`), then read each with line counts to find oversized
-classes/functions.
+Discover files (e.g. `src/**/*.cs`), then read each with line counts to find large files
+(>300 lines) and oversized classes/functions.
 
 ## 3. Code Duplication Detection
 
@@ -36,7 +36,7 @@ and compare manually.
 
 ## 4. Technical Debt Indicators
 
-Search comments for markers like `TODO:`, `FIXME:`, `HACK:` under `src/**`.
+Search comments for markers like `TODO:`, `FIXME:`, `HACK:` under `src/**`, and look for dead code.
 
 ## 5. Error Handling Patterns
 
@@ -46,67 +46,77 @@ Search for exception-handling patterns (e.g. `catch.*Exception`) under `src/**`.
 
 Read key files directly to assess complexity.
 
+# Quality Criteria
+
+- Cite specific file:line for every finding
+- Use tables for structured data
+- Quantify impact where possible (e.g., "appears 47 times")
+- Truncate repetitive patterns (cite 3 examples, state count)
+- Group similar issues to avoid repetition
+- Prioritize by frequency and severity
+
+# Output Location
+
+If the caller supplies an output path or a `REPORT_PREFIX` (e.g. an orchestrating skill such as
+`assess-repo`), save the full report there — the caller's path, or
+`docs/assessment/<REPORT_PREFIX>-code-quality.md` for a `REPORT_PREFIX` (creating
+`docs/assessment/` if needed) — and return a summary only (see Return Summary). If neither is
+supplied, report the full findings in your response and save them to
+`docs/assessment/code-quality.md` only if asked.
+
 # Output Format
 
 ```markdown
-## Code Quality Assessment
+# Code Quality Analysis
 
-### Naming Conventions
-| Pattern | Status | Example |
-|---------|--------|---------|
-| Classes PascalCase | ✓/✗ | ... |
-| ... | ... | ... |
-
-### Class Size Violations
+## Largest Files
 | File | Lines | Methods | Concern |
 |------|-------|---------|---------|
 | ... | ... | ... | ... |
 
-### Code Duplication
-| Pattern | Locations | Suggested Fix |
-|---------|-----------|---------------|
+## Technical Debt
+| Type | Count | Severity | Example |
+|------|-------|----------|---------|
+| TODO | N | Medium | file:line |
+| FIXME | N | High | file:line |
+
+## Naming Violations
+| Convention | Status | Example |
+|------------|--------|---------|
+| Classes PascalCase | ✓/✗ | file:line |
 | ... | ... | ... |
 
-### Technical Debt
-| Type | Count | Severity |
-|------|-------|----------|
-| TODO | N | Medium |
-| FIXME | N | High |
+## Duplication
+| Pattern | Locations | Suggested Fix |
+|---------|-----------|---------------|
+| ... | file:line, file:line | ... |
 
-### Error Handling Assessment
-[Findings on exception patterns]
+## Error Handling
+[Patterns found with file:line]
 
-### Complexity Concerns
+## Complexity Concerns
 [High complexity areas identified]
 
-### Before/After Examples
+## Before/After Examples
 [Problematic patterns with refactoring suggestions]
 
-### Key Findings
+## Key Findings
 1. [Finding 1 with file:line]
 2. [Finding 2 with file:line]
 3. [Finding 3 with file:line]
 
-### Score: A-F
-[Overall code quality grade with rationale]
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
-### Recommendations
+## Recommendations
 1. [Priority recommendation]
 2. [Secondary recommendation]
 ```
 
-# Quality Criteria
+# Return Summary
 
-- Cite specific file:line for every finding
-- Quantify impact where possible (e.g., "appears 47 times")
-- Group similar issues to avoid repetition
-- Prioritize by frequency and severity
-
-# Avoid These Patterns
-
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipes
-- `wc -l | sort | head`
-
-Use your runtime's dedicated file-discovery, read, and search tools instead.
+When the full report was saved to a file, return a summary only (max 5 lines):
+- Top 5 largest files (estimate lines)
+- Technical debt counts (TODO, FIXME, etc.)
+- Top 3 issues
+- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
+- Top 2 recommendations

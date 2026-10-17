@@ -34,6 +34,7 @@ matching filenames like `package.json`, `Cargo.toml`, `go.mod`,
 
 Read each found file to extract:
 - Language ecosystem
+- Frameworks
 - Key dependencies (shows domain)
 - Build tooling
 
@@ -44,7 +45,7 @@ Discover main entry points (ignoring gitignored paths), matching filenames like
 `main.swift`, `program.cs`, `App.tsx`, `app.py`, or `__main__.py`. Also check
 broader patterns such as `**/main.*`, `**/app.*`, or `**/*.[ch]`.
 
-Read key entry points to understand initialization and domain registration.
+Read key entry points and main modules to understand initialization and domain registration.
 
 ## Phase 3: Domain Keyword Analysis
 
@@ -96,9 +97,33 @@ Focus on:
 - Business logic modules
 - Core domain models
 
-# Output Format
+# Quality Criteria
 
-Save findings to: `docs/assessment/<REPORT_PREFIX>-purpose.md`
+- Focus on what can be INFERRED from code, not what docs say
+- Cite specific file:line for evidence
+
+# Score Anchors
+
+Choose the number from the evidence using these whole-number anchors (interpolate between them),
+then derive the letter mechanically from the Scoring Scale — never from this list:
+
+| Score | Meaning |
+|------:|---------|
+| 5.0 | Clear purpose, domain, and users identified |
+| 4.0 | Mostly clear, minor ambiguity |
+| 3.0 | Some clarity, significant gaps |
+| 2.0 | Vague, conflicting signals |
+| 1.0 | Could not determine purpose |
+
+# Output Location
+
+If the caller supplies an output path or a `REPORT_PREFIX` (e.g. an orchestrating skill such as
+`assess-repo`), save the full report there — the caller's path, or
+`docs/assessment/<REPORT_PREFIX>-purpose.md` for a `REPORT_PREFIX` (creating `docs/assessment/` if
+needed) — and return a summary only (see Return Summary). If neither is supplied, report the full
+findings in your response and save them to `docs/assessment/purpose.md` only if asked.
+
+# Output Format
 
 ```markdown
 # Repository Purpose Analysis
@@ -125,7 +150,7 @@ Save findings to: `docs/assessment/<REPORT_PREFIX>-purpose.md`
 
 **Target Users:** [Developers, End Users, Admins, etc.]
 
-**Key Capabilities:**
+**Key Capabilities:** [3-5 bullets]
 1. ...
 2. ...
 3. ...
@@ -158,26 +183,21 @@ What could NOT be determined:
 1. ...
 2. ...
 
-## Score: A-F (one line rationale)
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
-**A** = Clear purpose, domain, and users identified
-**B** = Mostly clear, minor ambiguity
-**C** = Some clarity, significant gaps
-**D** = Vague, conflicting signals
-**F** = Could not determine purpose
+## Recommendations
 
-## Recommendations for AI Agents
-
+[What docs would help future AI agents]
 1. Add [specific doc] to clarify [aspect]
 2. Add [specific doc] to clarify [aspect]
 ```
 
 # Return Summary
 
-Return max 10 lines:
-- Tech stack (1 line)
-- Inferred purpose (1 line)
-- Domain (1 line)
-- Confidence (HIGH/MEDIUM/LOW)
-- Score: A-F with one-line rationale
-- Top 1 recommendation
+When the full report was saved to a file, return a summary only (max 5 lines):
+- Tech stack overview
+- Inferred purpose (1 sentence)
+- Domain
+- Confidence level (HIGH/MEDIUM/LOW)
+- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
+- Top 2 recommendations for documentation

@@ -66,6 +66,25 @@ configuration that isn't already present.
 detect conflated assessment dimensions and cross-entity score-calibration
 issues before finalizing any of the above reports.
 
+## How the skills fit together
+
+- **Orchestrators** (`assess-repo`, `assess-team`) own the run, not the analysis: they dispatch one
+  subagent per dimension, collect each subagent's saved findings under `docs/assessment/`, and
+  synthesize the combined report. Each dispatch is a thin task block ("load the leaf skill and follow
+  it") plus the run's own rules (output path, evidence citations, summary only).
+- **Leaf skills** (`assess-purpose`, `assess-architect`, `assess-code-quality`, `assess-testing`,
+  `assess-security`, `assess-cicd`, `assess-ai-readiness`, and the eight `assess-team-*` skills) are
+  the single source for one dimension each: what to analyze, the output structure, scoring, and the
+  return summary. The orchestrators never duplicate that text.
+- **Run a single dimension** by invoking its leaf directly (for example `/skill:assess-security`).
+  When the caller supplies no output path or `REPORT_PREFIX`, a leaf reports its findings in the
+  response and saves them to `docs/assessment/<dimension>.md` (`docs/assessment/team-<dimension>.md`
+  for the `assess-team-*` leaves) only if asked.
+- **Scoring is shared:** every score is `<1.0-5.0> / <Letter>`, with the letter derived from the
+  Scoring Scale in `assessment-report-suite`.
+- If a runtime cannot load a skill by name for a subagent, the orchestrator reads the leaf's
+  `SKILL.md` and includes its full text in the subagent prompt.
+
 ## Skills
 
 | Skill | Purpose |

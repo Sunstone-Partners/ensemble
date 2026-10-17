@@ -7,6 +7,16 @@ description: analyze commit message quality and standards compliance
 
 Analyze commit messages to assess adherence to standards, clarity, and documentation quality.
 
+**Data Source:** Local git only
+
+# Tool Guidance
+
+**Avoid:** `find ... -exec ...`, `xargs ...`, and other complex shell pipelines; many coding-agent
+runtimes restrict these.
+
+**Prefer:** your runtime's dedicated file-discovery, read, and text-search capabilities where
+available. Use the shell only for simple `git` commands.
+
 # Analysis Protocol
 
 ## Phase 1: Sample Commit Messages
@@ -33,9 +43,28 @@ Score each author:
 - Average message quality
 - Improvement trends over time
 
+# Scoring
+
+Report every score — the dimension score and each per-author score cell — as `<1.0-5.0> / <Letter>`:
+assign the number from evidence first, then derive the letter mechanically from
+`skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter.
+
+# Reporting Rules
+
+- Cite specific file:line, not summarize
+- Use tables over paragraphs; skip common knowledge; no filler prose
+- Be specific with numbers: "127 commits without body", not "many"
+- Truncate verbose output: cite 3 examples, state "47 more similar"
+- One-line rationale for the score, e.g. "3.9 / B due to 40% missing conventional commits"
+- Data not available from local git: write "No evidence found in local git" (not "N/A"), add
+  `[confidence: MEDIUM - requires API to verify]`, and adjust the score accordingly
+
 # Output Format
 
-Save to: `docs/assessment/team-<YYYY-MM-DD>-commit-messages.md`
+If the caller supplies an output path or a REPORT_PREFIX, save the full report there (a REPORT_PREFIX
+means `docs/assessment/team-<REPORT_PREFIX>-commit-messages.md`) and return a summary only; if neither
+is supplied, report the full findings in your response and save to
+`docs/assessment/team-commit-messages.md` only if asked.
 
 ```markdown
 # Team Assessment: Commit Message Standards
@@ -43,7 +72,7 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-commit-messages.md`
 ## Convention Adoption
 | Author | Conventional % | Quality Score |
 |--------|---------------|---------------|
-| ... | X% | A-F |
+| ... | X% | <1.0-5.0> / <Letter> |
 
 ## Message Quality Distribution
 | Quality | Count | % |
@@ -54,10 +83,10 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-commit-messages.md`
 | Poor | N | X% |
 
 ## Common Issues
-1. [Issue with examples]
-2. [Issue with examples]
+1. [Issue with 3 examples, "47 more similar"]
+2. [Issue with 3 examples, "12 more similar"]
 
-## Score: A-F (one line rationale)
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
 ## Recommendations
 1. [Priority]
@@ -66,7 +95,7 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-commit-messages.md`
 
 # Return Summary
 
-Return max 10 lines:
+When the full report was saved to a file, return only a summary (max 5 lines):
 - % following conventional commits
-- Top issues found
-- Score: A-F with one-line rationale
+- Top issue pattern
+- Score: <1.0-5.0>/<Letter> with one-word rationale (numeric first; letter derived mechanically, never assigned directly)
