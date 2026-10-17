@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **packages/assessment:** `assess-repo` / `assess-team` delegate to their leaf skills (single source); numeric-first scoring throughout. `ensemble-assessment` is now Pi-installable and is no longer bundled into `ensemble-pi` (install both). Still included in `ensemble-full`.
 - **scripts/generate-codex:** framework skill path rewriting now matches the bare skill name (`skills/<name>/` -> `.codex/skills/<name>/`) instead of the old `<name>-framework` names.
 
+### Removed
+
+- **packages/git:** the `/ensemble:claude-changelog` command (unrelated to ensemble workflows). Use the `changelog-generator` skill for conventional-commit changelogs.
+
 ### Fixed
 
 - Agents (`backend-developer`, `frontend-developer`, `ensemble-orchestrator`, `infrastructure-developer`, `mobile-developer`) no longer reference skills that do not exist (`*-framework`, `gcp-cloud`, `azure-cloud`, `react-native`); `ensemble-full` now includes the `react` skill.
