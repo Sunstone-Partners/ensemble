@@ -6,8 +6,8 @@
  * mislabel them, defeating the per-TRD scoping.
  */
 
-const { buildScopedExport, titleMatches } = require('../lib/beads-stage');
-const { ensureLabel } = require('../lib/beads-label');
+const { buildScopedExport } = require('../lib/beads-stage');
+const { ensureLabel, titleMatches } = require('../lib/beads-label');
 
 const rec = (id, title, extra = {}) => JSON.stringify({ id, title, status: 'open', labels: [], ...extra });
 

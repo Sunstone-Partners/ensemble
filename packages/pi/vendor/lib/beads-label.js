@@ -9,7 +9,6 @@
  */
 
 const { execFileSync } = require('child_process');
-const { titleMatches } = require('./beads-stage');
 
 const IDS_PER_CALL = 50; // keeps the `br label add` command line short on Windows
 
@@ -18,6 +17,21 @@ const issuesOf = (parsed) => (Array.isArray(parsed) ? parsed : (parsed && parsed
 
 function runBr(args) {
   return execFileSync('br', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 60000 });
+}
+
+/**
+ * Does `title` belong to the scope entry `match`? A TRD scope entry such as "[trd:foo" (no
+ * closing delimiter) must not match the beads of a sibling TRD "[trd:foo-v2]", so it has to be
+ * followed by `]`, `:` or the end of the title. Any other entry (a TRD entry that already ends
+ * with `]` or `:`, or a non-TRD entry) is a plain substring match.
+ */
+function titleMatches(title, match) {
+  if (!match.startsWith('[trd:') || /[\]:]$/.test(match)) return title.includes(match);
+  for (let at = title.indexOf(match); at !== -1; at = title.indexOf(match, at + 1)) {
+    const next = title[at + match.length];
+    if (next === undefined || next === ']' || next === ':') return true;
+  }
+  return false;
 }
 
 /**
@@ -39,4 +53,4 @@ function ensureLabel({ label, match } = {}, run = runBr) {
   return { label, matched: mine.length, labeled: missing.length, already: mine.length - missing.length };
 }
 
-module.exports = { ensureLabel };
+module.exports = { ensureLabel, titleMatches };
