@@ -176,7 +176,7 @@ This walkthrough follows the default path. Every command stops at a gate and tel
 
 The command interviews you (scale detection, clarifying questions), researches context, defines requirements with acceptance criteria, then runs an Implementation Readiness Gate and a Constitution Gate before it saves. The PRD is written to `docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md` with a readiness score. The only next step it prints is `/ensemble:refine-prd <that path>`; a fresh PRD is never sent straight to `create-trd`.
 
-The Constitution Gate needs a constitution file: `docs/standards/constitution.md`, or `.specify/memory/constitution.md` as a fallback. With neither, the command halts with `CONSTITUTION_CONFIG_ERROR` and saves nothing.
+The Constitution Gate needs a constitution file: `docs/standards/constitution.md`, or `.specify/memory/constitution.md` as a fallback. With neither, the command halts with `CONSTITUTION_CONFIG_ERROR` and saves nothing. In a new project, run `/ensemble:init-project` first; it scaffolds `docs/standards/constitution.md`, `docs/PRD/` and `docs/TRD/`.
 
 ### Step 2: refine and lock the PRD
 
@@ -473,7 +473,7 @@ Phases: Release Initialization, Quality Gates (security scan, DoD validation, un
 
 ### Stack detection: `detect-stack`
 
-`detect-stack` (in `ensemble-core`) replaces the four 6.x detector skills. It is a skill with a CLI:
+`detect-stack` (in `ensemble-core`) replaces the four 6.x detector skills. It is a skill with a CLI. The paths below are relative to the root of the `ensemble-core` package: `packages/core/` in a repository clone, or the installed plugin directory on Claude Code. The Pi package ships only the skill's `SKILL.md` and `REFERENCE.md`, not the script, so on Pi run the script from a clone of this repository.
 
 ```bash
 node skills/detect-stack/detect-stack.js . --axis=framework
@@ -533,6 +533,7 @@ The Package column names the marketplace plugin that ships the command. Argument
 | `/ensemble:generate-api-docs` | none | Generate OpenAPI/Swagger documentation from the codebase | `ensemble-development` |
 | `/ensemble:standards` | `<discover\|inject\|fold> [args...]` | Dispatcher: coding standards | `ensemble-core` |
 | `/ensemble:fold-prompt` | none | Optimize `CLAUDE.md` for token efficiency and progressive loading | `ensemble-core` |
+| `/ensemble:init-project` | `minimal`, `force` | Scaffold `docs/standards/constitution.md`, `docs/PRD/`, `docs/TRD/` and `.gitignore` entries; hand-authored Markdown with no YAML source, so it is not counted among the 43 generated commands | `ensemble-core` |
 | `/ensemble:sessionlog` | none | Save a structured session transcript with decisions and commands to `SessionLogs` | `ensemble-core` |
 | `/ensemble:reinstall-plugins` | `[--all \| <filter>]` | Uninstall and reinstall plugins to pick up marketplace content that version-gated updates miss (Claude Code CLI) | `ensemble-core` |
 | `/ensemble:assess` | `<repo\|team\|config\|report> [--only <dimension>] [args...]` | Dispatcher: repository, team and configuration assessment | `ensemble-assessment` |
@@ -762,13 +763,13 @@ Commands such as `reqnroll-tdd`, `generate-feature-tests`, `discover-standards`,
 
 ### Constitution gate halts with `CONSTITUTION_CONFIG_ERROR`
 
-`create-prd` (including `--from-meeting`) and `create-trd` (including `--parser-tables`) run a Constitution Gate before saving. If neither `docs/standards/constitution.md` nor `.specify/memory/constitution.md` exists, the command halts with `CONSTITUTION_CONFIG_ERROR`, writes nothing under `docs/PRD/` or `docs/TRD/`, and prints no next step. A check with no source article id is also a halt for the same reason. Create a constitution file at one of those paths and re-run. No flag bypasses the gate, including `--foreman`.
+`create-prd` (including `--from-meeting`) and `create-trd` (including `--parser-tables`) run a Constitution Gate before saving. If neither `docs/standards/constitution.md` nor `.specify/memory/constitution.md` exists, the command halts with `CONSTITUTION_CONFIG_ERROR`, writes nothing under `docs/PRD/` or `docs/TRD/`, and prints no next step. A check with no source article id is also a halt for the same reason. Run `/ensemble:init-project` to scaffold `docs/standards/constitution.md` (or create a constitution file at one of those paths yourself) and re-run. No flag bypasses the gate, including `--foreman`.
 
 Before 7.0.0 the separate meeting command skipped this gate; `create-prd --from-meeting` does not, so repositories without a constitution that used the old command will now see the halt. When both constitution files exist and differ, the command warns and uses `docs/standards/constitution.md`.
 
 ### `detect-stack` fails with a missing `glob` module
 
-`detect-stack.js` requires the `glob` npm package, resolved from the repository's `node_modules`. In an isolated install (a plugin cache, a Pi package directory or a Codex project without that dependency) the script fails to load. Install `glob` where the script can resolve it, for example in the project that runs it:
+`detect-stack.js` requires the `glob` npm package, and `packages/core/package.json` does not declare it. `glob` is declared only in the repository root `package.json` (a development dependency), so the script loads in a repository clone after `npm install` at the root and may fail to load anywhere else, such as an installed plugin directory, unless the host project provides `glob`. Install it where the script can resolve it, for example in the project that runs it:
 
 ```bash
 npm install glob

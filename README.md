@@ -171,7 +171,7 @@ Versions below are taken from each package's `package.json`.
 
 ## Commands
 
-Commands are invoked as `/ensemble:<name>` in Claude Code. The tree contains 43 command definitions (`packages/*/commands/*.yaml`); **35 are typable** and 8 are hidden behind a dispatcher or the wave runner (see [Hidden commands](#hidden-commands)).
+Commands are invoked as `/ensemble:<name>` in Claude Code. The tree contains 43 command definitions (`packages/*/commands/*.yaml`); **35 are typable** and 8 are hidden behind a dispatcher or the wave runner (see [Hidden commands](#hidden-commands)). One more typable command, `/ensemble:init-project`, is hand-authored Markdown in `packages/core/commands/ensemble/` with no YAML source, so it is outside those counts and is not generated for Pi.
 
 ### Product and requirements
 
@@ -236,6 +236,7 @@ Commands are invoked as `/ensemble:<name>` in Claude Code. The tree contains 43 
 | `/ensemble:assess` | `repo`, `team`, `config`, `report`; `repo --only <dimension>` | assessment | Dispatcher for assessments; see [Assessment](#assessment) |
 | `/ensemble:standards` | `discover`, `inject`, `fold` plus subcommand args | core | Dispatcher for coding-standards work |
 | `/ensemble:fold-prompt` | none | core | Optimize `CLAUDE.md` for token efficiency and progressive context loading |
+| `/ensemble:init-project` | `minimal`, `force` | core | Scaffold `docs/standards/constitution.md`, `docs/PRD/` and `docs/TRD/` and the `.gitignore` entries for a project; run it when the Constitution Gate halts |
 | `/ensemble:sessionlog` | none | core | Save a structured session transcript to SessionLogs |
 | `/ensemble:reinstall-plugins` | `[--all \| <filter>]` | core | Force-refresh installed plugins (uninstall and reinstall) |
 | `/ensemble:manager-dashboard` | none | metrics | Productivity metrics and team analytics dashboard |
