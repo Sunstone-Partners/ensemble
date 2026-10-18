@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import matter from 'gray-matter';
+import { GENERATED_MARKER_PREFIX } from '../src/generated-marker';
 
 const AGENTS_DIR = path.resolve(__dirname, '..', 'agents');
 const ORCHESTRATOR_PATH = path.join(AGENTS_DIR, 'product-management-orchestrator.md');
@@ -106,12 +107,14 @@ describe('product-management-orchestrator agent', () => {
     expect(parsed.content.trim().length).toBeGreaterThan(0);
   });
 
-  it('body starts with a markdown heading (#)', () => {
-    const firstNonEmpty = parsed.content
+  it('body is markdown: past the generated marker comment, it starts with a heading (#)', () => {
+    // The generator stamps every agent with a marker comment right after the frontmatter
+    // (generated-marker.ts); regenerating adds it, so the check skips it where present
+    const firstContent = parsed.content
       .split('\n')
-      .find((line) => line.trim().length > 0);
-    expect(firstNonEmpty).toBeDefined();
-    expect(firstNonEmpty!.trimStart().startsWith('#')).toBe(true);
+      .find((line) => line.trim().length > 0 && !line.startsWith(GENERATED_MARKER_PREFIX));
+    expect(firstContent).toBeDefined();
+    expect(firstContent!.trimStart().startsWith('#')).toBe(true);
   });
 });
 

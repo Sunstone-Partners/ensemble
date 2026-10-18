@@ -204,7 +204,7 @@ describe('Pi generator: self-contained package output roots', () => {
 
   it('validates the self-contained package\'s artifacts when --validate is set', async () => {
     writeCommand(PKG, 'assess.yaml', command('assess'));
-    await expect(generateSelfContainedPackages(options({ validate: true }))).resolves.toBeUndefined();
+    await expect(generateSelfContainedPackages(options({ validate: true }))).resolves.toEqual({ pruned: [] });
   });
 
   it('hides a self-contained wrapper from Claude Code, and leaves ensemble-pi\'s own wrappers alone', async () => {

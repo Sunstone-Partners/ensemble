@@ -248,7 +248,7 @@ describe('generate() pipeline — dryRun:true on real repo', () => {
   it('resolves without error', async () => {
     await expect(
       generate(makeOptions({ dryRun: true, outputRoot }))
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ pruned: [] });
   });
 
   it('does not write any files to disk', async () => {

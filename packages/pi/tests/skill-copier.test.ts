@@ -15,6 +15,7 @@ import * as os from 'os';
 import * as path from 'path';
 import matter from 'gray-matter';
 import { copySkills, normalizeSkillMd } from '../src/transformers/skill-copier';
+import { generatedMarker, hasGeneratedMarker } from '../src/generated-marker';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -129,9 +130,10 @@ describe('copySkills', () => {
     }
   });
 
-  it('preserves REFERENCE.md content byte-for-byte', async () => {
+  it('preserves REFERENCE.md content apart from the generated marker line', async () => {
     const results = await copySkills(sourceRoot, outputRoot, {});
     const refResults = results.filter((r) => r.outputPath.endsWith('REFERENCE.md'));
+    expect(refResults.length).toBeGreaterThan(0);
 
     for (const result of refResults) {
       // Read original source (resolved real path)
@@ -139,8 +141,45 @@ describe('copySkills', () => {
         fs.realpathSync(result.sourcePath),
         'utf-8'
       );
-      expect(result.content).toBe(origContent);
+      const markerLine = result.content.split('\n', 1)[0];
+      expect(hasGeneratedMarker(result.content)).toBe(true);
+      // Everything after the marker line is the source, untouched
+      expect(result.content.slice(markerLine.length + 1)).toBe(origContent);
     }
+  });
+
+  it('stamps every copied file with a marker naming its source by path from the monorepo root', async () => {
+    const results = await copySkills(sourceRoot, outputRoot, {});
+    const expectedSource: Record<string, string> = {
+      'alpha/SKILL.md': 'packages/alpha/skills/SKILL.md',
+      'alpha/REFERENCE.md': 'packages/alpha/skills/REFERENCE.md',
+      'my-skill/SKILL.md': 'packages/beta/skills/my-skill/SKILL.md',
+    };
+    expect(results).toHaveLength(Object.keys(expectedSource).length);
+
+    for (const result of results) {
+      const relative = path.relative(path.join(outputRoot, 'skills'), result.outputPath).split(path.sep).join('/');
+      // Built from names alone: the temp dir may sit behind a symlink (macOS /var -> /private/var),
+      // and committed output must not differ by machine
+      expect(result.content).toContain(generatedMarker(expectedSource[relative]));
+      expect(hasGeneratedMarker(result.content)).toBe(true);
+    }
+  });
+
+  it('puts the marker after the frontmatter of a SKILL.md and leaves its body alone', async () => {
+    const results = await copySkills(sourceRoot, outputRoot, {});
+    const alpha = results.find((r) => r.outputPath.endsWith(path.join('alpha', 'SKILL.md')));
+    expect(alpha).toBeDefined();
+
+    expect(alpha!.content.startsWith('---\n')).toBe(true);
+    const body = matter(alpha!.content).content;
+    expect(body).toBe(`${generatedMarker('packages/alpha/skills/SKILL.md')}\n# Alpha Skill\nContent here.\n`);
+  });
+
+  it('does not let the marker become the description of a skill that has none', async () => {
+    const results = await copySkills(sourceRoot, outputRoot, {});
+    const alpha = results.find((r) => r.outputPath.endsWith(path.join('alpha', 'SKILL.md')));
+    expect(matter(alpha!.content).data['description']).toBe('Content here.');
   });
 
   // -------------------------------------------------------------------------

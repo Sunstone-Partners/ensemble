@@ -90,3 +90,14 @@ export interface TransformResult {
   content: string;
   type: 'command' | 'agent' | 'skill' | 'agents-md' | 'lib';
 }
+
+/** What a generator run reports back to its caller. */
+export interface GenerateResult {
+  /**
+   * Absolute paths, sorted, of the stale generated files the run removed or, on a dry run,
+   * would remove. A file is stale when the generator wrote it earlier (it carries a generated
+   * marker), this run did not reproduce it, and so its command, agent or skill was removed,
+   * renamed or moved. Hand-authored files are never listed.
+   */
+  pruned: string[];
+}

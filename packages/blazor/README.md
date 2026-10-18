@@ -1,6 +1,8 @@
 # @sunstone-partners/ensemble-blazor
 
-Blazor framework skills for .NET applications
+Blazor frontend skills: Server and WebAssembly components, Razor, Fluent UI.
+
+Backend .NET work (ASP.NET Core, Wolverine, MartenDB) lives in the separate `@sunstone-partners/ensemble-dotnet` package.
 
 ## Installation
 
@@ -10,7 +12,7 @@ claude plugin install @sunstone-partners/ensemble-blazor
 
 ## Description
 
-Part of the ensemble plugin ecosystem for Claude Code. This plugin provides blazor framework skills for .net applications.
+Part of the ensemble plugin ecosystem for Claude Code. This plugin provides the `blazor` skill: Blazor Server and WebAssembly hosting models, Razor component lifecycle, and Microsoft Fluent UI Blazor components. It does not include the `dotnet` backend skill; install `ensemble-dotnet` for that.
 
 ## Features
 

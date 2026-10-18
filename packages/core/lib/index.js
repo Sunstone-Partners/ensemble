@@ -51,10 +51,12 @@ function loadSkill(type = 'quick') {
 /**
  * Detect frameworks in a project directory
  * @param {string} projectPath - Path to the project
+ * @param {Object} [options] - Detection options (e.g. `framework` override, `skipDetection`)
  * @returns {Promise<Object>} Detection results with confidence scores
  */
-async function detect(projectPath) {
-  return detectFramework(projectPath);
+async function detect(projectPath, options = {}) {
+  const detector = new detectFramework(projectPath, undefined, options);
+  return detector.detect();
 }
 
 /**

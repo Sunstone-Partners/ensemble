@@ -38,6 +38,7 @@
     "@sunstone-partners/ensemble-rails": "^5.0.0",
     "@sunstone-partners/ensemble-phoenix": "^5.0.0",
     "@sunstone-partners/ensemble-blazor": "^5.0.0",
+    "@sunstone-partners/ensemble-dotnet": "^1.0.0",
     "@sunstone-partners/ensemble-jest": "^5.0.0",
     "@sunstone-partners/ensemble-pytest": "^5.0.0",
     "@sunstone-partners/ensemble-rspec": "^5.0.0",

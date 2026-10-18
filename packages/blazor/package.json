@@ -1,7 +1,7 @@
 {
   "name": "@sunstone-partners/ensemble-blazor",
   "version": "5.1.0",
-  "description": "Blazor framework skills for .NET applications",
+  "description": "Blazor frontend skills: Server and WebAssembly components, Razor, Fluent UI",
   "main": "lib/index.js",
   "scripts": {
     "test": "jest --passWithNoTests",
