@@ -188,7 +188,7 @@
     },
     {
       "name": "ensemble-nestjs",
-      "version": "6.0.0",
+      "version": "5.1.1",
       "source": "./packages/nestjs",
       "description": "NestJS backend framework skills",
       "category": "frameworks",
@@ -204,7 +204,7 @@
     },
     {
       "name": "ensemble-rails",
-      "version": "6.0.0",
+      "version": "5.1.1",
       "source": "./packages/rails",
       "description": "Ruby on Rails framework skills",
       "category": "frameworks",
@@ -220,7 +220,7 @@
     },
     {
       "name": "ensemble-phoenix",
-      "version": "6.0.0",
+      "version": "5.1.1",
       "source": "./packages/phoenix",
       "description": "Phoenix/Elixir framework skills",
       "category": "frameworks",
@@ -269,7 +269,7 @@
     },
     {
       "name": "ensemble-jest",
-      "version": "6.0.0",
+      "version": "5.1.1",
       "source": "./packages/jest",
       "description": "Jest testing framework skills",
       "category": "testing",
@@ -285,7 +285,7 @@
     },
     {
       "name": "ensemble-pytest",
-      "version": "6.0.0",
+      "version": "5.1.1",
       "source": "./packages/pytest",
       "description": "Pytest testing framework skills",
       "category": "testing",
@@ -301,7 +301,7 @@
     },
     {
       "name": "ensemble-rspec",
-      "version": "6.0.0",
+      "version": "5.2.0",
       "source": "./packages/rspec",
       "description": "RSpec testing framework skills",
       "category": "testing",
@@ -317,7 +317,7 @@
     },
     {
       "name": "ensemble-xunit",
-      "version": "6.0.0",
+      "version": "5.2.0",
       "source": "./packages/xunit",
       "description": "xUnit testing framework skills for .NET",
       "category": "testing",
@@ -351,7 +351,7 @@
     },
     {
       "name": "ensemble-exunit",
-      "version": "6.0.0",
+      "version": "5.1.1",
       "source": "./packages/exunit",
       "description": "ExUnit testing framework skills for Elixir",
       "category": "testing",

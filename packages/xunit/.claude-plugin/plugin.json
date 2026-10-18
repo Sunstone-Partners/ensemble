@@ -1,6 +1,6 @@
 {
   "name": "ensemble-xunit",
-  "version": "6.0.0",
+  "version": "5.2.0",
   "description": "xUnit testing framework integration for .NET",
   "author": {
     "name": "Sunstone Partners",

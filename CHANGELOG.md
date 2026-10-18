@@ -58,17 +58,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `ensemble-development` 6.0.11 → 7.0.0, `ensemble-e2e-testing` 5.4.1 →
     6.0.0, `ensemble-git` 5.3.2 → 6.0.0, `ensemble-infrastructure` 5.3.0 →
     6.0.0, `ensemble-metrics` 5.2.2 → 6.0.0, `ensemble-product` 5.6.5 → 6.0.0,
-    `ensemble-quality` 5.4.0 → 6.0.0, `ensemble-react` 5.1.0 → 6.0.0, and the
-    framework skill packages whose skill `name` is now the bare technology
-    name (`ensemble-exunit`, `ensemble-jest`, `ensemble-nestjs`,
-    `ensemble-phoenix`, `ensemble-pytest`, `ensemble-rails`, `ensemble-rspec`,
-    `ensemble-xunit`), each 5.1.0 → 6.0.0.
-  - MINOR (additive): `ensemble-assessment` 1.0.0 → 1.1.0 (`/ensemble:assess`,
-    Pi-installable), `ensemble-dotnet` 1.0.0 → 1.1.0 (gains the `dotnet`
-    skill).
-  - PATCH: `ensemble-reqnroll` 1.0.1 → 1.0.2 (docs point at the
-    `/ensemble:reqnroll` dispatcher), `ensemble-router` 5.2.2 → 5.2.3 (rules
-    follow the renamed and removed skills and agents).
+    `ensemble-quality` 5.4.0 → 6.0.0 and `ensemble-react` 5.1.0 → 6.0.0.
+  - MINOR (additive or rewritten content): `ensemble-assessment` 1.0.0 → 1.1.0
+    (`/ensemble:assess`, Pi-installable), `ensemble-dotnet` 1.0.0 → 1.1.0
+    (gains the `dotnet` skill), `ensemble-rspec` and `ensemble-xunit` 5.1.0 →
+    5.2.0 (full skills and working helper scripts).
+  - PATCH: `ensemble-exunit`, `ensemble-jest`, `ensemble-nestjs`,
+    `ensemble-phoenix`, `ensemble-pytest` and `ensemble-rails` 5.1.0 → 5.1.1
+    (skill frontmatter `name` is now the bare technology name and docs point at
+    `detect-stack`; Claude Code keys skills by directory name and Pi already
+    normalized the name, so only Codex's generated skill identifier changed,
+    and that ships in `ensemble-codex` 6.0.0), `ensemble-reqnroll` 1.0.1 →
+    1.0.2 (docs point at the `/ensemble:reqnroll` dispatcher),
+    `ensemble-router` 5.2.2 → 5.2.3 (rules follow the renamed and removed
+    skills and agents).
   - `ensemble-pi` 1.6.15 → 1.6.16 was bumped by
     `scripts/bump-pi-version-if-changed.js` (`postgenerate:pi`) earlier on this
     branch, not by hand. `ensemble-pi-extension` stays at 0.1.2: it has no
