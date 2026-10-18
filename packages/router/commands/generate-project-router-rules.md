@@ -151,8 +151,8 @@ Look for infrastructure patterns:
 - Check for `docker-compose.yml`, `Dockerfile` → Docker containerization
 - Check for `.github/workflows/` → GitHub Actions CI/CD
 - Check for `supabase/` → Supabase backend → `supabase` skill
-- Check for `*.tf` files → Terraform infrastructure → `aws-cloud` skill (if AWS)
-- Check for `cdk.json` → AWS CDK → `aws-cloud` skill
+- Check for `*.tf` files → Terraform infrastructure → `aws` skill (if AWS)
+- Check for `cdk.json` → AWS CDK → `aws` skill
 - Check for `serverless.yml` → Serverless Framework
 - Check for `k8s/`, `kubernetes/`, `helm/` → Kubernetes → `kubernetes`, `helm` skills
 - Check for `Chart.yaml` → Helm chart → `helm` skill

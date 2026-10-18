@@ -149,6 +149,7 @@ team_configuration:
         - ensemble-nestjs
         - ensemble-rails
         - ensemble-phoenix
+        - ensemble-dotnet
       frontend:
         - ensemble-react
         - ensemble-blazor
@@ -175,6 +176,7 @@ team_configuration:
       rails: ensemble-rails
       phoenix: ensemble-phoenix
       blazor: ensemble-blazor
+      dotnet: ensemble-dotnet
       jest: ensemble-jest
       pytest: ensemble-pytest
       rspec: ensemble-rspec

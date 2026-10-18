@@ -92,3 +92,47 @@ describe('validateCommandSchema — dispatch.subcommands ref-exists check', () =
     ).not.toThrow();
   });
 });
+
+describe('validateCommandSchema — metadata.visibility', () => {
+  const withVisibility = (visibility) => {
+    const cmd = baseCommand(undefined);
+    delete cmd.dispatch;
+    cmd.metadata.visibility = visibility;
+    return cmd;
+  };
+  const FILE = '/repo/packages/development/commands/x.yaml';
+
+  test.each(['visible', 'hidden'])('accepts visibility: %s', (visibility) => {
+    expect(() => validateCommandSchema(withVisibility(visibility), FILE)).not.toThrow();
+  });
+
+  test('rejects a value outside the enum', () => {
+    let thrown;
+    try {
+      validateCommandSchema(withVisibility('secret'), FILE);
+    } catch (errors) {
+      thrown = errors;
+    }
+    expect(Array.isArray(thrown)).toBe(true);
+    expect(thrown.some((e) => /visibility/.test(e.path || e.field || e.message || String(e)))).toBe(true);
+  });
+
+  test('a dispatcher ref to a hidden command resolves (refs are keyed by metadata.name only)', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { buildCommandNameSet } = require('../lib/schema-validator');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vis-names-'));
+    try {
+      const hidden = path.join(dir, 'leaf.yaml');
+      fs.writeFileSync(hidden, 'metadata:\n  name: ensemble:leaf\n  visibility: hidden\n');
+      const names = await buildCommandNameSet([hidden]);
+      expect(names.has('leaf')).toBe(true);
+
+      const dispatcher = baseCommand({ subcommands: [{ keyword: 'go', ref: 'leaf' }] });
+      expect(() => validateCommandSchema(dispatcher, FILE, new Set(), names)).not.toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

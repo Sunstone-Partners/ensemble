@@ -63,7 +63,7 @@ The `frontend-developer` agent automatically loads this skill when React is dete
 ```yaml
 # In frontend-developer.yaml
 skills:
-  - name: react-framework
+  - name: react
     auto-detect: true
     minimum-confidence: 0.8
 ```

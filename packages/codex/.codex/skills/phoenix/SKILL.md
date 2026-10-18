@@ -1,5 +1,5 @@
 ---
-name: Phoenix Framework
+name: phoenix
 description: Quick-reference Phoenix and Elixir patterns for API development, OTP, LiveView, Ecto, and Channels. Use when working in a Phoenix or Elixir codebase.
 version: 1.0.0
 user-invocable: true

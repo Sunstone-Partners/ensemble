@@ -64,63 +64,17 @@ Check if `docs/assessment/` exists. Create it if needed.
 
 ## Phase 2: Purpose Analysis (First Agent)
 
-Launch **assess-purpose** FIRST to establish context for all other agents.
+Launch a `task` agent FIRST to run the `assess-purpose` skill and establish context for all other agents.
+
+Every specialist task (here and in Phase 3) is a thin dispatch: it names the skill to load and adds only this run's rules; the skill itself holds the analysis steps, output format, and scoring rules. If your runtime cannot load a skill by name for a subagent, read that skill's `SKILL.md` file yourself and include its full text in the subagent prompt.
 
 ```markdown
-# Goal: Explore repository to infer purpose, domain, and target audience
+Load the `assess-purpose` skill and follow it.
 
-Save your findings to: docs/assessment/<REPORT_PREFIX>-purpose.md
-
-This is the foundational analysis — everything else builds on it.
-
-Analyze:
-- Tech stack (languages, frameworks, dependencies)
-- Directory structure and organization
-- Entry points and main modules
-- Domain-specific patterns (search for healthcare/finance/devops keywords)
-- Business logic to understand what operations are performed
-
-**Tools:** your runtime's dedicated file-discovery, read, text-search, and structural-code-search (e.g. ast-grep or equivalent) capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
-- Focus on what can be INFERRED from code, not what docs say
-- This tests AI-readiness: can you understand the codebase without human docs?
+Run-specific rules:
+- Save your findings to: docs/assessment/<REPORT_PREFIX>-purpose.md
 - Cite specific file:line for evidence
-- One-line rationale for scores
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# Repository Purpose Analysis
-
-## Tech Stack
-[Table with language, ecosystem, build tool, package manager]
-
-## Inferred Purpose
-- Primary Function: [one sentence]
-- Domain: [Healthcare/Finance/DevOps/etc.]
-- Target Users: [Developers/End Users/Admins/etc.]
-- Key Capabilities: [3-5 bullets]
-
-## Evidence
-[File:line citations for key findings]
-
-## Confidence Assessment
-[How certain are we about each inference]
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-[What docs would help future AI agents]
-```
-
-Return a summary (max 5 lines) with:
-- Tech stack overview
-- Inferred purpose (1 sentence)
-- Domain
-- Confidence level
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations for documentation
 ```
 
 ## Phase 3: Parallel Analysis
@@ -141,351 +95,63 @@ REPORT_PREFIX: <repo-name>-<YYYY-MM-DD>
 ## Specialist Tasks
 ### Task 1: Architecture Analysis
 ```markdown
-# Goal: Analyze repository architecture and structure
+Load the `assess-architect` skill and follow it.
 
-Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-architecture.md
-
-Analyze:
-- Project layout and organization
-- Layering (presentation, business, data, shared)
-- Component boundaries and dependencies
-- Integration patterns
-- Scalability constraints
-
-**Tools:** your runtime's dedicated file-discovery, read, text-search, structural-code-search (e.g. ast-grep or equivalent), and language-server/code-intelligence capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
+Run-specific rules:
+- Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-architecture.md
 - Cite specific file:line for every finding
-- Use tables for structured data
-- One-line rationale for scores
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# Architecture Analysis
-
-## Project Structure
-[Directory tree]
-
-## Layering Assessment
-[Assessment]
-
-## Dependencies
-[Findings with file:line]
-
-## Key Issues
-1. [Issue with reference]
-2. [Issue with reference]
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-1. [Priority]
-2. [Secondary]
-```
-
-Return a summary (max 5 lines) with:
-- Project structure overview
-- Top 3 architectural issues
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations
 ```
 
 ### Task 2: Code Quality Analysis
 ```markdown
-# Goal: Analyze code quality and technical debt
+Load the `assess-code-quality` skill and follow it.
 
-Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-code-quality.md
-
-Analyze:
-- Large files (>300 lines) — find then read to count
-- Naming convention violations
-- Code duplication patterns
-- Technical debt (TODO, FIXME, dead code)
-- Error handling patterns
-- Complexity issues
-
-**Tools:** your runtime's dedicated file-discovery, read, text-search, and structural-code-search (e.g. ast-grep or equivalent) capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
+Run-specific rules:
+- Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-code-quality.md
 - Cite specific file:line for every finding
-- Use tables for structured data
-- Truncate repetitive patterns (cite 3 examples, state count)
-- One-line rationale for scores
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# Code Quality Analysis
-
-## Largest Files
-| File | Lines | Concern |
-|------|-------|---------|
-| ... | ... | ... |
-
-## Technical Debt
-| Type | Count | Severity | Example |
-|------|-------|----------|---------|
-| TODO | N | Medium | file:line |
-| FIXME | N | High | file:line |
-
-## Naming Violations
-[Table or list with examples]
-
-## Duplication
-[Findings with specific file:line]
-
-## Error Handling
-[Patterns found with file:line]
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-1. [Priority]
-2. [Secondary]
-```
-
-Return a summary (max 5 lines) with:
-- Top 5 largest files (estimate lines)
-- Technical debt counts (TODO, FIXME, etc.)
-- Top 3 issues
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations
 ```
 
 ### Task 3: Testing Analysis
 ```markdown
-# Goal: Analyze test coverage and quality
+Load the `assess-testing` skill and follow it.
 
-Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-testing.md
-
-Analyze:
-- Test projects and test files
-- Test frameworks used
-- Coverage assessment (what's tested vs not)
-- Test quality (isolation, assertions, naming)
-- Coverage gaps
-
-**Tools:** your runtime's dedicated file-discovery, read, and text-search capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
+Run-specific rules:
+- Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-testing.md
 - Cite specific file:line for findings
-- Use tables for structured data
-- One-line rationale for scores
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# Testing Analysis
-
-## Test Projects
-| Project | Framework | Type | Coverage | Quality |
-|---------|-----------|------|----------|---------|
-| ... | ... | ... | ... | ... |
-
-## Coverage Summary
-[Assessment]
-
-## Test Quality
-[Strengths and weaknesses]
-
-## Coverage Gaps
-[What's not tested]
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-1. [Priority]
-2. [Secondary]
-```
-
-Return a summary (max 5 lines) with:
-- Test projects found
-- Coverage estimate (%)
-- Top 3 gaps
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations
 ```
 
 ### Task 4: Security Analysis
 ```markdown
-# Goal: Analyze security patterns and vulnerabilities
+Load the `assess-security` skill and follow it.
 
-Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-security.md
-
-Analyze:
-- Authentication patterns
-- Authorization mechanisms
-- Hardcoded secrets (report presence, NOT values)
-- Input validation
-- Dependency vulnerabilities
-
-**Tools:** your runtime's dedicated text-search, read, and structural-code-search (e.g. ast-grep or equivalent) capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
+Run-specific rules:
+- Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-security.md
 - NEVER output actual secrets — report presence only
 - Cite specific file:line for findings
-- Use tables for structured data
-- One-line rationale for scores
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# Security Analysis
-
-## Authentication
-[Patterns found]
-
-## Authorization
-[Assessment]
-
-## Secrets Management
-[Findings - presence only, no values]
-
-## Input Validation
-[Assessment]
-
-## Vulnerabilities
-| Type | Severity | Location |
-|------|----------|----------|
-| ... | ... | ... |
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-1. [Priority]
-2. [Secondary]
-```
-
-Return a summary (max 5 lines) with:
-- Auth patterns found
-- Secret management issues
-- Top 3 security issues (severity)
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations
 ```
 
 ### Task 5: AI Readiness Analysis
 ```markdown
-# Goal: Evaluate repository AI agent compatibility
+Load the `assess-ai-readiness` skill and follow it.
 
-Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-ai-readiness.md
-
-Analyze ALL 8 dimensions:
-- Context Efficiency — docs, types, self-documentation
-- Refactorability — boundaries, coupling
-- Testability — tests exist, can AI run them?
-- Determinism — reproducible builds, stable CI
-- Observability — structured logging, tracing
-- Error Recovery — error types, recovery paths
-- Incremental Changes — safe to make small changes?
-- Skill Coverage — common ops as scripts?
-
-Also check:
-- Documentation (README, docs/, SKILL.md, AGENTS.md)
-- Build/test scripts (Makefile, Justfile, package.json)
-
-**Tools:** your runtime's dedicated file-discovery, read, and text-search capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
-- Rate all 8 dimensions on the shared 1.0-5.0 scale (`skill://assessment-report-suite` Scoring Scale); derive each letter mechanically from the numeric score — never assign a bare letter
-- Cite evidence for each
-- One-line rationale for overall score
+Run-specific rules:
+- Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-ai-readiness.md
+- Cite specific file:line evidence for each dimension
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# AI Readiness Analysis
-
-## 8-Dimension Assessment
-| Dimension | Score | Evidence |
-|-----------|-------|----------|
-| Context Efficiency | <1.0-5.0>/<Letter> | ... |
-| Refactorability | <1.0-5.0>/<Letter> | ... |
-| Testability | <1.0-5.0>/<Letter> | ... |
-| Determinism | <1.0-5.0>/<Letter> | ... |
-| Observability | <1.0-5.0>/<Letter> | ... |
-| Error Recovery | <1.0-5.0>/<Letter> | ... |
-| Incremental Changes | <1.0-5.0>/<Letter> | ... |
-| Skill Coverage | <1.0-5.0>/<Letter> | ... |
-
-## Documentation
-[What exists, what's missing]
-
-## Missing for AI Agents
-[What's lacking]
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-1. [Priority]
-2. [Secondary]
-```
-
-Return a summary (max 5 lines) with:
-- All 8 dimension scores (brief)
-- Top 3 gaps
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations
 ```
 
 ### Task 6: CI/CD Analysis
 ```markdown
-# Goal: Analyze CI/CD pipelines and deployment
+Load the `assess-cicd` skill and follow it.
 
-Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-cicd.md
-
-Analyze:
-- CI configuration files
-- Pipeline stages
-- Deployment strategy
-- Automation level
-- Secrets management in CI
-
-**Tools:** your runtime's dedicated file-discovery, read, and text-search capabilities. NOT bash pipelines.
-
-**IMPORTANT:**
+Run-specific rules:
+- Save your detailed findings to: docs/assessment/<REPORT_PREFIX>-cicd.md
 - Cite specific file:line for findings
-- Use tables for structured data
-- One-line rationale for scores
 - Save full findings to output file, return summary only
-
-Output structure for file:
-```markdown
-# CI/CD Analysis
-
-## Pipeline Discovery
-| Platform | Config | Status |
-|----------|--------|--------|
-| ... | ... | ... |
-
-## Pipeline Stages
-| Stage | Duration | Quality |
-|-------|----------|---------|
-| ... | ... | ... |
-
-## Deployment Strategy
-[Assessment]
-
-## Strengths
-1. ...
-
-## Weaknesses
-1. ...
-
-## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
-
-## Recommendations
-1. [Priority]
-2. [Secondary]
-```
-
-Return a summary (max 5 lines) with:
-- CI system found
-- Pipeline stages (brief)
-- Top 3 weaknesses
-- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
-- Top 2 recommendations
 ```
 
 ## Phase 3: Read Agent Outputs

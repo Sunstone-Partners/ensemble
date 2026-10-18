@@ -23,7 +23,7 @@
  *   next-task    <trd-path> --ready a,b [--closed a,b] [--max N]
  *   pr-plan      <trd-path> [--stacked]
  *   validate-workstream <trd-path...>
- *   create-workstream-trd <trd-path...> [--out path]
+ *   create-workstream-trd <trd-path...> [--out path] [--allow-invalid]   (run by /ensemble:implement-trd-beads --workstream)
  *   workstream-plan <trd-path...> [--stacked]
  *   workstream-status [--workstream slug] [--issues-json path]
  *   beads-label --label <l> --match <title-substring>
@@ -419,7 +419,7 @@ function runValidateWorkstream(argv) {
   return validateWorkstream(items);
 }
 
-/** `create-workstream-trd <trd-path...> [--out path]` -> write normalized executable TRD. */
+/** `create-workstream-trd <trd-path...> [--out path] [--allow-invalid]` -> write normalized executable TRD. Run by `/ensemble:implement-trd-beads --workstream`; with `--generate-only` the command stops after this call. */
 function runCreateWorkstreamTrd(argv) {
   const { positionals, flags } = parseArgs(argv, new Set(['out']));
   if (positionals.length < 2) {

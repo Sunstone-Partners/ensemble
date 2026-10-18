@@ -125,7 +125,7 @@ describe('--validate flag: agent artifact validation', () => {
     injectResults([makeAgentResult()]);
     setupAgentsMdMock(GOOD_AGENTS_MD);
 
-    await expect(generate(BASE_OPTIONS)).resolves.toBeUndefined();
+    await expect(generate(BASE_OPTIONS)).resolves.toEqual({ pruned: [] });
   });
 
   test('agent missing frontmatter name field: throws "Validation failed" and logs specific error to stderr', async () => {
@@ -172,7 +172,7 @@ describe('--validate flag: command artifact validation', () => {
     injectResults([makeCommandResult()]);
     setupAgentsMdMock(GOOD_AGENTS_MD);
 
-    await expect(generate(BASE_OPTIONS)).resolves.toBeUndefined();
+    await expect(generate(BASE_OPTIONS)).resolves.toEqual({ pruned: [] });
   });
 
   test('command missing H1 heading: throws "Validation failed" and logs "missing H1 heading" to stderr', async () => {
@@ -258,6 +258,6 @@ describe('--validate flag: disabled when validate=false', () => {
     setupAgentsMdMock(GOOD_AGENTS_MD);
 
     const noValidateOptions = { ...BASE_OPTIONS, validate: false };
-    await expect(generate(noValidateOptions)).resolves.toBeUndefined();
+    await expect(generate(noValidateOptions)).resolves.toEqual({ pruned: [] });
   });
 });

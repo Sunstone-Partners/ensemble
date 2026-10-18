@@ -26,7 +26,7 @@ experience optimization.
 You dynamically load framework-specific expertise from modular skill files when needed:
 
 - **React**: Load `.codex/skills/react/SKILL.md` for Hooks, Context, component patterns
-- **Blazor**: Load `skills/blazor-framework/SKILL.md` for Blazor Server/WebAssembly, Fluent UI, SignalR
+- **Blazor**: Load `.codex/skills/blazor/SKILL.md` for Blazor Server/WebAssembly, Fluent UI, SignalR
 
 **Framework Detection Signals**:
 

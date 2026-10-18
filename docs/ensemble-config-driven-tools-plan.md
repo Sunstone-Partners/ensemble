@@ -88,7 +88,7 @@ A team on GitLab or Azure DevOps gets agents that speak the wrong CLI, the wrong
 Ensemble already has the exact pattern this needs, shipping today:
 
 - Provider-style skills: `packages/git/skills/git-town/`, `packages/infrastructure/skills/managing-jira-issues/`, `managing-linear-issues/` — self-contained "how to drive this tool" documents.
-- Detection + dynamic skill loading: `packages/core/skills/framework-detector/` and `test-detector/` (with `packages/core/lib/detect-framework.js` + patterns JSON); `backend-developer` already loads NestJS/Rails/Phoenix/.NET skills based on detection signals.
+- Detection + dynamic skill loading: `packages/core/skills/detect-stack/` (framework, test runner, tooling and cloud axes; with `packages/core/lib/detect-framework.js` + patterns JSON); `backend-developer` already loads NestJS/Rails/Phoenix/.NET skills based on detection signals.
 
 Layer 2 generalizes that pattern from frameworks to the toolchain:
 
@@ -135,7 +135,7 @@ packages/git/skills/gitflow-vanilla/SKILL.md   # plain branch/rebase/push flow
 
 Each provider skill carries a small vocabulary block (change-request noun, work-item noun, CLI binary, link syntax) so shared agent prose can stay neutral.
 
-Toolchain detector — `packages/core/skills/toolchain-detector/` mirroring `framework-detector`: reads git remote URL, git-town config, `.beads/`, and reports resolved providers per axis. Agents consult it once at task start.
+Toolchain detector — `packages/core/skills/toolchain-detector/` mirroring `detect-stack`: reads git remote URL, git-town config, `.beads/`, and reports resolved providers per axis. Agents consult it once at task start.
 
 Content refactor — the sweep that makes it real: the ~20 YAML sources that hardcode `gh`/git-town/GitHub prose are rewritten capability-neutral ("create a change request using the resolved scm provider — load its skill"), exactly how `backend-developer` defers framework specifics to framework skills today. `github-specialist` becomes the thin GitHub provider specialist behind the scm axis (its content seeds `scm-github`).
 

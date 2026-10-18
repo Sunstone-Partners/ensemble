@@ -22,11 +22,10 @@ Part of the ensemble plugin ecosystem for Claude Code. This plugin provides deve
 |---------|-------------|
 | `/ensemble:feature` | Canonical front door for the feature lifecycle — `new`/`resume`/`status`/`abandon`, forwarding into `new-feature`'s existing idea-to-PR resumable workflow. A leading `--foreman` after the keyword (e.g. `new --foreman <idea>`) runs it non-interactively for Foreman dispatch, forwarding `--foreman` to every stage skill |
 | `/ensemble:issue` | Canonical front door for issue work — `fix`/`list`/`resume`/`status`/`abandon`, forwarding into `fix-issue`/`list-issue` |
-| `/ensemble:trd` | Canonical front door for TRD authoring, analysis, and implementation by keyword |
-| `/ensemble:implement-trd-beads` | TRD implementation with persistent beads project management — epic/story/task hierarchy, `bd ready` execution loop, cross-session resumability |
+| `/ensemble:trd` | Canonical front door for TRD authoring, analysis, and implementation by keyword (`create`/`refine`/`implement`/`analyze`/`complexity`/`validate`/`verify`/`status`/`graph`); command variants are flags on their base command (`create --parser-tables`, `implement --workstream [--generate-only]`), not keywords |
+| `/ensemble:implement-trd-beads` | TRD implementation with persistent beads project management — epic/story/task hierarchy, `bd ready` execution loop, cross-session resumability; `--workstream <trd1> <trd2> ...` generates one normalized workstream TRD from several source TRDs and implements it, and `--workstream --generate-only` only generates it |
 | `/ensemble:refine-beads` | Approval-gated Beads graph refinement before execution — detects dependency, hierarchy, PR-boundary, traceability, and duplicate-task gaps; applies approved `br` repairs and revalidates with `bv --robot-*` |
-| `/ensemble:create-trd` | Create a Technical Requirements Document from a PRD |
-| `/ensemble:create-trd-foreman` | Create a Foreman-native structured TRD that `foreman sling prd` can consume |
+| `/ensemble:create-trd` | Create a Technical Requirements Document from a PRD; `--parser-tables` produces a Foreman-native structured TRD (parser-compatible sprint/story tables, no adversarial review phase) that `foreman sling prd` can consume |
 | `/ensemble:refine-trd` | Refine and improve an existing TRD |
 | `/ensemble:fix-issue` | Lightweight bug fix workflow (analysis to PR) |
 | `/ensemble:generate-api-docs` | Generate API documentation |
@@ -44,6 +43,12 @@ After installation, this plugin's agents, commands, and skills will be automatic
 `/ensemble:create-trd` requires >=3 Given/When/Then scenarios (happy path, edge case, error/negative case) per functional REQ-NNN's acceptance criteria, authored under each TRD-NNN-TEST task's `Test AC:` checklist (`- [ ] Scenario: <title> -- Given ..., When ..., Then ...`, indented deeper than the `Test AC:` label so the TRD/beads parsers pick it up).
 
 `/ensemble:implement-trd-beads` routes any task whose id matches `-TEST` through the Reqnroll BDD path: resolve `reqnroll-cli`, resolve the target `.csproj`, run `generate-bindings` to scaffold `.feature` files and `Pending()` step stubs, confirm RED, delegate `reqnroll-binding-specialist` to fill step bodies test-first, then re-confirm RED before handing off to GREEN implementation. It carries the same `Test AC:`/`validatesAcs` content verbatim into each TRD-NNN-TEST bead's description via `scaffold-planner.js`, so the contract holds regardless of which specialist later executes the bead.
+
+### Foreman Table Mode (`create-trd --parser-tables`)
+
+`/ensemble:create-trd <prd-path> --parser-tables` (or `/ensemble:trd create <prd-path> --parser-tables`) produces a Foreman-native structured TRD that `foreman sling prd` can consume. It replaces the removed `/ensemble:create-trd-foreman` command and behaves the same way: the Master Task List is parser-compatible sprint/story markdown tables (`### N.M Sprint N` / `#### Story N.M`, task IDs like `AUTH-T001`, every Status cell `[ ]`) for Foreman's `parseTrd()`; the adversarial review phase (self-critique, coverage and testability review, Design Readiness Gate) is omitted; the Constitution Gate still runs and cannot be bypassed; and the only next step printed is `foreman sling prd <original-prd-path>`. Generation asks no interactive questions (only the optional `--list` PRD picker does), writes no companion research/data-model artifacts, and `--foundational` still works.
+
+`--parser-tables` is not `--foreman`. `--foreman` keeps the standard `### PR N:` checkbox TRD and the adversarial review and only makes the run non-interactive (plus the Foreman artifact and subject contracts), because Foreman's own `prd` workflow runs `create-trd --foreman` and then `refine-trd` and `implement-trd` on the standard format. The two flags combine (`--foreman --parser-tables`).
 
 ### Multi-TRD Beads Workstreams
 
@@ -83,6 +88,21 @@ Combined workstream mode:
 - reports release train progress plus per-TRD ready/blocked/in-progress counts.
 
 If stacked PR support is enabled with `ENSEMBLE_USE_STACKED_PRS=true`, combined mode prints `Combined workstream mode: stacked PRs enabled`; otherwise it offers scaffold-only or alternate execution paths.
+
+#### Generating a workstream TRD
+
+`--workstream` with two or more TRD paths generates one normalized executable workstream TRD from the source TRDs (provenance preserved; every referenced PRD AC becomes AC-level implementation, test and validation tasks) and then implements it. Add `--generate-only` to stop after generating: no beads, branches, commits or PRs are created and nothing is implemented. This replaces the removed `/ensemble:create-workstream-trd` command.
+
+```bash
+# Generate only, then implement the generated file later
+/ensemble:implement-trd-beads --workstream --generate-only docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md
+/ensemble:implement-trd-beads docs/TRD/workstreams/TRD-2026-<id>-workstream-<slug>.md --plan --use-current-branch
+
+# Choose the output path; write the file even if source validation fails
+/ensemble:implement-trd-beads --workstream --generate-only docs/TRD/TRD-A.md docs/TRD/TRD-B.md --out docs/TRD/workstreams/my-workstream.md --allow-invalid
+```
+
+`--generate-only` requires `--workstream` and cannot be combined with `--plan`, `--execute`, `--status`, `--reset-task`, `--list`, `--branch` or `--use-current-branch`. Without it, `--allow-invalid` and `--out` are not used.
 
 ### Refine Beads Graphs
 

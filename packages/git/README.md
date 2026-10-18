@@ -22,7 +22,6 @@ Part of the ensemble plugin ecosystem for Claude Code. This plugin provides git 
 |---------|-------------|
 | `/ensemble:pr-merge` | Drive an open PR to green and merged: discovers every failing CI check and unresolved review thread, routes each to the owning orchestrator (tech-lead-orchestrator for code, qa-orchestrator for tests, build-orchestrator/infrastructure-orchestrator for pipeline/infra checks, github-specialist for PR mechanics), dispatches remediation concurrently, re-verifies against live CI/review state, and loops (bounded by `--max-rounds`, default 5) until merged or escalated |
 | `/ensemble:release` | Release workflow orchestration with quality gates and deployment coordination |
-| `/ensemble:claude-changelog` | Generate a changelog from conventional commits |
 
 ## Usage
 

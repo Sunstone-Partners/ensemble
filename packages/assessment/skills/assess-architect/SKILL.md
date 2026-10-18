@@ -13,17 +13,19 @@ Use your runtime's dedicated file-discovery, read, structural-code-search (e.g. 
 equivalent), text-search, and language-server/code-intelligence capabilities where available,
 rather than ad hoc shell pipelines.
 
-**Avoid:** `find ... -exec ...`, `xargs ...`, and other complex shell pipelines; many coding-agent
-runtimes restrict these.
+**Avoid:** `find ... -exec ...`, `xargs ...`, `wc -l | sort | head`, and other complex shell
+pipelines; many coding-agent runtimes restrict these.
 
 # Analysis Tasks
 
 ## 1. Project Structure Analysis
 
-Discover the project layout under `src/`, `tests/`, `configs/`, then inspect directory structure
-directly (e.g. listing `src/`).
+Discover the project layout and organization under `src/`, `tests/`, `configs/`, then inspect
+directory structure directly (e.g. listing `src/`).
 
 ## 2. Dependency Direction Analysis
+
+Assess component boundaries and dependency direction.
 
 Use structural code search for patterns like class inheritance (`class $CLASS extends $BASE`) and
 method calls (`$A.$B($C)`) if your runtime exposes a structural/AST-aware search tool; otherwise
@@ -33,7 +35,7 @@ Use code-intelligence/language-server tooling for references and definitions if 
 
 ## 3. Layering Assessment
 
-Read key files to understand boundaries:
+Identify the layers (presentation, business, data, shared) and read key files to understand boundaries:
 - Entry points (Program.cs, main.py, index.ts)
 - Configuration files
 - Module exports
@@ -60,49 +62,61 @@ Generate a Mermaid diagram showing:
 - External dependencies
 - Data flow direction
 
+# Quality Criteria
+
+- Cite specific file:line for every finding
+- Use tables for structured data
+
+# Output Location
+
+If the caller supplies an output path or a `REPORT_PREFIX` (e.g. an orchestrating skill such as
+`assess-repo`), save the full report there — the caller's path, or
+`docs/assessment/<REPORT_PREFIX>-architecture.md` for a `REPORT_PREFIX` (creating
+`docs/assessment/` if needed) — and return a summary only (see Return Summary). If neither is
+supplied, report the full findings in your response and save them to
+`docs/assessment/architecture.md` only if asked.
+
 # Output Format
 
-```markdown
-## Architecture Analysis
+````markdown
+# Architecture Analysis
 
-### Project Structure
-[Description of directory layout and components]
+## Project Structure
+[Directory tree, plus a description of the layout and components]
 
-### Layering Assessment
-[Evaluation of layer separation and responsibilities]
+## Layering Assessment
+[Layers found (presentation, business, data, shared) and an evaluation of layer separation and responsibilities]
 
-### Dependency Direction
-[Findings on dependency flow and violations]
+## Dependencies
+[Dependency direction, component boundaries, and violations — findings with file:line]
 
-### Integration Patterns
+## Integration Patterns
 [External integrations and patterns observed]
 
-### Scalability Constraints
+## Scalability Constraints
 [Identified bottlenecks and constraints]
 
-### Architecture Diagram
+## Architecture Diagram
 ```mermaid
 [Diagram showing system structure]
 ```
 
-### Key Findings
-1. [Finding 1]
-2. [Finding 2]
-3. [Finding 3]
+## Key Issues
+1. [Issue with reference]
+2. [Issue with reference]
+3. [Issue with reference]
 
-### Score: A-F
-[Overall architecture grade with rationale]
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
-### Recommendations
+## Recommendations
 1. [Priority recommendation]
 2. [Secondary recommendation]
-```
+````
 
-# Avoid These Patterns
+# Return Summary
 
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipes
-- `wc -l | sort | head`
-
-Use your runtime's dedicated file-discovery, read, and search tools instead.
+When the full report was saved to a file, return a summary only (max 5 lines):
+- Project structure overview
+- Top 3 architectural issues
+- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
+- Top 2 recommendations

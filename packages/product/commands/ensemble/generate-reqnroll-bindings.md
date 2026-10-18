@@ -1,6 +1,7 @@
 ---
 name: "ensemble:generate-reqnroll-bindings"
 description: "Scaffold a runnable Reqnroll + xUnit test project (features, step stubs, project files) from a PRD"
+user-invocable: false
 version: "1.0.0"
 category: "testing"
 last-updated: "2026-06-29"
@@ -44,7 +45,7 @@ test-first starting point before bindings are filled in.
 - Report the output directory, feature count, and distinct step-binding count
 - List any step files that were preserved (write-once) versus newly created
 - Echo parser warnings and remind the user that needs-clarification ACs produce step-less scenarios until the PRD is fixed
-- Point the user to /ensemble:reqnroll-tdd to fill the Pending() bodies test-first, or /ensemble:check-binding-drift to audit coverage later
+- Point the user to /ensemble:reqnroll tdd to fill the Pending() bodies test-first, or /ensemble:reqnroll binding-drift to audit coverage later
 
 ## Expected Output
 

@@ -1,6 +1,6 @@
 {
   "name": "ensemble-assessment",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Repository, team, and AI-readiness assessment and diagnostic reporting skills",
   "author": {
     "name": "Sunstone Partners",
@@ -19,5 +19,6 @@
     "team",
     "ensemble"
   ],
+  "commands": "./commands",
   "skills": "./skills"
 }

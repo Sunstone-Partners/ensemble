@@ -1,6 +1,6 @@
 {
   "name": "ensemble-quality",
-  "version": "5.4.0",
+  "version": "6.0.0",
   "description": "Quality assurance, code review, and DoD enforcement",
   "author": {
     "name": "Sunstone Partners",
@@ -15,13 +15,13 @@
     "testing",
     "ensemble"
   ],
+  "dependencies": ["ensemble-core"],
   "commands": "./commands",
   "skills": "./skills",
   "agents": [
     "./agents/code-reviewer.md",
     "./agents/deep-debugger.md",
     "./agents/qa-orchestrator.md",
-    "./agents/test-reader-agent.md",
     "./agents/test-runner.md"
   ]
 }

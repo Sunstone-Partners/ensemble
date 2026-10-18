@@ -9,11 +9,11 @@
  */
 
 const { performance } = require('perf_hooks');
-const { SmokeTestAPI } = require('../../smoke-test-api/scripts/execute-health-checks.js');
-const { SmokeTestDatabase } = require('../../smoke-test-database/scripts/test-connectivity.js');
-const { SmokeTestExternalServices } = require('../../smoke-test-external-services/scripts/test-integrations.js');
-const { SmokeTestAuth } = require('../../smoke-test-auth/scripts/test-auth-flows.js');
-const { SmokeTestCriticalPaths } = require('../../smoke-test-critical-paths/scripts/execute-journeys.js');
+const { SmokeTestAPI } = require('./execute-health-checks.js');
+const { SmokeTestDatabase } = require('./test-connectivity.js');
+const { SmokeTestExternalServices } = require('./test-integrations.js');
+const { SmokeTestAuth } = require('./test-auth-flows.js');
+const { SmokeTestCriticalPaths } = require('./execute-journeys.js');
 
 /**
  * Smoke test categories in execution order
@@ -22,7 +22,7 @@ const SMOKE_TEST_CATEGORIES = [
   {
     id: 'api',
     name: 'API Health',
-    skill: 'smoke-test-api',
+    skill: 'smoke-test-runner#api',
     target: 180000,  // 3 minutes
     timeout: 300000, // 5 minutes
     order: 1
@@ -30,7 +30,7 @@ const SMOKE_TEST_CATEGORIES = [
   {
     id: 'database',
     name: 'Database',
-    skill: 'smoke-test-database',
+    skill: 'smoke-test-runner#database',
     target: 120000,  // 2 minutes
     timeout: 300000, // 5 minutes
     order: 2
@@ -38,7 +38,7 @@ const SMOKE_TEST_CATEGORIES = [
   {
     id: 'externalServices',
     name: 'External Services',
-    skill: 'smoke-test-external-services',
+    skill: 'smoke-test-runner#external-services',
     target: 180000,  // 3 minutes
     timeout: 300000, // 5 minutes
     order: 3
@@ -46,7 +46,7 @@ const SMOKE_TEST_CATEGORIES = [
   {
     id: 'auth',
     name: 'Auth',
-    skill: 'smoke-test-auth',
+    skill: 'smoke-test-runner#auth',
     target: 120000,  // 2 minutes
     timeout: 300000, // 5 minutes
     order: 4
@@ -54,7 +54,7 @@ const SMOKE_TEST_CATEGORIES = [
   {
     id: 'criticalPaths',
     name: 'Critical Paths',
-    skill: 'smoke-test-critical-paths',
+    skill: 'smoke-test-runner#critical-paths',
     target: 300000,  // 5 minutes
     timeout: 600000, // 10 minutes
     order: 5

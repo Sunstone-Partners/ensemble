@@ -20,18 +20,12 @@ const DEFAULT_MODEL = 'gpt-5.1-codex';
 // Codex targets OpenAI models, so any Anthropic-family tier alias coming from
 // the source frontmatter (opus/sonnet/haiku) maps to the OpenAI DEFAULT_MODEL.
 const ANTHROPIC_ALIASES = new Set(['opus', 'sonnet', 'haiku']);
-const AVAILABLE_SKILLS = new Set(['react', 'nestjs', 'rails', 'phoenix', 'blazor', 'jest', 'pytest', 'rspec', 'xunit', 'exunit', 'reqnroll']);
+const AVAILABLE_SKILLS = new Set(['react', 'nestjs', 'rails', 'phoenix', 'blazor', 'dotnet', 'jest', 'pytest', 'rspec', 'xunit', 'exunit', 'reqnroll']);
+// Framework skills are named after their technology (skills/react/, skills/nestjs/, ...).
+// A bare `skills/<name>/` path is rewritten to the Codex location; the lookbehind leaves
+// already-prefixed (`.codex/skills/...`) and longer paths (`packages/x/skills/...`) alone.
 const FRAMEWORK_SKILL_REWRITES = [
-  [/skills\/nestjs-framework\//g, '.codex/skills/nestjs/'],
-  [/skills\/phoenix-framework\//g, '.codex/skills/phoenix/'],
-  [/skills\/rails-framework\//g, '.codex/skills/rails/'],
-  [/skills\/dotnet-framework\//g, '.codex/skills/blazor/dotnet-framework/'],
-  [/skills\/react-framework\//g, '.codex/skills/react/'],
-  [/skills\/jest-framework\//g, '.codex/skills/jest/'],
-  [/skills\/pytest-framework\//g, '.codex/skills/pytest/'],
-  [/skills\/rspec-framework\//g, '.codex/skills/rspec/'],
-  [/skills\/xunit-framework\//g, '.codex/skills/xunit/'],
-  [/skills\/exunit-framework\//g, '.codex/skills/exunit/'],
+  [/(?<![\w./-])skills\/(react|nestjs|rails|phoenix|blazor|dotnet|jest|pytest|rspec|xunit|exunit)\//g, '.codex/skills/$1/'],
   [/skills\/\{framework\}\//g, '.codex/skills/<framework>/'],
 ];
 
@@ -170,12 +164,12 @@ function buildCodexAgentsMd(commandCount, agentCount, skillCount) {
     '- Product/spec work: `product-management-orchestrator`, `documentation-specialist`',
     '- Application code: `backend-developer`, `frontend-developer`, `tech-lead-orchestrator`',
     '- Quality: `code-reviewer`, `deep-debugger`, `test-runner`, `playwright-tester`',
-    '- Infra/release: `infrastructure-developer`, `build-orchestrator`, `deployment-orchestrator`, `release-agent`',
+    '- Infra/release: `infrastructure-developer`, `build-orchestrator`, `deployment-orchestrator`',
     '- Research/general tasks: `general-purpose`, `context-fetcher`',
     '',
     '## Key Skills',
     '',
-    '- Frameworks: `react`, `nestjs`, `rails`, `phoenix`, `blazor`',
+    '- Frameworks: `react`, `nestjs`, `rails`, `phoenix`, `blazor`, `dotnet`',
     '- Test frameworks: `jest`, `pytest`, `rspec`, `xunit`, `exunit`',
     '- Commands: `.codex/skills/commands/ensemble-*/SKILL.md`',
     '',
@@ -216,7 +210,8 @@ function detectAgentSkills(name, content) {
   if (contentMentions(['nestjs'])) skills.add('nestjs');
   if (contentMentions(['rails'])) skills.add('rails');
   if (contentMentions(['phoenix'])) skills.add('phoenix');
-  if (contentMentions(['blazor', '.net', 'dotnet', 'asp.net'])) skills.add('blazor');
+  if (contentMentions(['blazor'])) skills.add('blazor');
+  if (contentMentions(['.net', 'dotnet', 'asp.net'])) skills.add('dotnet');
   if (contentMentions(['jest'])) skills.add('jest');
   if (contentMentions(['pytest'])) skills.add('pytest');
   if (contentMentions(['rspec'])) skills.add('rspec');
@@ -229,7 +224,7 @@ function detectAgentSkills(name, content) {
   }
 
   if (lowerName.includes('backend')) {
-    ['nestjs', 'rails', 'phoenix', 'blazor'].forEach((skill) => skills.add(skill));
+    ['nestjs', 'rails', 'phoenix', 'dotnet'].forEach((skill) => skills.add(skill));
   }
 
   return Array.from(skills).filter((skill) => AVAILABLE_SKILLS.has(skill)).sort();
@@ -353,7 +348,10 @@ function generateCommandSkills({ dryRun, verbose }) {
     const frontmatter = {
       name: codexSkillName,
       description: `${description} (Codex skill for /${commandName})`,
-      'user-invocable': true,
+      // Hidden commands keep their wrapper skill (dispatchers reference it by
+      // path) but are not user-invocable. The YAML is authoritative; Claude's
+      // generated .md carries the same flag and is accepted when the YAML is not.
+      'user-invocable': !(yamlData.metadata?.visibility === 'hidden' || data['user-invocable'] === false),
       ...(data['argument-hint'] ? { 'argument-hint': data['argument-hint'] } : {}),
       ...(data.model ? { model: ANTHROPIC_ALIASES.has(data.model) ? DEFAULT_MODEL : data.model } : {}),
     };

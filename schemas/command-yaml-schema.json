@@ -59,6 +59,12 @@
           "type": "string",
           "enum": ["high", "medium", "low"],
           "description": "Preferred Claude model for this command"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["visible", "hidden"],
+          "default": "visible",
+          "description": "Slash-menu visibility. 'hidden' keeps the command generated and readable by path (dispatchers invoke it) but removes it from the user-facing command surface on every runtime. Defaults to 'visible'."
         }
       }
     },

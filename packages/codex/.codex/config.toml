@@ -88,10 +88,6 @@ config_file = "agents/git-workflow.toml"
 description = "GitHub workflow automation specialist for branch management, pull request creation, code review integration, and repository operations using gh CLI."
 config_file = "agents/github-specialist.toml"
 
-[agents."release-agent"]
-description = "Automated release orchestration with quality gates, smoke test integration, and deployment coordination"
-config_file = "agents/release-agent.toml"
-
 [agents."build-orchestrator"]
 description = "Build system orchestrator managing CI/CD pipeline optimization, artifact creation, dependency management, and build automation across all environments."
 config_file = "agents/build-orchestrator.toml"
@@ -139,10 +135,6 @@ config_file = "agents/deep-debugger.toml"
 [agents."qa-orchestrator"]
 description = "Quality assurance orchestration and test coordination"
 config_file = "agents/qa-orchestrator.toml"
-
-[agents."test-reader-agent"]
-description = "Test agent - Read files and report on the results"
-config_file = "agents/test-reader-agent.toml"
 
 [agents."test-runner"]
 description = "Unit and integration test execution with intelligent failure triage and debugging"

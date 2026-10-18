@@ -1,5 +1,5 @@
 ---
-name: NestJS Framework
+name: nestjs
 version: 1.0.0
 framework_versions:
   min: 8.0.0

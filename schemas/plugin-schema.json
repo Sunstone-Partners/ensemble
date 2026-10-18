@@ -42,9 +42,10 @@
     },
     "dependencies": {
       "type": "array",
+      "description": "Plugins that must be enabled for this one to work. A bare name resolves against this plugin's own marketplace; name@marketplace and name@x.y.z are also accepted.",
       "items": {
         "type": "string",
-        "pattern": "^ensemble-[a-z0-9-]+@\\d+\\.\\d+\\.\\d+$"
+        "pattern": "^ensemble-[a-z0-9-]+(@[A-Za-z0-9._-]+)?$"
       }
     },
     "agents": {

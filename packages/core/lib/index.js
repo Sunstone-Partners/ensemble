@@ -42,7 +42,7 @@ const skill = {
  * @returns {string} Path to documentation file
  */
 function loadSkill(type = 'quick') {
-  const skillsDir = path.join(__dirname, '..', 'skills', 'framework-detector');
+  const skillsDir = path.join(__dirname, '..', 'skills', 'detect-stack');
   return type === 'comprehensive'
     ? path.join(skillsDir, 'REFERENCE.md')
     : path.join(skillsDir, 'SKILL.md');
@@ -51,10 +51,12 @@ function loadSkill(type = 'quick') {
 /**
  * Detect frameworks in a project directory
  * @param {string} projectPath - Path to the project
+ * @param {Object} [options] - Detection options (e.g. `framework` override, `skipDetection`)
  * @returns {Promise<Object>} Detection results with confidence scores
  */
-async function detect(projectPath) {
-  return detectFramework(projectPath);
+async function detect(projectPath, options = {}) {
+  const detector = new detectFramework(projectPath, undefined, options);
+  return detector.detect();
 }
 
 /**

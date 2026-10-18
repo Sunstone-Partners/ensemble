@@ -5,7 +5,7 @@
  * 1. --dry-run: no files written, resolves without error
  * 2. --verbose: process.stdout.write called with path information
  * 3. Flag defaults: {dryRun: false, verbose: false, validate: false} runs successfully
- * 4. Return value: generate() returns a Promise that resolves
+ * 4. Return value: generate() returns a Promise of a result listing the pruned files
  */
 
 import * as fs from 'fs';
@@ -69,7 +69,7 @@ describe('generate() — CLI flag handling', () => {
     it('resolves without throwing', async () => {
       const outputRoot = allocOutputRoot();
       const options = makeOptions({ dryRun: true, outputRoot });
-      await expect(generate(options)).resolves.toBeUndefined();
+      await expect(generate(options)).resolves.toEqual({ pruned: [] });
     });
 
     it('does not write prompt files when dryRun is true', async () => {
@@ -121,7 +121,7 @@ describe('generate() — CLI flag handling', () => {
     it('resolves without throwing when verbose is true', async () => {
       const outputRoot = allocOutputRoot();
       const options = makeOptions({ dryRun: true, verbose: true, outputRoot });
-      await expect(generate(options)).resolves.toBeUndefined();
+      await expect(generate(options)).resolves.toEqual({ pruned: [] });
     });
 
     it('writes generator start message to stdout', async () => {
@@ -182,7 +182,7 @@ describe('generate() — CLI flag handling', () => {
     it('resolves without throwing', async () => {
       const outputRoot = allocOutputRoot();
       const options = makeOptions({ dryRun: false, verbose: false, validate: false, outputRoot });
-      await expect(generate(options)).resolves.toBeUndefined();
+      await expect(generate(options)).resolves.toEqual({ pruned: [] });
     });
 
     it('creates output directories on disk', async () => {
@@ -223,7 +223,7 @@ describe('generate() — CLI flag handling', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 4. Return value: Promise<void> that resolves
+  // 4. Return value: Promise<GenerateResult> listing the pruned files
   // -------------------------------------------------------------------------
   describe('return value', () => {
     it('returns a Promise', () => {
@@ -235,11 +235,11 @@ describe('generate() — CLI flag handling', () => {
       return result;
     });
 
-    it('Promise resolves to undefined (void)', async () => {
+    it('Promise resolves to a result with no pruned files for a fresh output root', async () => {
       const outputRoot = allocOutputRoot();
       const options = makeOptions({ dryRun: true, outputRoot });
       const result = await generate(options);
-      expect(result).toBeUndefined();
+      expect(result).toEqual({ pruned: [] });
     });
 
     it('does not reject on valid input', async () => {
@@ -281,7 +281,7 @@ describe('generate() — CLI flag handling', () => {
       const outputRoot = allocOutputRoot();
       const options = makeOptions({ dryRun: true, verbose: false, validate: false, outputRoot });
       // Without validate the known malformed agent is silently generated
-      await expect(generate(options)).resolves.toBeUndefined();
+      await expect(generate(options)).resolves.toEqual({ pruned: [] });
     });
   });
 });

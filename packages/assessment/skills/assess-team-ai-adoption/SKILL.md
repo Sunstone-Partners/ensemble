@@ -7,10 +7,16 @@ description: assess AI tool adoption and usage patterns in the team
 
 Analyze AI tool adoption patterns — who's using AI assistants, how effectively, quality of AI-generated code.
 
+**Data Source:** Local git + code pattern analysis (AI tool usage statistics, e.g. Copilot, are not
+available from local git)
+
 # Tool Guidance
 
 **Avoid:** `find ... -exec ...`, `xargs ...`, and other complex shell pipelines; many coding-agent
 runtimes restrict these.
+
+**Prefer:** your runtime's dedicated file-discovery, read, and text-search capabilities where
+available. Use the shell only for simple `git` commands.
 
 # AI Usage Signal Detection
 
@@ -26,8 +32,9 @@ runtimes restrict these.
 
 ## Commit Patterns (indicators of AI usage)
 - `[pi]` or `[ai]` markers in commit messages
+- Rapid file creation: < 5 min between commits on the same file
 - Very short time between commits on different files (< 5 min)
-- Large PRs with consistent style
+- Large PRs with consistent, uniform style (no organic variation)
 - Commit messages with "generated", "created", "added tests"
 
 ## Time-Based Patterns
@@ -38,6 +45,12 @@ runtimes restrict these.
 # Analysis Protocol
 
 ## Phase 1: Code Style Analysis
+
+Analyze:
+- Code style consistency patterns
+- Boilerplate frequency
+- Formatting uniformity
+- AI-related documentation/PRs
 
 Search for AI indicators using your runtime's text-search tool, matching
 `// TODO:|# TODO:|// Generated` and `// AI|// Artificial`.
@@ -60,9 +73,28 @@ Evaluate:
 - Boilerplate vs organic code ratio
 - Test coverage in AI-assisted files
 
+# Scoring
+
+Report every score — the dimension score and each per-author score cell — as `<1.0-5.0> / <Letter>`:
+assign the number from evidence first, then derive the letter mechanically from
+`skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter.
+
+# Reporting Rules
+
+- Cite specific file:line, not summarize
+- Use tables over paragraphs; skip common knowledge; no filler prose
+- Be specific with numbers: "14 of 120 commits carry an AI marker", not "some commits"
+- Truncate verbose output: cite 3 examples, state "47 more similar"
+- One-line rationale for the score, e.g. "2.3 / D+ due to 14 of 120 commits carrying an AI marker and no AI policy"
+- Data not available from local git: write "No evidence found in local git" (not "N/A"), add
+  `[confidence: MEDIUM - requires API to verify]`, and adjust the score accordingly
+
 # Output Format
 
-Save to: `docs/assessment/team-<YYYY-MM-DD>-ai-adoption.md`
+If the caller supplies an output path or a REPORT_PREFIX, save the full report there (a REPORT_PREFIX
+means `docs/assessment/team-<REPORT_PREFIX>-ai-adoption.md`) and return a summary only; if neither is
+supplied, report the full findings in your response and save to `docs/assessment/team-ai-adoption.md`
+only if asked.
 
 ```markdown
 # Team Assessment: AI Adoption
@@ -70,7 +102,7 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-ai-adoption.md`
 ## AI Adoption by Author
 | Author | AI Signals | Code Quality | Effectiveness |
 |--------|------------|--------------|--------------|
-| ... | Low/Med/High | A-F | A-F |
+| ... | Low/Med/High | <1.0-5.0> / <Letter> | <1.0-5.0> / <Letter> |
 
 ## AI Signal Examples
 | Pattern | Files | Author | Interpretation |
@@ -79,6 +111,9 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-ai-adoption.md`
 
 ## Adoption Distribution
 [Analysis of how AI tools are being used]
+
+## AI Code Quality vs Manual
+[Comparison if data available]
 
 ## Key Findings
 1. [Finding with evidence] [confidence: HIGH/MEDIUM/LOW]
@@ -89,7 +124,7 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-ai-adoption.md`
 - Code review AI tools: ...
 - AI attribution policy: Yes/No
 
-## Score: A-F (one line rationale)
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
 ## Recommendations
 1. [Priority]
@@ -98,8 +133,8 @@ Save to: `docs/assessment/team-<YYYY-MM-DD>-ai-adoption.md`
 
 # Return Summary
 
-Return max 5 lines:
+When the full report was saved to a file, return only a summary (max 5 lines):
 - AI adoption rate
 - Top AI user
-- Score: A-F with one-word rationale
+- Score: <1.0-5.0>/<Letter> with one-word rationale (numeric first; letter derived mechanically, never assigned directly)
 - One recommendation

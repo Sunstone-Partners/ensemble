@@ -20,7 +20,7 @@ const fs = require('fs');
  * Skill metadata for React framework
  */
 const skillMetadata = {
-  name: 'react-framework',
+  name: 'react',
   version: '1.0.0',
   framework: 'React',
   minVersion: '18.0.0',
@@ -227,7 +227,7 @@ async function detectReact(projectPath) {
         confidence += 0.4;
       }
 
-      if (packageJson.dependencies?['react-dom'] || packageJson.devDependencies?.['react-dom']) {
+      if (packageJson.dependencies?.['react-dom'] || packageJson.devDependencies?.['react-dom']) {
         signals.push('package.json has react-dom dependency');
         confidence += 0.2;
       }

@@ -10,7 +10,7 @@ last-updated: "2025-11-05"
 
 
 This command orchestrates the complete release workflow from quality gates through deployment
-and verification. It delegates to release-agent for workflow orchestration, coordinating with
+and verification. It orchestrates the workflow directly, coordinating with
 specialized agents (code-reviewer, test-runner, playwright-tester, deployment-orchestrator)
 to ensure safe, reliable releases with comprehensive smoke test coverage and automated rollback.
 

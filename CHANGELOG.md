@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-10-18
+
+### Changed
+
+- **Hidden commands (new `metadata.visibility: hidden`):** a command YAML can now be hidden so it is not typable but stays readable by its dispatcher. Claude Code: generated frontmatter `user-invocable: false` (hidden from the slash menu; the model can still invoke it). Pi: written to `packages/pi/prompts/_hidden/` with no command-wrapper skill, and `packages/pi/package.json` `pi.prompts` changes from `./prompts` to `./prompts/*.md` because `pi install` registers subdirectories of a listed directory. Codex: wrapper skill gets `user-invocable: false`. The Pi generator now removes the old visible prompt and wrapper skill when a command becomes hidden.
+- **New dispatchers:** `/ensemble:reqnroll` (`features|feature-drift|bindings|binding-drift|tdd`) and `/ensemble:standards` (`discover|inject|fold`). `generate-feature-tests`, `check-feature-drift`, `generate-reqnroll-bindings`, `check-binding-drift`, `reqnroll-tdd`, `discover-standards` and `inject-standards` are now hidden behind them (**not typable by their old names**); `fold-prompt` stays typable because `directory-monitor` invokes it by name. `beads-build-wave` is hidden too; its agent now also looks for the Pi hidden prompt path. Typable commands: 44 -> 38 (46 generated; 8 hidden).
+- **packages/assessment:** new `/ensemble:assess` command: `repo`, `team`, `config`, `report`, and `repo --only <dimension>`, each loading the matching assessment skill by name (leaf skills stay invokable). `ensemble-assessment` is self-contained on Pi: the Pi generator now writes its prompt and command-wrapper skill into `packages/assessment/` (new `SELF_CONTAINED_PI_PACKAGES` in `packages/pi/src/self-contained-packages.ts`, which also drives the `ensemble-pi` exclusion), `packages/assessment/package.json` `pi.prompts` is `./prompts/*.md`, and `ensemble-pi` ships no assess prompt. `ensemble-full` carries the command via `commands/assessment`. Installing `ensemble-assessment` into Pi registers `ensemble-assess` plus the 22 assessment skills (checked with `pi install` and RPC `get_commands`); on OMP it is reachable through the `ensemble-assess` wrapper skill. Typable commands: 38 -> 39.
+- **Variant commands folded into flags (breaking: the old command names no longer exist):**
+  - `create-prd-meeting` -> `/ensemble:create-prd --from-meeting`; `refine-prd-meeting` -> `/ensemble:refine-prd --from-meeting`. The meeting-specific phases (summary intake, inferred scale, no-invention / `[NEEDS CLARIFICATION]` discipline, non-interactive critique, resolvable-vs-still-open classification) are preserved as flag-gated sections. **Behavior changes:** `--from-meeting` now runs the Constitution Gate like every other `create-prd` run, so a repo with no constitution file halts with `CONSTITUTION_CONFIG_ERROR` where the old variant did not; it is mutually exclusive with `--foreman` (and `--collab`/`--long-lived` on refine); meeting-sourced drafts now carry the standard frontmatter label; lifecycle hooks keyed on `ensemble:create-prd-meeting` / `ensemble:refine-prd-meeting` must key on `ensemble:create-prd` / `ensemble:refine-prd`.
+  - `create-trd-foreman` -> `/ensemble:create-trd --parser-tables` (sprint/story tables, no adversarial review, `foreman sling prd` next step). The flag is not `--foreman` because `create-trd --foreman` already means "standard TRD with Foreman artifact contracts" and Foreman's own default workflow runs it; the two combine. The variant's "skip to Output Management" after the MCP step now routes through the Constitution Gate instead of bypassing it.
+  - `create-workstream-trd` -> `/ensemble:implement-trd-beads <trd> <trd> --workstream --generate-only` (the generator step already lived there). The `trd` dispatcher drops the `foreman` and `workstream` keywords and the `prd` dispatcher drops `create-meeting` / `refine-meeting`; the flags go on `create`, `refine` and `implement`.
+  - Typable commands: 39 -> 35.
+- **Skill renames (breaking for anything that loads these by name):** skill directory names now equal their technology name. `developing-with-typescript|python|php|laravel|flutter` -> `typescript|python|php|laravel|flutter`; `styling-with-tailwind` -> `tailwind`; `managing-jira-issues` -> `jira`; `managing-linear-issues` -> `linear`; `managing-railway` -> `railway`; `managing-vercel` -> `vercel`; `managing-supabase` -> `supabase`; `aws-cloud` -> `aws`; `using-prisma` -> `prisma`; `using-celery` -> `celery`; `using-weaviate` -> `weaviate`; `using-anthropic-platform` -> `anthropic`; `using-openai-platform` -> `openai`; `using-perplexity-platform` -> `perplexity`; `building-langgraph-agents` -> `langgraph`.
+- **packages/react, packages/dotnet:** `developing-with-react` is folded into the `react` skill (the `react` skill is now also in `ensemble-full`); the `dotnet-framework` skill moves from `ensemble-blazor` to `ensemble-dotnet` as `dotnet`.
+- **packages/e2e-testing:** the five `smoke-test-*` leaf skills are merged into `smoke-test-runner` (`smoke-test-api|auth|critical-paths|database|external-services` no longer exist as separate skills).
+- **packages/infrastructure, packages/quality, schemas:** both plugin manifests now declare `"dependencies": ["ensemble-core"]` (they call `detect-stack`); `schemas/plugin-schema.json` accepts a bare plugin name, `name@marketplace` or `name@x.y.z` in `dependencies`. Verified on Claude Code 2.1.292 with an isolated config: installing `ensemble-infrastructure` from the `ensemble` marketplace pulls in `ensemble-core` automatically; a bare name resolves against the dependent plugin's own marketplace, and a dependency missing from the marketplace installs with a warning rather than an error. Pi/OMP and Codex have no dependency mechanism, so install `ensemble-core` alongside those packages yourself.
+- **packages/blazor (breaking for direct `lib/index.js` consumers):** `loadSkill`, `getTemplate` and `getExample` no longer take a `skillName` argument and `skill.skills` is now `['blazor']`, because `dotnet-framework` moved to `ensemble-dotnet`. Nothing in this repo calls these, but external users of `@sunstone-partners/ensemble-blazor` could.
+- **packages/react:** `lib/index.js` had a syntax error (`dependencies?['react-dom']`, now `?.`) and failed `node --check`; fixed while renaming its metadata.
+- **packages/core, packages/infrastructure:** the four detector skills (`framework-detector`, `test-detector`, `tooling-detector`, `cloud-provider-detector`) are merged into one `detect-stack` skill in `ensemble-core`. One CLI replaces the four scripts: `node skills/detect-stack/detect-stack.js [path] --axis=framework|test|tooling|cloud|all` (`--tool x` is now `--tools=x`). The output is one envelope (`axis`, `detected`, `primary`, `confidence`, `threshold`, `results`, `all_results`) instead of three schemas, and exit codes are uniform (0 detected, 1 nothing detected, 2 error). Weights, thresholds and boosts are unchanged. The `ensemble-infrastructure` agents and `deep-debugger` (`ensemble-quality`) call it, so install `ensemble-core` alongside those packages; see their READMEs. Replacement table: `skills/detect-stack/REFERENCE.md`.
+- **packages/assessment:** `assess-repo` / `assess-team` delegate to their leaf skills (single source); numeric-first scoring throughout. `ensemble-assessment` is now Pi-installable and is no longer bundled into `ensemble-pi` (install both). Still included in `ensemble-full`.
+- **scripts/generate-codex:** framework skill path rewriting now matches the bare skill name (`skills/<name>/` -> `.codex/skills/<name>/`) instead of the old `<name>-framework` names.
+
+### Removed
+
+- **packages/git:** the `/ensemble:claude-changelog` command (unrelated to ensemble workflows). Use the `changelog-generator` skill for conventional-commit changelogs.
+- **packages/metrics:** the `/ensemble:sprint-status` and `/ensemble:web-metrics-dashboard` commands (near-empty stubs with no tools or callers). `/ensemble:manager-dashboard` remains.
+- **packages/e2e-testing:** the `/ensemble:playwright-test` command (a stub that only delegated to `playwright-tester`). Use `/ensemble:author-playwright-tests` or the `playwright-tester` agent.
+- **packages/git, packages/quality:** the `release-agent` agent (a duplicate of the `/ensemble:release` command, which delegates to `git-workflow`, `github-specialist` and `deployment-orchestrator` directly) and the `test-reader-agent` fixture agent. The pi-extension live smoke script now uses `ensemble:manager-dashboard` as its read-only command.
+
+### Fixed
+
+- Agents (`backend-developer`, `frontend-developer`, `ensemble-orchestrator`, `infrastructure-developer`, `mobile-developer`) no longer reference skills that do not exist (`*-framework`, `gcp-cloud`, `azure-cloud`, `react-native`); `ensemble-full` now includes the `react` skill.
+- **packages/rspec, packages/xunit:** the `rspec` and `xunit` skills were 22-line stubs and their helper scripts were broken. Both are now full skills with a section layout matching `jest`/`pytest`/`exunit`; every code example was run (RSpec 3.13 and xunit 2.9.3 on .NET 10). `rspec/generate-test.rb` crashed without `--source`, mis-cased class names and always generated a vacuously passing example; `rspec/run-test.rb` printed all-zero counts. `xunit/generate-test.cs` did not compile (CS0136); `xunit/run-test.sh` ran `dotnet test <file.cs>`, asked for a non-existent `json` logger and always printed a hard-coded success. Both now report real `{success, passed, failed, skipped, total, failures[]}` JSON. **Behavior change:** the generated placeholder test is no longer a passing test (`skip` for RSpec, `Assert.Fail` for xUnit) so a scaffold cannot be mistaken for coverage. `rspec` also gains `skills/REFERENCE.md`, which `lib/index.js` already tried to load. `xunit/generate-test.cs` now needs the .NET 10 SDK (`dotnet run generate-test.cs`).
+- **packages/core:** `detect()` in `lib/index.js` called `FrameworkDetector` without `new` and threw on every call; it now constructs the detector and forwards options (regression test added).
+- **packages/development, packages/full, packages/blazor:** `ensemble-dotnet` is now in `configure-team.yaml` (`domain_to_plugins.backend`, `framework_keyword_to_plugin`) and the `ensemble-full` peerDependencies; the `ensemble-blazor` description no longer claims `.NET` backend skills.
+- **scripts/pi:** the Pi generator now prunes stale output. A file is removed only if it provably carries the generator's own marker (prompt header, command-wrapper skill proof, or the new marker line that agents and copied skills now carry), so hand-authored files survive; `--dry-run` reports without deleting; `generate()` and `generateAll()` return `{ pruned }`. Every generated Pi agent and skill file gains one marker line.
+- **docs/PRD:** `PRD-2026-87e64cc6` v1.1.0 amends REQ-009 (hiding is allowed behind a dispatcher), notes the folded variants as an exception under REQ-018, and leaves REQ-004 / AC-004-1 untouched.
+
+### Release plumbing
+
+- Aggregate release bumped so existing full-plugin installations receive the
+  changed content: `ensemble-full` 6.9.9 → 7.0.0. This is a MAJOR release
+  because commands, skills and agents are removed or renamed (see Changed and
+  Removed above). Content-change bumps follow semver per package.
+  - MAJOR (a skill, command, agent or library API was renamed or removed):
+    `ensemble-ai` 5.2.1 → 6.0.0, `ensemble-blazor` 5.1.0 → 6.0.0,
+    `ensemble-codex` 5.3.6 → 6.0.0 (regenerated; eight command wrapper skills
+    and two agents removed, skills renamed), `ensemble-core` 5.6.3 → 6.0.0,
+    `ensemble-development` 6.0.11 → 7.0.0, `ensemble-e2e-testing` 5.4.1 →
+    6.0.0, `ensemble-git` 5.3.2 → 6.0.0, `ensemble-infrastructure` 5.3.0 →
+    6.0.0, `ensemble-metrics` 5.2.2 → 6.0.0, `ensemble-product` 5.6.5 → 6.0.0,
+    `ensemble-quality` 5.4.0 → 6.0.0 and `ensemble-react` 5.1.0 → 6.0.0.
+  - MINOR (additive or rewritten content): `ensemble-assessment` 1.0.0 → 1.1.0
+    (`/ensemble:assess`, Pi-installable), `ensemble-dotnet` 1.0.0 → 1.1.0
+    (gains the `dotnet` skill), `ensemble-rspec` and `ensemble-xunit` 5.1.0 →
+    5.2.0 (full skills and working helper scripts).
+  - PATCH: `ensemble-exunit`, `ensemble-jest`, `ensemble-nestjs`,
+    `ensemble-phoenix`, `ensemble-pytest` and `ensemble-rails` 5.1.0 → 5.1.1
+    (skill frontmatter `name` is now the bare technology name and docs point at
+    `detect-stack`; Claude Code keys skills by directory name and Pi already
+    normalized the name, so only Codex's generated skill identifier changed,
+    and that ships in `ensemble-codex` 6.0.0), `ensemble-reqnroll` 1.0.1 →
+    1.0.2 (docs point at the `/ensemble:reqnroll` dispatcher),
+    `ensemble-router` 5.2.2 → 5.2.3 (rules follow the renamed and removed
+    skills and agents).
+  - `ensemble-pi` 1.6.15 → 1.6.16 was bumped by
+    `scripts/bump-pi-version-if-changed.js` (`postgenerate:pi`) earlier on this
+    branch, not by hand. `ensemble-pi-extension` stays at 0.1.2: it has no
+    marketplace entry and is installed from a checkout.
+- `@sunstone-partners/ensemble-*` dependency ranges that the new versions no
+  longer satisfy were moved to the new majors (`^6.0.0`, and `^7.0.0` for
+  `ensemble-development`) in each dependent package, in `ensemble-full`'s
+  peerDependencies and in `ensemble-pi`'s `ensemble-core` dependency, so a
+  plain `npm install` still resolves against the workspace.
+  `package-lock.json` was brought back in line (it had drifted:
+  `ensemble-quality` 5.3.0, `ensemble-pi` 1.6.15, and no `ensemble-dotnet` peer
+  on `ensemble-full`).
+
 ## [6.9.9] - 2026-10-17
 
 ### Added

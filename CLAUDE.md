@@ -8,17 +8,17 @@
 All ensemble commands use the `/ensemble:` namespace:
 ```
 /ensemble:fold-prompt          # Optimize Claude environment
+/ensemble:standards            # Coding standards front door: discover | inject | fold
+/ensemble:reqnroll             # PRD acceptance tests front door: features | feature-drift | bindings | binding-drift | tdd
+/ensemble:assess               # Assessment front door: repo | team | config | report (repo --only <dimension>)
 /ensemble:reinstall-plugins    # Force-refresh installed plugins (stopgap for version-gated updates)
-/ensemble:create-prd           # Create Product Requirements Document
-/ensemble:create-trd           # Create Technical Requirements Document
-/ensemble:create-trd-foreman   # Create Foreman-native structured Technical Requirements Document
-/ensemble:implement-trd-beads  # Implement TRD via Beads-backed graph execution (sole supported method)
+/ensemble:create-prd           # Create Product Requirements Document (--from-meeting: draft from a meeting summary)
+/ensemble:create-trd           # Create Technical Requirements Document (--parser-tables: Foreman-native structured TRD with parser-compatible tables)
+/ensemble:implement-trd-beads  # Implement TRD via Beads-backed graph execution (sole supported method; --workstream [--generate-only]: combine several TRDs into one workstream TRD)
 /ensemble:fix-issue            # Lightweight bug fix workflow (analysis → PR)
 /ensemble:release              # Orchestrate release workflow
-/ensemble:playwright-test      # Run E2E tests with Playwright
 /ensemble:sessionlog           # Save structured session transcript
 /ensemble:manager-dashboard    # Generate productivity metrics
-/ensemble:sprint-status        # Current sprint status report
 ```
 
 ### Essential Commands
@@ -159,7 +159,6 @@ responsibilities:
 - `context-fetcher` - Documentation retrieval
 - `directory-monitor` - File system surveillance
 - `agent-meta-engineer` - Agent ecosystem management
-- `release-agent` - Automated release orchestration
 
 ## Agent Delegation Protocol
 
@@ -199,7 +198,7 @@ ensemble-orchestrator (chief)
 | Test failures | test-runner | deep-debugger |
 | Database changes | postgresql-specialist | backend-developer |
 | CI/CD issues | build-orchestrator | infrastructure-developer |
-| Release process | release-agent | git-workflow |
+| Release process | git-workflow | github-specialist |
 
 ## TRD PR Boundary Workflow
 

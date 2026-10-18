@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-ai",
-  "version": "5.2.1",
+  "version": "6.0.0",
   "description": "AI SDK skills for OpenAI and other AI providers",
   "main": "lib/index.js",
   "scripts": {

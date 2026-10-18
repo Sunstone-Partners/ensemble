@@ -39,13 +39,13 @@ const plugin = {
   },
 
   /**
-   * Skill documentation lives in the blazor package (shared .NET skill)
+   * Skill documentation lives in this package's skills/ directory (top-level layout)
    */
-  skillPath: path.resolve(__dirname, '../../blazor/skills/dotnet-framework')
+  skillPath: path.resolve(__dirname, '..', 'skills')
 };
 
 /**
- * Load the dotnet-framework skill documentation
+ * Load the dotnet skill documentation
  * @param {string} type - 'quick' for SKILL.md, 'comprehensive' for REFERENCE.md
  * @returns {string} Absolute path to the documentation file
  */

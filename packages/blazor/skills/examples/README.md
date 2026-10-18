@@ -499,10 +499,10 @@ builder.Services.AddSignalR(options =>
 
 ## Related Skills
 
-- `skills/blazor-framework/SKILL.md` - Quick reference
-- `skills/blazor-framework/REFERENCE.md` - Comprehensive guide
-- `skills/blazor-framework/templates/` - Code generation templates
-- `skills/dotnet-framework/` - Backend .NET patterns
+- `skills/blazor/SKILL.md` - Quick reference
+- `skills/blazor/REFERENCE.md` - Comprehensive guide
+- `skills/blazor/templates/` - Code generation templates
+- `skills/dotnet/` - Backend .NET patterns
 
 ---
 

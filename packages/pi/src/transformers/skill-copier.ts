@@ -12,15 +12,23 @@
  *   - Subdirectory layout: packages/pi/skills/<subdir>/<filename>
  *   - Top-level layout:    packages/pi/skills/<package-name>/<filename>
  *
- * The `pi` package itself is excluded from scanning to avoid self-referential copies.
+ * Packages named in EXCLUDED_PACKAGES are not scanned: `pi` (the output target, avoids
+ * self-referential copies), `full` (symlink mirror of other packages' skills) and every
+ * self-contained Pi package (SELF_CONTAINED_PI_PACKAGES, currently `assessment`), which is
+ * distributed as its own Pi package and not bundled into ensemble-pi.
  * Symlinks (e.g. packages/full/skills/) are resolved before copying; if two paths
  * resolve to the same real file, the second is skipped.
+ *
+ * Every copied file starts with the generated marker (../generated-marker.ts), on its first
+ * line or right after the frontmatter: it is how a later generator run recognises a stale
+ * copy of a removed or renamed skill as its own output and prunes it (see generator.ts).
  *
  * SKILL.md files are normalized for Pi compatibility:
  *   - `name` is always overridden with the output skill directory name
  *   - `description` is added if missing, extracted from body or generated from the name
  *
- * REFERENCE.md files are copied byte-for-byte.
+ * REFERENCE.md files are copied as they are, apart from the generated marker, CRLF -> LF
+ * and the ensemble:<cmd> -> ensemble-<cmd> rewrite that applies to every copied file.
  *
  * @module ensemble-pi/transformers/skill-copier
  */
@@ -29,6 +37,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import matter from 'gray-matter';
 import { TransformResult } from '../types';
+import { SELF_CONTAINED_PI_PACKAGES } from '../self-contained-packages';
+import { withGeneratedMarker } from '../generated-marker';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -118,8 +128,17 @@ export function normalizeSkillMd(content: string, skillDirName: string): string 
   return matter.stringify(parsed.content, parsed.data);
 }
 
-/** Package directories to skip during scanning (output targets, not sources). */
-const SKIP_PACKAGES = new Set(['pi', 'full']);
+/**
+ * Package directories to skip during scanning. `pi` and `full` are output/mirror
+ * targets, not sources; self-contained Pi packages ship as their own Pi package, so the
+ * generator also writes their command prompts into the package itself (see
+ * ../self-contained-packages.ts).
+ */
+const EXCLUDED_PACKAGES: Record<string, true> = {
+  pi: true,
+  full: true,
+  ...SELF_CONTAINED_PI_PACKAGES,
+};
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -134,6 +153,12 @@ interface SkillFileEntry {
   skillDirName: string;
   /** File name (SKILL.md or REFERENCE.md). */
   fileName: string;
+  /**
+   * Where the file was discovered, as a path relative to the monorepo root built from names
+   * alone (never from realpath, which differs per machine when a checkout sits behind a
+   * symlink). It goes into the generated marker, and committed output must not vary by machine.
+   */
+  sourceLabel: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +174,7 @@ interface SkillFileEntry {
  *   2. Top-level layout: packages/<pkg>/skills/SKILL.md
  *      → skillDirName = <pkg>
  *
- * Skips packages in SKIP_PACKAGES (pi, full).
+ * Skips packages in EXCLUDED_PACKAGES (pi, full and the self-contained Pi packages).
  */
 function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
   const entries: SkillFileEntry[] = [];
@@ -167,7 +192,7 @@ function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
 
   for (const pkgDirent of packageDirents) {
     if (!pkgDirent.isDirectory() && !pkgDirent.isSymbolicLink()) continue;
-    if (SKIP_PACKAGES.has(pkgDirent.name)) continue;
+    if (Object.prototype.hasOwnProperty.call(EXCLUDED_PACKAGES, pkgDirent.name)) continue;
 
     const pkgName = pkgDirent.name;
     const skillsDir = path.join(packagesDir, pkgName, 'skills');
@@ -196,6 +221,7 @@ function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
           srcPath: topLevelFile,
           skillDirName: pkgName,
           fileName,
+          sourceLabel: `packages/${pkgName}/skills/${fileName}`,
         });
       }
     }
@@ -235,6 +261,7 @@ function discoverSkillFiles(packagesDir: string): SkillFileEntry[] {
             srcPath: filePath,
             skillDirName: skillDirent.name,
             fileName,
+            sourceLabel: `packages/${pkgName}/skills/${skillDirent.name}/${fileName}`,
           });
         }
       }
@@ -322,7 +349,11 @@ export async function copySkills(
     // prompts/ensemble-<cmd>.md and invoked as /ensemble-<cmd>; skill bodies
     // that point at ensemble:<cmd> would otherwise reference names that do not
     // resolve in Pi. Source stays authored in the Claude-canonical colon form.
-    const content = normalizedContent.replace(/ensemble:([a-z0-9-]+)/g, 'ensemble-$1');
+    // The generated marker goes on last, so it never feeds description extraction above.
+    const content = withGeneratedMarker(
+      normalizedContent.replace(/ensemble:([a-z0-9-]+)/g, 'ensemble-$1'),
+      entry.sourceLabel
+    );
 
     const result: TransformResult = {
       sourcePath: entry.srcPath,

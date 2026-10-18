@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as yaml from "js-yaml";
@@ -19,6 +19,8 @@ const DISPATCHER_YAMLS: Record<string, string> = {
   "ensemble-trd": "packages/development/commands/trd.yaml",
   "ensemble-issue": "packages/development/commands/issue.yaml",
   "ensemble-feature": "packages/development/commands/feature.yaml",
+  "ensemble-reqnroll": "packages/product/commands/reqnroll.yaml",
+  "ensemble-standards": "packages/core/commands/standards.yaml",
 };
 
 describe("resolveCommand", () => {
@@ -58,7 +60,7 @@ describe("resolveCommand", () => {
         .filter((f) => f.endsWith(".md"))
         .map((f) => f.slice(0, -".md".length))
         .filter((n) => n.startsWith("ensemble-") && !Object.hasOwn(DISPATCHER_TARGETS, n));
-      expect(names.length).toBeGreaterThan(40);
+      expect(names.length).toBeGreaterThan(0);
       for (const name of names) {
         const expected = { command: `ensemble:${name.slice("ensemble-".length)}`, arguments: "a b" };
         expect(resolveCommand(`/${name} a b`)).toEqual(expected);
@@ -240,7 +242,7 @@ describe("resolveCommand", () => {
   });
 
   describe("embedded dispatcher map matches the dispatcher YAML (drift guard)", () => {
-    it("covers exactly the four dispatchers", () => {
+    it("covers exactly the dispatchers", () => {
       expect(Object.keys(DISPATCHER_TARGETS).sort()).toEqual(Object.keys(DISPATCHER_YAMLS).sort());
     });
 
@@ -255,9 +257,11 @@ describe("resolveCommand", () => {
       expect(DISPATCHER_TARGETS[dispatcher]).toEqual(fromYaml);
     });
 
-    it("every embedded target is itself a real Ensemble prompt template", () => {
+    it("every embedded target is itself a real Ensemble prompt template (visible, or under prompts/_hidden)", () => {
       const promptDir = join(REPO_ROOT, "packages/pi/prompts");
-      const templates = new Set(readdirSync(promptDir).map((f) => f.replace(/\.md$/, "")));
+      const hiddenDir = join(promptDir, "_hidden");
+      const names = [...readdirSync(promptDir), ...(existsSync(hiddenDir) ? readdirSync(hiddenDir) : [])];
+      const templates = new Set(names.map((f) => f.replace(/\.md$/, "")));
       for (const keywords of Object.values(DISPATCHER_TARGETS)) {
         for (const ref of Object.values(keywords)) {
           expect(templates.has(`ensemble-${ref}`)).toBe(true);

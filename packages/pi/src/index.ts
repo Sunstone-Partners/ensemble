@@ -3,7 +3,8 @@
  * Ensemble Plugin for Pi — Generator CLI Entry Point
  *
  * Parses CLI flags (--dry-run, --verbose, --validate), invokes the generator
- * orchestrator, and maps exit codes to success/failure.
+ * orchestrator, and maps exit codes to success/failure. Generated files the run
+ * did not reproduce are pruned; --dry-run --verbose lists them without removing.
  *
  * Usage:
  *   node dist/index.js [--dry-run] [--verbose] [--validate]
@@ -17,7 +18,7 @@
  */
 
 import { GeneratorOptions } from './types';
-import { generate } from './generator';
+import { generateAll } from './generator';
 import * as path from 'path';
 
 const args = process.argv.slice(2);
@@ -30,7 +31,7 @@ const options: GeneratorOptions = {
   outputRoot: path.join(__dirname, '..'),
 };
 
-generate(options)
+generateAll(options)
   .then(() => {
     process.exit(0);
   })

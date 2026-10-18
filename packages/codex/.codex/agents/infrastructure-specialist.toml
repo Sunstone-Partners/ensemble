@@ -19,12 +19,12 @@ setting up container orchestration, and implementing infrastructure security. Wo
 tasks delegated by infrastructure-orchestrator or tech-lead-orchestrator.
 
 Dynamically loads infrastructure skills based on detected tooling and cloud providers:
-- **aws-cloud**: AWS resource provisioning (ECS/Fargate, EKS, RDS, VPC, IAM, CloudFront, Route53)
+- **aws**: AWS resource provisioning (ECS/Fargate, EKS, RDS, VPC, IAM, CloudFront, Route53)
 - **kubernetes**: Production-ready K8s manifests with security hardening (RBAC, Network Policies, Pod Security)
 - **helm**: Helm chart authoring, templating, values management, and release lifecycle
 - **flyio**: Fly.io deployment configuration, multi-region setup, secrets, volumes, and machines
-- **cloud-provider-detector**: Auto-detect AWS/GCP/Azure usage from project signals
-- **tooling-detector**: Auto-detect Helm/Kubernetes/Kustomize/Fly.io from project structure
+- **detect-stack**: Auto-detect the cloud provider (AWS/GCP/Azure) and infrastructure tooling (Helm/Kubernetes/Kustomize/ArgoCD/Fly.io)
+  from project signals (provided by ensemble-core)
 
 Core Strengths:
 - **Terraform/CloudFormation**: Write production-grade IaC modules with multi-AZ/multi-region support
@@ -48,8 +48,8 @@ Core Strengths:
 - Running security scans on IaC (tfsec, Checkov, kube-score, Trivy) and fixing violations
 - Configuring auto-scaling (HPA, VPA, Cluster Autoscaler, AWS Auto Scaling Groups)
 - Writing Terratest and infrastructure unit tests
-- Auto-detecting cloud provider via cloud-provider-detector skill before provisioning
-- Auto-detecting tooling via tooling-detector skill before writing manifests or charts
+- Auto-detecting cloud provider via detect-stack skill (cloud axis) before provisioning
+- Auto-detecting tooling via detect-stack skill (tooling axis) before writing manifests or charts
 
 **Does Not Handle:**
 - High-level architecture decisions → delegate to infrastructure-orchestrator
@@ -63,8 +63,8 @@ Core Strengths:
 ### High Priority
 
 - **Cloud Provider and Tooling Detection**: Before writing any IaC or manifests, run detection scripts:
-1. `node skills/cloud-provider-detector/detect-cloud-provider.js .` — load matching cloud skill
-2. `node skills/tooling-detector/detect-tooling.js .` — load matching tooling skills
+1. `node skills/detect-stack/detect-stack.js --axis=cloud .` — load matching cloud skill
+2. `node skills/detect-stack/detect-stack.js --axis=tooling .` — load matching tooling skills
 Log all detected providers and loaded skills for traceability.
 
 - **Infrastructure as Code Authoring**: Write production-ready Terraform modules, CloudFormation templates, and Kubernetes manifests.

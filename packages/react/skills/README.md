@@ -12,7 +12,7 @@ Progressive disclosure documentation for React development with modern patterns 
 ## Architecture
 
 ```
-react-framework/
+react/
 ├── README.md              # This file - overview and usage
 ├── SKILL.md               # Quick reference (<100KB) - Essential patterns
 ├── REFERENCE.md           # Comprehensive guide (<1MB) - Deep dive
@@ -119,10 +119,10 @@ The frontend-developer agent loads this skill when:
 
 ```typescript
 // Embedded in frontend-developer.yaml
-const skill = await skillLoader.loadSkill('react-framework', 'quick');
+const skill = await skillLoader.loadSkill('react', 'quick');
 // Returns SKILL.md content for fast reference
 
-const comprehensiveGuide = await skillLoader.loadSkill('react-framework', 'comprehensive');
+const comprehensiveGuide = await skillLoader.loadSkill('react', 'comprehensive');
 // Returns REFERENCE.md content for deep dives
 ```
 
@@ -149,7 +149,7 @@ cp templates/hook.template.ts src/hooks/useMyHook.ts
 
 The frontend-developer agent uses this skill by:
 
-1. **Detection Phase**: Runs framework-detector to identify React
+1. **Detection Phase**: Runs detect-stack (framework axis) to identify React
 2. **Loading Phase**: Loads SKILL.md for quick patterns
 3. **Deep Dive Phase**: Loads REFERENCE.md when needed for complex scenarios
 4. **Code Generation**: Uses templates for boilerplate reduction

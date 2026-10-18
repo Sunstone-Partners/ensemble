@@ -16,17 +16,19 @@
  * `input`. The colon form is accepted for the dispatchers only: Pi has no
  * template or skill that answers to `/ensemble:create-prd`.
  *
- * Four dispatcher commands (`ensemble-prd`, `ensemble-trd`, `ensemble-issue`,
- * `ensemble-feature`) take a keyword as their first argument that selects the
- * real target. The lifecycle belongs to the target, never the dispatcher, so
- * a dispatcher resolves only through its keyword map.
+ * Six dispatcher commands (`ensemble-prd`, `ensemble-trd`, `ensemble-issue`,
+ * `ensemble-feature`, `ensemble-reqnroll`, `ensemble-standards`) take a keyword
+ * as their first argument that selects the real target. The lifecycle belongs
+ * to the target, never the dispatcher, so a dispatcher resolves only through
+ * its keyword map.
  */
 
 /**
  * dispatcher command name -> (keyword -> target command ref).
  *
  * Copied from the `dispatch.subcommands` list of each dispatcher's YAML
- * (`packages/product/commands/prd.yaml`, and `trd.yaml`, `issue.yaml`,
+ * (`packages/product/commands/prd.yaml` and `reqnroll.yaml`,
+ * `packages/core/commands/standards.yaml`, and `trd.yaml`, `issue.yaml`,
  * `feature.yaml` under `packages/development/commands/`). Those files exist
  * only in the Ensemble repo, not in a user's project, so the extension cannot
  * read them at runtime. tests/lifecycle-resolve-command.test.ts compares this
@@ -36,15 +38,11 @@
 export const DISPATCHER_TARGETS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "ensemble-prd": {
     create: "create-prd",
-    "create-meeting": "create-prd-meeting",
     refine: "refine-prd",
-    "refine-meeting": "refine-prd-meeting",
   },
   "ensemble-trd": {
     create: "create-trd",
-    foreman: "create-trd-foreman",
     refine: "refine-trd",
-    workstream: "create-workstream-trd",
     implement: "implement-trd-beads",
     analyze: "analyze-requirements",
     complexity: "analyze-complexity",
@@ -65,6 +63,18 @@ export const DISPATCHER_TARGETS: Readonly<Record<string, Readonly<Record<string,
     resume: "new-feature",
     status: "new-feature",
     abandon: "new-feature",
+  },
+  "ensemble-reqnroll": {
+    features: "generate-feature-tests",
+    "feature-drift": "check-feature-drift",
+    bindings: "generate-reqnroll-bindings",
+    "binding-drift": "check-binding-drift",
+    tdd: "reqnroll-tdd",
+  },
+  "ensemble-standards": {
+    discover: "discover-standards",
+    inject: "inject-standards",
+    fold: "fold-prompt",
   },
 };
 

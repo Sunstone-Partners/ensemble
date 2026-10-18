@@ -15,10 +15,12 @@ const yaml = require('js-yaml');
 //
 // The list below was confirmed by listing packages/development/commands/*.yaml
 // and packages/product/commands/*.yaml directly rather than assumed:
-//  - trd.yaml itself, plus every ref in its own dispatch.subcommands[] (11)
-//  - prd.yaml itself, plus every ref in its own dispatch.subcommands[] (4 --
-//    not just create-prd/refine-prd; create-prd-meeting and refine-prd-meeting
-//    are real siblings routed the same way)
+//  - trd.yaml itself, plus every ref in its own dispatch.subcommands[] (9: the Foreman
+//    table-mode and workstream-generation variants are `create-trd --parser-tables` and
+//    `implement-trd-beads --workstream --generate-only` flags, not separate commands)
+//  - prd.yaml itself, plus every ref in its own dispatch.subcommands[] (2:
+//    create-prd and refine-prd; the meeting-sourced variants are
+//    `--from-meeting` flags on those two, not separate commands)
 //  - the 4 standalone beads-* command YAMLs that actually exist as commands:
 //    refine-beads, beads-plan, beads-build, beads-build-wave.
 // beads-scaffold-specialist (an agent:
@@ -46,9 +48,7 @@ const PRODUCT_COMMANDS_DIR = path.join(REPO_ROOT, 'packages', 'product', 'comman
 const SPECIALIST_COMMANDS = [
   ['trd', DEV_COMMANDS_DIR],
   ['create-trd', DEV_COMMANDS_DIR],
-  ['create-trd-foreman', DEV_COMMANDS_DIR],
   ['refine-trd', DEV_COMMANDS_DIR],
-  ['create-workstream-trd', DEV_COMMANDS_DIR],
   ['implement-trd-beads', DEV_COMMANDS_DIR],
   ['analyze-requirements', DEV_COMMANDS_DIR],
   ['analyze-complexity', DEV_COMMANDS_DIR],
@@ -62,9 +62,7 @@ const SPECIALIST_COMMANDS = [
   ['beads-build-wave', DEV_COMMANDS_DIR],
   ['prd', PRODUCT_COMMANDS_DIR],
   ['create-prd', PRODUCT_COMMANDS_DIR],
-  ['create-prd-meeting', PRODUCT_COMMANDS_DIR],
   ['refine-prd', PRODUCT_COMMANDS_DIR],
-  ['refine-prd-meeting', PRODUCT_COMMANDS_DIR],
 ];
 
 // dispatch.subcommands[].ref values that would silently route a specialist
@@ -125,9 +123,7 @@ describe('Specialist command regression suite (TRD-011 / TRD-011-TEST)', () => {
   describe('specialist commands remain documented', () => {
     const EXPECTED_TRD_SUBCOMMAND_REFS = [
       'create-trd',
-      'create-trd-foreman',
       'refine-trd',
-      'create-workstream-trd',
       'implement-trd-beads',
       'analyze-requirements',
       'analyze-complexity',
@@ -136,7 +132,7 @@ describe('Specialist command regression suite (TRD-011 / TRD-011-TEST)', () => {
       'requirement-status',
       'trd-dependency-graph',
     ];
-    const EXPECTED_PRD_SUBCOMMAND_REFS = ['create-prd', 'create-prd-meeting', 'refine-prd', 'refine-prd-meeting'];
+    const EXPECTED_PRD_SUBCOMMAND_REFS = ['create-prd', 'refine-prd'];
 
     test('ensemble:trd dispatch table still routes every TRD specialist, documented as the direct way to use it', () => {
       const command = readYaml(DEV_COMMANDS_DIR, 'trd');
@@ -164,11 +160,34 @@ describe('Specialist command regression suite (TRD-011 / TRD-011-TEST)', () => {
         '/ensemble:implement-trd-beads',
         '/ensemble:refine-beads',
         '/ensemble:create-trd',
-        '/ensemble:create-trd-foreman',
         '/ensemble:refine-trd',
       ]) {
         expect(readme).toContain(name);
       }
+    });
+
+    test('create-trd-foreman and create-workstream-trd are removed as commands and live on as flags', () => {
+      for (const slug of ['create-trd-foreman', 'create-workstream-trd']) {
+        expect(fs.existsSync(path.join(DEV_COMMANDS_DIR, `${slug}.yaml`))).toBe(false);
+      }
+      const trd = readYaml(DEV_COMMANDS_DIR, 'trd');
+      const keywords = trd.dispatch.subcommands.map((sub) => sub.keyword);
+      expect(keywords).not.toContain('foreman');
+      expect(keywords).not.toContain('workstream');
+      const byKeyword = Object.fromEntries(trd.dispatch.subcommands.map((sub) => [sub.keyword, sub]));
+      expect(byKeyword.create.description).toContain('--parser-tables');
+      expect(byKeyword.implement.description).toContain('--workstream --generate-only');
+      // The base commands carry the flags the variants became.
+      expect(readYaml(DEV_COMMANDS_DIR, 'create-trd').metadata.argument_hint).toContain('--parser-tables');
+      expect(readYaml(DEV_COMMANDS_DIR, 'implement-trd-beads').metadata.argument_hint).toContain('--generate-only');
+    });
+
+    test('packages/development/README.md documents the flags that replaced the removed variants', () => {
+      const readme = fs.readFileSync(path.join(REPO_ROOT, 'packages', 'development', 'README.md'), 'utf8');
+      expect(readme).toContain('/ensemble:create-trd <prd-path> --parser-tables');
+      expect(readme).toContain('--workstream --generate-only');
+      expect(readme).not.toContain('| `/ensemble:create-trd-foreman` |');
+      expect(readme).not.toContain('| `/ensemble:create-workstream-trd` |');
     });
   });
 });

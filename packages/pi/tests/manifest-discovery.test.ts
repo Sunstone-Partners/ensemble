@@ -45,10 +45,13 @@ describe('package.json pi field', () => {
     expect(pi['skills']).toContain('./skills');
   });
 
-  test('pi.prompts includes "./prompts"', () => {
+  test('pi.prompts is non-recursive so prompts/_hidden/ stays unregistered', () => {
+    // Probed against pi 1.3.0: installing a package with pi.prompts
+    // ["./prompts"] registers prompts/_hidden/*.md as slash commands; the
+    // non-recursive glob does not. Hidden commands are generated into
+    // prompts/_hidden/ and must stay unregistered.
     const pi = packageJson['pi'] as Record<string, unknown>;
-    expect(Array.isArray(pi['prompts'])).toBe(true);
-    expect(pi['prompts']).toContain('./prompts');
+    expect(pi['prompts']).toEqual(['./prompts/*.md']);
   });
 
   test('pi.agents includes "./agents"', () => {

@@ -9,7 +9,7 @@
  * What it does. It builds agent-core and the extension bundle the way scripts/install.mjs does (the bun arguments
  * are read from that script), into a throwaway directory, and writes a shim that loads the bundle the way the
  * installed shim does. It then runs `pi -p --no-session -e <shim> -ne` in a throwaway project whose
- * `.ensemble/hooks.yaml` selects one real Ensemble command, `ensemble:sprint-status` (its prompt, from
+ * `.ensemble/hooks.yaml` selects one real Ensemble command, `ensemble:manager-dashboard` (its prompt, from
  * packages/pi/prompts, is given to Pi with --prompt-template), with a shell start handler and a shell end handler.
  * Each handler appends one line to a log. The script prints the log, and the run passes only if the model produced
  * output and the log shows `command.start` and then `command.end`, once each, for one run.
@@ -61,11 +61,11 @@ import { fileURLToPath } from "node:url";
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const AGENT_CORE = resolve(PKG, "..", "agent-core");
 const INSTALL_SCRIPT = join(PKG, "scripts", "install.mjs");
-const PROMPT_FILE = resolve(PKG, "..", "pi", "prompts", "ensemble-sprint-status.md");
+const PROMPT_FILE = resolve(PKG, "..", "pi", "prompts", "ensemble-manager-dashboard.md");
 
 /** The real command the hooks select, and what the user types for it. */
-const COMMAND = "ensemble:sprint-status";
-const SLASH_COMMAND = "/ensemble-sprint-status";
+const COMMAND = "ensemble:manager-dashboard";
+const SLASH_COMMAND = "/ensemble-manager-dashboard";
 
 const PI = process.env.ENSEMBLE_SMOKE_PI || "pi";
 const MODEL = process.env.ENSEMBLE_SMOKE_MODEL || "litellm/qwen";

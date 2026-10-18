@@ -30,6 +30,7 @@ Read pipeline configuration files to understand:
 - Stages
 - Jobs
 - Artifacts
+- Automation level (how much runs without manual steps)
 
 ## 3. Build Stage Assessment
 
@@ -51,50 +52,66 @@ Check how secrets are handled (env vars, vault, etc.)
 
 Look for Terraform, CloudFormation, or similar.
 
+# Quality Criteria
+
+- Cite specific file:line for findings
+- Use tables for structured data
+
+# Output Location
+
+If the caller supplies an output path or a `REPORT_PREFIX` (e.g. an orchestrating skill such as
+`assess-repo`), save the full report there — the caller's path, or
+`docs/assessment/<REPORT_PREFIX>-cicd.md` for a `REPORT_PREFIX` (creating `docs/assessment/` if
+needed) — and return a summary only (see Return Summary). If neither is supplied, report the full
+findings in your response and save them to `docs/assessment/cicd.md` only if asked.
+
 # Output Format
 
 ```markdown
-## CI/CD Assessment
+# CI/CD Analysis
 
-### Pipeline Discovery
-| Platform | Config File | Status |
-|----------|------------|--------|
+## Pipeline Discovery
+| Platform | Config | Status |
+|----------|--------|--------|
 | GitHub Actions | .github/workflows/ | ✓/✗ |
 | GitLab CI | .gitlab-ci.yml | ✓/✗ |
 | Jenkins | Jenkinsfile | ✓/✗ |
 | Azure DevOps | azure-pipelines.yml | ✓/✗ |
 
-### Pipeline Stages
-| Stage | Quality |
-|-------|---------|
-| Build | Good/Needs Improvement |
-| Test | Good/Needs Improvement |
-| Deploy | Good/Needs Improvement |
+## Pipeline Stages
+| Stage | Duration | Quality |
+|-------|----------|---------|
+| Build | ... | Good/Needs Improvement |
+| Test | ... | Good/Needs Improvement |
+| Deploy | ... | Good/Needs Improvement |
 
-### Deployment Strategy
+## Deployment Strategy
+[Assessment, including automation level and infrastructure as code]
+
 | Stage | Strategy | Approval | Rollback |
 |-------|----------|----------|----------|
 | Dev | ... | ✓/✗ | ✓/✗ |
 | Staging | ... | ✓/✗ | ✓/✗ |
 | Prod | ... | ✓/✗ | ✓/✗ |
 
-### Key Findings
-1. [Strength 1]
-2. [Weakness 1]
-3. [Weakness 2]
+## Strengths
+1. ...
 
-### Score: A-F
-[Overall CI/CD grade with rationale]
+## Weaknesses
+1. ...
 
-### Recommendations
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
+
+## Recommendations
 1. [Priority recommendation]
 2. [Secondary recommendation]
 ```
 
-# Avoid These Patterns
+# Return Summary
 
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipes
-
-Use your runtime's dedicated file-discovery, read, and search tools instead.
+When the full report was saved to a file, return a summary only (max 5 lines):
+- CI system found
+- Pipeline stages (brief)
+- Top 3 weaknesses
+- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
+- Top 2 recommendations

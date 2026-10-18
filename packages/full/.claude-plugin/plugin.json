@@ -1,6 +1,6 @@
 {
   "name": "ensemble-full",
-  "version": "6.9.9",
+  "version": "7.0.0",
   "description": "Complete ensemble ecosystem (meta-package with all plugins)",
   "author": {
     "name": "Sunstone Partners",
@@ -22,6 +22,7 @@
     "./commands/git",
     "./commands/e2e-testing",
     "./commands/metrics",
+    "./commands/assessment",
     "./commands/router"
   ],
   "skills": "./skills",
@@ -43,7 +44,6 @@
     "./agents/e2e-testing/playwright-tester.md",
     "./agents/git/git-workflow.md",
     "./agents/git/github-specialist.md",
-    "./agents/git/release-agent.md",
     "./agents/infrastructure/build-orchestrator.md",
     "./agents/infrastructure/deployment-orchestrator.md",
     "./agents/infrastructure/helm-chart-specialist.md",
@@ -58,7 +58,6 @@
     "./agents/quality/code-reviewer.md",
     "./agents/quality/deep-debugger.md",
     "./agents/quality/qa-orchestrator.md",
-    "./agents/quality/test-reader-agent.md",
     "./agents/quality/test-runner.md"
   ]
 }

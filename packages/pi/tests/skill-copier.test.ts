@@ -15,6 +15,7 @@ import * as os from 'os';
 import * as path from 'path';
 import matter from 'gray-matter';
 import { copySkills, normalizeSkillMd } from '../src/transformers/skill-copier';
+import { generatedMarker, hasGeneratedMarker } from '../src/generated-marker';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -129,9 +130,10 @@ describe('copySkills', () => {
     }
   });
 
-  it('preserves REFERENCE.md content byte-for-byte', async () => {
+  it('preserves REFERENCE.md content apart from the generated marker line', async () => {
     const results = await copySkills(sourceRoot, outputRoot, {});
     const refResults = results.filter((r) => r.outputPath.endsWith('REFERENCE.md'));
+    expect(refResults.length).toBeGreaterThan(0);
 
     for (const result of refResults) {
       // Read original source (resolved real path)
@@ -139,8 +141,45 @@ describe('copySkills', () => {
         fs.realpathSync(result.sourcePath),
         'utf-8'
       );
-      expect(result.content).toBe(origContent);
+      const markerLine = result.content.split('\n', 1)[0];
+      expect(hasGeneratedMarker(result.content)).toBe(true);
+      // Everything after the marker line is the source, untouched
+      expect(result.content.slice(markerLine.length + 1)).toBe(origContent);
     }
+  });
+
+  it('stamps every copied file with a marker naming its source by path from the monorepo root', async () => {
+    const results = await copySkills(sourceRoot, outputRoot, {});
+    const expectedSource: Record<string, string> = {
+      'alpha/SKILL.md': 'packages/alpha/skills/SKILL.md',
+      'alpha/REFERENCE.md': 'packages/alpha/skills/REFERENCE.md',
+      'my-skill/SKILL.md': 'packages/beta/skills/my-skill/SKILL.md',
+    };
+    expect(results).toHaveLength(Object.keys(expectedSource).length);
+
+    for (const result of results) {
+      const relative = path.relative(path.join(outputRoot, 'skills'), result.outputPath).split(path.sep).join('/');
+      // Built from names alone: the temp dir may sit behind a symlink (macOS /var -> /private/var),
+      // and committed output must not differ by machine
+      expect(result.content).toContain(generatedMarker(expectedSource[relative]));
+      expect(hasGeneratedMarker(result.content)).toBe(true);
+    }
+  });
+
+  it('puts the marker after the frontmatter of a SKILL.md and leaves its body alone', async () => {
+    const results = await copySkills(sourceRoot, outputRoot, {});
+    const alpha = results.find((r) => r.outputPath.endsWith(path.join('alpha', 'SKILL.md')));
+    expect(alpha).toBeDefined();
+
+    expect(alpha!.content.startsWith('---\n')).toBe(true);
+    const body = matter(alpha!.content).content;
+    expect(body).toBe(`${generatedMarker('packages/alpha/skills/SKILL.md')}\n# Alpha Skill\nContent here.\n`);
+  });
+
+  it('does not let the marker become the description of a skill that has none', async () => {
+    const results = await copySkills(sourceRoot, outputRoot, {});
+    const alpha = results.find((r) => r.outputPath.endsWith(path.join('alpha', 'SKILL.md')));
+    expect(matter(alpha!.content).data['description']).toBe('Content here.');
   });
 
   // -------------------------------------------------------------------------
@@ -163,6 +202,35 @@ describe('copySkills', () => {
     // If pi were included it would appear under outputRoot/skills/pi/
     const piOutputDir = path.join(outputRoot, 'skills', 'pi');
     expect(fs.existsSync(piOutputDir)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // 2b. Explicit exclusion: packages/assessment ships as its own Pi package
+  // -------------------------------------------------------------------------
+  it('does not copy skills from the assessment package, but still copies other packages', async () => {
+    const assessSkill = path.join(
+      sourceRoot,
+      'packages',
+      'assessment',
+      'skills',
+      'assess-repo'
+    );
+    fs.mkdirSync(assessSkill, { recursive: true });
+    fs.writeFileSync(path.join(assessSkill, 'SKILL.md'), '# Assess Repo\nAssessment content.\n', 'utf-8');
+    fs.writeFileSync(path.join(assessSkill, 'REFERENCE.md'), '# Assess Ref\n', 'utf-8');
+
+    const results = await copySkills(sourceRoot, outputRoot, {});
+
+    // Nothing sourced from packages/assessment
+    const assessmentPkgPath = path.join(sourceRoot, 'packages', 'assessment');
+    for (const result of results) {
+      expect(result.sourcePath.startsWith(assessmentPkgPath)).toBe(false);
+    }
+    expect(fs.existsSync(path.join(outputRoot, 'skills', 'assess-repo'))).toBe(false);
+
+    // Other packages' skills are still copied
+    expect(fs.existsSync(path.join(outputRoot, 'skills', 'my-skill', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(outputRoot, 'skills', 'alpha', 'SKILL.md'))).toBe(true);
   });
 
   // -------------------------------------------------------------------------
@@ -369,6 +437,14 @@ describe('copySkills against real packages directory', () => {
     const piPkgPath = path.join(repoRoot, 'packages', 'pi');
     for (const result of results) {
       expect(result.sourcePath.startsWith(piPkgPath)).toBe(false);
+    }
+  });
+
+  it('does not include any source from packages/assessment', async () => {
+    const results = await copySkills(repoRoot, outputRoot, { dryRun: true });
+    const assessmentPkgPath = path.join(repoRoot, 'packages', 'assessment');
+    for (const result of results) {
+      expect(result.sourcePath.startsWith(assessmentPkgPath)).toBe(false);
     }
   });
 

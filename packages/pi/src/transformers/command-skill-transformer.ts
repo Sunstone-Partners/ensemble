@@ -16,11 +16,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
 import { TransformResult } from '../types';
+import { COMMAND_HEADER_PREFIX } from '../generated-marker';
 import matter from 'gray-matter';
 
 /**
- * Strip the HTML comment header block (lines starting with `<!--`) from prompt
- * content so the SKILL.md body starts with the actual markdown title.
+ * Strip the first HTML comment of the prompt header (the generated marker) so the
+ * SKILL.md body starts with the rest of the header and the markdown title. Only the
+ * first comment goes: the `<!-- Command: <name> | Version: <v> -->` line stays, and
+ * isCommandWrapperSkill relies on that to tie a wrapper to the command it came from.
  */
 function stripHeader(content: string): string {
   return content.replace(/^<!--[\s\S]*?-->\n*/m, '');
@@ -39,6 +42,38 @@ function extractDescription(promptContent: string, skillName: string): string {
 }
 
 /**
+ * Whether `content` is a command-wrapper skill that generateCommandSkills wrote into
+ * the skill directory `skillDirName`: the directory and frontmatter name are the
+ * `ensemble-<cmd>` prompt stem, the frontmatter carries `disable-model-invocation: true`,
+ * and the body opens with the prompt's own `Command:` header line for that same name.
+ * A hand-authored skill that merely shares the name, or sets the same flag, has no such
+ * header line, so pruning (generator.ts) never takes it for a wrapper.
+ */
+export function isCommandWrapperSkill(skillDirName: string, content: string): boolean {
+  if (!skillDirName.startsWith('ensemble-')) return false;
+  let parsed: matter.GrayMatterFile<string>;
+  try {
+    parsed = matter(content);
+  } catch {
+    return false; // frontmatter that does not parse is not ours
+  }
+  return (
+    parsed.data['disable-model-invocation'] === true &&
+    parsed.data['name'] === skillDirName &&
+    parsed.content.trimStart().startsWith(`${COMMAND_HEADER_PREFIX}${skillDirName} |`)
+  );
+}
+
+/**
+ * Where the wrapper skill of the prompt at `promptPath` is written under `outputRoot`:
+ * skills/<prompt stem>/SKILL.md. Exported so the generator can name the wrappers a run is
+ * about to write (for a dry run, before any prompt is on disk) exactly as this writer does.
+ */
+export function commandSkillPath(outputRoot: string, promptPath: string): string {
+  return path.join(outputRoot, 'skills', path.basename(promptPath, '.md'), 'SKILL.md');
+}
+
+/**
  * Generate SKILL.md wrappers for every command prompt.
  *
  * Discovers every prompts/*.md file dynamically and writes a SKILL.md with
@@ -47,20 +82,30 @@ function extractDescription(promptContent: string, skillName: string): string {
  * Files are written directly (like copySkills) and results returned with
  * type: 'skill' so the main write loop skips them.
  *
- * @param outputRoot  Pi package root (packages/pi)
- * @param options     Runtime options
+ * @param outputRoot  Package root whose prompts/ holds the command prompts and whose
+ *                    skills/ receives the wrappers (packages/pi, or a self-contained
+ *                    Pi package's directory)
+ * @param options     Runtime options. `hideFromClaudeCode` adds `user-invocable: false`
+ *                    to each wrapper (Pi and OMP ignore the key; verified on pi 1.3.0 and
+ *                    omp 18.12.0, where `skill:<name>` stays registered). Set it for a
+ *                    package that is also a Claude Code plugin with the real
+ *                    /ensemble:<cmd> command: Claude Code scans that package's skills/
+ *                    and would otherwise list the Pi/OMP wrapper beside the command.
+ *                    Leave it unset where the wrapper is the only entry point (packages/pi
+ *                    has no Claude commands).
  * @returns           Array of TransformResult entries, one per skill generated
  */
 export async function generateCommandSkills(
   outputRoot: string,
-  options: { dryRun?: boolean; verbose?: boolean }
+  options: { dryRun?: boolean; verbose?: boolean; hideFromClaudeCode?: boolean }
 ): Promise<TransformResult[]> {
-  const { dryRun = false, verbose = false } = options;
+  const { dryRun = false, verbose = false, hideFromClaudeCode = false } = options;
 
   const promptsDir = path.join(outputRoot, 'prompts');
-  const skillsOutputDir = path.join(outputRoot, 'skills');
   const results: TransformResult[] = [];
 
+  // NON-recursive on purpose: hidden commands live in prompts/_hidden/ and must
+  // not get a wrapper skill (nor be registered by Pi's prompts/*.md scan).
   const promptFiles = (
     await glob(path.join(promptsDir, '*.md').split(path.sep).join('/'), { absolute: true })
   ).sort();
@@ -89,9 +134,10 @@ export async function generateCommandSkills(
       description,
       // Prevent auto-trigger from description matching; invoke via explicit /skill-name only
       'disable-model-invocation': true,
+      ...(hideFromClaudeCode ? { 'user-invocable': false } : {}),
     });
 
-    const outputPath = path.join(skillsOutputDir, skillName, 'SKILL.md');
+    const outputPath = commandSkillPath(outputRoot, promptPath);
 
     const result: TransformResult = {
       sourcePath: promptPath,

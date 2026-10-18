@@ -1,7 +1,7 @@
 ---
 name: ensemble-generate-feature-tests
 description: Generate Gherkin .feature files and a traceability manifest from a PRD's acceptance criteria (Codex skill for /ensemble:generate-feature-tests)
-user-invocable: true
+user-invocable: false
 argument-hint: '[prd-path] [--out <dir>] [--dry-run]'
 model: gpt-5.1-codex
 ---
@@ -47,7 +47,7 @@ its PRD document id and AC id.
 - Report the output directory, number of feature files, and total scenarios
 - List every AC tagged @needs-clarification (free-form or carrying a [NEEDS CLARIFICATION] marker) so the author can fix the PRD
 - Echo any parser warnings (e.g. requirements with no acceptance criteria)
-- Remind the user to commit the generated features and run /ensemble:check-feature-drift after future PRD edits
+- Remind the user to commit the generated features and run /ensemble:reqnroll feature-drift after future PRD edits
 
 ## Expected Output
 

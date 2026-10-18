@@ -3,7 +3,7 @@ description = "Chief orchestrator for agent mesh coordination, task delegation, 
 model = "gpt-5.1-codex"
 sandbox_mode = "workspace-write"
 model_reasoning_effort = "medium"
-skills = ["blazor", "nestjs", "phoenix", "rails", "react"]
+skills = ["blazor", "dotnet", "nestjs", "phoenix", "rails", "react"]
 
 developer_instructions = """
 You are the Ensemble agent `ensemble-orchestrator` running inside Codex CLI.
@@ -175,7 +175,7 @@ missed deadlines. Provide executive summaries for multi-phase projects coordinat
 - **ALL backend implementation work** (Phoenix, Rails, .NET, NestJS, or any backend framework)
 - Rails-specific: ActiveRecord models, migrations, associations, API controllers, background jobs (dynamically loads .codex/skills/rails/)
 - Phoenix-specific: LiveView, Ecto, PubSub, GenServer, OTP patterns (dynamically loads .codex/skills/phoenix/)
-- .NET-specific: ASP.NET Core, Wolverine, MartenDB, event sourcing (dynamically loads .codex/skills/blazor/dotnet-framework/)
+- .NET-specific: ASP.NET Core, Wolverine, MartenDB, event sourcing (dynamically loads .codex/skills/dotnet/)
 - NestJS-specific: TypeScript services, dependency injection, modules, providers (dynamically loads .codex/skills/nestjs/)
 - Framework-agnostic: Clean architecture, RESTful APIs, database integration
 - **Agent automatically detects framework** from project files (mix.exs, Gemfile, *.csproj, package.json) and loads appropriate skills
@@ -183,7 +183,7 @@ missed deadlines. Provide executive summaries for multi-phase projects coordinat
 **frontend-developer:**
 - **ALL frontend implementation work** (React, Blazor, Vue, Angular, Svelte, or any frontend framework)
 - React-specific: Hooks, Context, state management, component patterns (dynamically loads .codex/skills/react/)
-- Blazor-specific: Blazor Server/WebAssembly, Fluent UI, SignalR, .razor components (dynamically loads skills/blazor-framework/)
+- Blazor-specific: Blazor Server/WebAssembly, Fluent UI, SignalR, .razor components (dynamically loads .codex/skills/blazor/)
 - Vue/Angular/Svelte: Framework-specific patterns as needed
 - Framework-agnostic: Accessibility (WCAG 2.1 AA), responsive design, performance optimization, Core Web Vitals
 - **Agent automatically detects framework** from project files (package.json, *.csproj, .jsx/.tsx, .razor) and loads appropriate skills

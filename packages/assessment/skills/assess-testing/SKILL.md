@@ -21,11 +21,12 @@ runtimes restrict these.
 ## 1. Test Project Inventory
 
 Discover test files matching patterns like `**/*test*.ts`, `**/*test*.cs`, `**/*test*.py`, and
-directories like `tests/`, `spec/`.
+directories like `tests/`, `spec/`. Identify the test projects and the test frameworks used.
 
 ## 2. Coverage Analysis
 
-Read test configuration files (package.json, pytest.ini, etc.) for coverage settings.
+Read test configuration files (package.json, pytest.ini, etc.) for coverage settings, and assess
+what is tested vs not.
 
 ## 3. Test Quality Assessment
 
@@ -51,50 +52,63 @@ corresponding test file exists.
 
 Read CI configuration to understand test execution.
 
+# Quality Criteria
+
+- Cite specific file:line for findings
+- Use tables for structured data
+
+# Output Location
+
+If the caller supplies an output path or a `REPORT_PREFIX` (e.g. an orchestrating skill such as
+`assess-repo`), save the full report there — the caller's path, or
+`docs/assessment/<REPORT_PREFIX>-testing.md` for a `REPORT_PREFIX` (creating `docs/assessment/` if
+needed) — and return a summary only (see Return Summary). If neither is supplied, report the full
+findings in your response and save them to `docs/assessment/testing.md` only if asked.
+
 # Output Format
 
 ```markdown
-## Testing Assessment
+# Testing Analysis
 
-### Test Projects
+## Test Projects
 | Project | Framework | Type | Coverage | Quality |
 |---------|-----------|------|----------|---------|
 | ... | ... | ... | ... | ... |
 
-### Coverage Summary
+## Coverage Summary
 - **Overall:** ~N%
 - **Business Logic:** ~N%
 - **API Layer:** ~N%
 - **Data Access:** ~N%
 
-### Test Quality Analysis
-[Assessment of test quality aspects]
+## Test Quality
+[Strengths and weaknesses]
 
-### Test Strategy
+## Test Strategy
 [Evaluation of testing approach]
 
-### Coverage Gaps
+## Coverage Gaps
 | Module | Coverage | Gap Type |
 |--------|----------|----------|
 | ... | ... | Missing unit tests |
 
-### Key Findings
+## Key Findings
 1. [Finding 1]
 2. [Finding 2]
 3. [Finding 3]
 
-### Score: A-F
-[Overall testing grade with rationale]
+## Score: <1.0-5.0> / <Letter> (one line rationale; assign the number from evidence first, derive the letter mechanically from `skill://assessment-report-suite`'s Scoring Scale — never assign a bare letter)
 
-### Recommendations
+## Recommendations
 1. [Priority recommendation]
 2. [Secondary recommendation]
 ```
 
-# Avoid These Patterns
+# Return Summary
 
-- `find ... -exec ...`
-- `xargs ...`
-- Complex shell pipes
-
-Use your runtime's dedicated file-discovery, read, and search tools instead.
+When the full report was saved to a file, return a summary only (max 5 lines):
+- Test projects found
+- Coverage estimate (%)
+- Top 3 gaps
+- Score: <1.0-5.0>/<Letter> with one-line rationale (numeric first; letter derived mechanically, never assigned directly)
+- Top 2 recommendations

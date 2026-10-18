@@ -3,16 +3,30 @@
  *
  * Discovers Ensemble YAML sources across packages/*, validates structural
  * requirements, calls transformers, and writes Pi-compatible artifacts to
- * packages/pi/commands/, agents/, skills/, and AGENTS.md.
+ * packages/pi/prompts/, agents/, skills/, and AGENTS.md.
  *
- * Supports --dry-run (collect without writing), --verbose (log paths),
- * and --validate (parse output .md files after generation).
+ * Packages listed in SELF_CONTAINED_PI_PACKAGES are distributed as Pi packages of
+ * their own: their commands are kept out of packages/pi and generated into the
+ * package itself (see generateSelfContainedPackages).
+ *
+ * Stale output is pruned on every run: a generated file (one that carries a generated marker,
+ * see generated-marker.ts) that the run did not reproduce is removed, so a removed or renamed
+ * command, agent or skill leaves nothing behind (see pruneStaleArtifacts).
+ *
+ * Supports --dry-run (collect without writing or pruning), --verbose (log paths, including
+ * every pruned file), and --validate (parse output .md files after generation).
  *
  * @module ensemble-pi/generator
  */
 
-import { generateCommandSkills } from './transformers/command-skill-transformer';
-import { GeneratorOptions, TransformResult, CommandYaml } from './types';
+import {
+  commandSkillPath,
+  generateCommandSkills,
+  isCommandWrapperSkill,
+} from './transformers/command-skill-transformer';
+import { SELF_CONTAINED_PI_PACKAGES } from './self-contained-packages';
+import { GeneratorOptions, GenerateResult, TransformResult, CommandYaml } from './types';
+import { hasGeneratedMarker } from './generated-marker';
 import { transformCommand } from './transformers/command-transformer';
 import { buildAgentResult } from './transformers/agent-transformer';
 import { copySkills } from './transformers/skill-copier';
@@ -86,13 +100,16 @@ function buildCommandPathMap(
   for (const filePath of commandFiles) {
     try {
       const raw = yaml.load(fs.readFileSync(filePath, 'utf-8')) as
-        | { metadata?: { name?: unknown } }
+        | { metadata?: { name?: unknown; visibility?: unknown } }
         | undefined;
       const name = raw?.metadata?.name;
       if (typeof name === 'string' && name) {
         const ref = name.replace(/^ensemble:/, '');
-        const piName = name.replace(/^ensemble:/, 'ensemble-');
-        const absolutePath = path.join(outputRoot, 'prompts', `${piName}.md`);
+        const absolutePath = promptOutputPath(
+          outputRoot,
+          name,
+          raw?.metadata?.visibility === 'hidden'
+        );
         pathsByRef.set(ref, path.relative(sourceRoot, absolutePath));
       }
     } catch {
@@ -101,6 +118,209 @@ function buildCommandPathMap(
     }
   }
   return pathsByRef;
+}
+
+/**
+ * Single source of truth for a command's Pi prompt output path. Visible
+ * commands live at prompts/ensemble-<cmd>.md (registered by the non-recursive
+ * prompts/*.md scan, and wrapped as skills). Hidden commands live one level
+ * down at prompts/_hidden/ensemble-<cmd>.md: still on disk and readable by
+ * path (dispatchers point at it) but invisible to that scan.
+ */
+export const HIDDEN_PROMPTS_DIR = '_hidden';
+
+export function promptOutputPath(
+  outputRoot: string,
+  commandName: string,
+  hidden: boolean
+): string {
+  const piName = commandName.replace(/^ensemble:/, 'ensemble-');
+  return hidden
+    ? path.join(outputRoot, 'prompts', HIDDEN_PROMPTS_DIR, `${piName}.md`)
+    : path.join(outputRoot, 'prompts', `${piName}.md`);
+}
+
+// ---------------------------------------------------------------------------
+// Pruning stale generated output
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinds of generator output pruning looks at, each with its own proof that the generator
+ * wrote the file. A file without that proof is hand-authored as far as the generator can tell,
+ * and is never touched:
+ *
+ *   prompt   prompts/*.md and prompts/_hidden/*.md   generated marker (generated-marker.ts)
+ *   agent    agents/*.md                             generated marker, after the frontmatter
+ *   skill    skills/<name>/*.md                      generated marker (what copySkills writes)
+ *   wrapper  skills/ensemble-<cmd>/SKILL.md          the wrapper's own proof, see
+ *                                                    isCommandWrapperSkill
+ *
+ * Nothing else is looked at: not a file elsewhere in the output root (AGENTS.md, vendor/),
+ * not a subdirectory of a skill, not a symlink, not a placeholder such as .gitkeep.
+ */
+export type ArtifactKind = 'prompt' | 'agent' | 'skill' | 'wrapper';
+
+/** Entries of `dir`, or none when it does not exist. */
+function entriesOf(dir: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return [];
+    throw err;
+  }
+}
+
+/** The regular .md files directly in `dir`. */
+function markdownFilesIn(dir: string): string[] {
+  return entriesOf(dir)
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => path.join(dir, entry.name));
+}
+
+/** The regular files among `files` whose content `proof` accepts. */
+function filesProving(
+  files: string[],
+  proof: (content: string, file: string) => boolean
+): string[] {
+  return files.filter((file) => {
+    try {
+      return fs.lstatSync(file).isFile() && proof(fs.readFileSync(file, 'utf-8'), file);
+    } catch {
+      return false; // unreadable or vanished: nothing proves it is ours
+    }
+  });
+}
+
+/**
+ * Every file of `kind` under `outputRoot` that provably came from the generator, produced this
+ * run or not.
+ */
+export function listGeneratedFiles(outputRoot: string, kind: ArtifactKind): string[] {
+  const promptsDir = path.join(outputRoot, 'prompts');
+  const skillsDir = path.join(outputRoot, 'skills');
+  const skillDirs = entriesOf(skillsDir)
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(skillsDir, entry.name));
+
+  switch (kind) {
+    case 'prompt':
+      return filesProving(
+        [...markdownFilesIn(promptsDir), ...markdownFilesIn(path.join(promptsDir, HIDDEN_PROMPTS_DIR))],
+        hasGeneratedMarker
+      );
+    case 'agent':
+      return filesProving(markdownFilesIn(path.join(outputRoot, 'agents')), hasGeneratedMarker);
+    case 'skill':
+      return filesProving(skillDirs.flatMap(markdownFilesIn), hasGeneratedMarker);
+    case 'wrapper':
+      return filesProving(
+        skillDirs.map((dir) => path.join(dir, 'SKILL.md')),
+        (content, file) => isCommandWrapperSkill(path.basename(path.dirname(file)), content)
+      );
+  }
+}
+
+/**
+ * Paths compare case-folded. On a case-insensitive filesystem (macOS, Windows) a stale file
+ * whose name differs from this run's output only in case is the very file just written, and
+ * must never be pruned; on a case-sensitive one folding can only keep a file, never delete one.
+ */
+function foldPath(file: string): string {
+  return path.resolve(file).toLowerCase();
+}
+
+/** The folded output paths of `results`: what a run produced, for pruneStaleArtifacts. */
+function producedPaths(results: readonly TransformResult[]): Set<string> {
+  return new Set(results.map((result) => foldPath(result.outputPath)));
+}
+
+/** Remove `dir` if it is empty and not one of the `keep` roots; anything inside it is safe. */
+function removeIfEmpty(dir: string, keep: ReadonlySet<string>): void {
+  if (keep.has(dir)) return;
+  try {
+    fs.rmdirSync(dir); // refuses a directory that still holds a file
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOTEMPTY' && code !== 'EEXIST' && code !== 'ENOENT') throw err;
+  }
+}
+
+/**
+ * Remove the generated files of `kinds` under `outputRoot` that the run did not produce: the
+ * mirror of a command, agent or skill that was removed or renamed, or of a command that
+ * changed visibility (its prompt now lives in the other directory). `produced` holds the
+ * folded paths the run wrote or, on a dry run, would write (see producedPaths). Directories
+ * this empties are removed too, except the prompts/, agents/ and skills/ roots.
+ *
+ * Only a file that provably came from the generator is a candidate (see ArtifactKind), so a
+ * hand-authored file in the same directory survives, and so does anything else sharing the
+ * directory of a pruned skill. On a dry run nothing is removed.
+ *
+ * @returns the pruned paths (on a dry run, those that would be), sorted.
+ */
+export function pruneStaleArtifacts(
+  outputRoot: string,
+  produced: ReadonlySet<string>,
+  kinds: readonly ArtifactKind[],
+  options: { dryRun: boolean; verbose: boolean }
+): string[] {
+  const { dryRun, verbose } = options;
+  const stale = [...new Set(kinds.flatMap((kind) => listGeneratedFiles(outputRoot, kind)))]
+    .filter((file) => !produced.has(foldPath(file)))
+    .sort();
+
+  const keep = new Set(['prompts', 'agents', 'skills'].map((dir) => path.join(outputRoot, dir)));
+  for (const file of stale) {
+    if (!dryRun) {
+      fs.rmSync(file, { force: true });
+      removeIfEmpty(path.dirname(file), keep);
+    }
+    if (verbose) {
+      process.stdout.write(`  prune${dryRun ? ' (dry-run)' : ''}: ${file}\n`);
+    }
+  }
+
+  if (verbose && kinds.length > 0) {
+    process.stdout.write(
+      `prune (${kinds.join(', ')}): ${stale.length} stale file(s) ${dryRun ? 'would be removed (dry-run)' : 'removed'}.\n`
+    );
+  }
+  return stale;
+}
+
+/**
+ * Generate the command-wrapper skills from the prompts on disk, then prune the wrappers whose
+ * command is gone.
+ *
+ * `prompts.pruned` are the prompts this run's prune removed or, on a dry run, would remove: a
+ * dry run leaves them on disk, but a real run would not wrap them, so their wrappers are
+ * neither output nor protected from pruning. `prompts.written` are the prompts this run writes
+ * or, on a dry run, would write: such a prompt may not be on disk yet, so generateCommandSkills
+ * cannot see it, but an existing wrapper of it is not stale.
+ */
+async function generateWrappersAndPrune(
+  outputRoot: string,
+  prompts: { written: readonly TransformResult[]; pruned: readonly string[] },
+  options: { dryRun: boolean; verbose: boolean; hideFromClaudeCode?: boolean; pruneWrappers?: boolean }
+): Promise<{ results: TransformResult[]; pruned: string[] }> {
+  const { dryRun, verbose, hideFromClaudeCode, pruneWrappers = true } = options;
+  const gone = new Set(prompts.pruned.map(foldPath));
+  const results = (await generateCommandSkills(outputRoot, { dryRun, verbose, hideFromClaudeCode })).filter(
+    (result) => !gone.has(foldPath(result.sourcePath))
+  );
+
+  const produced = producedPaths(results);
+  const promptsDir = path.join(outputRoot, 'prompts'); // hidden prompts (prompts/_hidden/) get no wrapper
+  for (const prompt of prompts.written) {
+    if (path.dirname(prompt.outputPath) === promptsDir) {
+      produced.add(foldPath(commandSkillPath(outputRoot, prompt.outputPath)));
+    }
+  }
+  const pruned = pruneWrappers
+    ? pruneStaleArtifacts(outputRoot, produced, ['wrapper'], { dryRun, verbose })
+    : [];
+  return { results, pruned };
 }
 
 // ---------------------------------------------------------------------------
@@ -329,10 +549,56 @@ function buildCommandResult(
   commandPathsByRef: Map<string, string>
 ): TransformResult {
   const name = commandYaml.metadata.name;
-  const piName = name.replace(/^ensemble:/, 'ensemble-');
-  const outputPath = path.join(outputRoot, 'prompts', `${piName}.md`);
+  const outputPath = promptOutputPath(
+    outputRoot,
+    name,
+    commandYaml.metadata.visibility === 'hidden'
+  );
   const content = transformCommand(commandYaml, sourcePath, { verbose, commandPathsByRef });
   return { sourcePath, outputPath, content, type: 'command' };
+}
+
+/**
+ * Transform every command YAML in `commandFiles` into a Pi prompt under
+ * `outputRoot`. Dispatcher refs resolve only against `commandFiles` themselves, so
+ * a command can never point at a prompt this output root does not contain: a ref
+ * across a Pi package boundary (ensemble-pi to a self-contained package, or back)
+ * fails loudly instead of rendering a path the installed package cannot resolve.
+ */
+function buildCommandResults(
+  commandFiles: string[],
+  outputRoot: string,
+  sourceRoot: string,
+  verbose: boolean
+): TransformResult[] {
+  // Built once per run, over the same already-discovered commandFiles, so
+  // dispatcher commands can resolve dispatch.subcommands[].ref to a sibling
+  // command's own Pi prompt output path (see command-transformer.ts's
+  // renderSubcommands). File-order independent: every command's path is
+  // resolvable regardless of which one is processed first below.
+  const commandPathsByRef = buildCommandPathMap(commandFiles, outputRoot, sourceRoot);
+  const results: TransformResult[] = [];
+
+  for (const filePath of commandFiles) {
+    let raw: unknown;
+    try {
+      raw = yaml.load(fs.readFileSync(filePath, 'utf-8'));
+    } catch (err) {
+      throw new Error(`YAML parse error in ${filePath}: ${(err as Error).message}`, { cause: err });
+    }
+
+    // Structural validation runs BEFORE any transformation (TRD-005 requirement)
+    const commandYaml = validateCommandYaml(raw, filePath);
+    const result = buildCommandResult(commandYaml, filePath, outputRoot, verbose, commandPathsByRef);
+
+    if (verbose) {
+      process.stdout.write(`  command: ${filePath} → ${result.outputPath}\n`);
+    }
+
+    results.push(result);
+  }
+
+  return results;
 }
 
 // transformAgent is now provided by ./transformers/agent-transformer (TRD-007)
@@ -421,7 +687,16 @@ function validateResults(
 // Public API
 // ---------------------------------------------------------------------------
 
-export async function generate(options: GeneratorOptions): Promise<void> {
+/**
+ * Generate ensemble-pi into `outputRoot` from the sources under `sourceRoot`: command
+ * prompts, agents, copied skills, command-wrapper skills, vendored libs and AGENTS.md.
+ *
+ * Stale output is pruned: a file an earlier run wrote (it carries a generated marker, see
+ * generated-marker.ts) that this run did not reproduce is removed, so a removed or renamed
+ * command, agent or skill leaves nothing behind. A hand-authored file is never touched. On a
+ * dry run nothing is removed; the result lists what a real run would remove.
+ */
+export async function generate(options: GeneratorOptions): Promise<GenerateResult> {
   const { dryRun, verbose, validate, sourceRoot, outputRoot } = options;
 
   if (verbose) {
@@ -442,37 +717,19 @@ export async function generate(options: GeneratorOptions): Promise<void> {
   // 1. Discover and process command YAML files
   // ------------------------------------------------------------------
   const commandPattern = path.join(sourceRoot, 'packages/*/commands/*.yaml');
-  const commandFiles = await discoverYamlFiles(commandPattern);
+  // Self-contained Pi packages ship their own prompts (generateSelfContainedPackages);
+  // none of their commands belong in ensemble-pi.
+  const commandFiles = (await discoverYamlFiles(commandPattern)).filter((file) => {
+    const packageName = path.basename(path.dirname(path.dirname(file)));
+    return !Object.prototype.hasOwnProperty.call(SELF_CONTAINED_PI_PACKAGES, packageName);
+  });
 
   if (verbose) {
     process.stdout.write(`Discovered ${commandFiles.length} command YAML file(s).\n`);
   }
 
-  // Built once per run, over the same already-discovered commandFiles, so
-  // dispatcher commands can resolve dispatch.subcommands[].ref to a sibling
-  // command's own Pi prompt output path (see command-transformer.ts's
-  // renderSubcommands). File-order independent: every command's path is
-  // resolvable regardless of which one is processed first below.
-  const commandPathsByRef = buildCommandPathMap(commandFiles, outputRoot, sourceRoot);
-
-  for (const filePath of commandFiles) {
-    let raw: unknown;
-    try {
-      raw = yaml.load(fs.readFileSync(filePath, 'utf-8'));
-    } catch (err) {
-      throw new Error(`YAML parse error in ${filePath}: ${(err as Error).message}`);
-    }
-
-    // Structural validation runs BEFORE any transformation (TRD-005 requirement)
-    const commandYaml = validateCommandYaml(raw, filePath);
-    const result = buildCommandResult(commandYaml, filePath, outputRoot, verbose, commandPathsByRef);
-
-    if (verbose) {
-      process.stdout.write(`  command: ${filePath} → ${result.outputPath}\n`);
-    }
-
-    results.push(result);
-  }
+  const commandResults = buildCommandResults(commandFiles, outputRoot, sourceRoot, verbose);
+  results.push(...commandResults);
 
   // ------------------------------------------------------------------
   // 2. Discover and process agent YAML files
@@ -483,6 +740,8 @@ export async function generate(options: GeneratorOptions): Promise<void> {
   if (verbose) {
     process.stdout.write(`Discovered ${agentFiles.length} agent YAML file(s).\n`);
   }
+
+  const agentResults: TransformResult[] = [];
 
   for (const filePath of agentFiles) {
     let raw: unknown;
@@ -525,6 +784,7 @@ export async function generate(options: GeneratorOptions): Promise<void> {
     }
 
     results.push(result);
+    agentResults.push(result);
   }
 
   // ------------------------------------------------------------------
@@ -566,11 +826,48 @@ export async function generate(options: GeneratorOptions): Promise<void> {
   }
 
   // ------------------------------------------------------------------
-  // 5b. Command prompt skill wrappers
-  //     Called after the write loop so the prompt files exist on disk.
+  // 5a. Prune stale generated files: prompts, agents and copied skills an earlier run wrote
+  //     that this run did not reproduce (their command, agent or skill was removed or
+  //     renamed, or a command changed visibility). Before 5b, because the wrapper skills
+  //     are derived from the prompts on disk: a stale prompt left in place would get a
+  //     fresh wrapper.
+  //
+  //     A kind is pruned only if its sources were discovered at all. Discovering none
+  //     points at a wrong sourceRoot or a broken glob far more often than at a repo that
+  //     really lost every command, agent or skill, and pruning then would delete
+  //     everything the generator ever wrote.
   // ------------------------------------------------------------------
-  const commandSkillResults = await generateCommandSkills(outputRoot, { dryRun, verbose });
-  results.push(...commandSkillResults);
+  const sourcesDiscovered: Array<[ArtifactKind, number, string]> = [
+    ['prompt', commandFiles.length, 'generated prompts and wrapper skills'],
+    ['agent', agentResults.length, 'generated agents'],
+    ['skill', skillResults.length, 'copied skills'],
+  ];
+  const pruneKinds: ArtifactKind[] = [];
+  for (const [kind, count, what] of sourcesDiscovered) {
+    if (count > 0) {
+      pruneKinds.push(kind);
+    } else if (verbose) {
+      process.stdout.write(`  prune: no ${kind} sources discovered, leaving ${what} alone\n`);
+    }
+  }
+  const pruned = pruneStaleArtifacts(outputRoot, producedPaths(results), pruneKinds, {
+    dryRun,
+    verbose,
+  });
+
+  // ------------------------------------------------------------------
+  // 5b. Command prompt skill wrappers, then prune the wrappers of commands that are gone
+  //     Called after the write loop and the prune so the prompt files on disk are exactly
+  //     this run's.
+  // ------------------------------------------------------------------
+  const wrappers = await generateWrappersAndPrune(
+    outputRoot,
+    { written: commandResults, pruned },
+    { dryRun, verbose, pruneWrappers: commandFiles.length > 0 }
+  );
+  results.push(...wrappers.results);
+  pruned.push(...wrappers.pruned);
+  pruned.sort();
 
   // ------------------------------------------------------------------
   // 6. Performance timing (TRD-010)
@@ -603,4 +900,82 @@ export async function generate(options: GeneratorOptions): Promise<void> {
       `Generator complete. ${results.length} artifact(s) processed.\n`
     );
   }
+
+  return { pruned };
+}
+
+/**
+ * Generate the Pi artifacts of every self-contained Pi package
+ * (SELF_CONTAINED_PI_PACKAGES): each package's command prompts under
+ * packages/<name>/prompts/ and their command-wrapper skills under
+ * packages/<name>/skills/ensemble-*, i.e. the layout ensemble-pi itself uses, rooted
+ * at the package. The package's own skills are already in packages/<name>/skills/
+ * and are never copied.
+ *
+ * Writes only inside each package directory under `sourceRoot`, never `outputRoot`
+ * (ensemble-pi), so `generate()` stays confined to the output root it is given. A
+ * package without commands/*.yaml is skipped and nothing is created or pruned for it.
+ *
+ * Prompts and wrapper skills of a removed or renamed command are pruned (see
+ * pruneStaleArtifacts). Nothing else in the package is inspected: its own skills are
+ * hand-authored sources, and none of them carries a generated marker.
+ */
+export async function generateSelfContainedPackages(
+  options: Omit<GeneratorOptions, 'outputRoot'>
+): Promise<GenerateResult> {
+  const { dryRun, verbose, validate, sourceRoot } = options;
+  const results: TransformResult[] = [];
+  const pruned: string[] = [];
+
+  for (const packageName of Object.keys(SELF_CONTAINED_PI_PACKAGES)) {
+    const packageRoot = path.join(sourceRoot, 'packages', packageName);
+    const commandFiles = await discoverYamlFiles(path.join(packageRoot, 'commands', '*.yaml'));
+    if (commandFiles.length === 0) continue;
+
+    if (verbose) {
+      process.stdout.write(
+        `Self-contained Pi package ${packageName}: ${commandFiles.length} command YAML file(s) → ${packageRoot}\n`
+      );
+    }
+
+    const commandResults = buildCommandResults(commandFiles, packageRoot, sourceRoot, verbose);
+    if (!dryRun) {
+      for (const result of commandResults) {
+        writeResult(result);
+      }
+    }
+    results.push(...commandResults);
+
+    // After the write loop so this run's prompts are on disk, as in generate(). The package is
+    // also a Claude Code plugin whose real /ensemble:<cmd> command is generated from the same
+    // YAML, so the Pi/OMP wrapper must not be listed beside it there.
+    const prunedPrompts = pruneStaleArtifacts(packageRoot, producedPaths(commandResults), ['prompt'], {
+      dryRun,
+      verbose,
+    });
+    const wrappers = await generateWrappersAndPrune(
+      packageRoot,
+      { written: commandResults, pruned: prunedPrompts },
+      { dryRun, verbose, hideFromClaudeCode: true }
+    );
+    results.push(...wrappers.results);
+    pruned.push(...prunedPrompts, ...wrappers.pruned);
+  }
+
+  if (validate) {
+    validateResults(results, { verbose });
+  }
+
+  return { pruned: pruned.sort() };
+}
+
+/**
+ * Everything `npm run generate:pi` produces: ensemble-pi into `outputRoot`, then each
+ * self-contained Pi package into its own directory. Reports the stale files pruned from
+ * both.
+ */
+export async function generateAll(options: GeneratorOptions): Promise<GenerateResult> {
+  const piRoot = await generate(options);
+  const packages = await generateSelfContainedPackages(options);
+  return { pruned: [...piRoot.pruned, ...packages.pruned].sort() };
 }

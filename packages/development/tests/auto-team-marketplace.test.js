@@ -28,7 +28,7 @@ const path = require('path');
  */
 function analyzeMarketplaceGaps(trdDomains, installedPlugins, marketplaceCatalog) {
   const domainToPlugins = {
-    backend:        ['ensemble-nestjs', 'ensemble-rails', 'ensemble-phoenix'],
+    backend:        ['ensemble-nestjs', 'ensemble-rails', 'ensemble-phoenix', 'ensemble-dotnet'],
     frontend:       ['ensemble-react', 'ensemble-blazor'],
     infrastructure: ['ensemble-infrastructure'],
     testing:        ['ensemble-e2e-testing', 'ensemble-jest', 'ensemble-pytest', 'ensemble-rspec', 'ensemble-xunit', 'ensemble-exunit'],
@@ -110,7 +110,8 @@ const SAMPLE_CATALOG = [
   { name: 'ensemble-rails',          description: 'Ruby on Rails framework skills and agents',            gap_category: 'agent' },
   { name: 'ensemble-phoenix',        description: 'Elixir Phoenix framework skills',                      gap_category: 'agent' },
   { name: 'ensemble-react',          description: 'React component development skills',                   gap_category: 'skill' },
-  { name: 'ensemble-blazor',         description: '.NET Blazor framework skills',                         gap_category: 'skill' },
+  { name: 'ensemble-blazor',         description: 'Blazor frontend skills',                               gap_category: 'skill' },
+  { name: 'ensemble-dotnet',         description: '.NET backend agents and skills',                       gap_category: 'agent' },
   { name: 'ensemble-jest',           description: 'Jest test runner integration',                         gap_category: 'skill' },
   { name: 'ensemble-pytest',         description: 'Pytest framework integration',                         gap_category: 'skill' },
   { name: 'ensemble-rspec',          description: 'RSpec test framework integration',                     gap_category: 'skill' },

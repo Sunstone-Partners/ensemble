@@ -1,7 +1,7 @@
 ---
 name: ensemble-inject-standards
 description: Selectively inject relevant standards from standards/index.yml into agent context based on current task (Codex skill for /ensemble:inject-standards)
-user-invocable: true
+user-invocable: false
 argument-hint: <task-description>
 model: gpt-5.1-codex
 ---
@@ -29,7 +29,7 @@ minimal while ensuring the right conventions are surfaced at the right time.
    Verify the standards index exists before proceeding
 
 - Check if standards/index.yml exists in the project root
-- If standards/index.yml does not exist: print "ERROR: No standards index found. Run /ensemble:discover-standards first." and stop
+- If standards/index.yml does not exist: print "ERROR: No standards index found. Run /ensemble:standards discover first." and stop
 - If the file exists, read standards/index.yml fully into memory
 - Note the stack metadata (language, framework) and the full list of categories and rules
 
@@ -37,7 +37,7 @@ minimal while ensuring the right conventions are surfaced at the right time.
    Parse the task description and extract keyword signals for relevance matching
 
 - Read $ARGUMENTS as TASK_DESCRIPTION
-- If TASK_DESCRIPTION is empty: print "ERROR: Provide a task description, e.g., /ensemble:inject-standards 'implement user authentication endpoint'" and stop
+- If TASK_DESCRIPTION is empty: print "ERROR: Provide a task description, e.g., /ensemble:standards inject 'implement user authentication endpoint'" and stop
 - Convert TASK_DESCRIPTION to lowercase and extract individual keywords
 - Identify technology terms (language names, framework names, library names)
 - Identify domain nouns (user, order, payment, product, auth, session, etc.)
@@ -84,7 +84,7 @@ minimal while ensuring the right conventions are surfaced at the right time.
    Print instructions for the agent to proceed with the injected context
 
 - Print: "Standards injected. Proceed with task using the above conventions."
-- Print: "Run /ensemble:discover-standards to refresh the index if the codebase has changed."
+- Print: "Run /ensemble:standards discover to refresh the index if the codebase has changed."
 
 ## Expected Output
 

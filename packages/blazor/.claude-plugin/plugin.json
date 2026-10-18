@@ -1,7 +1,7 @@
 {
   "name": "ensemble-blazor",
-  "version": "5.1.0",
-  "description": "Blazor framework skills for .NET applications",
+  "version": "6.0.0",
+  "description": "Blazor frontend skills: Server and WebAssembly components, Razor, Fluent UI",
   "author": {
     "name": "Sunstone Partners",
     "email": "info@sunstonepartners.com",

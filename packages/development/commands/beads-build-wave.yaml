@@ -8,6 +8,7 @@ metadata:
   source: sunstone
   model: medium
   argument_hint: "--epic <id> [--max-parallel N] [--trd trd-path] [--strategy tdd|characterization|bug-fix|refactor|test-after|flexible] [--label <label>] [--team-roles <json>]"
+  visibility: hidden
   allowed_tools:
     - Read
     - Write

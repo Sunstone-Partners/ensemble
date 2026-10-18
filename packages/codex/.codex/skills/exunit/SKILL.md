@@ -1,5 +1,5 @@
 ---
-name: ExUnit Test Framework
+name: exunit
 description: Execute and generate ExUnit tests for Elixir projects with setup callbacks, describe blocks, and async testing support
 version: 1.0.0
 user-invocable: true
@@ -190,7 +190,7 @@ The deep-debugger agent uses this skill for Elixir projects:
 Example workflow:
 ```markdown
 1. deep-debugger receives bug report for Elixir project
-2. Invokes test-detector to identify ExUnit
+2. Invokes detect-stack (test axis) to identify ExUnit
 3. Invokes exunit-test/generate-test.exs to create failing test
 4. Invokes exunit-test/run-test.exs to validate test fails
 5. Delegates fix to elixir-phoenix-expert agent

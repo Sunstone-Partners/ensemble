@@ -1,26 +1,26 @@
 ---
 name: "ensemble:prd"
 description: "Dispatch to a PRD-authoring or PRD-refinement subcommand by keyword"
-version: "1.0.0"
+version: "1.1.0"
 category: "planning"
-last-updated: "2026-10-05"
-argument-hint: "<create|create-meeting|refine|refine-meeting> [subcommand args...]"
+last-updated: "2026-10-17"
+argument-hint: "<create|refine> [subcommand args...]"
 ---
 <!-- DO NOT EDIT - Generated from prd.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->
 
 
-Thin routing layer over the existing create-prd / create-prd-meeting / refine-prd /
-refine-prd-meeting commands. Reads and follows the matching sibling command's own
-generated file for this runtime, passing the rest of $ARGUMENTS unchanged, and does
-not re-implement any of their phases.
+Thin routing layer over the existing create-prd / refine-prd commands. Reads and
+follows the matching sibling command's own generated file for this runtime, passing
+the rest of $ARGUMENTS unchanged, and does not re-implement any of their phases.
+Meeting-sourced drafting and refinement are the --from-meeting flag on those two
+commands, not separate keywords: `create --from-meeting <summary>` and
+`refine <prd-path> --from-meeting <summary>`.
 
 ## Subcommands
 
-- **`create`** - Create a new PRD through a live structured interview. Invoke `/ensemble:create-prd` directly, or read and follow `packages/product/commands/ensemble/create-prd.md`, passing the remaining arguments through as its $ARGUMENTS.
-- **`create-meeting`** - Create a PRD from a meeting summary instead of a live interview. Invoke `/ensemble:create-prd-meeting` directly, or read and follow `packages/product/commands/ensemble/create-prd-meeting.md`, passing the remaining arguments through as its $ARGUMENTS.
-- **`refine`** - Refine an existing PRD with stakeholder feedback. Invoke `/ensemble:refine-prd` directly, or read and follow `packages/product/commands/ensemble/refine-prd.md`, passing the remaining arguments through as its $ARGUMENTS.
-- **`refine-meeting`** - Refine an existing PRD using a meeting summary as the feedback source. Invoke `/ensemble:refine-prd-meeting` directly, or read and follow `packages/product/commands/ensemble/refine-prd-meeting.md`, passing the remaining arguments through as its $ARGUMENTS.
+- **`create`** - Create a new PRD through a live structured interview, or from a meeting summary with --from-meeting. Invoke `/ensemble:create-prd` directly, or read and follow `packages/product/commands/ensemble/create-prd.md`, passing the remaining arguments through as its $ARGUMENTS.
+- **`refine`** - Refine an existing PRD with stakeholder feedback, or with a meeting summary as the feedback source via --from-meeting. Invoke `/ensemble:refine-prd` directly, or read and follow `packages/product/commands/ensemble/refine-prd.md`, passing the remaining arguments through as its $ARGUMENTS.
 
 ## Workflow
 
@@ -36,5 +36,5 @@ not re-implement any of their phases.
 ## Usage
 
 ```
-/ensemble:prd <create|create-meeting|refine|refine-meeting> [subcommand args...]
+/ensemble:prd <create|refine> [subcommand args...]
 ```

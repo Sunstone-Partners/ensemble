@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pi/OMP installability: `pi-package` keyword and `pi` manifest in `package.json`. Install `@sunstone-partners/ensemble-assessment` together with `@sunstone-partners/ensemble-pi`; there is no dependency between them.
+- Test covering orchestrator-to-leaf delegation (dispatched leaves exist, numeric-first scoring, `skill://` references resolve).
+
+### Changed
+
+- `assess-repo` and `assess-team` now delegate each dimension to its leaf skill instead of embedding a copy of the specialist prompt; the leaf skills are the single source and can be run directly for a single dimension. `assess-repo` is about 40% shorter and `assess-team` about 50% shorter.
+- All leaf skills and the `assess-team` synthesis use numeric-first scoring (`<1.0-5.0> / <Letter>`) per `assessment-report-suite`; bare letter-only scores are gone.
+
+### Removed
+
+- Assessment skills are no longer bundled into `ensemble-pi`; they ship only in `ensemble-assessment` (still included in `ensemble-full`).
+
 ## [1.0.0] - 2026-10-09
 
 ### Added

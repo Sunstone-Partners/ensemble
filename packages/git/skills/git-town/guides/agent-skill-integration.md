@@ -286,7 +286,6 @@ Delegate specialized tasks:
 ### Receives Work From
 - **ensemble-orchestrator**: High-level workflow coordination
 - **tech-lead-orchestrator**: Architecture-driven branching strategies
-- **release-agent**: Automated release orchestration
 
 ### Hands Off To
 - **code-reviewer**: Pre-merge code quality checks
@@ -483,7 +482,6 @@ Escalate to git-workflow or tech-lead-orchestrator when:
 ### Receives Work From
 - **git-workflow**: Delegated error recovery
 - **implement-trd**: Sync/merge conflict resolution
-- **release-agent**: Release workflow error recovery
 
 ### Hands Off To
 - **tech-lead-orchestrator**: Architectural conflict resolution
@@ -553,7 +551,7 @@ Session 2: Query git-town:SKILL:branch-management (cache miss, reload)
 - Agent requires error handling across multiple scenarios
 - Agent serves as primary Git workflow authority
 - Development patterns involve frequent Git operations
-- Example agents: git-workflow, release-agent, ensemble-orchestrator
+- Example agents: git-workflow, ensemble-orchestrator
 
 **Query specific sections when**:
 - Agent has focused Git responsibilities (only branch creation, only shipping)

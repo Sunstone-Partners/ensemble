@@ -115,9 +115,9 @@ The router recognizes 24+ skills including:
 
 - **Deployment**: vercel, railway, supabase
 - **Frameworks**: nestjs, flutter
-- **Testing**: jest, pytest, rspec, exunit, xunit, test-detector
+- **Testing**: jest, pytest, rspec, exunit, xunit
 - **Workflow**: create-prd, create-trd, implement-trd-beads, release
-- **Detection**: framework-detector, test-detector
+- **Detection**: detect-stack
 
 ## Development
 

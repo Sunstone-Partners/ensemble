@@ -1,6 +1,6 @@
 {
   "name": "ensemble-git",
-  "version": "5.3.2",
+  "version": "6.0.0",
   "description": "Git workflow automation and conventional commits",
   "author": {
     "name": "Sunstone Partners",
@@ -19,7 +19,6 @@
   "skills": "./skills",
   "agents": [
     "./agents/git-workflow.md",
-    "./agents/github-specialist.md",
-    "./agents/release-agent.md"
+    "./agents/github-specialist.md"
   ]
 }

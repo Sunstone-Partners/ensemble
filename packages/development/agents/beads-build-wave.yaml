@@ -38,7 +38,10 @@ mission:
          root: `$CLAUDE_PLUGIN_ROOT/commands/ensemble/beads-build-wave.md` when
          CLAUDE_PLUGIN_ROOT is set, otherwise glob for
          `**/commands/ensemble/beads-build-wave.md` under the installed plugin
-         directory. Follow its workflow verbatim.
+         directory. On Pi/OMP the command is a hidden prompt, so also glob for
+         `**/prompts/_hidden/ensemble-beads-build-wave.md` (it has no skill
+         wrapper and is not a registered slash command). Follow its workflow
+         verbatim.
       3. If neither resolves, emit a JSON summary with
          terminal_state="blocked" and next_action_hint="stop_blocked" so the
          parent halts cleanly instead of looping on an unrunnable wave. Do not

@@ -18,7 +18,7 @@ The `[Given(@"...")]` attributes in generated `Steps/*.cs` are **authoritative a
 read-only**. Bind by editing **method bodies only** — never the attribute text. A
 hand-edited attribute that no longer matches the scenario step becomes an *undefined
 step*. Wrong/missing attribute text is a drift signal (see
-`/ensemble:check-binding-drift`), not something to fix by hand.
+`/ensemble:reqnroll binding-drift`), not something to fix by hand.
 
 A method name ending in `_` plus twelve hex characters is deliberate, not a glitch.
 The name is built from the step text, so two steps differing only in punctuation

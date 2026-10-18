@@ -1,7 +1,7 @@
 ---
 document_id: PRD-2026-87e64cc6
 label: prd-command-surface-consolidation
-version: 1.0.1
+version: 1.1.0
 status: Draft
 date: 2026-10-06
 scale_depth: STANDARD
@@ -133,7 +133,16 @@ design_readiness_score: null
 **Priority:** Should | **Complexity:** Low | **[RISK: documentation cannot be enforced against direct invocation; hiding may be technically impossible on some hosts]**
 
 - AC-009-1: Given the underlying resumable workflow becomes the internal implementation of the feature front door, when a user consults any product documentation, then the front-door command is presented as the entry point and the internal workflow is described as implementation detail.
-- AC-009-2: Given a user invokes the internal workflow name directly (it may remain technically reachable), when it runs, then behavior is identical to going through the front door — the same canonical run record — with a one-line pointer to the front door; staying undocumented-but-reachable, rather than fully non-invocable, is an accepted outcome.
+- AC-009-2: Given a user invokes the internal workflow name directly (it may remain technically reachable), when it runs, then behavior is identical to going through the front door — the same canonical run record — with a one-line pointer to the front door. *(Amended 2026-10-18, v1.1.0: the original clause "staying undocumented-but-reachable, rather than fully non-invocable, is an accepted outcome" no longer limits the surface, see the amendment below. `ensemble-new-feature` itself stays typable with the pointer line.)*
+
+> **Amendment (2026-10-18, v1.1.0) — supersedes the "de-advertise, do not hide" stance of this requirement.** Hiding is now allowed for leaf commands that only exist as implementation behind a dispatcher. Decided in `docs/plans/ensemble-surface-consolidation-plan.md` (section 3 and the "Decided" bullets in section 8); REQ-004 and AC-004-1 are unchanged. Shipped scope:
+>
+> - **Hidden leaves (8):** `beads-build-wave`; the five reqnroll leaves (`generate-feature-tests`, `check-feature-drift`, `generate-reqnroll-bindings`, `check-binding-drift`, `reqnroll-tdd`), now reached through the `ensemble:reqnroll` dispatcher; and `discover-standards` and `inject-standards`, now reached through `ensemble:standards`. Each is marked `metadata.visibility: hidden` in its command YAML.
+> - **How each host hides them:** Claude Code: generated frontmatter `user-invocable: false`, which removes the command from the slash menu; a typed `/name` for a hidden command is silently swallowed (headless `-p` returns an empty successful result with no model call, checked on Claude Code 2.1.292; interactive mode not observed), while the model and the dispatcher can still load the leaf (also exercised). Pi: the prompt is written to `prompts/_hidden/` with no command-wrapper skill, and `pi.prompts` is `["./prompts/*.md"]` so Pi does not register it. Codex: the wrapper skill carries `user-invocable: false` (maintenance-only host, not verified live; no Codex CLI available).
+> - **Stays typable:** every command REQ-004 protects (the PRD/TRD/beads specialist commands), the `ensemble-feature`, `ensemble-issue`, `ensemble-prd` and `ensemble-trd` front doors, `ensemble-new-feature` (with its AC-009-2 pointer line), and `fold-prompt` (invoked by name by `directory-monitor`).
+> - **Not hidden, folded:** the four PRD/TRD variants were folded into flags on their base commands and removed, not hidden (see the amendment under REQ-018).
+> - **Consequence:** a hidden leaf's old name can no longer be typed on Claude Code; its replacement (dispatcher keyword or flag) is recorded in `CHANGELOG.md`.
+> - **Risk flag:** the "hiding may be technically impossible" risk is reduced on Claude Code and Pi (both mechanisms probed 2026-10-17, see the plan's H0 results); it remains unverified on a live Codex.
 
 ### Discoverability and Consistency
 
@@ -195,6 +204,8 @@ design_readiness_score: null
 
 - AC-018-1: Given the consolidation ships, when a user runs any existing standalone PRD/TRD/beads command, then its output contract is byte-for-byte the documented behavior it had before, except for added pointer lines required by REQ-008/REQ-009.
 
+> **Amendment (2026-10-18, v1.1.0):** AC-018-1 has two further explicit exceptions that shipped on the surface-consolidation branch. (1) Four variant commands were folded into flags on their base commands and no longer exist under their old names: `create-prd-meeting` and `refine-prd-meeting` became `create-prd --from-meeting` and `refine-prd --from-meeting`; `create-trd-foreman` became `create-trd --parser-tables`; `create-workstream-trd` became `implement-trd-beads --workstream --generate-only`. (2) `--from-meeting` now runs the Constitution Gate like every other `create-prd`/`refine-prd` run, so a repo with no constitution file halts with `CONSTITUTION_CONFIG_ERROR` where the old `-meeting` variant did not. The base commands without these flags keep their output contract unchanged. Neither fold touches REQ-004 / AC-004-1, which name no variant. See `docs/plans/ensemble-surface-consolidation-plan.md` section 9 (variants to flags) and `CHANGELOG.md`.
+
 ### REQ-019: Make `ensemble-issue fix` resumable and checkpointed
 **Priority:** Must | **Complexity:** High | **[RISK: a second, independently-built run-state mechanism risks drifting from the feature workflow's unless the TRD shares the underlying implementation]**
 
@@ -251,7 +262,7 @@ No circular dependencies identified.
 | Availability failure discovered only mid-run as a cryptic error. | Missing edge case | REQ-006 requires pre-state fail-fast with installation instructions; first-run (no prior state) is explicitly the ordinary case, not a failure (AC-006-3). |
 | `status` implies more than happened (e.g. PR merged). | Testability / honesty | REQ-007-1 reuses the workflow's exact reference reporting; PR only when recorded. |
 | Two "new feature" commands keep coexisting indefinitely. | Gap | REQ-001/REQ-008/REQ-009 force one canonical path with outright retirement, not a lingering compatibility window. |
-| Hiding the internal workflow name may be technically impossible. | Feasibility | REQ-009 sets the honest goal: de-advertise + converge on the same run record, not invisibility. |
+| Hiding the internal workflow name may be technically impossible. | Feasibility | REQ-009 originally set the honest goal: de-advertise + converge on the same run record, not invisibility. Superseded 2026-10-18 (v1.1.0): leaves behind a dispatcher are now hidden per host (see the REQ-009 amendment); `ensemble-new-feature` is still de-advertised, not hidden. |
 | Skills and commands drift apart in name/description. | Ambiguity | REQ-010 requires convergence regardless of entry route. |
 | Adding retries/autonomy to make resume "smarter". | Safety / constitution | REQ-014 keeps the layer documentation-and-routing only; continuation is user-invoked, including for the new issue checkpointing (REQ-019). |
 | Acceptance proven via internal APIs rather than the product. | Testability | REQ-012 asserts through the shipped entry point; REQ-013 requires guards to fail observably. |
@@ -289,6 +300,14 @@ Constitution Gate: running
 Constitution compliance: passed
 
 ## Changelog
+
+### 2026-10-18 — v1.1.0
+
+Amended after the surface-consolidation work on branch `chore/surface-consolidation-prework` (plan: `docs/plans/ensemble-surface-consolidation-plan.md`, sections 3, 8 and 9). No requirement added, removed or renumbered; no acceptance criterion added or removed.
+
+- REQ-009 superseded in part: the "de-advertise, not hide; undocumented-but-reachable is accepted" stance no longer limits the surface. Leaf commands behind a dispatcher may be hidden (`metadata.visibility: hidden`; Claude Code `user-invocable: false`, Pi `prompts/_hidden/`, Codex wrapper `user-invocable: false`). 8 leaves hidden; `fold-prompt` and `ensemble-new-feature` stay typable. AC-009-2 text trimmed accordingly.
+- REQ-004 and AC-004-1 unchanged: PRD/TRD/beads specialist commands stay typable; the four PRD/TRD variants were folded into flags rather than hidden.
+- REQ-018: amendment note records the folded variants and `--from-meeting` now running the Constitution Gate as explicit exceptions to AC-018-1. The TRD's REQ-008/REQ-009 pointer-line wording (TRD-011) is left as written.
 
 ### 2026-10-06 — v1.0.1
 

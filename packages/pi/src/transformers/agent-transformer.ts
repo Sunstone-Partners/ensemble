@@ -2,7 +2,9 @@
  * Agent Transformer
  *
  * Transforms Ensemble YAML agent definitions into Pi agent markdown
- * files with YAML frontmatter, written to packages/pi/agents/.
+ * files with YAML frontmatter, written to packages/pi/agents/. Each file
+ * carries the generated marker (../generated-marker.ts) right after the
+ * frontmatter, which is how a later run recognises it as its own output.
  *
  * Handles both top-level `name`/`description`/`tools` layout and the
  * nested `metadata.*` pattern used across the Ensemble monorepo.
@@ -19,6 +21,7 @@
 
 import * as path from 'path';
 import { TransformResult } from '../types';
+import { generatedMarker } from '../generated-marker';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -250,14 +253,14 @@ function renderBody(raw: Record<string, unknown>, agentName: string): string {
 /**
  * Transform a parsed agent YAML into a Pi agent markdown string.
  *
- * Produces YAML frontmatter (name, description, tools, model) followed by
- * markdown body (mission, responsibilities). Claude Code-only tools are
- * stripped; Task is mapped to task and AskUserQuestion to ask.
+ * Produces YAML frontmatter (name, description, tools, model), the generated
+ * marker, then the markdown body (mission, responsibilities). Claude Code-only
+ * tools are stripped; Task is mapped to task and AskUserQuestion to ask.
  *
  * @param agentYaml  Parsed YAML object from agent source file
- * @param sourcePath Absolute path to the source .yaml file (for logging)
+ * @param sourcePath Absolute path to the source .yaml file (named in the marker, and for logging)
  * @param options    Runtime options
- * @returns          Rendered markdown string (frontmatter + body)
+ * @returns          Rendered markdown string (frontmatter + marker + body)
  */
 export function transformAgent(
   agentYaml: Record<string, unknown>,
@@ -280,7 +283,7 @@ export function transformAgent(
   const frontmatter = renderFrontmatter(name, description, filteredTools, model);
   const body = renderBody(agentYaml, name);
 
-  return `${frontmatter}\n\n${body}`;
+  return `${frontmatter}\n\n${generatedMarker(path.basename(sourcePath))}\n\n${body}`;
 }
 
 /**

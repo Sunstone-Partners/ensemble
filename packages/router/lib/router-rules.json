@@ -146,11 +146,6 @@
           "name": "playwright-tester",
           "purpose": "E2E tests with Playwright MCP, capture traces and screenshots for regression",
           "tools": ["Read", "Write", "Edit", "Bash"]
-        },
-        {
-          "name": "test-reader-agent",
-          "purpose": "Test file reading and analysis for test coverage understanding",
-          "tools": ["Read"]
         }
       ]
     },
@@ -182,11 +177,6 @@
           "name": "build-orchestrator",
           "purpose": "CI/CD pipeline optimization, artifact creation, dependency management, build automation",
           "tools": ["Read", "Write", "Edit", "Bash"]
-        },
-        {
-          "name": "release-agent",
-          "purpose": "Automated release orchestration with quality gates, smoke test integration",
-          "tools": ["Read", "Write", "Edit", "Bash", "Task", "Skill"]
         },
         {
           "name": "helm-chart-specialist",
@@ -333,7 +323,7 @@
       "patterns": ["act.*run", "local.*workflow"],
       "purpose": "Test GitHub Actions workflows locally using nektos/act"
     },
-    "aws-cloud": {
+    "aws": {
       "triggers": ["aws", "amazon web services", "ec2", "s3", "lambda", "cloudformation", "cdk", "aws cdk"],
       "patterns": ["aws.*deploy", "cdk.*synth", "cloudformation.*stack"],
       "purpose": "AWS cloud infrastructure provisioning and services"
@@ -343,7 +333,7 @@
       "patterns": ["blazor.*component", "@code.*block"],
       "purpose": "Blazor component development for .NET applications"
     },
-    "building-langgraph-agents": {
+    "langgraph": {
       "triggers": ["langgraph", "multi-agent", "agent workflow", "cyclic workflow", "agentic", "agent orchestration"],
       "patterns": ["langgraph.*agent", "state.*graph", "agent.*workflow"],
       "purpose": "LangGraph development for stateful multi-agent applications and cyclic workflows"
@@ -353,42 +343,46 @@
       "patterns": ["generate.*changelog", "changelog.*generate"],
       "purpose": "Parse conventional commits and generate categorized changelog"
     },
-    "cloud-provider-detector": {
-      "triggers": ["detect cloud", "which cloud", "aws or gcp", "cloud provider"],
-      "patterns": ["detect.*cloud", "cloud.*provider"],
-      "purpose": "Auto-detect AWS, GCP, or Azure usage with multi-signal analysis"
+    "detect-stack": {
+      "triggers": ["detect cloud", "which cloud", "aws or gcp", "cloud provider",
+                   "detect framework", "what framework", "identify framework", "which framework",
+                   "detect test framework", "what test framework", "which testing",
+                   "detect tooling", "which tools", "infrastructure tools", "detect helm", "detect kubernetes"],
+      "patterns": ["detect.*cloud", "cloud.*provider", "detect.*framework", "which.*framework",
+                   "detect.*test", "which.*test.*framework", "detect.*tool", "which.*infrastructure"],
+      "purpose": "Detect a project's framework, test runner, infrastructure tooling, and cloud provider with multi-signal confidence scoring"
     },
-    "developing-with-flutter": {
+    "flutter": {
       "triggers": ["flutter", "dart", "flutter widget", "flutter build", "flutter state"],
       "patterns": ["flutter.*widget", "flutter.*build"],
       "purpose": "Flutter SDK for cross-platform development targeting iOS, Android, and Web"
     },
-    "developing-with-laravel": {
+    "laravel": {
       "triggers": ["laravel", "eloquent", "artisan", "blade template", "laravel migration", "laravel queue"],
       "patterns": ["laravel.*app", "artisan.*make", "eloquent.*model"],
       "purpose": "Laravel framework patterns for PHP applications including Eloquent ORM, migrations, routing, queues, and Blade templates"
     },
-    "developing-with-php": {
+    "php": {
       "triggers": ["php", "composer", "php 8", "php type", "php enum", "php attribute"],
       "patterns": ["php.*class", "composer.*require"],
       "purpose": "Modern PHP 8.x development with type system, attributes, enums, error handling, and Composer"
     },
-    "developing-with-python": {
+    "python": {
       "triggers": ["python", "fastapi", "type hint", "async python", "pydantic", "poetry"],
       "patterns": ["python.*app", "fastapi.*route", "def.*async"],
       "purpose": "Python 3.11+ development with type hints, async patterns, FastAPI, and pytest"
     },
-    "developing-with-react": {
+    "react": {
       "triggers": ["react", "react hook", "react component", "jsx", "tsx", "next.js", "nextjs"],
       "patterns": ["react.*component", "use[A-Z].*hook"],
       "purpose": "React 18+ development with hooks, state management, component patterns, and Next.js integration"
     },
-    "developing-with-typescript": {
+    "typescript": {
       "triggers": ["typescript", "ts config", "type guard", "generics", "utility type", "strict mode"],
       "patterns": ["typescript.*config", "interface.*\\{", "type.*="],
       "purpose": "TypeScript 5.x development with type system, generics, utility types, and strict mode patterns"
     },
-    "dotnet-framework": {
+    "dotnet": {
       "triggers": ["dotnet", ".net", "asp.net", "entity framework", "c# api", "dotnet core"],
       "patterns": ["\\.net.*app", "dotnet.*new", "entity.*framework"],
       "purpose": ".NET 8+ with ASP.NET Core patterns and Entity Framework"
@@ -402,11 +396,6 @@
       "triggers": ["fly.io", "fly", "flyctl", "fly deploy", "fly scale", "fly launch"],
       "patterns": ["fly.*deploy", "flyctl.*"],
       "purpose": "Fly.io deployment and application scaling"
-    },
-    "framework-detector": {
-      "triggers": ["detect framework", "what framework", "identify framework", "which framework"],
-      "patterns": ["detect.*framework", "which.*framework"],
-      "purpose": "Multi-signal framework detection with confidence scoring"
     },
     "helm": {
       "triggers": ["helm", "helm chart", "helm install", "helm upgrade", "helm values", "values.yaml"],
@@ -425,27 +414,27 @@
       "patterns": ["kubectl.*apply", "kubectl.*get", "k8s.*deploy"],
       "purpose": "Kubernetes cluster and workload management"
     },
-    "managing-jira-issues": {
+    "jira": {
       "triggers": ["jira", "jira issue", "jira ticket", "jira sprint", "jira board", "atlassian jira", "confluence"],
       "patterns": ["jira.*issue", "create.*jira", "jira.*sprint"],
       "purpose": "Jira issue management using the jira CLI with JSON output"
     },
-    "managing-linear-issues": {
+    "linear": {
       "triggers": ["linear", "linear issue", "linear cycle", "linear project", "linearis", "linear.app"],
       "patterns": ["linear.*issue", "create.*linear"],
       "purpose": "Linear.app issue management using Linearis CLI with JSON output and smart ID resolution"
     },
-    "managing-railway": {
+    "railway": {
       "triggers": ["railway", "railway deploy", "railway service", "railway logs", "railway.app"],
       "patterns": ["railway.*deploy", "railway.*service"],
       "purpose": "Railway platform CLI for service deployment, infrastructure management, and debugging"
     },
-    "managing-supabase": {
+    "supabase": {
       "triggers": ["supabase", "supabase db", "supabase edge", "supabase migration", "supabase function"],
       "patterns": ["supabase.*db", "supabase.*function"],
       "purpose": "Supabase CLI for database management, Edge Functions, migrations, and local development"
     },
-    "managing-vercel": {
+    "vercel": {
       "triggers": ["vercel", "vercel deploy", "vercel domain", "vercel env", "vercel logs", "nextjs deploy"],
       "patterns": ["vercel.*deploy", "vercel.*domain"],
       "purpose": "Vercel platform CLI for frontend deployments, serverless functions, and edge network management"
@@ -475,77 +464,42 @@
       "patterns": ["run.*rspec", "rspec.*spec", "bundle.*exec.*rspec"],
       "purpose": "Execute and generate RSpec tests for Ruby/Rails projects"
     },
-    "smoke-test-api": {
-      "triggers": ["api smoke test", "test api endpoints", "api health"],
-      "patterns": ["smoke.*api", "api.*smoke"],
-      "purpose": "Smoke test API endpoints for health and basic functionality"
-    },
-    "smoke-test-auth": {
-      "triggers": ["auth smoke test", "test authentication", "login test"],
-      "patterns": ["smoke.*auth", "auth.*smoke"],
-      "purpose": "Smoke test authentication flows"
-    },
-    "smoke-test-critical-paths": {
-      "triggers": ["critical path test", "happy path test", "core flow test"],
-      "patterns": ["critical.*path", "happy.*path"],
-      "purpose": "Smoke test critical user paths and core application flows"
-    },
-    "smoke-test-database": {
-      "triggers": ["database smoke test", "db smoke test", "test database connection"],
-      "patterns": ["smoke.*db", "database.*smoke"],
-      "purpose": "Smoke test database connectivity and basic operations"
-    },
-    "smoke-test-external-services": {
-      "triggers": ["external service test", "third party test", "integration smoke test"],
-      "patterns": ["external.*service", "third.*party.*test"],
-      "purpose": "Smoke test external service integrations"
-    },
     "smoke-test-runner": {
-      "triggers": ["smoke test", "sanity test", "quick test", "health check test", "critical path test"],
-      "patterns": ["smoke.*test", "sanity.*check"],
-      "purpose": "Orchestrates smoke test categories for API, auth, database, and critical path validation"
+      "triggers": ["smoke test", "sanity test", "quick test", "health check test", "critical path test", "api smoke test", "test api endpoints", "api health", "auth smoke test", "test authentication", "login test", "happy path test", "core flow test", "database smoke test", "db smoke test", "test database connection", "external service test", "third party test", "integration smoke test"],
+      "patterns": ["smoke.*test", "sanity.*check", "smoke.*api", "api.*smoke", "smoke.*auth", "auth.*smoke", "critical.*path", "happy.*path", "smoke.*db", "database.*smoke", "external.*service", "third.*party.*test"],
+      "purpose": "Orchestrates and documents smoke tests for API, database, external services, auth, and critical path validation"
     },
-    "styling-with-tailwind": {
+    "tailwind": {
       "triggers": ["tailwind", "tailwindcss", "tailwind config", "utility class", "tailwind theme"],
       "patterns": ["tailwind.*config", "@tailwind"],
       "purpose": "Utility-first CSS styling patterns using Tailwind CSS 3.x"
     },
-    "test-detector": {
-      "triggers": ["detect test framework", "what test framework", "which testing"],
-      "patterns": ["detect.*test", "which.*test.*framework"],
-      "purpose": "Automatically detect test frameworks in projects"
-    },
-    "tooling-detector": {
-      "triggers": ["detect tooling", "which tools", "infrastructure tools", "detect helm", "detect kubernetes"],
-      "patterns": ["detect.*tool", "which.*infrastructure"],
-      "purpose": "Automatic detection of infrastructure tooling (Helm, Kubernetes, Kustomize, ArgoCD)"
-    },
-    "using-anthropic-platform": {
+    "anthropic": {
       "triggers": ["anthropic", "claude api", "claude sdk", "messages api", "tool use", "extended thinking"],
       "patterns": ["anthropic.*client", "messages.*create", "claude.*api"],
       "purpose": "Claude SDK development with Messages API, Tool Use, Extended Thinking, streaming, and prompt caching"
     },
-    "using-celery": {
+    "celery": {
       "triggers": ["celery", "celery task", "celery beat", "task queue", "celery worker", "redis broker"],
       "patterns": ["celery.*task", "@task.*def", "celery.*beat"],
       "purpose": "Celery 5.3+ distributed task queue with Beat scheduler, Redis/RabbitMQ brokers, workflow patterns"
     },
-    "using-openai-platform": {
+    "openai": {
       "triggers": ["openai", "gpt", "openai api", "chat completions", "openai embedding", "gpt-4", "gpt-5"],
       "patterns": ["openai.*client", "chat.*completions", "openai.*embed"],
       "purpose": "OpenAI SDK development with GPT-5 family, Chat Completions, Responses API, embeddings, and tool calling"
     },
-    "using-perplexity-platform": {
+    "perplexity": {
       "triggers": ["perplexity", "sonar", "perplexity api", "search augmented", "pplx"],
       "patterns": ["perplexity.*client", "sonar.*api"],
       "purpose": "Perplexity Sonar API development with search-augmented generation, real-time web search, and citations"
     },
-    "using-prisma": {
+    "prisma": {
       "triggers": ["prisma", "prisma schema", "prisma migrate", "prisma client", "prisma studio"],
       "patterns": ["prisma.*schema", "prisma.*migrate", "@prisma/client"],
       "purpose": "Prisma 5+ ORM with schema-first design, type-safe client, migrations, and database integrations"
     },
-    "using-weaviate": {
+    "weaviate": {
       "triggers": ["weaviate", "vector database", "semantic search", "embedding", "vector store"],
       "patterns": ["weaviate.*client", "vector.*search"],
       "purpose": "Weaviate vector database for semantic search, hybrid queries, and AI-native applications"
