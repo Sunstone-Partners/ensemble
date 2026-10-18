@@ -115,7 +115,7 @@ Each phase: edit sources, run `npm run generate` from the repo root, run `script
 
 ## 9. Execution status (branch `chore/surface-consolidation-prework`)
 
-Surface now: **68 source skills** (was 77), **47 commands generated, 39 typable** (was 48; 8 hidden behind dispatchers or the wave-runner; `assess` added), **35 agents** (was 37). Each phase below is its own commit and passed `npm run validate` plus the pi, codex, core, development, product, assessment, pi-extension, scripts and router test suites.
+Surface now: **68 source skills** (was 77), **43 commands generated, 35 typable** (was 48; 8 hidden behind dispatchers or the wave-runner; `assess` added; 4 variants folded into flags), **35 agents** (was 37). Each phase below is its own commit and passed `npm run validate` plus the pi, codex, core, development, product, assessment, pi-extension, scripts and router test suites.
 
 | Phase | Status | Notes |
 |---|---|---|
@@ -130,7 +130,7 @@ Surface now: **68 source skills** (was 77), **47 commands generated, 39 typable*
 | S4 detectors 4 -> 1 | Done | `fe942c3`; infra and quality manifests depend on `ensemble-core` |
 | Command audits C-A/C-B/C-F/C-G, agent audit | Done | C-A and C-B: no merges (see section 5). C-F/C-G: removed `sprint-status`, `web-metrics-dashboard`, `playwright-test`. Agents: removed `release-agent` and `test-reader-agent` (37 -> 35). A caller outside the audit (pi-extension smoke script) was found and moved to `manager-dashboard` |
 | `assess` command (S6 step 4) | Done | Normal command (not `dispatch:`, which only references commands) routing to skills. Per-package Pi prompt root via `SELF_CONTAINED_PI_PACKAGES`. Gate: `pi install` of `packages/assessment` registers `ensemble-assess`; `ensemble-pi` alone does not; both installed give no duplicates. Note: a project-local `pi install -l` loads in RPC mode only with `--approve`. OMP has no `pi.prompts` support, so the wrapper skill is its route |
-| C-C variants -> flags | Not started | Needs a TRD per variant (separate 19-29KB workflows); variants would become untypable, so this is a product decision as well as a refactor |
+| C-C variants -> flags | Done | `create-prd-meeting` / `refine-prd-meeting` -> `--from-meeting`; `create-trd-foreman` -> `create-trd --parser-tables` (not `--foreman`, which already means something else and is used by Foreman's workflow); `create-workstream-trd` -> `implement-trd-beads --workstream --generate-only`. Equivalence audit per variant; REQ-004/AC-004-1 do not name any variant. Behavior changes are listed in the changelog (notably `--from-meeting` now runs the Constitution Gate) |
 
 Follow-ups found during execution: (1) the Pi generator never deletes mirrors of removed or renamed skills, so each phase needed manual orphan cleanup (find them by file age after generating); consider making `copySkills` prune. (2) `ensemble-dotnet` has no entry in `configure-team.yaml` (`domain_to_plugins`, `framework_keyword_to_plugin`) and `packages/full/package.json` peerDependencies lacks it. (3) The `ensemble-blazor` marketplace description ("Blazor/.NET framework skills") now overstates since `dotnet` moved out. (4) `rspec` and `xunit` skills are 22-line stubs. (5) Plugin versions were not bumped for the changed packages (only `ensemble-pi` auto-bumped); bump at release. (6) `packages/core/lib/index.js` calls a class without `new` in `detect()` (pre-existing).
 

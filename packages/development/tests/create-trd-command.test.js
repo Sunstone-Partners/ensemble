@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 
 const sourcePath = path.join(__dirname, '../commands/create-trd.yaml');
 const generatedPath = path.join(__dirname, '../commands/ensemble/create-trd.md');
@@ -366,5 +367,187 @@ describe('create-trd pins the PRD reference key and its value shape', () => {
     expect(text).toContain('prd_reference: docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md');
     expect(text).toContain('It is not the PRD');
     expect(text).toContain('looksLikePath');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --parser-tables: Foreman table mode.
+//
+// This is the former standalone create-trd-foreman command, folded into
+// create-trd as a flag-gated mode (the variant YAML is deleted). It cannot be
+// `--foreman`: create-trd --foreman already means "standard TRD, no prompts"
+// and Foreman's own prd workflow runs `create-trd --foreman` and then
+// refine-trd / implement-trd on that standard format, so the table format
+// needs its own flag. Every assertion below is something the variant did that
+// must still be true of `create-trd <prd> --parser-tables`.
+// ---------------------------------------------------------------------------
+describe('create-trd --parser-tables mode (folded in from create-trd-foreman)', () => {
+  const doc = yaml.load(read(sourcePath));
+  const MODE_FLAG = "$ARGUMENTS contains '--parser-tables'";
+  const phase = (name) => doc.workflow.phases.find((p) => p.name === name);
+  const step = (phaseName, title) => phase(phaseName).steps.find((s) => s.title === title);
+  const actionsOf = (phaseName, title) => step(phaseName, title).actions.map(String).join('\n');
+
+  // [phase, title] of every step that only runs in table mode.
+  const MODE_STEPS = [
+    ['Task Breakdown and Planning', 'Foreman Master Task List Generation (--parser-tables)'],
+    ['Task Breakdown and Planning', 'Foreman Test Task Generation (--parser-tables)'],
+    ['Task Breakdown and Planning', 'Foreman Dependency Mapping (--parser-tables)'],
+    ['Output Management', 'Foreman TRD Document Generation (--parser-tables)'],
+    ['Output Management', 'Foreman Acceptance Criteria Traceability (--parser-tables)'],
+    ['Output Management', 'Foreman Traceability Validation (--parser-tables)'],
+    ['Output Management', 'Foreman File Save and Next Steps (--parser-tables)'],
+  ];
+  // [phase, title] of every standard step that table mode replaces or omits.
+  const REPLACED_STEPS = [
+    ['Task Breakdown and Planning', 'Master Task List Generation'],
+    ['Task Breakdown and Planning', 'Test Task Generation (BDD)'],
+    ['Task Breakdown and Planning', 'Dependency Mapping and PR Boundary Design'],
+    ['Adversarial Review and Design Gate', 'Architecture Self-Critique'],
+    ['Adversarial Review and Design Gate', 'Task Coverage Analysis'],
+    ['Adversarial Review and Design Gate', 'Dependency and Estimate Review'],
+    ['Adversarial Review and Design Gate', 'Testability Review'],
+    ['Adversarial Review and Design Gate', 'Design Readiness Gate'],
+    ['Output Management', 'TRD Document Generation'],
+    ['Output Management', 'Acceptance Criteria Traceability'],
+    ['Output Management', 'Traceability Validation'],
+    ['Output Management', 'File Save and Next Steps'],
+  ];
+
+  test('is advertised on the command and documented as distinct from --foreman', () => {
+    expect(doc.metadata.argument_hint).toContain('--parser-tables');
+    const param = doc.parameters.find((p) => p.name === 'parser-tables');
+    expect(param).toBeDefined();
+    expect(param.default).toBe(false);
+    expect(param.description).toContain('former standalone /ensemble:create-trd-foreman command');
+    expect(param.description).toContain("Foreman's parseTrd()");
+    expect(param.description).toContain('OMIT the adversarial review phase');
+    expect(param.description).toContain('Not the same as --foreman');
+  });
+
+  test('--foreman keeps its standard-TRD meaning and was not repurposed for the table format', () => {
+    const foreman = doc.parameters.find((p) => p.name === 'foreman');
+    expect(foreman.description).toContain('Design Readiness Gate FAIL) still HALT unchanged');
+    expect(foreman.description).not.toContain('parser-compatible');
+    // The flag name must not contain '--foreman': the standard path tests
+    // "contains '--foreman'" and would otherwise match it by substring.
+    expect('--parser-tables'.includes('--foreman')).toBe(false);
+  });
+
+  test('each table-mode step runs only under the flag, and each step it replaces is skipped under it', () => {
+    for (const [phaseName, title] of MODE_STEPS) {
+      expect(step(phaseName, title)).toBeDefined();
+      const first = String(step(phaseName, title).actions[0]);
+      expect(first).toContain(`Runs only when ${MODE_FLAG}`);
+      expect(first).toContain('If it is absent, skip this step');
+    }
+    for (const [phaseName, title] of REPLACED_STEPS) {
+      const first = String(step(phaseName, title).actions[0]);
+      expect(first).toContain(`If ${MODE_FLAG}: skip this step`);
+    }
+  });
+
+  test('the adversarial review phase is omitted in table mode: no Phase 5 step survives, and the mode says so', () => {
+    const phaseName = 'Adversarial Review and Design Gate';
+    for (const s of phase(phaseName).steps) {
+      expect(String(s.actions[0])).toContain(`If ${MODE_FLAG}: skip this step`);
+    }
+    const first = String(phase(phaseName).steps[0].actions[0]);
+    expect(first).toContain('skip this step and every other step of this phase');
+    expect(first).toContain('Design Readiness Gate');
+    expect(first).toContain('continues with the Constitution Gate phase');
+    expect(actionsOf('MCP Enhancement (Optional)', 'Check MCP Availability')).toContain(
+      'under --parser-tables, which omits Phase 5, skip to the Constitution Gate phase instead'
+    );
+  });
+
+  test('Foreman Master Task List Generation keeps the parser-compatible table rules', () => {
+    const text = actionsOf('Task Breakdown and Planning', 'Foreman Master Task List Generation (--parser-tables)');
+    expect(text).toContain('Generate unique task IDs following the pattern `[A-Z]+-T\\d+`');
+    expect(text).toContain('Organize work under `### N.M Sprint N` headers and `#### Story N.M` headers only');
+    expect(text).toContain('write a **Shippable State:** line');
+    expect(text).toContain('For every story, emit a markdown table with required columns `ID | Task | Est. | Deps`');
+    expect(text).toContain('Set every Status cell to `[ ]` so Foreman creates dispatchable native tasks');
+    expect(text).toContain('Use dependencies that reference other task IDs exactly as strings in the Dependencies column');
+    expect(text).toContain('First column header must be exactly `id` (lowercase)');
+    expect(text).toContain('Second column must contain `task`, `description`, or `title`');
+    // Not the PR-section checkbox format of the standard path.
+    expect(text).not.toContain('GitHub checkbox');
+  });
+
+  test('Foreman test and dependency steps stay in table form', () => {
+    const tests = actionsOf('Task Breakdown and Planning', 'Foreman Test Task Generation (--parser-tables)');
+    expect(tests).toContain('using the same table format');
+    expect(tests).toContain('rather than narrative bullet lists');
+    expect(tests).toContain('All test/validation task Status cells must also be `[ ]`');
+    const deps = actionsOf('Task Breakdown and Planning', 'Foreman Dependency Mapping (--parser-tables)');
+    expect(deps).toContain('Build a dependency graph from the Dependencies column values');
+    expect(deps).toContain('Ensure no dependency points to a task ID that is absent from the final TRD tables');
+    expect(deps).toContain('if Task A depends on Task B, Task B must appear before Task A');
+  });
+
+  test('Foreman document generation writes exactly one parser-compatible file with all-[ ] statuses', () => {
+    const text = actionsOf('Output Management', 'Foreman TRD Document Generation (--parser-tables)');
+    expect(text).toContain('Preserve parser-compatible sprint/story/table structure exactly; do not replace tables with prose checklists');
+    expect(text).toContain('NO `-foreman` suffix');
+    expect(text).toContain('Write exactly one primary parser-compatible TRD markdown file');
+    expect(text).toContain('Validate that all task Status cells in ALL tables are `[ ]`');
+    expect(text).toContain('If --foundational: set `kind: foundational`');
+    // No companion artifacts, no PR-section format.
+    expect(text).not.toContain('-data-model.md');
+    expect(text).not.toContain('### PR N:');
+  });
+
+  test('Foreman validation and save end with the foreman sling prd next step, never a beads command', () => {
+    const validation = actionsOf('Output Management', 'Foreman Traceability Validation (--parser-tables)');
+    expect(validation).toContain('Validate that every task ID referenced in Dependencies exists in the generated tables');
+    expect(validation).toContain('Validate that required columns `id`, `task`, and `status` exist for every story table');
+    expect(validation).toContain('fail the phase if any `[x]` or `done` markers found');
+    expect(validation).toContain('Foreman compatibility check: parser-safe=<yes/no>, dependency-orphans=N, uncovered-reqs=M');
+    const save = actionsOf('Output Management', 'Foreman File Save and Next Steps (--parser-tables)');
+    expect(save).toContain('explicit next step `foreman sling prd <original-prd-path>` only after constitution compliance passes');
+    expect(save).toContain('Do not suggest beads-specific implementation commands');
+    expect(save).toContain('--team does not apply in this mode');
+    expect(save).not.toContain("Suggest: '/ensemble:refine-trd");
+  });
+
+  test('shared steps never ask in table mode, as the variant never asked', () => {
+    const readiness = actionsOf('PRD Ingestion and Validation', 'Implementation Readiness Gate Check');
+    expect(readiness).toContain('If --foreman or --parser-tables is set, skip the ask -- log the warning and proceed automatically.');
+    expect(readiness).toContain('If --foreman or --parser-tables is set, skip the ask, log the warning, and proceed.');
+    const alternatives = actionsOf('Architecture Design', 'Architecture Alternatives');
+    expect(alternatives).toContain("'--parser-tables' and does NOT contain '--foreman': skip the ask");
+    expect(alternatives).toContain('unless the caller explicitly requested an interactive architecture review');
+    expect(actionsOf('Architecture Design', 'Capability Reuse Check')).toContain(
+      'keep the Foreman Dependencies column local-only'
+    );
+    expect(actionsOf('Architecture Design', 'Domain Analysis')).toContain(
+      'record COMPANION_DOMAINS as empty -- Foreman table mode writes exactly one parser-compatible TRD file'
+    );
+  });
+
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s keeps the constitution gate non-bypassable in table mode and withholds the foreman sling prd step on violation', (_label, filePath) => {
+    const contract = contractSection(read(filePath));
+
+    expect(contract).toContain('there is no Design Readiness Gate in this mode');
+    expect(contract).toContain('Foreman compatibility checks exist in memory');
+    expect(contract).toContain('printing the foreman sling prd next step');
+    expect(contract).toContain('non-bypassable unconditionally');
+    expect(contract).toContain('Do not offer any proceed anyway, override, skip, soft-confirmation, or default-proceed path');
+    expect(contract).toContain('do not print the foreman sling prd next-step output');
+    expect(unguardedConstitutionBypassLines(contract)).toEqual([]);
+  });
+
+  test('generated command markdown renders the flag, the mode steps and the foreman sling prd next step', () => {
+    const md = read(generatedPath);
+    expect(md).toContain('argument-hint: "[prd-path] [--team] [--foundational] [--list] [--foreman] [--parser-tables]"');
+    expect(md).toContain('- **`parser-tables`** (boolean, optional, default: `false`)');
+    for (const [, title] of MODE_STEPS) {
+      expect(md).toContain(title);
+    }
+    expect(md).toContain('explicit next step `foreman sling prd <original-prd-path>` only after constitution compliance passes');
   });
 });

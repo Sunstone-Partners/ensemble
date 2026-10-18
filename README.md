@@ -177,16 +177,16 @@ After installation, plugins automatically register their agents, commands, and s
 
 ### Available Commands
 
-Ensemble ships 47 slash-commands across seven packages (39 directly typable; the rest are reachable only through the front-door command that dispatches to them). This is a representative sample — see the [wiki Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) for the full list.
+Ensemble ships 43 slash-commands across seven packages (35 directly typable; the rest are reachable only through the front-door command that dispatches to them). This is a representative sample — see the [wiki Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) for the full list.
 
 - `/ensemble:feature` - Canonical front door for the feature lifecycle: `new`/`resume`/`status`/`abandon` (ensemble-development)
 - `/ensemble:issue` - Canonical front door for issue work: `fix`/`list`/`resume`/`status`/`abandon` (ensemble-development)
-- `/ensemble:prd` - Canonical front door for PRD authoring: `create`/`create-meeting`/`refine`/`refine-meeting` (ensemble-product)
-- `/ensemble:trd` - Canonical front door for TRD authoring, analysis, and implementation (ensemble-development)
+- `/ensemble:prd` - Canonical front door for PRD authoring: `create`/`refine`; both take `--from-meeting` to work from a meeting summary instead of a live interview (ensemble-product)
+- `/ensemble:trd` - Canonical front door for TRD authoring, analysis, and implementation; `create --parser-tables` produces a Foreman-native structured TRD and `implement --workstream [--generate-only]` combines several TRDs into one workstream TRD (ensemble-development)
 - `/ensemble:reqnroll` - Front door for PRD-to-Reqnroll acceptance tests: `features`/`feature-drift`/`bindings`/`binding-drift`/`tdd` (ensemble-product)
 - `/ensemble:standards` - Front door for project coding standards: `discover`/`inject`/`fold` (ensemble-core)
 - `/ensemble:assess` - Front door for assessments: `repo`/`team`/`config`/`report`, plus `repo --only <dimension>` for a single repository dimension (ensemble-assessment)
-- `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation (ensemble-development)
+- `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation; `--workstream [--generate-only]` first generates one normalized workstream TRD from several source TRDs (ensemble-development)
 - `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*` (ensemble-development)
 - `/ensemble:fold-prompt` - Project optimization (ensemble-core)
 - `/ensemble:manager-dashboard` - Metrics dashboard (ensemble-metrics)
@@ -221,6 +221,28 @@ The session is iterative: completed sessions can be re-launched with
 `--collab` against the same PRD path to revisit the prior answers,
 comments, and revision history. To start over, delete the session
 file under `~/.config/ensemble/logs/refinement-review/`.
+
+### Meeting-Sourced PRDs
+
+`ensemble:create-prd` and `ensemble:refine-prd` accept a `--from-meeting` flag that
+works from a normalized meeting summary (inline text or a file path) instead of a
+live interview. Questions the interview would have asked are answered from the
+summary where it states an answer, and marked `[NEEDS CLARIFICATION]` where it does
+not -- nothing is guessed.
+
+```bash
+# Draft a PRD from a meeting summary. Saved as Draft whatever the readiness score.
+/ensemble:create-prd --from-meeting docs/meetings/2026-10-17-requirements-sync.md
+
+# Refine an existing PRD using a meeting summary as the feedback source.
+/ensemble:refine-prd docs/PRD/PRD-2026-019.md --from-meeting docs/meetings/2026-10-24-follow-up.md
+```
+
+`refine-prd --from-meeting` applies only the findings the summary resolves, cites the
+part of the summary behind each change, leaves every other finding (and its
+`[NEEDS CLARIFICATION]` marker) untouched for a later live `refine-prd` pass, and never
+locks the PRD or changes its Status. `--from-meeting` cannot be combined with
+`--foreman`, `--collab` or `--long-lived`.
 
 ### Agent Mesh
 
@@ -331,6 +353,16 @@ Behavior:
 - each TRD's PR/story/task hierarchy stays under its own epic;
 - cross-TRD dependencies use `<trd-slug>#TRD-NNN` or `<trd-slug>#PR-N`;
 - graph checks use `bv --robot-*` only and prompt before ambiguous/cyclic dependency changes.
+
+To combine several source TRDs into one normalized workstream TRD (source provenance preserved, every referenced AC decomposed into AC-level implementation, test and validation tasks), use `--workstream`:
+
+```bash
+# Generate only -- no beads, branches, commits or PRs (replaces the removed /ensemble:create-workstream-trd)
+/ensemble:implement-trd-beads --workstream --generate-only docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md [--out docs/TRD/workstreams/my-workstream.md] [--allow-invalid]
+
+# Generate, then implement the generated workstream TRD in one step
+/ensemble:implement-trd-beads --workstream docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md --plan --use-current-branch
+```
 
 See `packages/development/README.md` for the user-facing command details.
 

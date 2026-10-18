@@ -304,7 +304,7 @@ These capabilities were proposed as opportunities but already exist in Ensemble:
 - ✓ **Quickstart validation artifact** — `implement-trd` generates `quickstart.md` smoke-test runbook from acceptance criteria after completion verification; `implement-trd-beads` routes to `implement-trd` for v1 (PR #61)
 - ✓ **Quick-fix workflow** — `ensemble:fix-issue` for lightweight bug fixes (no PRD/TRD overhead)
 - ✓ **Cross-artifact requirement analysis** — `ensemble:analyze-requirements` validates PRD↔TRD↔beads alignment
-- ✓ **Clarification enforcement** — `ensemble:refine-prd`, `refine-trd`, `refine-prd-meeting` surface ambiguities
+- ✓ **Clarification enforcement** — `ensemble:refine-prd`, `refine-trd`, `refine-prd --from-meeting` surface ambiguities
 - ✓ **Feature branching & stacked PRs** — `ensemble:implement-trd` (git-town workflow) and `ensemble:implement-trd-beads` (--branch option, stacked PR support)
 
 ---

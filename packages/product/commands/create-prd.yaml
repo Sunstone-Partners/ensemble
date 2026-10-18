@@ -1,12 +1,13 @@
 metadata:
   name: ensemble:create-prd
-  description: Create comprehensive Product Requirements Document with structured elicitation and adversarial review
-  version: 2.6.0
-  lastUpdated: "2026-09-22"
+  description: Create comprehensive Product Requirements Document with structured elicitation and adversarial review, or from a meeting summary with --from-meeting
+  version: 2.7.0
+  lastUpdated: "2026-10-17"
   category: planning
   output_path: ensemble/create-prd.md
   source: sunstone
   model: high
+  argument_hint: "[product-description] [--foreman] | --from-meeting <meeting-summary-or-path>"
 
 parameters:
   - name: foreman
@@ -22,17 +23,43 @@ parameters:
       still HALT unchanged. Constitution Gate Contract failures also hard HALT;
       --foreman cannot bypass missing-source, unmapped-check, or article violation
       failures. For automated Foreman orchestration.
+  - name: from-meeting
+    type: boolean
+    default: false
+    description: |
+      Draft the PRD from a meeting summary instead of a live interview -- the
+      asynchronous counterpart to the default mode, for capturing requirements
+      discussed in a meeting a human was not available to interview about
+      afterward. $ARGUMENTS (with this flag removed) is a normalized meeting
+      summary, inline text or a path to one -- not raw audio/video, and not a
+      free-form product description (use the default mode for that). Skips
+      every interview question: scale depth is inferred from the summary, what
+      the summary states is extracted, and every gap the interview would have
+      filled is marked [NEEDS CLARIFICATION: ...] instead of guessed. The
+      Implementation Readiness Gate never blocks the save in this mode: a
+      CONCERNS or FAIL score still saves the PRD with Status Draft and reports
+      the result, because there is no live user to ask. The Constitution Gate
+      Contract is unchanged and its failures still hard HALT. Cannot be
+      combined with --foreman (passing both HALTs with an error): --foreman
+      takes the PRD subject from FOREMAN_TASK_TITLE / FOREMAN_TASK_DESCRIPTION,
+      while this mode takes it from the meeting summary.
 
 constraints:
-  - DO NOT implement, build, or execute any work described in the product description
+  - DO NOT implement, build, or execute any work described in the product description (or, with --from-meeting, in the meeting summary)
   - This command creates ONLY a PRD document
   - The arguments describe what should be documented, not what should be built
   - After creating the PRD, stop and wait for user approval before any implementation
-  - DO NOT skip the elicitation phase -- always ask clarifying questions before generating requirements (unless --foreman is set, see parameters)
-  - DO NOT save the PRD until it passes the Implementation Readiness Gate
+  - DO NOT skip the elicitation phase -- always ask clarifying questions before generating requirements (unless --foreman or --from-meeting is set, see parameters)
+  - "DO NOT save the PRD until it passes the Implementation Readiness Gate (--from-meeting excepted: it saves a Draft on any score, see the --from-meeting constraints below)"
   - DO NOT save the PRD until the Constitution Gate Contract passes
   - 'Mark every unresolved ambiguity inline with [NEEDS CLARIFICATION: <specific question>] rather than making a best-guess assumption — these markers drive the refine-prd interview'
   - 'When --foreman is set, Scale Detection and all clarifying-question interviews are force-skipped in favor of best-effort defaults and inline [NEEDS CLARIFICATION: ...] markers; the CONCERNS-level Implementation Readiness Gate confirmation defaults to proceeding (with the warning still shown) only for non-constitution concerns; constitution violations are excluded from CONCERNS auto-proceed and always HALT; the FAIL-level HALT is unaffected'
+  - "--from-meeting: $ARGUMENTS is a normalized meeting summary, or a path to one -- not raw audio/video, not a live interview transcript to conduct"
+  - "--from-meeting: DO NOT invent requirements, decisions, or constraints that are not actually present in the provided meeting summary -- mark every gap with [NEEDS CLARIFICATION] instead of guessing, since there is no human present to ask"
+  - "--from-meeting: DO NOT skip the Ambiguity Marking Pass -- everything the live interview would normally ask must become a [NEEDS CLARIFICATION] marker here instead"
+  - "--from-meeting: save the PRD as Status Draft even on a low Readiness Gate score -- see the Implementation Readiness Gate step for why this differs from the default mode. The Constitution Gate Contract still applies unchanged: its failures hard HALT in this mode too"
+  - "--from-meeting: the meeting-summary input contract is source-agnostic -- any adapter (Teams, Zoom, Otter, a manually pasted transcript) that normalizes its output into the shape described in the Meeting Summary Intake phase can feed this command; do not assume Teams-specific formatting anywhere in this workflow"
+  - "--from-meeting cannot be combined with --foreman (the subject comes from the meeting summary, not from FOREMAN_TASK_TITLE) -- HALT if both are passed"
 
 mission:
   summary: |
@@ -57,6 +84,17 @@ mission:
     a subject nobody asked for is worse than no PRD, because the run reports success.
     Outside Foreman dispatch both variables are simply absent, and behavior is unchanged --
     the arguments are the product description.
+    Meeting-summary mode (--from-meeting): create the PRD from a meeting summary rather than a
+    live interactive interview -- the asynchronous counterpart to the default mode, for capturing
+    requirements discussed in a meeting a human wasn't available to interview about afterward.
+    $ARGUMENTS (with the flag removed) is the meeting summary, inline text or a path to one, and
+    replaces the product description. Extracts what the summary actually states, marks every gap
+    the live interview would normally have filled with [NEEDS CLARIFICATION], and produces the
+    same PRD structure, Implementation Readiness Gate and Constitution Gate as the default mode
+    so a later human-run refine-prd pass closes the gaps interactively. Source-agnostic by
+    design: works from any adapter that normalizes its meeting-summary output into the expected
+    shape, not tied to any one meeting platform. --from-meeting and --foreman are mutually
+    exclusive.
 
 workflow:
   phases:
@@ -67,6 +105,8 @@ workflow:
           title: Scale Detection
           description: Determine project complexity to calibrate PRD depth
           actions:
+            - "HALT CHECK (run first, before anything else in this command): IF $ARGUMENTS contains BOTH --from-meeting and --foreman, HALT immediately and print: 'ERROR: --from-meeting takes the PRD subject from the meeting summary in $ARGUMENTS, while --foreman takes it from FOREMAN_TASK_TITLE / FOREMAN_TASK_DESCRIPTION; the two cannot be combined. Drop one of the two flags.' Do not read the meeting summary, do not read FOREMAN_TASK_TITLE, and do not write any file."
+            - "IF --from-meeting flag is set: skip this step and every other step in this phase -- there is no one to interview. Scale depth is inferred from the meeting summary, and the Problem Space and Creative Elicitation questions are answered from it (or marked [NEEDS CLARIFICATION: ...]), in the Meeting Summary Intake phase."
             - "IF --foreman flag is set: the PRD subject is FOREMAN_TASK_TITLE and its requirements input is FOREMAN_TASK_DESCRIPTION. Read both before anything else, print the title you read, and use them everywhere these steps say 'the product description provided as arguments'. If FOREMAN_TASK_TITLE is unset or empty AND no product description was passed as arguments, STOP here -- write no PRD and report that the subject was never delivered. Never substitute a subject inferred from the repository, git history, or docs/PRD/ contents."
             - "IF --foreman flag is set: skip asking, default depth level to STANDARD, and announce that STANDARD was auto-selected (not asked) because foreman mode is active -- then proceed directly to the next step."
             - "Ask the user: 'Is this a solo/side project, small team (2-5), or enterprise/multi-team effort?'"
@@ -78,6 +118,7 @@ workflow:
           title: Problem Space Interview
           description: Gather core product context through a one-question-at-a-time interview
           actions:
+            - "IF --from-meeting flag is set: skip this step entirely -- do not ask any of these questions. The Meeting Summary Intake phase maps the meeting summary onto Q1-Q5 and marks every unanswered one [NEEDS CLARIFICATION: ...] instead."
             - "IF --foreman flag is set: do not ask any of these questions. For each one, either resolve it with the most reasonable default based on the provided product description and note the assumption in the PRD, or -- if genuinely unresolvable without human input -- mark it inline in the generated PRD as [NEEDS CLARIFICATION: <question>] per this repo's convention. Do not block; proceed to the next step."
             - "INTERVIEW PROTOCOL: Ask exactly ONE question, wait for the user's full answer, then ask the next. Never batch questions."
             - "Determine which of these questions are NOT already answered by the product description provided as arguments, then ask only the unanswered ones in order:"
@@ -93,6 +134,7 @@ workflow:
           title: Creative Elicitation
           description: Surface hidden and edge-case requirements through a structured one-question-at-a-time interview
           actions:
+            - "IF --from-meeting flag is set: skip this step entirely -- do not ask any SCAMPER, failure-scenario or scope-boundary question. The Meeting Summary Intake phase does not attempt creative elicitation (it captures an edge case, risk or alternative only if the summary surfaces one), and Approvals and Decision Ownership / Entry and Exit Criteria are derived from the summary in Requirements Definition."
             - "IF --foreman flag is set: do not ask any SCAMPER or failure-scenario questions. Instead, reason through the same angles internally, resolving each with a reasonable default and noting the assumption, or marking genuinely unresolvable items inline as [NEEDS CLARIFICATION: <question>] in the generated PRD. Do not block."
             - "INTERVIEW PROTOCOL: Ask ONE question at a time, wait for the answer, then ask the next."
             - "Choose 2-3 SCAMPER angles most relevant to this product and ask them sequentially:"
@@ -109,8 +151,44 @@ workflow:
             - "For LIGHT depth: 2 SCAMPER questions + 2 failure scenario questions"
             - "For DEEP depth: all 4 SCAMPER angles + 5+ failure scenario questions"
 
-    - name: Research and Context
+    - name: Meeting Summary Intake (--from-meeting only)
       order: 2
+      when: $ARGUMENTS contains --from-meeting
+      steps:
+        - order: 1
+          title: Parse Meeting Summary
+          description: |
+            Runs only when --from-meeting is present in $ARGUMENTS; otherwise skip this
+            entire phase (all three steps) and go straight to Research and Context.
+            Read and structurally parse the provided meeting summary
+          actions:
+            - "Read the meeting summary from $ARGUMENTS (the --from-meeting flag removed) -- either inline text or a file path"
+            - "Expect a normalized shape with some subset of: meeting title/date/attendees, Decisions, Open Questions, Discussion Points (optionally grouped by topic), Action Items (optionally tagged with an owner). Different adapters populate different subsets of this shape -- do not fail if one section is missing, just note what's absent"
+            - "If $ARGUMENTS is empty or does not resemble a meeting summary (no Decisions/Discussion Points/Action Items section found at all), stop and tell the user this mode needs a meeting summary, not a free-form product description -- suggest /ensemble:create-prd (without --from-meeting) for that instead"
+
+        - order: 2
+          title: Scale Detection (inferred, not asked)
+          description: |
+            Runs only when --from-meeting is present in $ARGUMENTS; otherwise skip this step.
+            Infer project complexity from the summary's own scope, since there is no one to ask
+          actions:
+            - "Estimate depth from signal richness: count distinct decisions + discussion topics + action items combined. Roughly: 3 or fewer total items => LIGHT, 4-10 => STANDARD, more than 10 or explicit enterprise/multi-team language in the summary => DEEP"
+            - "Default to STANDARD if the signal is ambiguous rather than guessing at the extremes"
+            - "State the inferred depth AND the reasoning behind it in the PRD's Notes section, so a human reviewing it can override during a later refine-prd pass -- this is an inference, not a live-confirmed choice like in the default mode"
+
+        - order: 3
+          title: Extraction
+          description: |
+            Runs only when --from-meeting is present in $ARGUMENTS; otherwise skip this step.
+            Map meeting content onto the default mode's Problem Space questions, marking anything unaddressed
+          actions:
+            - "For each of the five Problem Space questions (Q1-Q5 in the Structured Elicitation phase: problem/pain and who feels it, primary users, success metrics, constraints, prior solutions tried), search the summary for an answer"
+            - "Where the summary answers a question, use that content directly and note which part of the summary it came from"
+            - "Where the summary does NOT answer a question, do not guess -- record it as a [NEEDS CLARIFICATION: <the original question, reworded to the specific gap>] to be inserted at the relevant point in the PRD, exactly as the Ambiguity Marking Pass would"
+            - "Do NOT attempt the SCAMPER/failure-scenario elicitation interactively -- there is no one to ask follow-up creative-elicitation questions of here. If the summary happens to surface an edge case, risk, or alternative considered, capture it as a requirement or risk flag; if it doesn't, that's simply outside what this pass covers, not a gap to interview around"
+
+    - name: Research and Context
+      order: 3
       steps:
         - order: 1
           title: Codebase Reconnaissance
@@ -130,6 +208,7 @@ workflow:
             - "Set Document ID to PRD-{current_year}-{micro_uuid}, for example PRD-2026-a1b2c3d4"
             - "Set a human-readable Label: prd-<stem>, where <stem> is a short lowercase-kebab handle for the effort (a few words), derived from the working title by default but overridable if the user offers a shorter codename. Example: title 'Multi-Factor Login' -> label prd-login-mfa. The label is display-only for humans to reference the doc at a glance; it is NEVER a reference key (all cross-document references use the micro UUID Document ID) and need not be globally unique."
             - Note any cross-cutting requirements from existing PRDs that this feature must respect
+            - "IF --from-meeting flag is set: if the meeting summary itself references an existing PRD or feature by name, flag that as a candidate for /ensemble:refine-prd <prd-path> --from-meeting <meeting-summary-or-path> instead -- this mode is for new PRDs, not extending an existing one"
 
         - order: 3
           title: Business Integration Points
@@ -142,15 +221,18 @@ workflow:
             - "For DEEP depth: list each dependency with its capability, business outcome, and obligation -- still no interface or data-flow design"
 
     - name: Requirements Definition
-      order: 3
+      order: 4
       steps:
         - order: 1
           title: Functional Requirements
           description: Define what the product must do, grouped by feature area
           actions:
+            - "IF --from-meeting flag is set: draw requirements only from the Meeting Summary Intake phase's extraction -- do not add requirements the summary does not support"
             - "Group requirements by feature area (e.g., 'User Management', 'Data Import', 'Reporting'), not just 'Functional' vs 'Non-Functional'"
             - "Assign REQ-NNN IDs as H3 headings: '### REQ-NNN: Description'"
             - "Tag each requirement with MoSCoW priority: Must, Should, Could, Won't (this release). Priority is business value only -- never an effort or difficulty judgement."
+            - "IF --from-meeting flag is set: infer each requirement's MoSCoW priority from how the meeting summary discussed it (e.g., a Decision implies Must, an Open Question implies the priority itself may need clarification). Priority is business value only; if the meeting argued about effort or cost, record that as a constraint or an action item, never as the requirement's priority."
+            - "IF --from-meeting flag is set: derive *Approvals and Decision Ownership* and *Entry and Exit Criteria* from the summary: whose approval was treated as decisive (an owner, a sign-off, a 'X to confirm'), and any precondition or 'done when' the meeting stated. If the summary is silent, insert [NEEDS CLARIFICATION: no approver identified in the meeting -- confirm who signs off on this scope] rather than inventing one."
             - "Flag requirements with risk indicators where applicable: [RISK: description]"
             - "Write requirements as user-observable behaviors, not implementation details; a requirement that names a framework, database, library, endpoint, or schema belongs in the TRD"
             - "Do NOT tag requirements with complexity or effort estimates -- sizing is the TRD's job (/ensemble:create-trd, 'Assess Complexity'). A PRD that estimates effort invites scope decisions to be made on cost rather than value."
@@ -164,6 +246,8 @@ workflow:
           actions:
             - "Use the same REQ-NNN numbering sequence (continue from functional requirements)"
             - "Cover these categories as applicable: performance, security, accessibility, reliability, scalability, observability"
+            - "IF --from-meeting flag is set: cover those categories only where the meeting summary actually touched on them -- do not invent NFRs the meeting never discussed. The LIGHT/DEEP coverage targets below do not apply in this mode (they would force invented requirements)."
+            - "IF --from-meeting flag is set: if the meeting summary is silent on a category a real product would typically need (e.g., security, accessibility), mark it with [NEEDS CLARIFICATION: no NFR discussion found for <category> -- confirm requirements] rather than fabricating one"
             - "Tag each with MoSCoW priority only -- no complexity estimate"
             - "For LIGHT depth: 2-3 non-functional requirements covering the obvious gaps"
             - "For DEEP depth: comprehensive coverage of all categories with specific targets (e.g., 'p99 latency < 200ms')"
@@ -176,6 +260,7 @@ workflow:
             - "Format: '- AC-NNN-M: Given <context>, when <action>, then <outcome>'"
             - "Every Must requirement needs at least 2 ACs (happy path + one edge case)"
             - "Every Should requirement needs at least 1 AC"
+            - "IF --from-meeting flag is set: where the meeting summary doesn't give enough detail to write a real edge-case AC, write the happy-path AC from what's known and mark the missing edge case with [NEEDS CLARIFICATION] rather than inventing one"
             - "Could/Won't requirements: ACs optional but recommended"
             - "For security-sensitive requirements, write the rejection the user can observe as an AC ('when a second login attempt comes from a different device, then access is denied and re-verification is requested') -- never reference test cases or harnesses"
             - "For LIGHT depth: 1 AC per requirement minimum"
@@ -205,6 +290,16 @@ workflow:
             After marking: count the total [NEEDS CLARIFICATION] markers and print:
             "Ambiguity scan complete: N items marked for clarification."
             These markers will become the structured interview agenda in /ensemble:refine-prd.
+
+            IF --from-meeting flag is set: same discipline, but expect a HIGHER marker count
+            than a live run would produce, since there was no interview to resolve things in
+            real time. That is expected, not a defect in this mode. For each place where the PRD
+            author made an assumption rather than having it stated explicitly in the meeting
+            summary, insert the [NEEDS CLARIFICATION: <specific question>] marker immediately
+            after the ambiguous text. After marking, print this instead:
+            "Ambiguity scan complete: N items marked for clarification (meeting-sourced draft -- expect more than a live create-prd run)."
+            These markers become the structured interview agenda in a later, human-run
+            /ensemble:refine-prd.
           actions: []
 
         - order: 5
@@ -218,12 +313,13 @@ workflow:
             - "For DEEP depth: dependency table with columns: REQ, Depends On, Blocked By, Notes"
 
     - name: Adversarial Review and Readiness Gate
-      order: 4
+      order: 5
       steps:
         - order: 1
           title: Self-Critique
           description: Find issues in the draft PRD before presenting to the user
           actions:
+            - "IF --from-meeting flag is set: do NOT present these issues to the user for live resolution -- there is no interview in this mode, so the Issue Resolution step is skipped entirely. Review the draft PRD for issues in the same 5 categories (gaps, contradictions, ambiguity, missing edge cases, testability), resolve what's directly resolvable from the meeting summary's own content, and convert everything else into an additional [NEEDS CLARIFICATION] marker instead of asking. The at-least-5 / at-least-10 issue minimums and the 'present each issue' action below do not apply."
             - "Review the draft PRD and identify at least 5 potential issues from these categories:"
             - "  - Gaps: missing requirements that the elicitation phase hinted at"
             - "  - Contradictions: requirements that conflict with each other"
@@ -237,6 +333,7 @@ workflow:
           title: Issue Resolution
           description: Walk through issues one at a time and incorporate user decisions
           actions:
+            - "IF --from-meeting flag is set: skip this step entirely -- Self-Critique already resolved what the meeting summary could resolve and converted the rest into [NEEDS CLARIFICATION] markers. There is no live user to walk through issues; do NOT invoke AskUserQuestion here."
             - "IF --foreman flag is set: do not ask the user to confirm resolutions. For each issue, apply your recommended resolution directly and note it was auto-applied under foreman mode; if an issue genuinely cannot be resolved without human input, mark it inline as [NEEDS CLARIFICATION: <question>] in the generated PRD instead of blocking."
             - "INTERVIEW PROTOCOL: Present ONE issue at a time. Do not list all issues upfront."
             - "For each issue: state the problem, give your recommended resolution, then ask 'Does this resolution work for you, or would you like to adjust it?'"
@@ -255,13 +352,15 @@ workflow:
             - "  - Clarity: could two different developers read this and build the same thing?"
             - "  - Feasibility: are all requirements technically achievable within stated constraints?"
             - "Compute overall score: average of all dimensions"
+            - "IF --from-meeting flag is set: expect a LOWER score than a live run would typically produce, roughly proportional to the [NEEDS CLARIFICATION] marker count -- that reflects reality, not a failure of this mode"
+            - "IF --from-meeting flag is set: the CONCERNS and FAIL branches below do NOT apply. Neither asking the user (CONCERNS) nor refusing to save (FAIL) fits this mode: there is no live user to ask, and its entire purpose is producing a starting draft for a human's later refine-prd pass, so refusing to save a low-scoring async draft would defeat that purpose. Do NOT invoke AskUserQuestion for this branch. On PASS (4.0+), CONCERNS (3.0-3.9) or FAIL (below 3.0) alike, continue to the Constitution Gate and then save the PRD with Status set to Draft. Report the PASS/CONCERNS/FAIL result plainly, list the specific concerns (same categories as Self-Critique), and say clearly that a human refine-prd pass is expected next given the score."
             - "PASS (4.0+): proceed to the Constitution Gate before saving the PRD"
             - "CONCERNS (3.0-3.9): list specific concerns, ask user if they want to address them or proceed. IF --foreman flag is set: skip the question -- log the concerns clearly and default to proceeding to the Constitution Gate before saving the PRD, without pausing for confirmation."
-            - "FAIL (<3.0): do not save -- identify the weakest dimensions and loop back to fix them. This is a hard gate and HALTs unchanged regardless of --foreman."
+            - "FAIL (<3.0): do not save -- identify the weakest dimensions and loop back to fix them. This is a hard gate and HALTs unchanged regardless of --foreman. Only --from-meeting differs, per the action above."
             - "Present the scorecard to the user with the gate decision"
 
     - name: Constitution Gate
-      order: 5
+      order: 6
       steps:
         - order: 1
           title: Constitution Gate Contract
@@ -285,7 +384,7 @@ workflow:
             - "If the gate passes, record `Constitution compliance: passed` in the saved PRD Health summary or notes, print `Constitution Gate: PASSED`, then continue to Output Management save and success messaging."
 
     - name: Output Management
-      order: 6
+      order: 7
       steps:
         - order: 1
           title: PRD Document Generation
@@ -298,6 +397,8 @@ workflow:
             - "  - Constitution compliance: passed"
             - "Include the dependency map section"
             - "File naming: docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md (micro_uuid = 8 lowercase hex chars; no sequence number)"
+            - "IF --from-meeting flag is set: add a Source line noting this PRD was drafted from a meeting summary -- name the meeting title and date if the input included them"
+            - "IF --from-meeting flag is set: state the [NEEDS CLARIFICATION] marker count in the Notes section, so a human can gauge how much refine-prd work remains before this is Development Ready"
 
         - order: 2
           title: File Organization
@@ -306,6 +407,7 @@ workflow:
             - "Create docs/PRD/ directory if it doesn't exist only after the Constitution Gate Contract passes"
             - "Save the PRD to docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md only after `Constitution compliance: passed` is recorded"
             - "Print: file path, requirement count, readiness score, and suggested next step (e.g., '/ensemble:refine-prd docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md') only after constitution compliance passes"
+            - "IF --from-meeting flag is set: also print the [NEEDS CLARIFICATION] marker count with the file path, requirement count and readiness score, and name the suggested next step as /ensemble:refine-prd on this file to close out the clarification markers interactively, not /ensemble:create-trd directly, given the marker count -- still only after constitution compliance passes"
             - "The next step is ALWAYS refine-prd, never create-trd. A freshly created PRD has not been reviewed, and refine-prd is the review: it is where its open questions get answered and where the PRD is locked. Do not print /ensemble:create-trd here, and do not offer it as an alternative -- create-trd is what refine-prd suggests once the PRD is locked."
 
 expectedOutput:
@@ -341,3 +443,6 @@ expectedOutput:
 
     - name: Readiness Scorecard
       description: Implementation Readiness Gate scores for completeness, testability, clarity, and feasibility
+
+    - name: Clarification Agenda (--from-meeting only)
+      description: Count and list of [NEEDS CLARIFICATION] markers -- the agenda for the human-run refine-prd pass a meeting-sourced draft expects to follow it

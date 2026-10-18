@@ -116,12 +116,96 @@ describe('implement-trd-beads RCA quality gates', () => {
 
 describe('implement-trd-beads direct multi-TRD deprecation', () => {
   const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
-  test('errors on direct multiple TRDs and points to create-workstream-trd', () => {
+  test('errors on direct multiple TRDs and points to --workstream (create-workstream-trd was folded into it)', () => {
     const text = fs.readFileSync(yamlPath, 'utf8');
     expect(text).toContain('Multiple TRDs passed directly');
-    expect(text).toContain('/ensemble:create-workstream-trd');
+    // The standalone /ensemble:create-workstream-trd command is removed; the
+    // error has to name the flag form that replaced it.
+    expect(text).toContain('/ensemble:implement-trd-beads --workstream --generate-only <trd1> <trd2>');
+    expect(text).toContain('or rerun with --workstream to generate and implement in one step');
+    expect(text).not.toContain('/ensemble:create-workstream-trd <trd1>');
+    expect(text).not.toContain('prefer /ensemble:create-workstream-trd');
     expect(text).toContain('--legacy-multi');
     expect(text).toContain('DEPRECATED: direct multi-TRD mode');
+  });
+});
+
+
+// `--workstream --generate-only` is the former standalone create-workstream-trd
+// command (3.8KB, generate-only). implement-trd-beads already took --workstream
+// and ran the same `trd-cli create-workstream-trd`, but then always went on to
+// implement; the generate-only stop, --out, --allow-invalid and the report were
+// the parts it did not have.
+describe('implement-trd-beads --workstream --generate-only (folded in from create-workstream-trd)', () => {
+  const yaml = require('js-yaml');
+  const yamlPath = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+  const generatedPath = path.join(__dirname, '../commands/ensemble/implement-trd-beads.md');
+  const doc = yaml.load(fs.readFileSync(yamlPath, 'utf8'));
+  const preflight = doc.workflow.phases.find((p) => p.name === 'Preflight');
+  const specialArgs = preflight.steps.find((s) => s.title === 'Handle Special Arguments');
+  const toolCheck = preflight.steps.find((s) => s.title === 'Tool Availability Check');
+  const actions = specialArgs.actions.map(String);
+  const indexOfAction = (needle) => actions.findIndex((a) => a.includes(needle));
+  const generateOnlyText = actions.filter((a) => a.includes('--generate-only')).join('\n');
+
+  test('is advertised in the argument hint and documented as parameters', () => {
+    expect(doc.metadata.argument_hint).toContain('--workstream [--generate-only [--out <path>] [--allow-invalid]]');
+    const names = doc.parameters.map((p) => p.name);
+    expect(names).toEqual(expect.arrayContaining(['workstream', 'generate-only']));
+    const param = doc.parameters.find((p) => p.name === 'generate-only');
+    expect(param.description).toContain('former standalone');
+    expect(param.description).toContain('/ensemble:create-workstream-trd');
+    expect(param.description).toContain('Cannot be combined with --plan, --execute, --status');
+  });
+
+  test('runs in Preflight step 2, before the br/bv checks, so generating needs only node and the TRD CLI', () => {
+    expect(specialArgs.order).toBeLessThan(toolCheck.order);
+    expect(toolCheck.actions.map(String).join('\n')).toContain('which br');
+  });
+
+  test('resolves the TRD CLI and forwards --out and --allow-invalid to create-workstream-trd only in generate-only mode', () => {
+    const parse = actions[indexOfAction('Parse $ARGUMENTS for .md paths')];
+    // --out takes a value ending in .md, which must not be counted as a source TRD.
+    expect(parse).toContain('Parse $ARGUMENTS for .md paths (excluding the value that follows --out)');
+    expect(parse).toContain('resolve TRD_CLI per the tool-path-resolution skill');
+    expect(parse).toContain('create-workstream-trd <TRD_PATHS...>');
+    expect(parse).toContain("(only when '--generate-only' is present, also pass --out <path> if provided and --allow-invalid if provided)");
+    expect(parse).toContain('no workstream file is written unless --allow-invalid was passed in --generate-only mode');
+  });
+
+  test('keeps the variant contract: two or more TRDs, generated content, report, nothing implemented', () => {
+    expect(generateOnlyText).toContain('ERROR: --generate-only requires --workstream and two or more TRD paths.');
+    expect(generateOnlyText).toContain(
+      'Source TRD Manifest, normalized Master Task List, source provenance, verbatim source task markdown payloads, AC-level implementation tasks, AC-level executable test tasks, AC validation tasks, and Definition of Done evidence requirements'
+    );
+    expect(generateOnlyText).toContain('docs/TRD/workstreams/TRD-YYYY-<micro_uuid>-workstream-<slug>.md');
+    expect(generateOnlyText).toContain(
+      'print the generated path, the workstream slug, the source TRD count, and the next step: /ensemble:implement-trd-beads <generated-path>'
+    );
+    expect(generateOnlyText).toContain('Do not start implementation automatically');
+    expect(generateOnlyText).toContain('EXIT here without running any later Preflight step');
+    expect(generateOnlyText).toContain(
+      'Do not implement any TRD work and do not create beads, branches, commits, or PRs in this mode'
+    );
+  });
+
+  test('rejects other modes alongside --generate-only, and stops before plan/execute/status handling', () => {
+    const guard = indexOfAction('cannot be combined with --plan, --execute, --status, --reset-task, --list, --branch or --use-current-branch');
+    const parse = indexOfAction('Parse $ARGUMENTS for .md paths');
+    const report = indexOfAction('print the generated path, the workstream slug');
+    const planOnly = indexOfAction("If $ARGUMENTS contains '--plan': set PLAN_ONLY=true");
+    const statusOnly = indexOfAction("If $ARGUMENTS contains '--status' AND COMBINED_WORKSTREAM_MODE=true");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(report).toBeGreaterThan(parse);
+    expect(report).toBeLessThan(planOnly);
+    expect(report).toBeLessThan(statusOnly);
+  });
+
+  test('generated command markdown renders the generate-only mode', () => {
+    const md = fs.readFileSync(generatedPath, 'utf8');
+    expect(md).toContain('WORKSTREAM GENERATE-ONLY MODE');
+    expect(md).toContain('--workstream [--generate-only [--out <path>] [--allow-invalid]]');
   });
 });
 

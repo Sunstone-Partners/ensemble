@@ -1,30 +1,31 @@
 ---
 name: "ensemble:trd"
 description: "Dispatch to a TRD-authoring, analysis, or implementation subcommand by keyword"
-version: "1.0.0"
+version: "1.1.0"
 category: "planning"
-last-updated: "2026-10-05"
-argument-hint: "<create|foreman|refine|workstream|implement|analyze|complexity|validate|verify|status|graph> [subcommand args...]"
+last-updated: "2026-10-17"
+argument-hint: "<create|refine|implement|analyze|complexity|validate|verify|status|graph> [subcommand args...]"
 ---
 <!-- DO NOT EDIT - Generated from trd.yaml -->
 <!-- To modify this file, edit the YAML source and run: npm run generate -->
 
 
-Thin routing layer over the existing TRD-adjacent commands (authoring, Foreman-native
-authoring, refinement, workstream normalization, beads-driven implementation, and the
-cross-artifact analysis/validation/verification/status/dependency-graph tools). Reads
-and follows the matching sibling command's own generated file for this runtime, passing
-the rest of $ARGUMENTS unchanged, and does not re-implement any of their phases. This
-group is intentionally heterogeneous -- not every subcommand below is a simple CRUD
-variant of one workflow, so read each one's own description carefully before picking it.
+Thin routing layer over the existing TRD-adjacent commands (authoring, refinement,
+beads-driven implementation, and the cross-artifact analysis/validation/verification/
+status/dependency-graph tools). Reads and follows the matching sibling command's own
+generated file for this runtime, passing the rest of $ARGUMENTS unchanged, and does not
+re-implement any of their phases. Variants of a command are flags on that command rather
+than keywords: `create --parser-tables` produces a Foreman-native structured TRD, and
+`implement --workstream [--generate-only]` generates a normalized executable workstream TRD
+from multiple source TRDs. This group is intentionally heterogeneous -- not every
+subcommand below is a simple CRUD variant of one workflow, so read each one's own
+description carefully before picking it.
 
 ## Subcommands
 
-- **`create`** - Create a Technical Requirements Document from a PRD. Invoke `/ensemble:create-trd` directly, or read and follow `packages/development/commands/ensemble/create-trd.md`, passing the remaining arguments through as its $ARGUMENTS.
-- **`foreman`** - Create a Foreman-native structured TRD from a PRD (no adversarial review phase, parser-compatible tables). Invoke `/ensemble:create-trd-foreman` directly, or read and follow `packages/development/commands/ensemble/create-trd-foreman.md`, passing the remaining arguments through as its $ARGUMENTS.
+- **`create`** - Create a Technical Requirements Document from a PRD (add --parser-tables for a Foreman-native structured TRD with parser-compatible sprint/story tables and no adversarial review phase). Invoke `/ensemble:create-trd` directly, or read and follow `packages/development/commands/ensemble/create-trd.md`, passing the remaining arguments through as its $ARGUMENTS.
 - **`refine`** - Refine and enhance an existing TRD with stakeholder feedback. Invoke `/ensemble:refine-trd` directly, or read and follow `packages/development/commands/ensemble/refine-trd.md`, passing the remaining arguments through as its $ARGUMENTS.
-- **`workstream`** - Generate a normalized executable workstream TRD from multiple source TRDs. Invoke `/ensemble:create-workstream-trd` directly, or read and follow `packages/development/commands/ensemble/create-workstream-trd.md`, passing the remaining arguments through as its $ARGUMENTS.
-- **`implement`** - Implement a TRD with beads project management (persistent bead hierarchy, br/bv-driven execution, cross-session resumability). Invoke `/ensemble:implement-trd-beads` directly, or read and follow `packages/development/commands/ensemble/implement-trd-beads.md`, passing the remaining arguments through as its $ARGUMENTS.
+- **`implement`** - Implement a TRD with beads project management (persistent bead hierarchy, br/bv-driven execution, cross-session resumability); --workstream <trd1> <trd2> ... generates and implements one normalized workstream TRD from multiple source TRDs, and --workstream --generate-only [--out path] [--allow-invalid] only generates it. Invoke `/ensemble:implement-trd-beads` directly, or read and follow `packages/development/commands/ensemble/implement-trd-beads.md`, passing the remaining arguments through as its $ARGUMENTS.
 - **`analyze`** - Pre-implementation cross-artifact consistency sweep (PRD-TRD-beads alignment). Invoke `/ensemble:analyze-requirements` directly, or read and follow `packages/development/commands/ensemble/analyze-requirements.md`, passing the remaining arguments through as its $ARGUMENTS.
 - **`complexity`** - Score work complexity and choose an adaptive Ensemble planning route. Invoke `/ensemble:analyze-complexity` directly, or read and follow `packages/development/commands/ensemble/analyze-complexity.md`, passing the remaining arguments through as its $ARGUMENTS.
 - **`validate`** - Pre-implementation traceability gate (REQ-NNN coverage and TEST task pairing between PRD and TRD). Invoke `/ensemble:validate-requirements` directly, or read and follow `packages/development/commands/ensemble/validate-requirements.md`, passing the remaining arguments through as its $ARGUMENTS.
@@ -46,5 +47,5 @@ variant of one workflow, so read each one's own description carefully before pic
 ## Usage
 
 ```
-/ensemble:trd <create|foreman|refine|workstream|implement|analyze|complexity|validate|verify|status|graph> [subcommand args...]
+/ensemble:trd <create|refine|implement|analyze|complexity|validate|verify|status|graph> [subcommand args...]
 ```

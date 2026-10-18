@@ -5,15 +5,24 @@ description: >-
   stakeholder feedback, additional research, or identified gaps. Updates PRD
   while maintaining version history, traceability, and alignment with the
   create-prd v2.2.0 format including PRD Health summaries, MoSCoW priorities,
-  and Implementation Readiness Gate scoring.
+  and Implementation Readiness Gate scoring. Meeting-summary mode
+  (--from-meeting): refine the PRD using a meeting summary as the source of
+  stakeholder feedback, rather than a live interactive interview -- the
+  asynchronous counterpart to the default mode. Runs the same Synthesis findings
+  scan, but instead of interviewing the user about each finding, checks whether
+  the meeting summary already answers it. Applies what it can directly from the
+  summary and leaves everything else as an open finding for a later human-run
+  refine-prd pass, rather than guessing. It never locks the PRD and never
+  changes its Status field. --from-meeting is mutually exclusive with --collab,
+  --long-lived and --foreman.
 disable-model-invocation: true
 ---
-<!-- Command: ensemble-refine-prd | Version: 2.8.0 -->
-<!-- Description: Refine and enhance existing PRD with stakeholder feedback and additional detail -->
+<!-- Command: ensemble-refine-prd | Version: 2.9.0 -->
+<!-- Description: Refine and enhance existing PRD with stakeholder feedback and additional detail, or from a meeting summary with --from-meeting -->
 
 # ensemble-refine-prd
 
-> **Mission:** Refine and enhance an existing Product Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates PRD while maintaining version history, traceability, and alignment with the create-prd v2.2.0 format including PRD Health summaries, MoSCoW priorities, and Implementation Readiness Gate scoring.
+> **Mission:** Refine and enhance an existing Product Requirements Document based on stakeholder feedback, additional research, or identified gaps. Updates PRD while maintaining version history, traceability, and alignment with the create-prd v2.2.0 format including PRD Health summaries, MoSCoW priorities, and Implementation Readiness Gate scoring. Meeting-summary mode (--from-meeting): refine the PRD using a meeting summary as the source of stakeholder feedback, rather than a live interactive interview -- the asynchronous counterpart to the default mode. Runs the same Synthesis findings scan, but instead of interviewing the user about each finding, checks whether the meeting summary already answers it. Applies what it can directly from the summary and leaves everything else as an open finding for a later human-run refine-prd pass, rather than guessing. It never locks the PRD and never changes its Status field. --from-meeting is mutually exclusive with --collab, --long-lived and --foreman.
 
 > **Constraints:**
 > - DO NOT implement, build, or execute any work described in the PRD
@@ -23,6 +32,11 @@ disable-model-invocation: true
 > - DO NOT make any edits to the PRD during the Synthesis step — findings are presented first, edits happen only after the user selects items
 > - --collab requires a human reviewer and cannot be combined with --foreman (non-interactive mode) -- HALT if both are passed
 > - When --foreman is set, skip the Synthesis selection prompt and Interview questions -- auto-apply all findings and [NEEDS CLARIFICATION: ...] resolutions using best-effort defaults (falling back to an inline [NEEDS CLARIFICATION: ...] marker when no safe default exists) and log what was auto-applied; the "stop and wait for user approval before implementation" constraint above is unaffected
+> - --from-meeting requires TWO distinct inputs in $ARGUMENTS: a PRD file path AND a meeting summary (inline text or a path to one) -- not one input
+> - --from-meeting: DO NOT invent answers to findings the meeting summary does not actually address -- leave those findings and their [NEEDS CLARIFICATION] markers untouched for a later live /ensemble-refine-prd pass, do not guess
+> - --from-meeting: DO NOT make any edits to the PRD during the Synthesis step or the finding classification -- findings are classified first, edits happen only after
+> - --from-meeting: the meeting-summary input contract is source-agnostic, same as create-prd --from-meeting -- any adapter that normalizes into the expected shape (see the Parse Meeting Summary step) can feed this command
+> - --from-meeting cannot be combined with --collab, --long-lived or --foreman -- HALT if --from-meeting is passed together with any of them. It never changes the PRD's Status field and never runs the PRD Lock step
 
 ## Arguments
 
@@ -32,6 +46,7 @@ disable-model-invocation: true
 - **`long-lived`** (boolean, optional, default: `false`): Long-lived review session: a single invite URL with a 6-hour TTL that any number of reviewers can exchange (no nonce burn, no fan-out). QuickTunnel is implicit — `cloudflared` is launched automatically so the invite URL works across networks without a Cloudflare account. Reviewers identify themselves with a display name (no uniqueness check, no provider login) before the document UI is served. Presence (who is currently viewing) is surfaced to other reviewers in real time. Completion terminates the listener so the port does not stay bound. Mutually exclusive with `--reviewers N` (a long-lived session already accepts arbitrary reviewers via one reusable invite URL). `--long-lived` implies `--tunnel=quick`; do not pass a separate `--tunnel` value with this flag.
 - **`ttl`** (string, optional, default: `"6h"`): Long-lived session lifetime as a duration string (e.g. `6h`, `12h`, `1d`). Parsed by the bootstrap to milliseconds; the minimum accepted value is `6h` and the default is `6h`. Only used when `--long-lived` is set; ignored otherwise.
 - **`foreman`** (boolean, optional, default: `false`): Run in Foreman-native non-interactive mode -- skip the terminal interview/Synthesis selection step and automatically apply all findings/[NEEDS CLARIFICATION: ...] resolutions using best-effort defaults instead of waiting for the user to select which findings to apply. Mutually exclusive with --collab (which requires a human reviewer) -- passing both HALTs with an error. For automated Foreman orchestration.
+- **`from-meeting`** (boolean, optional, default: `false`): Refine the PRD using a meeting summary as the source of stakeholder feedback instead of a live interview -- the asynchronous counterpart to the default mode. $ARGUMENTS (with this flag removed) must carry TWO distinct inputs: the PRD file path (the first non-flag token, as everywhere in this command) and, after it, a meeting summary -- inline text or a path to one. Runs the same Synthesis findings scan as the default mode, but instead of interviewing the user about each finding, checks whether the meeting summary already answers it: findings the summary answers (RESOLVABLE_FROM_MEETING) are applied, citing the part of the summary that grounded each change; findings it does not address (STILL_OPEN) and their [NEEDS CLARIFICATION] markers are left untouched for a later live refine-prd pass rather than guessed at. Never changes the PRD's Status field and skips the PRD Lock step. Mutually exclusive with --collab, --long-lived and --foreman (passing any of them together with --from-meeting HALTs with an error).
 
 ## Phase 1: Collaborative Review
 
@@ -45,6 +60,16 @@ combined with --foreman (non-interactive mode). Drop one of
 the two flags." Do not resolve the PRD path, do not generate
 questions, do not bootstrap a session, do not start a server.
 This check runs even before the GUARD below.
+
+SECOND HALT CHECK (also before the GUARD below): If $ARGUMENTS
+contains `--from-meeting` together with any of `--collab`,
+`--long-lived` or `--foreman`, HALT immediately and print:
+"ERROR: --from-meeting takes its feedback from a meeting summary
+and cannot be combined with --collab, --long-lived or --foreman.
+Drop one of the flags." Do not resolve the PRD path, do not read
+the meeting summary, do not bootstrap a session, do not start a
+server, and do not edit the PRD. This check runs even before the
+GUARD below.
 
 GUARD: If BOTH `--collab` and `--long-lived` are absent from
 $ARGUMENTS, skip this entire step and proceed directly to Phase 2
@@ -285,13 +310,14 @@ Review existing PRD content and establish baseline metrics
 
 **Actions:**
 1. Read the PRD file from the path provided in $ARGUMENTS
-2. Parse frontmatter for Document ID, Version, Status, and Readiness Score
-3. Count requirements by type (functional, non-functional) and priority (Must/Should/Could/Won't)
-4. Count acceptance criteria and compute AC coverage percentage (requirements with at least one AC / total requirements)
-5. Check if PRD Health summary exists and whether its numbers match actual requirement counts
-6. Note the current version number for version bumping later
+2. IF --from-meeting is present in $ARGUMENTS: the PRD path is the first non-flag token; everything after it is the meeting summary (inline text or a path to one), parsed in the Meeting-Sourced Review phase -- never treat any of it as part of the PRD path
+3. Parse frontmatter for Document ID, Version, Status, and Readiness Score
+4. Count requirements by type (functional, non-functional) and priority (Must/Should/Could/Won't)
+5. Count acceptance criteria and compute AC coverage percentage (requirements with at least one AC / total requirements)
+6. Check if PRD Health summary exists and whether its numbers match actual requirement counts
+7. Note the current version number for version bumping later
 
-### Step 2: Synthesis (skip when --collab or --long-lived in $ARGUMENTS)
+### Step 2: Synthesis (skip when --collab or --long-lived in $ARGUMENTS; scan only, no selection prompt, when --from-meeting)
 
 If `--collab` or `--long-lived` is present in $ARGUMENTS, SKIP this
 step entirely — the Collaborative Review phase has already collected
@@ -300,7 +326,7 @@ and comments. Otherwise, perform the original synthesis below.
 After reviewing the PRD, generate a numbered list of findings WITHOUT making
 any edits yet. Scan for the following issues:
 
-- '[NEEDS CLARIFICATION] markers from create-prd — present each one verbatim as a finding so the user''s answers replace the marker with actual content'
+- '[NEEDS CLARIFICATION] markers from create-prd (including create-prd --from-meeting drafts) — present each one verbatim as a finding so the user''s answers replace the marker with actual content'
 - Requirements missing REQ-NNN IDs as H3 headings
 - Acceptance criteria that are missing or not in Given/When/Then format
 - Missing PRD document ID (PRD-YYYY-NNN) in frontmatter
@@ -317,6 +343,14 @@ any edits yet. Scan for the following issues:
 - PRD Health summary missing or outdated (requirement counts by priority don't match actual counts)
 - Missing Implementation Readiness Gate scorecard
 - Acceptance criteria coverage gaps (Must requirements with fewer than 2 ACs, Should requirements with zero ACs)
+
+IF `--from-meeting` is present in $ARGUMENTS: still generate the
+numbered findings list from the scan above (with no edits), but skip
+the ask selection prompt below entirely and do not set
+SELECTED_ITEMS here. There is no live interview in this mode: the
+Meeting-Sourced Review phase classifies every finding against the
+meeting summary and sets SELECTED_ITEMS to the RESOLVABLE_FROM_MEETING
+findings only. Do NOT use ask in this step.
 
 IF `--foreman` is present in $ARGUMENTS: skip the ask
 selection prompt below entirely. Instead, set SELECTED_ITEMS to
@@ -347,8 +381,11 @@ If the user replies "skip" or selects nothing, exit immediately without
 making any changes. If the user replies "all", set SELECTED_ITEMS to every
 finding number.
 
-### Step 3: Interview (skip when --collab or --long-lived in $ARGUMENTS)
+### Step 3: Interview (skip when --collab, --long-lived or --from-meeting in $ARGUMENTS)
 
+If `--from-meeting` is present in $ARGUMENTS, SKIP this step
+entirely — findings are answered from the meeting summary by the
+Meeting-Sourced Review phase, never by interview.
 If `--collab` or `--long-lived` is present in $ARGUMENTS, SKIP this
 step entirely — the Collaborative Review phase already collected
 interactive answers. If `--foreman` is present in $ARGUMENTS, ALSO
@@ -387,8 +424,11 @@ For each selected finding, ask a focused follow-up question. Examples:
 - For missing risk indicators: ask what risks apply to Medium/High complexity items
 - For dependency gaps: ask which requirements depend on or are blocked by others
 
-### Step 4: Feedback Integration (artifact when --collab or --long-lived in $ARGUMENTS)
+### Step 4: Feedback Integration (artifact when --collab or --long-lived in $ARGUMENTS; skipped when --from-meeting)
 
+If `--from-meeting` is present in $ARGUMENTS, SKIP this step
+entirely — the Meeting-Sourced Review phase applies changes from
+the meeting summary instead.
 If `--collab` or `--long-lived` is present in $ARGUMENTS, source the
 answers and comments from the artifact written by the Collaborative
 Review phase (path printed by that phase); the Interview step is
@@ -402,7 +442,50 @@ original feedback integration below.
 Incorporate the answers gathered during the Interview step. Apply changes
 only for SELECTED_ITEMS — do not modify sections the user did not select.
 
-## Phase 3: Enhancement
+## Phase 3: Meeting-Sourced Review (--from-meeting only)
+
+### Step 1: Parse Meeting Summary
+
+Runs only when `--from-meeting` is present in $ARGUMENTS; otherwise skip
+this entire phase (all three steps) and proceed to Enhancement.
+Read and structurally parse the meeting summary provided alongside the PRD path
+
+**Actions:**
+1. Read the meeting summary from $ARGUMENTS (the --from-meeting flag removed) -- inline text or a file path, distinct from the PRD path, which is the first non-flag token
+2. Expect the same normalized shape as create-prd --from-meeting: some subset of meeting title/date/attendees, Decisions, Open Questions, Discussion Points (optionally topic-grouped), Action Items (optionally owner-tagged). Do not assume every section is present
+3. If $ARGUMENTS only identifies a PRD with no meeting summary content or path alongside it, stop and tell the user this mode needs both a PRD path and a meeting summary -- suggest /ensemble-refine-prd (without --from-meeting) for a live-interview refinement instead
+
+### Step 2: Synthesis (classify findings against the meeting summary)
+
+Runs only when `--from-meeting` is present in $ARGUMENTS; otherwise skip this step.
+The PRD Review phase's Synthesis step has already produced the numbered findings
+list (the same finding-scan checklist as the default mode, with no edits made).
+
+For EACH finding, check whether the meeting summary's actual content answers
+it. Sort every finding into exactly one of two buckets:
+- RESOLVABLE_FROM_MEETING: the summary directly states an answer
+- STILL_OPEN: the summary does not address this finding
+
+Do NOT use ask here -- there is no live interview in this
+mode. Print both buckets as a report to the user (not a prompt): what got
+resolved from the meeting and what's still open.
+
+### Step 3: Feedback Integration (from meeting content only)
+
+Runs only when `--from-meeting` is present in $ARGUMENTS; otherwise skip this step.
+Apply changes ONLY for RESOLVABLE_FROM_MEETING findings, using the meeting
+summary's own content as the answer. Cite which part of the summary
+(a Decision, an Action Item, a specific Discussion Point) grounded each
+change, the same way create-prd --from-meeting cites its sources. Leave STILL_OPEN
+findings and their [NEEDS CLARIFICATION] markers completely untouched --
+do not guess at them just because a change is already in progress elsewhere
+in the document.
+
+Set SELECTED_ITEMS to exactly the RESOLVABLE_FROM_MEETING findings, so the
+Enhancement phase's Content Refinement and Validation act on those findings
+and nothing else.
+
+## Phase 4: Enhancement
 
 ### Step 1: Content Refinement
 
@@ -413,6 +496,10 @@ Add PRD frontmatter block if it was a selected finding (Document ID, Version, St
 Add MoSCoW priority and complexity tags to requirements that were selected for tagging.
 Add risk indicators to Medium/High complexity requirements that were selected.
 Update or create the dependency map section if dependency gaps were selected.
+When `--from-meeting` is present in $ARGUMENTS, SELECTED_ITEMS is exactly the
+RESOLVABLE_FROM_MEETING findings: refine strictly what the meeting summary
+actually resolved, using the same mechanics as above, and leave every STILL_OPEN
+finding untouched.
 
 ### Step 2: Validation
 
@@ -424,8 +511,9 @@ Verify structural integrity of all changes made during refinement
 3. Verify MoSCoW tags are present on all requirements touched during refinement
 4. Verify Given/When/Then format on all acceptance criteria touched during refinement
 5. Check that no requirements were accidentally removed during editing (compare count with baseline from Step 1.1)
+6. IF --from-meeting is present in $ARGUMENTS: confirm every STILL_OPEN finding from Synthesis remains genuinely untouched in the saved output
 
-## Phase 4: Readiness Gate Re-Score
+## Phase 5: Readiness Gate Re-Score
 
 ### Step 1: Readiness Assessment
 
@@ -438,9 +526,11 @@ Re-score the PRD after refinement to measure improvement
 4. Compute overall score: average of all 4 dimensions
 5. If a previous score exists, print delta: 'Readiness score: X.X -> Y.Y (improved/declined)'
 6. If the score dropped compared to previous, warn the user and identify which dimensions declined
-7. Update the Readiness Score in the PRD frontmatter
+7. IF --from-meeting is present in $ARGUMENTS: note plainly if a meaningful STILL_OPEN count remains -- the score may legitimately stay below PASS until a live /ensemble-refine-prd closes those out, and that's expected, not a defect in this pass
+8. Update the Readiness Score in the PRD frontmatter
+9. IF --from-meeting is present in $ARGUMENTS, Status transition rule (explicit, matching create-prd --from-meeting): regardless of whether the re-score lands on PASS, CONCERNS, or FAIL, this mode never changes the PRD's Status field away from whatever it already was (typically Draft). A meeting-sourced refinement pass -- even one that reaches PASS -- doesn't itself graduate a PRD to a reviewed/approved state; that still requires a live human check. Only note the gate result and score, don't act on it by changing Status
 
-## Phase 5: Output Management
+## Phase 6: Output Management
 
 ### Step 1: PRD Update
 
@@ -451,19 +541,22 @@ Save the refined PRD with updated metadata and changelog
 2. Preserve the Document ID and Label frontmatter fields unchanged -- never regenerate or renumber them on refine (downstream artifacts correlate by the micro UUID id)
 3. Update the PRD Health summary: recalculate requirement counts by priority, AC coverage percentage, risk flag count, dependency count
 4. Add changelog entry at the bottom of the PRD: date, version, list of changes made during this refinement
-5. Save the updated PRD to the same file path (overwrite the original)
-6. Print summary: number of changes made, new version, updated readiness score and delta (if applicable)
+5. IF --from-meeting is present in $ARGUMENTS: the changelog entry also notes that this was a meeting-sourced pass and names the meeting if the input included a title/date
+6. Save the updated PRD to the same file path (overwrite the original)
+7. Print summary: number of changes made, new version, updated readiness score and delta (if applicable)
+8. IF --from-meeting is present in $ARGUMENTS: the summary also states the RESOLVABLE_FROM_MEETING count applied and the STILL_OPEN count remaining -- so the user knows a live /ensemble-refine-prd pass is still needed for the remainder if that count is nonzero
 
 ### Step 2: PRD Lock
 
-Close the refinement with an explicit lock decision, then hand off to create-trd
+Close the refinement with an explicit lock decision, then hand off to create-trd. Skipped entirely under --from-meeting (see the first action).
 
 **Actions:**
-1. This step ALWAYS runs, and it is the last thing this command does. The run does not end on a printed summary.
-2. Present the close-out through ask, not prose. Put the readiness score, its delta, and a ONE-LINE verdict in the question body, together with any genuine open question the refinement could not settle from the PRD or the constitution. Keep it to a few lines: the person answering this has not read the PRD and is not going to.
-3. Option 1, and the recommendation: LOCK the PRD. Set frontmatter `status: Locked`, save, and print the next step as '/ensemble-create-trd <prd path>'. Cost: none. Risk: a locked PRD that changes later forces the TRD to be re-created rather than refined, so lock when the requirements are settled.
-4. Option 2: another refine pass. Cost: one more run. Risk: none beyond time. Offer this when the readiness score fell, or when open questions remain unanswered.
-5. Option 3: leave the PRD unlocked and stop here. Cost: none now. Risk: create-trd will warn that the PRD was never locked, and nothing downstream can tell a settled PRD from a draft.
-6. Do NOT print '/ensemble-create-trd' anywhere before this question is answered, and print it only on the LOCK branch. An unlocked PRD has no business producing a TRD.
-7. Ask genuine open questions ONLY. A finding -- anything the PRD, the TRD or the constitution already contains a rule for -- is not a question: it was fixed during Synthesis. If nothing is genuinely open, say so in one line and offer the lock; never manufacture a question to fill the slot.
-8. If --foreman is set, skip the question, lock the PRD, and log the decision.
+1. IF --from-meeting is present in $ARGUMENTS: SKIP this entire step. A meeting-sourced pass never locks the PRD and never changes its Status (see the Status transition rule in Readiness Assessment): ask no close-out question, set no `status: Locked`, and print no create-trd next step. The run ends on the PRD Update summary.
+2. This step ALWAYS runs, and it is the last thing this command does. The run does not end on a printed summary. (Every mode except --from-meeting: see the first action.)
+3. Present the close-out through ask, not prose. Put the readiness score, its delta, and a ONE-LINE verdict in the question body, together with any genuine open question the refinement could not settle from the PRD or the constitution. Keep it to a few lines: the person answering this has not read the PRD and is not going to.
+4. Option 1, and the recommendation: LOCK the PRD. Set frontmatter `status: Locked`, save, and print the next step as '/ensemble-create-trd <prd path>'. Cost: none. Risk: a locked PRD that changes later forces the TRD to be re-created rather than refined, so lock when the requirements are settled.
+5. Option 2: another refine pass. Cost: one more run. Risk: none beyond time. Offer this when the readiness score fell, or when open questions remain unanswered.
+6. Option 3: leave the PRD unlocked and stop here. Cost: none now. Risk: create-trd will warn that the PRD was never locked, and nothing downstream can tell a settled PRD from a draft.
+7. Do NOT print '/ensemble-create-trd' anywhere before this question is answered, and print it only on the LOCK branch. An unlocked PRD has no business producing a TRD.
+8. Ask genuine open questions ONLY. A finding -- anything the PRD, the TRD or the constitution already contains a rule for -- is not a question: it was fixed during Synthesis. If nothing is genuinely open, say so in one line and offer the lock; never manufacture a question to fill the slot.
+9. If --foreman is set, skip the question, lock the PRD, and log the decision.

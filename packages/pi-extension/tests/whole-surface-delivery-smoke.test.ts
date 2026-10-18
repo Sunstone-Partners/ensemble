@@ -161,9 +161,11 @@ describe("Whole-surface delivery smoke (TRD-012 / TRD-012-TEST)", () => {
     it("ensemble-prd/ensemble-trd retain their specialist dispatch tables unchanged (not folded into either lifecycle command)", () => {
       const prdYaml = loadYaml("packages/product/commands/prd.yaml");
       const trdYaml = loadYaml("packages/development/commands/trd.yaml");
-      expect(dispatchKeywords(prdYaml).map((s) => s.keyword)).toEqual(
-        expect.arrayContaining(["create", "create-meeting", "refine", "refine-meeting"]),
-      );
+      const prdKeywords = dispatchKeywords(prdYaml).map((s) => s.keyword);
+      expect(prdKeywords).toEqual(expect.arrayContaining(["create", "refine"]));
+      // The meeting-sourced variants are `--from-meeting` flags on create-prd/refine-prd, not dispatcher keywords.
+      expect(prdKeywords).not.toContain("create-meeting");
+      expect(prdKeywords).not.toContain("refine-meeting");
       expect(dispatchKeywords(trdYaml).map((s) => s.keyword)).toEqual(
         expect.arrayContaining(["create", "refine", "implement", "analyze"]),
       );

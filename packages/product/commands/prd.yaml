@@ -1,34 +1,30 @@
 metadata:
   name: ensemble:prd
   description: Dispatch to a PRD-authoring or PRD-refinement subcommand by keyword
-  version: 1.0.0
-  lastUpdated: "2026-10-05"
+  version: 1.1.0
+  lastUpdated: "2026-10-17"
   category: planning
   output_path: ensemble/prd.md
   source: sunstone
-  argument_hint: "<create|create-meeting|refine|refine-meeting> [subcommand args...]"
+  argument_hint: "<create|refine> [subcommand args...]"
 
 mission:
   summary: |
-    Thin routing layer over the existing create-prd / create-prd-meeting / refine-prd /
-    refine-prd-meeting commands. Reads and follows the matching sibling command's own
-    generated file for this runtime, passing the rest of $ARGUMENTS unchanged, and does
-    not re-implement any of their phases.
+    Thin routing layer over the existing create-prd / refine-prd commands. Reads and
+    follows the matching sibling command's own generated file for this runtime, passing
+    the rest of $ARGUMENTS unchanged, and does not re-implement any of their phases.
+    Meeting-sourced drafting and refinement are the --from-meeting flag on those two
+    commands, not separate keywords: `create --from-meeting <summary>` and
+    `refine <prd-path> --from-meeting <summary>`.
 
 dispatch:
   subcommands:
     - keyword: create
       ref: create-prd
-      description: Create a new PRD through a live structured interview
-    - keyword: create-meeting
-      ref: create-prd-meeting
-      description: Create a PRD from a meeting summary instead of a live interview
+      description: Create a new PRD through a live structured interview, or from a meeting summary with --from-meeting
     - keyword: refine
       ref: refine-prd
-      description: Refine an existing PRD with stakeholder feedback
-    - keyword: refine-meeting
-      ref: refine-prd-meeting
-      description: Refine an existing PRD using a meeting summary as the feedback source
+      description: Refine an existing PRD with stakeholder feedback, or with a meeting summary as the feedback source via --from-meeting
 
 workflow:
   phases:

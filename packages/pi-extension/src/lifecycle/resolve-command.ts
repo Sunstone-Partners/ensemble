@@ -38,15 +38,11 @@
 export const DISPATCHER_TARGETS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "ensemble-prd": {
     create: "create-prd",
-    "create-meeting": "create-prd-meeting",
     refine: "refine-prd",
-    "refine-meeting": "refine-prd-meeting",
   },
   "ensemble-trd": {
     create: "create-trd",
-    foreman: "create-trd-foreman",
     refine: "refine-trd",
-    workstream: "create-workstream-trd",
     implement: "implement-trd-beads",
     analyze: "analyze-requirements",
     complexity: "analyze-complexity",

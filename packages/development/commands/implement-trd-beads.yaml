@@ -1,13 +1,13 @@
 metadata:
   name: ensemble:implement-trd-beads
   description: Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via br/bv, and cross-session resumability
-  version: 2.22.0
-  lastUpdated: "2026-09-19"
+  version: 2.23.0
+  lastUpdated: "2026-10-17"
   category: implementation
   output_path: ensemble/implement-trd-beads.md
   source: sunstone
   model: medium
-  argument_hint: "[trd-path] [--plan] [--execute] [--branch=<name>] [--use-current-branch] [--status] [--reset-task TRD-XXX] [--list] [max parallel N] [--foreman]"
+  argument_hint: "[trd-path] [--plan] [--execute] [--branch=<name>] [--use-current-branch] [--status] [--reset-task TRD-XXX] [--list] [max parallel N] [--foreman] [<trd-path> <trd-path>... --workstream [--generate-only [--out <path>] [--allow-invalid]]]"
   allowed_tools:
     - Read
     - Write
@@ -40,6 +40,31 @@ parameters:
       artifact. Never invent, alter, or relocate the path. Never treat an
       unset FOREMAN_ARTIFACT_PATH as an error — outside Foreman dispatch
       it is simply absent, and behavior must be unchanged.
+  - name: workstream
+    type: boolean
+    default: false
+    description: |
+      With two or more TRD paths, generate one normalized executable workstream TRD from the source TRDs
+      (node "$TRD_CLI" create-workstream-trd) and then implement that single generated TRD with the normal
+      single-TRD behavior. Without --workstream or --legacy-multi, passing two or more TRD paths HALTs.
+      Add --generate-only to stop after generating the workstream TRD. (Separately, with --status in
+      --legacy-multi combined mode, --workstream <slug> selects one workstream's status report.)
+  - name: generate-only
+    type: boolean
+    default: false
+    description: |
+      Only valid with --workstream and two or more TRD paths (this folds in the former standalone
+      /ensemble:create-workstream-trd command). Generate the workstream TRD, print its path, workstream slug,
+      source TRD count and the next step (/ensemble:implement-trd-beads <generated-path>), then EXIT before any
+      br, git, branch, scaffold, commit or PR side effect -- nothing is implemented. Accepts --out <path> to
+      choose the output file (default docs/TRD/workstreams/TRD-YYYY-<micro_uuid>-workstream-<slug>.md) and
+      --allow-invalid to write the workstream file even when source TRD validation fails (without it every
+      validation error is printed and no file is written). Cannot be combined with --plan, --execute, --status,
+      --reset-task, --list, --branch or --use-current-branch. Source TRDs remain canonical: the generated
+      workstream TRD is an execution artifact that preserves source PRD/TRD/REQ/AC provenance and source task
+      markdown verbatim, and decomposes every referenced PRD acceptance criterion into AC-level implementation,
+      executable-test and validation tasks with Definition of Done evidence requirements. Generated files use
+      micro UUID document IDs (TRD-YYYY-<8hex>-workstream-<slug>.md), never sequence numbers.
 # ============================================================
 # COMMENT FORMAT SPEC
 # ============================================================
@@ -139,6 +164,7 @@ mission:
     - Quickstart generation: beads-backed quickstart.md generation is unsupported in v1. No standalone command currently generates this artifact for a beads-backed run.
     - --foreman forces non-interactive mode without changing safety HALT behavior (branch-intent-required, PR-backend-unresolved, and completion-verification-failed still HALT unchanged).
     - When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories as needed) IN ADDITION TO any repo-local report this command already writes -- Foreman computes that path and reads it back to confirm the phase produced an artifact. Never invent, alter, or relocate the path, and never treat an unset FOREMAN_ARTIFACT_PATH as an error (outside Foreman dispatch it is simply absent and behavior is unchanged).
+    - --workstream (with two or more TRD paths) generates one normalized executable workstream TRD from the source TRDs and implements it; --workstream --generate-only stops after generating it (the former /ensemble:create-workstream-trd command) -- no beads, branches, commits or PRs are created and nothing is implemented
 
 executionContract:
   description: |
@@ -200,11 +226,12 @@ executionContract:
     description: |
       Direct multi-TRD execution is deprecated because it can lose fidelity
       across parser/runtime merge boundaries. The supported path is to create
-      a workstream TRD first and execute that instead.
+      a workstream TRD first (--workstream; add --generate-only to generate without implementing) and execute that instead.
     rules:
       - "If $ARGUMENTS contains more than one .md path: print 'Multiple TRDs passed directly' error and HALT before any br/git/scaffold side effect."
-      - "Error message must point the user at /ensemble:create-workstream-trd <trd1> <trd2> ... to generate the workstream TRD, then re-run /ensemble:implement-trd-beads <generated-workstream-trd>."
-      - "The exception path is --legacy-multi (or --workstream): both are accepted, but --legacy-multi is DEPRECATED: direct multi-TRD mode. Prefer --workstream (which generates a workstream TRD via create-workstream-trd) over --legacy-multi."
+      - "Error message must point the user at /ensemble:implement-trd-beads --workstream --generate-only <trd1> <trd2> ... to generate the workstream TRD, then re-run /ensemble:implement-trd-beads <generated-workstream-trd>, or at /ensemble:implement-trd-beads --workstream <trd1> <trd2> ... to generate and implement in one step."
+      - "The exception path is --legacy-multi (or --workstream): both are accepted, but --legacy-multi is DEPRECATED: direct multi-TRD mode. Prefer --workstream (which generates a workstream TRD via node \"$TRD_CLI\" create-workstream-trd) over --legacy-multi."
+      - "--workstream --generate-only runs the same generation as --workstream, then reports and EXITs in Preflight step 2 before any br, git, branch, scaffold, commit or PR side effect (the former standalone /ensemble:create-workstream-trd command)."
   blockedCheck:
     title: Execution Blocked-Check Logic
     description: |
@@ -300,10 +327,14 @@ workflow:
 
         - order: 2
           title: Handle Special Arguments
-          description: Process --status and --reset-task arguments for early exit paths
+          description: Process --status, --reset-task and --workstream --generate-only arguments for early exit paths
           actions:
             - "If $ARGUMENTS contains '--plan' AND $ARGUMENTS contains '--execute': print 'ERROR: --plan and --execute are mutually exclusive.' and EXIT"
-            - "Parse $ARGUMENTS for .md paths. Initialize COMBINED_WORKSTREAM_MODE=false before branching. If two or more TRD paths are present without '--workstream' or '--legacy-multi': print 'ERROR: Multiple TRDs passed directly. Direct multi-TRD execution is deprecated because it can lose fidelity across parser/runtime merge boundaries. Run /ensemble:create-workstream-trd <trd1> <trd2> ... then /ensemble:implement-trd-beads <generated-workstream-trd>, or rerun with --workstream to generate first.' and HALT before any br/git/scaffold side effects. If two or more TRD paths are present with '--workstream': resolve TRD_CLI and run node \"$TRD_CLI\" create-workstream-trd <TRD_PATHS...>; parse {ok,path}. If ok is false or JSON malformed, print errors and HALT. Replace TRD path list with the generated single workstream TRD path and continue normal single-TRD behavior. If two or more TRD paths are present with '--legacy-multi': set COMBINED_WORKSTREAM_MODE=true, set SOURCE_TRD_PATHS to the ordered path list, print 'DEPRECATED: direct multi-TRD mode; prefer /ensemble:create-workstream-trd then implement the generated workstream TRD', and list every source TRD. If exactly one TRD path is present: keep COMBINED_WORKSTREAM_MODE=false and preserve existing single-TRD behavior exactly. If zero TRD paths are present: keep COMBINED_WORKSTREAM_MODE=false and defer to normal single-TRD selection in Preflight step 4."
+            - "If $ARGUMENTS contains '--generate-only' AND contains any of '--plan', '--execute', '--status', '--reset-task', '--list', '--branch=<name>', '--use-current-branch': print 'ERROR: --generate-only only generates the workstream TRD and cannot be combined with --plan, --execute, --status, --reset-task, --list, --branch or --use-current-branch.' and HALT before any br/git/scaffold side effect"
+            - "Parse $ARGUMENTS for .md paths (excluding the value that follows --out). Initialize COMBINED_WORKSTREAM_MODE=false before branching. If two or more TRD paths are present without '--workstream' or '--legacy-multi': print 'ERROR: Multiple TRDs passed directly. Direct multi-TRD execution is deprecated because it can lose fidelity across parser/runtime merge boundaries. Run /ensemble:implement-trd-beads --workstream --generate-only <trd1> <trd2> ... then /ensemble:implement-trd-beads <generated-workstream-trd>, or rerun with --workstream to generate and implement in one step.' and HALT before any br/git/scaffold side effects. If two or more TRD paths are present with '--workstream': resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js (if it cannot be resolved or `which node` fails, print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required to generate the workstream TRD.' and HALT) and run node \"$TRD_CLI\" create-workstream-trd <TRD_PATHS...> (only when '--generate-only' is present, also pass --out <path> if provided and --allow-invalid if provided); parse {ok,path,workstreamSlug,sourceTrds,errors}. If ok is false, the process exits non-zero, or JSON is malformed, print every error and HALT (when validation fails no workstream file is written unless --allow-invalid was passed in --generate-only mode). If '--generate-only' is present, do not continue: the WORKSTREAM GENERATE-ONLY MODE actions below take over. Otherwise replace TRD path list with the generated single workstream TRD path and continue normal single-TRD behavior. If two or more TRD paths are present with '--legacy-multi': set COMBINED_WORKSTREAM_MODE=true, set SOURCE_TRD_PATHS to the ordered path list, print 'DEPRECATED: direct multi-TRD mode; prefer /ensemble:implement-trd-beads --workstream', and list every source TRD. If exactly one TRD path is present: keep COMBINED_WORKSTREAM_MODE=false and preserve existing single-TRD behavior exactly. If zero TRD paths are present: keep COMBINED_WORKSTREAM_MODE=false and defer to normal single-TRD selection in Preflight step 4."
+            - "WORKSTREAM GENERATE-ONLY MODE (the former standalone /ensemble:create-workstream-trd command). If $ARGUMENTS contains '--generate-only' and the '--workstream' generation above did not run (fewer than two TRD paths, '--workstream' absent, or '--legacy-multi' used instead): print 'ERROR: --generate-only requires --workstream and two or more TRD paths.' and HALT before any br/git/scaffold side effect."
+            - "If $ARGUMENTS contains '--generate-only' and the '--workstream' generation ran: the generated file MUST contain a Source TRD Manifest, normalized Master Task List, source provenance, verbatim source task markdown payloads, AC-level implementation tasks, AC-level executable test tasks, AC validation tasks, and Definition of Done evidence requirements. Default output path format is docs/TRD/workstreams/TRD-YYYY-<micro_uuid>-workstream-<slug>.md (or the --out path when supplied)."
+            - "If $ARGUMENTS contains '--generate-only' and the '--workstream' generation ran: print the generated path, the workstream slug, the source TRD count, and the next step: /ensemble:implement-trd-beads <generated-path>. Do not start implementation automatically -- EXIT here without running any later Preflight step. Do not implement any TRD work and do not create beads, branches, commits, or PRs in this mode."
             - "If $ARGUMENTS contains '--plan': set PLAN_ONLY=true (scaffold phase runs, Execute phase is skipped — print wheel instructions and exit after scaffold completes)"
             - "If $ARGUMENTS contains '--execute': set EXECUTE_ONLY=true (scaffold phase is skipped — resume detection runs, Execute phase runs against existing beads)"
             - "If $ARGUMENTS contains '--use-current-branch': set USE_CURRENT_BRANCH_REQUESTED=true; if $ARGUMENTS also contains '--branch=<name>': print 'ERROR: --use-current-branch and --branch=<name> are mutually exclusive.' and HALT before any git side effects. If flag absent: set USE_CURRENT_BRANCH_REQUESTED=false. If $ARGUMENTS contains '--branch=<name>': extract the branch name after '=' and store it as BRANCH_REQUESTED; if --use-current-branch is also present this is already caught and HALTed above."
@@ -898,3 +929,6 @@ expectedOutput:
 
     - name: Requirement Satisfaction Report
       description: Table of PRD REQ-NNN requirements with SATISFIED/NOT VERIFIED status, test task references, and proven AC sub-IDs (generated from root epic req-verified comments)
+
+    - name: Workstream TRD (--workstream --generate-only)
+      description: Generated executable workstream TRD under docs/TRD/workstreams/ (or the --out path) with a Source TRD Manifest, normalized Master Task List, source provenance and AC-level implementation, test and validation tasks; no beads, branches, commits or PRs are created

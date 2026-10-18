@@ -12,10 +12,9 @@ All ensemble commands use the `/ensemble:` namespace:
 /ensemble:reqnroll             # PRD acceptance tests front door: features | feature-drift | bindings | binding-drift | tdd
 /ensemble:assess               # Assessment front door: repo | team | config | report (repo --only <dimension>)
 /ensemble:reinstall-plugins    # Force-refresh installed plugins (stopgap for version-gated updates)
-/ensemble:create-prd           # Create Product Requirements Document
-/ensemble:create-trd           # Create Technical Requirements Document
-/ensemble:create-trd-foreman   # Create Foreman-native structured Technical Requirements Document
-/ensemble:implement-trd-beads  # Implement TRD via Beads-backed graph execution (sole supported method)
+/ensemble:create-prd           # Create Product Requirements Document (--from-meeting: draft from a meeting summary)
+/ensemble:create-trd           # Create Technical Requirements Document (--parser-tables: Foreman-native structured TRD with parser-compatible tables)
+/ensemble:implement-trd-beads  # Implement TRD via Beads-backed graph execution (sole supported method; --workstream [--generate-only]: combine several TRDs into one workstream TRD)
 /ensemble:fix-issue            # Lightweight bug fix workflow (analysis → PR)
 /ensemble:release              # Orchestrate release workflow
 /ensemble:sessionlog           # Save structured session transcript
