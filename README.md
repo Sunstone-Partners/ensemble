@@ -1,48 +1,522 @@
 # Ensemble Plugins
 
-Modular plugin ecosystem for Claude Code, enabling flexible, pay-what-you-need AI-augmented development workflows.
+Modular plugin ecosystem for AI coding agents (Claude Code first, plus Pi/Oh My Pi, OpenCode and Codex CLI). Ensemble packages a spec-driven workflow (PRD, TRD, Beads task graph, implementation, PR) together with framework skills, specialist agents and repository assessments. Install only the packages you need, or the full bundle.
 
 ![The Spec-Driven Factory: Ensemble Plugin Ecosystem](docs/images/ensemble-architecture.png)
 
-## Model Tier Selection
+Current release: **7.0.0** (`ensemble-full`, `ensemble-development`). Each package is versioned independently; see [Packages](#packages).
 
-Command sources declare an abstract tier (`high`/`medium`/`low`) in their YAML
-`metadata.model`. At generation time these map to Claude Code's portable model
-aliases, which resolve per-provider at runtime (Anthropic API, Bedrock, Vertex)
-and auto-forward as new model versions ship:
+## Contents
 
-| Tier | Claude Code alias | Typical Use |
+- [Quick start](#quick-start)
+- [Installation](#installation)
+- [Packages](#packages)
+- [Commands](#commands)
+- [The PRD to TRD to Beads to implementation workflow](#the-prd-to-trd-to-beads-to-implementation-workflow)
+- [Assessment](#assessment)
+- [Stack detection](#stack-detection)
+- [Skills](#skills)
+- [Agents](#agents)
+- [Runtimes](#runtimes)
+- [Upgrading to 7.0.0](#upgrading-to-700)
+- [Configuration and model tiers](#configuration-and-model-tiers)
+- [Development](#development)
+- [Versioning](#versioning)
+- [Documentation and links](#documentation-and-links)
+
+## Quick start
+
+In Claude Code:
+
+```text
+/plugin marketplace add Sunstone-Partners/ensemble
+/plugin install ensemble-full@ensemble
+```
+
+Then, in a project:
+
+```text
+/ensemble:create-prd "short product description"
+/ensemble:create-trd <prd-path>
+/ensemble:implement-trd-beads <trd-path> --plan
+/ensemble:implement-trd-beads <trd-path> --execute
+```
+
+`/ensemble:feature new <idea>` runs the same idea-to-PR flow as one resumable, checkpointed run. For a read-only look at a repository, run `/ensemble:assess repo`.
+
+The full workflow needs the `br` (beads_rust) and `bv` (beads_viewer) CLIs on `PATH`. Walkthroughs live in the [user guide](docs/guides/user-guide.md).
+
+## Installation
+
+### Claude Code (marketplace)
+
+Plugins are installed with Claude Code's `/plugin` command. The marketplace is `ensemble`.
+
+```text
+# Add the Ensemble marketplace
+/plugin marketplace add Sunstone-Partners/ensemble
+
+# Everything (all plugins bundled)
+/plugin install ensemble-full@ensemble
+```
+
+Or use the interactive UI: `/plugin`, **Discover** tab, select a plugin, choose a scope.
+
+### Per-package plugins
+
+Install only what you need. Package names are the `name` fields in [marketplace.json](marketplace.json):
+
+```text
+# Foundation and workflow
+/plugin install ensemble-core@ensemble
+/plugin install ensemble-product@ensemble
+/plugin install ensemble-development@ensemble
+/plugin install ensemble-quality@ensemble
+/plugin install ensemble-infrastructure@ensemble
+/plugin install ensemble-git@ensemble
+/plugin install ensemble-e2e-testing@ensemble
+/plugin install ensemble-metrics@ensemble
+/plugin install ensemble-assessment@ensemble
+
+# Framework skills
+/plugin install ensemble-react@ensemble
+/plugin install ensemble-nestjs@ensemble
+/plugin install ensemble-dotnet@ensemble
+
+# Test frameworks
+/plugin install ensemble-jest@ensemble
+/plugin install ensemble-pytest@ensemble
+```
+
+`ensemble-infrastructure` and `ensemble-quality` declare a dependency on `ensemble-core` (their agents call the `detect-stack` skill), and Claude Code installs it automatically from the same marketplace. Pi and Codex have no dependency mechanism, so install `ensemble-core` alongside those packages yourself.
+
+### Installation scopes
+
+- **User** (default): available across all your projects.
+- **Project**: shared with collaborators via `.claude/settings.json`.
+- **Local**: personal, per-repository, not shared.
+
+### Pi / Oh My Pi
+
+```bash
+pi install @sunstone-partners/ensemble-pi
+
+# Assessments are a separate Pi package (not bundled into ensemble-pi)
+pi install @sunstone-partners/ensemble-assessment
+```
+
+Pi commands are invoked as `/ensemble-<command>` (Oh My Pi: `/skill:ensemble-<command>`). From a checkout use `pi install ./packages/pi`. See [packages/pi/README.md](packages/pi/README.md).
+
+### Codex CLI (maintenance only)
+
+Codex support only has to keep generating without errors; no new Codex-specific features are planned.
+
+```bash
+npm install -D @sunstone-partners/ensemble-codex
+npx ensemble-codex-install . --force
+```
+
+From a checkout: `npm run generate:codex` then `npm run install:codex -- /path/to/project`. See [packages/codex/README.md](packages/codex/README.md).
+
+### OpenCode
+
+See [OpenCode support](#opencode-support).
+
+### From a local checkout
+
+```bash
+git clone https://github.com/Sunstone-Partners/ensemble.git
+claude --plugin-dir ./ensemble/packages/core
+```
+
+## Packages
+
+Versions below are taken from each package's `package.json`.
+
+| Package | Version | Contents |
+|---------|---------|----------|
+| `ensemble-full` | 7.0.0 | Meta-package that bundles all plugins |
+| `ensemble-core` | 6.0.0 | `detect-stack` skill, `/ensemble:standards`, `fold-prompt`, `sessionlog`, `reinstall-plugins`, orchestration agents, XDG config |
+| `ensemble-product` | 6.0.0 | PRD commands (`create-prd`, `refine-prd`, `prd`, `reqnroll`, `analyze-product`) and the product-management orchestrator |
+| `ensemble-development` | 7.0.0 | TRD, Beads, feature and issue workflows; language skills; development agents |
+| `ensemble-quality` | 6.0.0 | `pr-review-remediation` skill; code-reviewer, deep-debugger, qa-orchestrator, test-runner agents |
+| `ensemble-infrastructure` | 6.0.0 | Cloud, Kubernetes, Helm, Fly.io, Railway, Supabase, Vercel, Jira and Linear skills; infrastructure agents |
+| `ensemble-git` | 6.0.0 | `/ensemble:pr-merge`, `/ensemble:release`; `git-town`, `changelog-generator`, `act-local-ci` skills; git agents |
+| `ensemble-e2e-testing` | 6.0.0 | `/ensemble:author-playwright-tests`; `smoke-test-runner`, `writing-playwright-tests` skills; `playwright-tester` agent |
+| `ensemble-metrics` | 6.0.0 | `/ensemble:manager-dashboard`; `manager-dashboard-agent` |
+| `ensemble-assessment` | 1.1.0 | `/ensemble:assess` and the 22 assessment and report skills; installable on its own on Pi |
+| `ensemble-react` | 6.0.0 | `react` skill |
+| `ensemble-nestjs` | 5.1.1 | `nestjs` skill |
+| `ensemble-rails` | 5.1.1 | `rails` skill |
+| `ensemble-phoenix` | 5.1.1 | `phoenix` skill |
+| `ensemble-blazor` | 6.0.0 | `blazor` skill |
+| `ensemble-dotnet` | 1.1.0 | `dotnet` skill; `dotnet-backend-expert` agent |
+| `ensemble-ai` | 6.0.0 | `anthropic`, `openai`, `perplexity`, `weaviate`, `langgraph` skills |
+| `ensemble-jest` | 5.1.1 | `jest` skill |
+| `ensemble-pytest` | 5.1.1 | `pytest` skill |
+| `ensemble-rspec` | 5.2.0 | `rspec` skill |
+| `ensemble-xunit` | 5.2.0 | `xunit` skill |
+| `ensemble-exunit` | 5.1.1 | `exunit` skill |
+| `ensemble-reqnroll` | 1.0.2 | `reqnroll` skill; `reqnroll-binding-specialist` agent |
+| `ensemble-router` | 5.2.3 | UserPromptSubmit routing hook for agent delegation and skill invocation |
+| `ensemble-permitter` | 5.2.1 | Permission-expansion hook with allowlist (opt out with `ENSEMBLE_PERMITTER_DISABLE=1`) |
+| `ensemble-multiplexer-adapters` | 5.2.2 | Terminal multiplexer adapters (WezTerm, Zellij, tmux) |
+| `ensemble-opencode` | 5.3.1 | OpenCode runtime translation layer |
+| `ensemble-pi` | 1.6.16 | Pi runtime translation layer (own version line) |
+| `ensemble-codex` | 6.0.0 | Codex CLI runtime translation layer |
+| `ensemble-agent-core` | 0.1.2 | Shared run-index I/O primitives for the `new-feature` and `fix-issue` workflows (library) |
+| `ensemble-pi-extension` | 0.1.2 | Pi extension providing native command completion for the dispatcher commands (no marketplace entry; installed from a checkout) |
+
+`ensemble-agent-core`, `ensemble-pi-extension`, `ensemble-multiplexer-adapters` and the runtime layers are support packages; day-to-day use needs only the workflow and skill packages.
+
+## Commands
+
+Commands are invoked as `/ensemble:<name>` in Claude Code. The tree contains 43 command definitions (`packages/*/commands/*.yaml`); **35 are typable** and 8 are hidden behind a dispatcher or the wave runner (see [Hidden commands](#hidden-commands)).
+
+### Product and requirements
+
+| Command | Arguments | Package | Purpose |
+|---------|-----------|---------|---------|
+| `/ensemble:prd` | `create`, `refine` plus subcommand args | product | Dispatcher for PRD authoring |
+| `/ensemble:create-prd` | `[product-description] [--foreman]` or `--from-meeting <meeting-summary-or-path>` | product | Create a PRD with structured elicitation and adversarial review; `--from-meeting` builds it from a meeting summary |
+| `/ensemble:refine-prd` | `<prd-path> [--from-meeting <summary-or-path> \| --foreman \| --collab [--tunnel=quick] [--reviewers N] [--no-open] \| --long-lived [--ttl <duration>]]` | product | Refine an existing PRD, or from a meeting summary |
+| `/ensemble:analyze-product` | none | product | Analyze a brownfield project and produce an improvement roadmap |
+| `/ensemble:reqnroll` | `features`, `feature-drift`, `bindings`, `binding-drift`, `tdd` plus subcommand args | product | Dispatcher for PRD-to-Reqnroll acceptance-test work |
+
+### TRD and pre-implementation checks
+
+| Command | Arguments | Package | Purpose |
+|---------|-----------|---------|---------|
+| `/ensemble:trd` | `create`, `refine`, `implement`, `analyze`, `complexity`, `validate`, `verify`, `status`, `graph` plus subcommand args | development | Dispatcher for TRD authoring, analysis and implementation |
+| `/ensemble:create-trd` | `[prd-path] [--team] [--foundational] [--list] [--foreman] [--parser-tables]` | development | Create a TRD from a PRD; `--parser-tables` emits Foreman sprint/story tables |
+| `/ensemble:refine-trd` | none | development | Refine an existing TRD |
+| `/ensemble:analyze-complexity` | `[work-description] [--bead <id>] [--route <simple, medium, complex>] [--no-adaptive-planning] [--foreman]` | development | Score work complexity and choose a planning route |
+| `/ensemble:analyze-requirements` | `[prd-path] [trd-path]` | development | Cross-artifact consistency sweep (PRD, TRD, beads) before coding |
+| `/ensemble:validate-requirements` | `[prd-path] [trd-path]` | development | Traceability gate: REQ-NNN coverage and TEST task pairing |
+| `/ensemble:verify-requirements` | `--trd <trd-path> [--prd <prd-path>] [--mode <auto, beads, checkbox, both>] [--report-path <path>] [--no-write-report] [--run-tests]` | development | Post-implementation REQ to AC to code traceability verifier |
+| `/ensemble:requirement-status` | `[trd-path-or-slug]` | development | On-demand requirement satisfaction report from bead comments |
+| `/ensemble:trd-dependency-graph` | `[trd-dir\|paths...] [--format <json, mermaid, dot>] [--overlap]` | development | Dependency graph across TRDs and likely-duplicate work report |
+| `/ensemble:configure-team` | `[trd-path] [--team] [--no-team]` | development | Derive team roles, agent assignments and plugins from TRD complexity |
+
+### Beads planning and implementation
+
+| Command | Arguments | Package | Purpose |
+|---------|-----------|---------|---------|
+| `/ensemble:implement-trd-beads` | `[trd-path] [--plan] [--execute] [--branch=<name>] [--use-current-branch] [--status] [--reset-task TRD-XXX] [--list] [max parallel N] [--foreman]`, or `<trd-path> <trd-path>... --workstream [--generate-only [--out <path>] [--allow-invalid]]` | development | TRD implementation on a persistent bead hierarchy |
+| `/ensemble:beads-plan` | `[epic-id\|slug-pattern] [max parallel N]` | development | Analyze an existing hierarchy and print `bv` analysis; no implementation |
+| `/ensemble:beads-build` | `[epic-id\|slug-pattern] [--trd trd-path] [--strategy <name>] [--label <label>] [max parallel N]` | development | Drive an existing hierarchy to completion through builder, review and close |
+| `/ensemble:refine-beads` | `[epic-id\|release-train-id\|slug] [--scope project]` | development | Approval-gated Beads graph refinement before execution |
+| `/ensemble:implement-bead` | `<bead-id>` | development | Implement one bead through analysis, implementation and PR |
+| `/ensemble:list-issue` | `[--ranked \| --robot-triage]` | development | List open Beads issues for triage |
+
+`--strategy` accepts `tdd`, `characterization`, `bug-fix`, `refactor`, `test-after` or `flexible`.
+
+### Feature and issue lifecycle
+
+| Command | Arguments | Package | Purpose |
+|---------|-----------|---------|---------|
+| `/ensemble:feature` | `new`, `resume`, `status`, `abandon` plus args | development | Dispatcher for the resumable idea-to-PR workflow |
+| `/ensemble:new-feature` | none | development | The checkpointed workflow `feature` forwards to (idea, PRD, TRD, beads, implementation, optional PR) |
+| `/ensemble:issue` | `fix`, `list`, `resume`, `status`, `abandon` plus args | development | Dispatcher for issue work |
+| `/ensemble:fix-issue` | none | development | Lightweight bug-fix workflow |
+| `/ensemble:generate-api-docs` | none | development | Generate OpenAPI/Swagger documentation from the codebase |
+
+### Git, testing and delivery
+
+| Command | Arguments | Package | Purpose |
+|---------|-----------|---------|---------|
+| `/ensemble:pr-merge` | `[pr-number-or-url] [--max-rounds=N] [--dry-run]` | git | Drive an open PR to green and merged, one subagent per failing check or review thread |
+| `/ensemble:release` | none | git | Release workflow via `git-workflow`, `github-specialist` and `deployment-orchestrator` |
+| `/ensemble:author-playwright-tests` | `[story-or-pr-reference]` | e2e-testing | Interactive Playwright test authoring grounded in shipped code and PRD acceptance criteria |
+
+### Assessment, standards and utilities
+
+| Command | Arguments | Package | Purpose |
+|---------|-----------|---------|---------|
+| `/ensemble:assess` | `repo`, `team`, `config`, `report`; `repo --only <dimension>` | assessment | Dispatcher for assessments; see [Assessment](#assessment) |
+| `/ensemble:standards` | `discover`, `inject`, `fold` plus subcommand args | core | Dispatcher for coding-standards work |
+| `/ensemble:fold-prompt` | none | core | Optimize `CLAUDE.md` for token efficiency and progressive context loading |
+| `/ensemble:sessionlog` | none | core | Save a structured session transcript to SessionLogs |
+| `/ensemble:reinstall-plugins` | `[--all \| <filter>]` | core | Force-refresh installed plugins (uninstall and reinstall) |
+| `/ensemble:manager-dashboard` | none | metrics | Productivity metrics and team analytics dashboard |
+
+### Hidden commands
+
+Eight commands are marked `metadata.visibility: hidden` in their YAML. They cannot be typed under their own name; their dispatcher (or the wave runner) loads them.
+
+| Hidden command | Reached through |
+|----------------|-----------------|
+| `generate-feature-tests` | `/ensemble:reqnroll features` |
+| `check-feature-drift` | `/ensemble:reqnroll feature-drift` |
+| `generate-reqnroll-bindings` | `/ensemble:reqnroll bindings` |
+| `check-binding-drift` | `/ensemble:reqnroll binding-drift` |
+| `reqnroll-tdd` | `/ensemble:reqnroll tdd` |
+| `discover-standards` | `/ensemble:standards discover` |
+| `inject-standards` | `/ensemble:standards inject` |
+| `beads-build-wave` | Dispatched internally by `/ensemble:beads-build` (one scheduling wave per invocation) |
+
+`fold-prompt` stays typable because the `directory-monitor` agent invokes it by name.
+
+### Collaborative refinement review
+
+`/ensemble:refine-prd` and `/ensemble:refine-trd` accept `--collab`, which replaces the terminal interview with a browser-based HTML review: each question renders in a sidebar with anchor-linked comments, and the session writes a `.response.json` artifact that the enhancement phase reads.
+
+```bash
+# Local-only review
+/ensemble:refine-prd --collab docs/PRD/PRD-2026-019.md
+
+# Remote review over a Cloudflare Quick Tunnel (no account, DNS or token)
+/ensemble:refine-prd --collab --tunnel=quick docs/PRD/PRD-2026-019.md
+```
+
+`--tunnel=quick` requires the [`cloudflared`](https://github.com/cloudflare/cloudflared) binary on `PATH` (or `CLOUDFLARED_PATH` set to its absolute path). Completed sessions can be re-opened by re-running with `--collab` against the same path; to start over, delete the session file under `~/.config/ensemble/logs/refinement-review/`. Details: [docs/guides/refinement-review-collab.md](docs/guides/refinement-review-collab.md).
+
+## The PRD to TRD to Beads to implementation workflow
+
+```text
+create-prd  ->  create-trd  ->  (validate/analyze)  ->  implement-trd-beads  ->  PR
+ PRD             TRD with REQ/AC      gates              bead hierarchy,        pr-merge
+                 and task list                           builder + review
+```
+
+1. **PRD**: `/ensemble:create-prd` elicits requirements and runs an adversarial review and the Constitution Gate. Refine with `/ensemble:refine-prd`.
+2. **TRD**: `/ensemble:create-trd <prd-path>` designs architecture and a Master Task List with test tasks and acceptance criteria. Refine with `/ensemble:refine-trd`.
+3. **Gates** (optional): `/ensemble:validate-requirements` and `/ensemble:analyze-requirements` check REQ coverage, TEST pairing and PRD/TRD/beads alignment before coding.
+4. **Beads**: `/ensemble:implement-trd-beads <trd-path> --plan` scaffolds an epic, stories and tasks with `br`, validated with `bv --robot-*`. `--execute` runs the dependency-aware build loop.
+5. **Verify**: `/ensemble:verify-requirements --trd <trd-path>` and `/ensemble:requirement-status` report traceability.
+6. **Land**: `/ensemble:pr-merge` drives the PR to green.
+
+`/ensemble:feature` wraps the whole chain in one checkpointed, resumable run (`new`, `resume`, `status`, `abandon`).
+
+### Branch selection
+
+`--branch=<name>` and `--use-current-branch` are mutually exclusive. `--branch=<name>` switches to an existing branch; `--use-current-branch` works on the checked-out branch. With neither flag, the command auto-detects a local branch matching the TRD slug, then reads saved branch intent from the TRD frontmatter (`ensemble_implement_trd_beads: {branch_name, use_proposed, stacked_prs}`), then falls back to the pr-plan proposed branch. Priority: explicit flags, auto-detect, saved frontmatter, pr-plan.
+
+### Multi-TRD workstreams
+
+Passing two or more TRD paths directly now halts with an error. Generate one normalized workstream TRD instead:
+
+```bash
+# Generate only (no beads, branches, commits or PRs), then implement the result
+/ensemble:implement-trd-beads --workstream --generate-only docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md
+/ensemble:implement-trd-beads docs/TRD/workstreams/<generated-file>.md --plan --use-current-branch
+
+# Or generate and implement in one step
+/ensemble:implement-trd-beads docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md --workstream
+```
+
+`--generate-only` requires `--workstream` and cannot be combined with `--plan`, `--execute`, `--status`, `--reset-task`, `--list`, `--branch` or `--use-current-branch`. `--out <path>` and `--allow-invalid` (write the workstream file even when source TRD validation fails) are only used together with `--generate-only`. The default output path is `docs/TRD/workstreams/TRD-YYYY-<micro_uuid>-workstream-<slug>.md`. More in [packages/development/README.md](packages/development/README.md).
+
+### Foreman table mode
+
+`/ensemble:create-trd <prd-path> --parser-tables` produces a Foreman-native TRD with parser-compatible sprint/story tables and no adversarial review. It is not the same as `--foreman`, which keeps the standard checkbox TRD and only makes the run non-interactive with Foreman artifact contracts; the two flags combine.
+
+### Reqnroll acceptance tests
+
+For .NET projects, `/ensemble:reqnroll` turns PRD acceptance criteria into Gherkin features, step bindings and a test-first loop, with drift checks (`features`, `feature-drift`, `bindings`, `binding-drift`, `tdd`). `implement-trd-beads` also routes `-TEST` tasks through the Reqnroll path and delegates step bodies to `reqnroll-binding-specialist`.
+
+## Assessment
+
+`ensemble-assessment` provides `/ensemble:assess`, a single dispatcher over the assessment skills:
+
+| Invocation | Runs |
+|------------|------|
+| `/ensemble:assess repo [args]` | Full parallel repository assessment (`assess-repo`) |
+| `/ensemble:assess repo --only <dimension>` | One repository dimension through its leaf skill |
+| `/ensemble:assess team [args]` | Team assessment (`assess-team`) |
+| `/ensemble:assess config` | Portfolio-local assessment configuration (`assess-config`) |
+| `/ensemble:assess report` | End-to-end report suite (`assessment-report-suite`) |
+
+`assess-repo` and `assess-team` are thin dispatchers over their leaf skills, which stay individually invocable:
+
+| Group | Skills |
+|-------|--------|
+| Repository dimensions | `assess-ai-readiness`, `assess-architect`, `assess-cicd`, `assess-code-quality`, `assess-purpose`, `assess-security`, `assess-testing` |
+| Team dimensions | `assess-team-ai-adoption`, `assess-team-code-quality`, `assess-team-code-review`, `assess-team-commit-messages`, `assess-team-commit-volume`, `assess-team-documentation`, `assess-team-incidents`, `assess-team-test-coverage` |
+| Reports and audits | `ai-readiness-diagnostic-report`, `architecture-overview-report`, `assessment-report-suite`, `assessment-scoring-conflation-audit` |
+| Setup | `assess-config` |
+
+## Stack detection
+
+The four former detector skills are one skill, `detect-stack`, in `ensemble-core`. It uses weighted multi-signal confidence scoring and one CLI:
+
+```bash
+node packages/core/skills/detect-stack/detect-stack.js <path> --axis=framework|test|tooling|cloud|all
+```
+
+Other options: `--framework=<name>`, `--provider=<name>`, `--tools=<comma-separated list>` and `--min-confidence=<0-1>`. The output is one JSON envelope with `axis`, `detected`, `primary`, `confidence`, `threshold`, `results` and `all_results`; exit codes are `0` detected, `1` nothing detected, `2` error. Agents in `ensemble-infrastructure` and `ensemble-quality` call it, which is why those packages depend on `ensemble-core`.
+
+## Skills
+
+Skill directories use the bare technology name. The tree has 69 source skill directories (`packages/*/skills/<name>/`, plus the single-skill framework packages).
+
+| Package | Skills |
+|---------|--------|
+| core | `detect-stack` |
+| development | `typescript`, `python`, `php`, `laravel`, `flutter`, `tailwind`, `prisma`, `celery`, `complete-beads`, `completion-verification`, `pr-review-cycle`, `staleness-gate`, `tool-path-resolution` |
+| infrastructure | `aws`, `kubernetes`, `helm`, `flyio`, `railway`, `supabase`, `vercel`, `jira`, `linear` |
+| git | `git-town`, `changelog-generator`, `act-local-ci` |
+| quality | `pr-review-remediation` |
+| e2e-testing | `smoke-test-runner`, `writing-playwright-tests` |
+| ai | `anthropic`, `openai`, `perplexity`, `weaviate`, `langgraph` |
+| assessment | `ensemble-assess` and the 22 assessment skills listed under [Assessment](#assessment) |
+| Frameworks | `react` (ensemble-react), `nestjs`, `rails`, `phoenix`, `blazor`, `dotnet` (ensemble-dotnet) |
+| Testing | `jest`, `pytest`, `rspec`, `xunit`, `exunit`, `reqnroll` |
+
+`smoke-test-runner` covers the API, auth, critical-path, database and external-service smoke categories in one skill.
+
+## Agents
+
+35 agent definitions across the packages:
+
+| Package | Agents |
+|---------|--------|
+| core | `agent-meta-engineer`, `context-fetcher`, `directory-monitor`, `ensemble-orchestrator`, `file-creator`, `general-purpose` |
+| development | `advisor`, `api-documentation-specialist`, `architect`, `backend-developer`, `beads-build-wave`, `beads-scaffold-specialist`, `documentation-specialist`, `frontend-developer`, `mobile-developer`, `pm`, `tech-lead-orchestrator` |
+| dotnet | `dotnet-backend-expert` |
+| e2e-testing | `playwright-tester` |
+| git | `git-workflow`, `github-specialist` |
+| infrastructure | `build-orchestrator`, `deployment-orchestrator`, `helm-chart-specialist`, `infrastructure-developer`, `infrastructure-orchestrator`, `infrastructure-specialist`, `postgresql-specialist` |
+| metrics | `manager-dashboard-agent` |
+| product | `product-management-orchestrator` |
+| quality | `code-reviewer`, `deep-debugger`, `qa-orchestrator`, `test-runner` |
+| reqnroll | `reqnroll-binding-specialist` |
+
+## Runtimes
+
+| Aspect | Claude Code | Pi / Oh My Pi | Codex CLI |
+|--------|-------------|---------------|-----------|
+| Package | Plugins from the `ensemble` marketplace | `@sunstone-partners/ensemble-pi` (+ `ensemble-assessment`) | `@sunstone-partners/ensemble-codex` |
+| Command syntax | `/ensemble:<name>` | `/ensemble-<name>`; Oh My Pi `/skill:ensemble-<name>` | Command skills `.codex/skills/commands/ensemble-*/SKILL.md` |
+| Hidden commands | Generated with `user-invocable: false`: absent from the slash menu, still invocable by the model through the dispatcher | Written to `prompts/_hidden/` with no wrapper skill; `pi.prompts` is `./prompts/*.md` (non-recursive), so Pi does not register them | Wrapper skill is generated with `user-invocable: false` (not verified on a live Codex) |
+| Dependencies | Installed automatically from the marketplace | None; install `ensemble-core` yourself | None; install `ensemble-core` yourself |
+| Status | Primary | Supported; `ensemble-pi` is on its own version line (1.6.16) | Maintenance only |
+
+Pi generation prunes stale output only when a file carries the generator's own marker, so hand-authored files survive.
+
+### OpenCode support
+
+`ensemble-opencode` translates Ensemble agents, commands and skills to OpenCode formats.
+
+```bash
+# Generate all OpenCode artifacts to dist/opencode/
+npm run generate:opencode
+
+# Preview without writing files, or validate against the OpenCode schema
+npm run generate:opencode -- --dry-run
+npm run generate:opencode -- --validate
+
+# Custom output directory
+npm run generate:opencode -- --output-dir ./my-output
+```
+
+Add the plugin in `opencode.json`:
+
+```jsonc
+{
+  "plugin": ["ensemble-opencode"]
+}
+```
+
+For local development use `"plugin": ["file:///absolute/path/to/packages/opencode"]`. Local `file://` installs load command definitions from the source YAML when `dist/opencode/opencode.json` has not been generated. Commands resolve under both namespaced and plain names (`/ensemble:create-prd` and `/create-prd`). Output layout:
+
+```text
+dist/opencode/
+  .opencode/
+    agents/            # Agent markdown files
+    commands/ensemble/ # Translated command files
+    skill/             # Skill files
+  opencode.json        # OpenCode configuration manifest
+```
+
+## Upgrading to 7.0.0
+
+7.0.0 is a MAJOR release because skills, commands and agents were renamed or removed. Full detail: [CHANGELOG.md](CHANGELOG.md).
+
+### Skill renames
+
+Anything that loads a skill by name must use the new name.
+
+| Old | New |
+|-----|-----|
+| `developing-with-typescript`, `developing-with-python`, `developing-with-php`, `developing-with-laravel`, `developing-with-flutter` | `typescript`, `python`, `php`, `laravel`, `flutter` |
+| `styling-with-tailwind` | `tailwind` |
+| `managing-jira-issues`, `managing-linear-issues` | `jira`, `linear` |
+| `managing-railway`, `managing-vercel`, `managing-supabase` | `railway`, `vercel`, `supabase` |
+| `aws-cloud` | `aws` |
+| `using-prisma`, `using-celery`, `using-weaviate` | `prisma`, `celery`, `weaviate` |
+| `using-anthropic-platform`, `using-openai-platform`, `using-perplexity-platform` | `anthropic`, `openai`, `perplexity` |
+| `building-langgraph-agents` | `langgraph` |
+| `dotnet-framework` (ensemble-blazor) | `dotnet` (ensemble-dotnet) |
+| `developing-with-react` | folded into `react` (also now in `ensemble-full`) |
+| `smoke-test-api`, `smoke-test-auth`, `smoke-test-critical-paths`, `smoke-test-database`, `smoke-test-external-services` | `smoke-test-runner` |
+| `framework-detector`, `test-detector`, `tooling-detector`, `cloud-provider-detector` | `detect-stack` with `--axis=framework`, `test`, `tooling` or `cloud` (`--tool x` is now `--tools=x`) |
+
+### Commands
+
+| Old | New |
+|-----|-----|
+| `/ensemble:create-prd-meeting` | `/ensemble:create-prd --from-meeting` |
+| `/ensemble:refine-prd-meeting` | `/ensemble:refine-prd --from-meeting` |
+| `/ensemble:create-trd-foreman` | `/ensemble:create-trd --parser-tables` |
+| `/ensemble:create-workstream-trd` | `/ensemble:implement-trd-beads <trd> <trd> --workstream --generate-only` |
+| `/ensemble:generate-feature-tests`, `check-feature-drift`, `generate-reqnroll-bindings`, `check-binding-drift`, `reqnroll-tdd` | `/ensemble:reqnroll features`, `feature-drift`, `bindings`, `binding-drift`, `tdd` |
+| `/ensemble:discover-standards`, `inject-standards` | `/ensemble:standards discover`, `inject` |
+| `assess-repo` / `assess-team` / `assess-config` / report skills invoked directly | `/ensemble:assess repo`, `team`, `config`, `report` (leaf skills remain invocable) |
+| `/ensemble:claude-changelog` (removed) | Use the `changelog-generator` skill |
+| `/ensemble:sprint-status`, `/ensemble:web-metrics-dashboard` (removed) | None; `/ensemble:manager-dashboard` remains |
+| `/ensemble:playwright-test` (removed) | `/ensemble:author-playwright-tests` or the `playwright-tester` agent |
+
+The `trd` dispatcher no longer has `foreman` or `workstream` keywords, and the `prd` dispatcher no longer has `create-meeting` or `refine-meeting`; the flags above go on `create`, `refine` and `implement`. Typable commands went from 44 to 35.
+
+### Removed agents
+
+- `release-agent`: duplicate of `/ensemble:release`, which delegates to `git-workflow`, `github-specialist` and `deployment-orchestrator`.
+- `test-reader-agent`: fixture agent.
+
+### Behavior changes
+
+- `create-prd --from-meeting` now runs the Constitution Gate like every other `create-prd` run. A repo with no constitution file halts with `CONSTITUTION_CONFIG_ERROR`, where the old variant did not. It is mutually exclusive with `--foreman` (and with `--collab` and `--long-lived` on refine). Meeting-sourced drafts carry the standard frontmatter label.
+- Lifecycle hooks keyed on the old names (`ensemble:create-prd-meeting`, `ensemble:refine-prd-meeting`, `ensemble:create-trd-foreman`) must be re-keyed on `ensemble:create-prd`, `ensemble:refine-prd` and `ensemble:create-trd`. See [docs/guides/command-lifecycle-hooks.md](docs/guides/command-lifecycle-hooks.md).
+- `create-trd --parser-tables`: the former "skip to Output Management" path now routes through the Constitution Gate.
+- `ensemble-blazor` library API: `loadSkill`, `getTemplate` and `getExample` no longer take a `skillName` argument, and `skill.skills` is now `['blazor']`, because `dotnet-framework` moved to `ensemble-dotnet`. This affects only external consumers of `lib/index.js`.
+- `rspec` and `xunit` skills are now full skills with working helper scripts (`generate-test.rb` and `run-test.rb` for RSpec; `generate-test.cs` and `run-test.sh` for xUnit), located directly in the skill directory. The generated placeholder test is no longer a passing test (`skip` for RSpec, `Assert.Fail` for xUnit), so a scaffold cannot be mistaken for coverage. `xunit/generate-test.cs` needs the .NET 10 SDK (`dotnet run generate-test.cs`).
+- `ensemble-assessment` is Pi-installable on its own and is no longer bundled into `ensemble-pi`; install both if you want both.
+- `ensemble-infrastructure` and `ensemble-quality` now declare `ensemble-core` as a dependency (Claude Code installs it; Pi and Codex do not).
+- Direct multi-TRD invocation of `implement-trd-beads` is rejected; use `--workstream`.
+- Package versions moved to new majors for packages whose surface changed: `ensemble-ai`, `ensemble-blazor`, `ensemble-codex`, `ensemble-core`, `ensemble-e2e-testing`, `ensemble-git`, `ensemble-infrastructure`, `ensemble-metrics`, `ensemble-product`, `ensemble-quality`, `ensemble-react` are 6.0.0; `ensemble-development` and `ensemble-full` are 7.0.0. Dependency ranges (`^6.0.0`, `^7.0.0` for development) were updated accordingly.
+
+After upgrading, refresh installed plugins with `/ensemble:reinstall-plugins`.
+
+## Configuration and model tiers
+
+Command sources declare an abstract tier (`high`, `medium`, `low`) in YAML `metadata.model`. At generation time these map to Claude Code's portable model aliases, which resolve per provider (Anthropic API, Bedrock, Vertex) at runtime, so there is no per-project model config to maintain:
+
+| Tier | Claude Code alias | Typical use |
 |------|-------------------|-------------|
 | `high` | `opus` | Strategic reasoning, architecture, security review |
 | `medium` | `sonnet` | Implementation, documentation, testing |
 | `low` | `haiku` | Lightweight retrieval, file watching |
 
-Because commands ship portable aliases instead of pinned model IDs, there is no
-per-project model config to maintain — the same commands work on every backend.
+Ensemble uses XDG-compliant configuration paths, chosen in this order:
 
-## Overview
+1. `$XDG_CONFIG_HOME/ensemble/` if `XDG_CONFIG_HOME` is set
+2. `~/.config/ensemble/` if `~/.config` exists
+3. `~/.ensemble/` as the fallback
 
-Ensemble Plugins v5.0.0 provides a modular plugin system for Claude Code, allowing developers to install only the capabilities they need—from core orchestration to framework-specific skills.
+Config, logs, cache and session data live under that directory. To migrate legacy ai-mesh directories:
 
-## Framework Comparison & Selection
+```bash
+node scripts/migrate-config.js --dry-run   # preview
+node scripts/migrate-config.js             # migrate
+node scripts/migrate-config.js --force     # overwrite existing files
+```
 
-Comparing Ensemble to other AI-driven development frameworks? See our comprehensive analysis:
+Environment variables are documented in [docs/guides/environment-variables.md](docs/guides/environment-variables.md).
 
-- **[Ensemble vs. Spec-Kit](docs/comparison-other-frameworks.md)** — Quick reference table and detailed analysis of orchestration models, requirement traceability, task persistence, constitutional governance, runtime compatibility, and decision framework for choosing between the two.
+### Ensemble and Foreman boundary
 
-- **[Ensemble vs. BMAD vs. Spec-Kit](docs/comparison-bmad.md)** — Three-way analysis covering scale-adaptive planning, agent specialization, documentation-first approaches, persistent task state, and migration paths between all three frameworks.
-
-**TL;DR:** Choose Ensemble for persistent cross-session task state and deep requirement traceability; choose BMAD for scale-adaptive planning and lightweight core; choose Spec-Kit for 30+ runtime support and hard-enforced constitutional governance.
-
----
-
-## Ensemble/Foreman Ownership Boundary
-
-Ensemble is the portable behavior-definition, packaging, validation, and local
-agent-harness project. It describes, validates, packages, simulates, and
-locally runs behavior — it does not activate, govern, schedule, execute,
-recover, or audit production behavior. That is Foreman's job, in a separate
-repository:
+Ensemble is the portable behavior-definition, packaging, validation and local agent-harness project. It describes, validates, packages, simulates and locally runs behavior; it does not activate, govern, schedule, execute, recover or audit production behavior. That is Foreman's job, in a separate repository.
 
 ```text
 Ensemble = describe, validate, package, simulate, and locally run behavior
@@ -50,336 +524,43 @@ Foreman  = activate, govern, schedule, execute, recover, and audit production be
 Pi/OMP   = provide the agent loop and invocation substrate
 ```
 
-Ensemble explicitly does **not** own: durable production event ingestion,
-durable activation decisions, deduplication leases or cooldown state,
-production retries/recovery/execution scheduling, durable causal history,
-approval enforcement for production mutations, or a second dispatcher
-competing with Foreman.
-
-This repository also contains an existing Elixir activation runner
-(`packages/core`). **That runner is not a Pi/OMP adapter** and must not be
-treated as the local agent-harness integration point; the Pi/OMP-facing
-integration is implemented as a TypeScript Pi extension
-(`packages/pi-extension`).
-
-
-
-## Architecture
-
-The plugin ecosystem is organized into 4 tiers; see the [wiki Architecture page](https://github.com/Sunstone-Partners/ensemble/wiki/02-Architecture) for the complete, current package count and dependency graph. Representative packages per tier:
-
-### Tier 1: Core Foundation
-- **ensemble-core** (5.0.0) - Essential orchestration, agents, and utilities
-
-### Tier 2: Workflow Plugins
-- **ensemble-product** - Product management (PRD creation, analysis)
-- **ensemble-development** - Frontend/backend implementation agents
-- **ensemble-quality** - Code review, testing, DoD enforcement
-- **ensemble-infrastructure** - AWS, Kubernetes, Docker, Helm, Fly.io automation
-- **ensemble-git** - Git workflow and conventional commits
-- **ensemble-e2e-testing** - Playwright integration for E2E testing
-- **ensemble-metrics** - Productivity analytics and dashboard
-
-### Tier 3: Framework Skills
-- **ensemble-react** - React component development
-- **ensemble-nestjs** - NestJS backend patterns
-- **ensemble-rails** - Ruby on Rails MVC
-- **ensemble-phoenix** - Phoenix LiveView patterns
-- **ensemble-blazor** - Blazor .NET components
-- **ensemble-dotnet** - Broader .NET / ASP.NET Core skills
-
-### Tier 4: Testing Framework Integration
-- **ensemble-jest** - Jest testing patterns
-- **ensemble-pytest** - Pytest testing patterns
-- **ensemble-rspec** - RSpec testing patterns
-- **ensemble-xunit** - xUnit testing patterns
-- **ensemble-exunit** - ExUnit testing patterns
-- **ensemble-reqnroll** - Reqnroll BDD step definitions
-
-### Utilities
-- **ensemble-permitter** - Permission-expansion hook with allowlist (opt-out via `ENSEMBLE_PERMITTER_DISABLE=1`)
-- **ensemble-multiplexer-adapters** - Terminal multiplexer abstraction layer
-- **ensemble-ai** - AI SDK skills for OpenAI, Anthropic, Perplexity, and Weaviate
-- **ensemble-assessment** - Repository, team, and AI-readiness assessment and diagnostic reporting
-
-### Runtime Translation
-- **ensemble-opencode** (5.3.0) - OpenCode runtime support (translates Ensemble artifacts to OpenCode-compatible formats)
-
-### Meta-Package
-- **ensemble-full** - Complete ecosystem (all plugins bundled)
-
-## Installation
-
-Plugins are installed using Claude Code's interactive `/plugin` command.
-
-### Quick Start (Full Ecosystem)
-
-In Claude Code, run:
-
-```
-# Add the Ensemble marketplace
-/plugin marketplace add Sunstone-Partners/ensemble
-
-# Install the full bundle (all plugins)
-/plugin install ensemble-full@ensemble
-```
-
-Or use the interactive UI: type `/plugin` → **Discover** tab → select **ensemble-full** → choose your scope.
-
-### Modular Installation
-
-Install only what you need from the marketplace:
-
-```
-# Core foundation (required)
-/plugin install ensemble-core@ensemble
-
-# Workflow plugins
-/plugin install ensemble-product@ensemble
-/plugin install ensemble-development@ensemble
-/plugin install ensemble-quality@ensemble
-/plugin install ensemble-infrastructure@ensemble
-/plugin install ensemble-git@ensemble
-/plugin install ensemble-e2e-testing@ensemble
-
-# Framework skills (optional)
-/plugin install ensemble-react@ensemble
-/plugin install ensemble-nestjs@ensemble
-
-# Testing support (optional)
-/plugin install ensemble-jest@ensemble
-/plugin install ensemble-pytest@ensemble
-```
-
-### Local Installation (Development)
-
-For local development or testing, use the `--plugin-dir` flag:
-
-```bash
-# Clone the repository
-git clone https://github.com/Sunstone-Partners/ensemble.git
-
-# Run Claude Code with a local plugin
-claude --plugin-dir ./ensemble/packages/core
-```
-
-### Installation Scopes
-
-When installing plugins, you can choose a scope:
-
-- **User** (default) — available across all your projects
-- **Project** — shared with collaborators via `.claude/settings.json`
-- **Local** — personal, per-repository (not shared)
-
-## Usage
-
-After installation, plugins automatically register their agents, commands, and skills with Claude Code.
-
-### Available Commands
-
-Ensemble ships 48 slash-commands across six packages; this is a representative sample — see the [wiki Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) for the full list.
-
-- `/ensemble:feature` - Canonical front door for the feature lifecycle: `new`/`resume`/`status`/`abandon` (ensemble-development)
-- `/ensemble:issue` - Canonical front door for issue work: `fix`/`list`/`resume`/`status`/`abandon` (ensemble-development)
-- `/ensemble:prd` - Canonical front door for PRD authoring: `create`/`create-meeting`/`refine`/`refine-meeting` (ensemble-product)
-- `/ensemble:trd` - Canonical front door for TRD authoring, analysis, and implementation (ensemble-development)
-- `/ensemble:implement-trd-beads` - Beads-backed TRD implementation; accepts multiple TRD paths for combined workstream mode with a release train bead, one TRD epic per source TRD, cross-TRD dependency edges, and `bv --robot-*` validation (ensemble-development)
-- `/ensemble:refine-beads` - Approval-gated Beads graph refinement before execution; detects hierarchy/dependency/traceability/PR-boundary gaps, proposes `br` repairs, and validates with `bv --robot-*` (ensemble-development)
-- `/ensemble:fold-prompt` - Project optimization (ensemble-core)
-- `/ensemble:manager-dashboard` - Metrics dashboard (ensemble-metrics)
-
-### Collaborative Refinement Review
-
-The `ensemble:refine-prd` and `ensemble:refine-trd` commands accept a
-`--collab` flag that replaces the terminal AskUserQuestion interview
-with a browser-based HTML review. Each refinement question renders in
-a sidebar with anchor-linked comments; reviewers can answer the
-question, select an option from a 2–5 item menu, and leave per-line
-comments against the PRD/TRD document. The session produces an
-artifact (`.response.json`) that the Enhancement phase reads directly.
-
-```bash
-# Local-only review (reviewer on same machine)
-/ensemble:refine-prd --collab docs/PRD/PRD-2026-019.md
-
-# Remote review over Cloudflare Quick Tunnel — no account, no DNS, no token
-/ensemble:refine-prd --collab --tunnel=quick docs/PRD/PRD-2026-019.md
-```
-
-`--tunnel=quick` requires the [`cloudflared`](https://github.com/cloudflare/cloudflared)
-binary on `PATH` (or set `CLOUDFLARED_PATH` to its absolute path). It
-launches a `*.trycloudflare.com` QuickTunnel after the local server
-binds, re-mints the share-nonce against the tunnel origin, and tears
-down the tunnel on exit. The share URL has the shape
-`<origin>/api/exchange?nonce=<id>` — the bearer token never appears
-in the URL.
-
-The session is iterative: completed sessions can be re-launched with
-`--collab` against the same PRD path to revisit the prior answers,
-comments, and revision history. To start over, delete the session
-file under `~/.config/ensemble/logs/refinement-review/`.
-
-### Agent Mesh
-
-Plugins provide 28 specialized agents across domains:
-
-- **Orchestrators**: ai-mesh-orchestrator, tech-lead-orchestrator, product-management-orchestrator, qa-orchestrator, build-orchestrator, deployment-orchestrator, infrastructure-orchestrator
-- **Developers**: frontend-developer, backend-developer, infrastructure-developer
-- **Quality**: code-reviewer, test-runner, playwright-tester, deep-debugger
-- **Specialists**: documentation-specialist, api-documentation-specialist, postgresql-specialist, github-specialist, helm-chart-specialist
-- **Utilities**: git-workflow, file-creator, context-fetcher, directory-monitor, release-agent, agent-meta-engineer
-
-## OpenCode Support
-
-Ensemble plugins can be used with the [OpenCode](https://opencode.ai) runtime via the `ensemble-opencode` translation layer. This generates OpenCode-compatible agents, commands, skills, and configuration from the existing Ensemble YAML/JSON/Markdown artifacts.
-
-### Generating OpenCode Artifacts
-
-```bash
-# Generate all OpenCode artifacts to dist/opencode/
-npm run generate:opencode
-
-# Preview without writing files
-npm run generate:opencode -- --dry-run
-
-# Validate generated config against OpenCode schema
-npm run generate:opencode -- --validate
-
-# Custom output directory
-npm run generate:opencode -- --output-dir ./my-output
-```
-
-The generator produces:
-- **Skills**: Copies and validates SKILL.md files to `.opencode/skill/`
-- **Commands**: Translates YAML commands to OpenCode Markdown format in `.opencode/commands/ensemble/`
-- **Agents**: Converts 28 agent YAML definitions to OpenCode JSON config + Markdown agent files
-- **Hooks**: Bridges Ensemble PreToolUse/PostToolUse hooks to OpenCode's typed hook API via `@opencode-ai/plugin` SDK
-- **Manifest**: Generates `opencode.json` with agent, command, skill, plugin, and permission configuration
-
-### Installing in OpenCode
-
-```jsonc
-// In your opencode.json, add the plugin:
-{
-  "plugin": ["ensemble-opencode"]
-}
-```
-
-For local development:
-```jsonc
-{
-  "plugin": ["file:///absolute/path/to/packages/opencode"]
-}
-```
-
-Local `file://` installs load command definitions from the source YAML when
-`dist/opencode/opencode.json` has not been generated yet. Commands are exposed
-with both namespaced and plain aliases, so `/ensemble:create-prd` and
-`/create-prd` both resolve to the PRD workflow.
-
-### Output Structure
-
-```
-dist/opencode/
-├── .opencode/
-│   ├── agents/          # Agent markdown files
-│   ├── commands/
-│   │   └── ensemble/    # Translated command files
-│   └── skill/           # Framework skill files
-└── opencode.json        # OpenCode configuration manifest
-```
-
-## Plugin Dependencies
-
-Plugins declare dependencies to ensure compatibility:
-
-```
-ensemble-react
-  └─ ensemble-development
-      └─ ensemble-core
-```
-
-Claude Code automatically installs required dependencies when you install a plugin.
-
-## Multi-TRD Beads Workstreams
-
-`/ensemble:implement-trd-beads` can scaffold and execute related TRDs as one graph-aware workstream without merging the source documents.
-
-```bash
-# Plan/scaffold — branch intent resolved automatically from TRD slug or explicit flag
-# --use-current-branch: work on the current branch (no new branch created)
-/ensemble:implement-trd-beads docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md --plan --use-current-branch
-
-# Execute an existing scaffold
-/ensemble:implement-trd-beads docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md --execute --use-current-branch
-
-# Inspect combined status
-/ensemble:implement-trd-beads docs/TRD/TRD-2026-001-api.md docs/TRD/TRD-2026-002-ui.md --status
-```
-
-> **Note:** `--branch=<name>` and `--use-current-branch` are mutually exclusive. `--branch=<name>` requires the branch to already exist (switches to it with `git switch`); `--use-current-branch` works on the currently checked-out branch. When neither flag is provided, the workflow (1) auto-detects a matching local branch by TRD slug, (2) reads saved branch intent from the TRD's frontmatter (`ensemble_implement_trd_beads: {branch_name, use_proposed, stacked_prs}`) if auto-detect found no single match, then (3) falls back to pr-plan's proposed branch. Priority: explicit flags > auto-detect > saved frontmatter > pr-plan. If exactly one local branch matches the slug, it is reused automatically. If multiple local branches match, a warning is printed and the workflow falls through to saved-frontmatter or normal branch-intent handling. Saved choices are written back to the TRD frontmatter after confirmation, so subsequent runs reuse the same branch and PR topology without re-prompting. CLI flags always override all other sources.
-
-Behavior:
-
-- one TRD path keeps existing single-TRD behavior;
-- two or more TRD paths enable combined workstream mode;
-- all TRDs are validated before side effects;
-- Beads get one release train parent plus one root epic per TRD;
-- each TRD's PR/story/task hierarchy stays under its own epic;
-- cross-TRD dependencies use `<trd-slug>#TRD-NNN` or `<trd-slug>#PR-N`;
-- graph checks use `bv --robot-*` only and prompt before ambiguous/cyclic dependency changes.
-
-See `packages/development/README.md` for the user-facing command details.
+The Elixir activation runner in `packages/core` is not a Pi/OMP adapter; the Pi/OMP-facing integration is the TypeScript extension in `packages/pi-extension`.
 
 ## Development
 
-### Repository Structure
-
-```
+```text
 ensemble/
-├── packages/               # Individual plugins
-│   ├── core/              # Core plugin
-│   ├── product/           # Product plugin
-│   └── ...                # Additional plugins
-├── schemas/               # Validation schemas
-├── scripts/               # Build and validation scripts
-└── marketplace.json       # Plugin registry
+  packages/        # Individual plugins
+  schemas/         # Validation schemas
+  scripts/         # Build, generation and validation scripts
+  docs/            # Guides, plans, PRDs and TRDs
+  marketplace.json # Plugin registry
 ```
-
-### Building from Source
 
 ```bash
-# Clone repository
 git clone https://github.com/Sunstone-Partners/ensemble.git
 cd ensemble
-
-# Install dependencies
 npm install
-
-# Validate all plugins
-npm run validate
-
-# Run tests
-npm test
+npm run validate   # schemas, version sync, model-id lint
+npm test           # workspace tests
 ```
 
-### Creating a New Plugin
+Command and agent sources are YAML under `packages/<pkg>/commands/` and `packages/<pkg>/agents/`. After editing them run `npm run generate` (Markdown), and `npm run generate:pi`, `npm run generate:opencode` or `npm run generate:codex` for the runtime layers. Generated Markdown under `packages/<pkg>/commands/ensemble/` is not edited by hand. See [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for conventions.
 
-1. Create package structure:
+### Creating a new plugin
+
 ```bash
 mkdir -p packages/my-plugin/{.claude-plugin,agents,commands,skills,lib,tests}
 ```
 
-2. Create `packages/my-plugin/.claude-plugin/plugin.json`:
+Create `packages/my-plugin/.claude-plugin/plugin.json`:
+
 ```json
 {
   "name": "ensemble-my-plugin",
   "version": "1.0.0",
   "description": "My custom plugin",
-  "author": {
-    "name": "Your Name",
-    "email": "you@example.com"
-  },
+  "author": { "name": "Your Name", "email": "you@example.com" },
   "license": "MIT",
   "keywords": ["my-plugin", "ensemble"],
   "agents": "./agents",
@@ -388,141 +569,26 @@ mkdir -p packages/my-plugin/{.claude-plugin,agents,commands,skills,lib,tests}
 }
 ```
 
-3. Create `packages/my-plugin/package.json`
-4. Add agents, commands, and skills
-5. Validate: `npm run validate`
-6. Test: `npm test`
-
-## Migration from ensemble v3.x/v4.x
-
-If you're migrating from previous ensemble versions:
-
-1. **Identify current usage**: Review which agents/commands you actively use
-2. **Install equivalent plugins**: Map your usage to the new modular plugins
-3. **Update references**: Plugin names have changed (e.g., `infrastructure-management-subagent` → `ensemble-infrastructure`)
-4. **Test workflows**: Verify your development workflows still function
-
-### Migration Guide
-
-| v3.x/v4.x Component | v5.0 Plugin |
-|---------------------|-------------|
-| ensemble-orchestrator | ensemble-core |
-| product-management-orchestrator | ensemble-product |
-| frontend-developer | ensemble-development |
-| backend-developer | ensemble-development |
-| infrastructure-management-subagent | ensemble-infrastructure |
-| code-reviewer | ensemble-quality |
-| test-runner | ensemble-quality |
-| git-workflow | ensemble-git |
-| playwright-tester | ensemble-e2e-testing |
-| manager-dashboard-agent | ensemble-metrics |
-| ensemble-pane-viewer | ensemble-agent-progress-pane (now 5.1.0) |
-| task-progress-pane | ensemble-task-progress-pane (new) |
-
-## Configuration
-
-Ensemble uses XDG-compliant configuration paths:
-
-### Config Directory Location
-
-The config directory is determined in this order:
-1. `$XDG_CONFIG_HOME/ensemble/` (if XDG_CONFIG_HOME is set)
-2. `~/.config/ensemble/` (if ~/.config exists)
-3. `~/.ensemble/` (fallback)
-
-### Directory Structure
-
-```
-~/.config/ensemble/           # or ~/.ensemble/
-├── plugins/
-│   ├── task-progress-pane/   # Task progress plugin config
-│   └── agent-progress-pane/  # Agent progress pane plugin config
-├── logs/                     # Log files
-├── cache/                    # Cache data
-└── sessions/                 # Session data
-```
-
-### Migrating from ai-mesh
-
-If you have existing ai-mesh configuration directories, use the migration script:
-
-```bash
-# Preview what will be migrated
-node scripts/migrate-config.js --dry-run
-
-# Perform migration
-node scripts/migrate-config.js
-
-# Force overwrite existing files
-node scripts/migrate-config.js --force
-```
-
-The script migrates:
-- `~/.ai-mesh-task-progress/` → `~/.config/ensemble/plugins/task-progress-pane/`
-- `~/.ai-mesh-pane-viewer/` → `~/.config/ensemble/plugins/agent-progress-pane/`
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch
-3. Make changes in the relevant package(s)
-4. Add/update tests
-5. Run validation: `npm run validate`
-6. Run tests: `npm test`
-7. Submit a pull request
+Then add `packages/my-plugin/package.json`, the agents, commands and skills, register the plugin in `marketplace.json`, and run `npm run validate` and `npm test`.
 
 ## Versioning
 
-All plugins follow [Semantic Versioning](https://semver.org/):
+All plugins follow [Semantic Versioning](https://semver.org/) and every plugin is versioned independently. `claude plugin install` and `claude plugin update` gate on the plugin's own `.claude-plugin/plugin.json` version, so a package whose version does not move never re-syncs on a consuming machine; a per-package bump is what ships a change.
 
-- **Major**: Breaking changes (e.g., 4.x → 5.0)
-- **Minor**: New features, backward compatible (e.g., 5.0 → 5.1)
-- **Patch**: Bug fixes, backward compatible (e.g., 5.0.0 → 5.0.1)
+`npm run validate` enforces that each package agrees with itself: `packages/<name>/package.json`, `packages/<name>/.claude-plugin/plugin.json` and that package's `marketplace.json` entry carry the same version (`scripts/validate-version-sync.js`). The exception is the release set: root `package.json`, `packages/full/` and the `ensemble-full` marketplace entry must match each other before tagging.
 
-Every plugin is versioned independently. `claude plugin install` and
-`claude plugin update` gate on the plugin's own `.claude-plugin/plugin.json`
-version string, so a package whose version does not move never re-syncs on a
-consuming machine — which makes a per-package bump the mechanism that actually
-ships a change, and a repo-wide lockstep bump pure churn for every plugin that
-did not change.
+## Documentation and links
 
-What `npm run validate` enforces is that each package agrees with *itself*:
-`packages/<name>/package.json`, `packages/<name>/.claude-plugin/plugin.json`,
-and that package's `marketplace.json` entry must carry the same version
-(`scripts/validate-version-sync.js`). Drift there is invisible and breaks
-installs. The one exception is the release set — root `package.json`,
-`packages/full/`, and the `ensemble-full` marketplace entry — which must match
-each other before tagging.
-
-When you change a package, bump that package. Nothing requires two different
-packages to share a number.
+- [User guide](docs/guides/user-guide.md): task-oriented walkthroughs.
+- [Wiki](https://github.com/Sunstone-Partners/ensemble/wiki): architecture, command and skill references. The [Architecture page](https://github.com/Sunstone-Partners/ensemble/wiki/02-Architecture) has the package graph and the [Commands Reference](https://github.com/Sunstone-Partners/ensemble/wiki/07-Commands) the long-form command docs.
+- [CHANGELOG.md](CHANGELOG.md): release history and the full 7.0.0 notes.
+- [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md): contribution workflow and repository conventions.
+- [Ensemble vs. Spec-Kit](docs/comparison-other-frameworks.md) and [Ensemble vs. BMAD vs. Spec-Kit](docs/comparison-bmad.md): framework comparisons.
+- [Issues](https://github.com/Sunstone-Partners/ensemble/issues) and [Discussions](https://github.com/Sunstone-Partners/ensemble/discussions).
 
 ## License
 
-MIT - See [LICENSE](LICENSE) for details.
-
-## Support
-
-- **Documentation**: [https://github.com/Sunstone-Partners/ensemble](https://github.com/Sunstone-Partners/ensemble)
-- **Issues**: [GitHub Issues](https://github.com/Sunstone-Partners/ensemble/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Sunstone-Partners/ensemble/discussions)
-- **Email**: info@sunstonepartners.com
-
-## Acknowledgments
-
-Built on the foundation of previous ensemble versions, which achieved:
-- 35-40% productivity improvements
-- 87-99% performance optimization
-- 28 specialized agents (v5.0)
-- Production validation across multiple teams
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
+MIT. See [LICENSE](LICENSE).
 
 ---
 
