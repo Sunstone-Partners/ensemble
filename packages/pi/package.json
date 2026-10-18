@@ -55,7 +55,7 @@
     "pi": ">=1.0.0"
   },
   "dependencies": {
-    "@sunstone-partners/ensemble-core": "^5.4.0",
+    "@sunstone-partners/ensemble-core": "^6.0.0",
     "glob": "^10.0.0",
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0"

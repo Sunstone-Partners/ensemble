@@ -1,6 +1,6 @@
 {
   "name": "ensemble-e2e-testing",
-  "version": "5.4.1",
+  "version": "6.0.0",
   "description": "End-to-end testing with Playwright integration",
   "author": {
     "name": "Sunstone Partners",

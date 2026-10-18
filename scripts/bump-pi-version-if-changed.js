@@ -48,7 +48,14 @@ const CONTENT_PATHS = [
 ];
 
 function run(args) {
-  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim();
+  // The content diff against the merge-base can exceed execFileSync's default
+  // 1 MiB maxBuffer (it was 1.09 MB on the surface-consolidation branch), which
+  // made the whole auto-bump silently skip with a misleading message.
+  return execFileSync('git', args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+  }).trim();
 }
 
 function readJson(file) {
