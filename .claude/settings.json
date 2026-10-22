@@ -23,8 +23,5 @@
       }
     ]
   },
-  "enabledPlugins": {
-    "ensemble-e2e-testing@ensemble": true,
-    "ensemble-quality@ensemble": true
-  }
+  "enabledPlugins": {}
 }
