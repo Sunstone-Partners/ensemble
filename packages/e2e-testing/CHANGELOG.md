@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tool abstraction layer: `adapter-e2e-quality-playwright`, the default `e2e-quality` adapter. See `docs/guides/adapter-authoring.md`.
 - `/ensemble:author-playwright-tests` now captures an end-state screenshot for every authored test, on a pass and on a failure. Each test opens `await using var evidence = EvidenceCapture.For(page, acId);` (a framework-neutral C# helper the command adds to the E2E test project, `lib/evidence-capture.js`); a proposal without it, or a run that leaves no screenshot, is rejected by `delegation-contract.js`. Screenshots are written to `E2E_EVIDENCE_DIR` (default `<temp>/e2e-evidence`), never into the repo, and are attached to the synced ADO Test Case through a command you configure in `E2E_EVIDENCE_ATTACH_CMD` (the Azure DevOps MCP cannot upload files; with none configured the command reports the gap and keeps the files).
+- `spec-writer.js` can emit xUnit as well as NUnit. `lib/e2e-framework.js` detects the consuming E2E project's framework from its `PackageReference` names, and `/ensemble:author-playwright-tests` passes it to the authoring agent and to `spec-writer`: xUnit gets `[Fact]`/`[Trait("Category", "E2E")]`, a new xUnit class gets the project's own `[Collection]` fixture (copied from a sibling spec class), and appending to an existing file infers its framework and refuses a mismatch. NUnit output is unchanged, and it stays the default when the framework cannot be told.
 
 - Plugin extraction and population (in progress)
 

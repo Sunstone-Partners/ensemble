@@ -76,13 +76,9 @@ headed/headless prompt or the REQ loop below.
 ### Phase 2: Execution Setup
 
 **1. Ask Headed or Headless — Once Per Session**
-   REQ-013: before running the first test in the session, ask the QA
-engineer (in conversation — this session is interactive via Claude
-Code, so "asking" means posing the question directly, not a GUI
-dialog) whether they want to watch the browser run (headed) or let
-it run independently and report status back (headless). This is a
-single, one-time choice for the whole session, made once here
-before the first test run — do not re-ask per AC.
+   REQ-013: before the first test runs, ask the QA engineer directly
+in conversation whether to watch the browser (headed) or run
+independently (headless): one choice for the whole session.
 
 
 - Before running the first test this session, ask the QA engineer: "Would you like to watch these tests run (headed), or should I run them independently and report status back (headless)?"
@@ -124,6 +120,7 @@ session that halts there never prompts for it.
 
 - Call resolveEvidenceDir(process.env) from $E2E_LIB/evidence-capture.js; carry it forward as evidenceDir for every Run request
 - If the consuming E2E test project has no EvidenceCapture.cs, write renderEvidenceHelper({namespace}) from the same module into it and tell the QA engineer it lands in this PR — confirmed tests call it, so it must exist before the first Run
+- Call detectE2eFrameworkInDir(<that project's directory>) from $E2E_LIB/e2e-framework.js; carry the result forward as framework ("nunit" when it returns null)
 
 ### Phase 3: REQ Batching and Delegation
 
@@ -144,7 +141,7 @@ only grounds and authors; it never runs the test. Running
 happens in Phase 4, step 2, after the QA engineer confirms.
 
 
-- Build a request {acText, groundingDiff, acId} and validate it with validateProposalRequest(req) from $E2E_LIB/delegation-contract.js — acText is this AC's own text (not the whole REQ), groundingDiff is Phase 1's groundImplementation() result for its REQ, acId is this AC's id
+- Build a request {acText, groundingDiff, acId, framework} and validate it with validateProposalRequest(req) from $E2E_LIB/delegation-contract.js — acText is this AC's own text (not the whole REQ), groundingDiff is Phase 1's groundImplementation() result for its REQ, acId is this AC's id, framework is Phase 2 step 4's result (an xunit test builds its own page the way the project's sibling tests do)
 - Delegate the validated request to @playwright-tester (the ensemble-e2e-testing plugin's playwright-tester agent, resolved by name — not by file path), which grounds the AC and authors a test, plus a plainEnglishSummary of what it does — never running it at this stage. The test must open `await using var evidence = EvidenceCapture.For(page, acId);` right after its page exists (after any context it creates, so it disposes first)
 - Validate the response with validateProposalResponse(res, req) from delegation-contract.js — it always carries either {proposedTest, selectorsUsed, plainEnglishSummary} or an explicit authoringFailure, never neither; a test without its EvidenceCapture scope is rejected: re-delegate once with that error
 - If the response is an authoringFailure with no viable alternative: call markManual(acId, reason) from $E2E_LIB/manual-ac-tracker.js, log via logAction({type: "manual-ac-marked", acId, reason}), and move to the next AC — never proceed to Phase 4 with nothing to present
@@ -188,7 +185,7 @@ and apply its traceability tag — AC-006-2's existing-file append
 must be checked before scaffolding a redundant new one.
 
 
-- Determine whether an existing spec file in the consuming application's E2E test project already covers this AC's REQ (e.g. from Phase 1's resume-scan); call writeOrAppendSpecFile(filePath, specDetails) from $E2E_LIB/spec-writer.js — it scaffolds a new file when none exists, or appends a [Test] method to the existing one, never both
+- Determine whether an existing spec file in the consuming application's E2E test project already covers this AC's REQ (e.g. from Phase 1's resume-scan); call writeOrAppendSpecFile(filePath, specDetails) from $E2E_LIB/spec-writer.js with specDetails.framework — it scaffolds a new file when none exists, or appends a [Test] (nunit) or [Fact] (xunit) method to the existing one, never both. A new xunit file also needs {collection, fixtureType} copied from a sibling spec class; it refuses without them, and refuses to append the wrong framework to an existing file
 - Call tagTestMethod(fileContent, {acId, acText, reqId, documentId}) from $E2E_LIB/traceability-tagger.js to turn spec-writer.js's plain anchor comment into the full `@hash:`/doc-id/`@REQ` traceability tag
 - Log via logAction({type: "test-written", acId, testName, filePath, mode: "created"|"appended"}) from $E2E_LIB/session-logger.js
 
@@ -234,10 +231,8 @@ resilience, both apply here.
 
 **1. File One ADO Task Per Confirmed Gap**
    TRD-029 (satisfies REQ-010): fires as soon as Phase 1's gap review
-resolves "confirmed" for an AC — do not batch every gap to the
-end of the session; AC-010-2 requires one Task per gap, never
-bundled, and this module's own shape enforces that (no batching
-parameter exists).
+resolves "confirmed" for an AC, not batched to the end of the
+session; AC-010-2 requires one Task per gap.
 
 
 - For each AC whose Phase 1 resolveGapReview() call resolved to "gap-confirmed": call resolveImplementingAuthor(groundingResult.files) from $E2E_LIB/ac-gap-task-filer.js (never throws — an unresolved author still proceeds, unassigned)

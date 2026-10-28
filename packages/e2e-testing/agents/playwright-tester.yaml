@@ -58,7 +58,7 @@ responsibilities:
       also produce plainEnglishSummary — a short, human-readable description of what the authored test actually
       does and which part of the AC it exercises. Ground it in the real test's steps/assertions, not a restatement of
       the AC. Open the test with `await using var evidence = EvidenceCapture.For(page, acId)` right after its page
-      exists (after any context it creates, so it disposes first); the request's acId names the screenshot. Never run the test during this stage; running happens only after the QA
+      exists (after any context it creates, so it disposes first); the request's acId names the screenshot. framework 'xunit' means no PageTest `Page`: build the context and page as the project's sibling tests do. Never run the test during this stage; running happens only after the QA
       engineer confirms via the orchestrator's decision loop (ac-decision-loop.js) in a separate Run-stage
       delegation.
   - priority: high
@@ -121,7 +121,7 @@ integrationProtocols:
         each AC in TWO separate, stateless stages, defined in packages/e2e-testing/lib/delegation-contract.js —
         each is its own subagent invocation with no memory of the other, so the Run stage repeats whatever context
         it needs rather than assuming continuity.
-        Proposal stage (validateProposalRequest/validateProposalResponse): Request {acText, groundingDiff, acId?} — ground
+        Proposal stage (validateProposalRequest/validateProposalResponse): Request {acText, groundingDiff, acId?, framework?} — ground
         the AC in code and author a test, but do NOT run it. Response {proposedTest, selectorsUsed,
         plainEnglishSummary} (TRD-040: a human-readable description of what the test does, for the orchestrator to
         present to the QA engineer before any run) or an explicit {authoringFailure: true, reason} when a test
