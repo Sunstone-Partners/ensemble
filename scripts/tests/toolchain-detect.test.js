@@ -1256,53 +1256,61 @@ describe('remote_url_matches: per-process memoization (PR 4 review round 2, Find
     expect(__getRemoteUrlMatchCacheMissesForTests()).toBe(1);
   });
 
-  test('production wiring: toolchain-cli explain --json across all 14 categories with the SAME catastrophic-pattern candidate declared everywhere completes well under one second (one deadline total, not 14)', () => {
-    const { projectRoot } = mkManyCategoryProject('toolchain-detect-memo-cli-');
-    // Extend the shared adapters to every one of the 14 real categories so this exercises the
-    // full `explain` sweep, not just the 5-category subset above.
+  test('production wiring: toolchain-cli explain --json across all 14 categories with the SAME catastrophic-pattern candidate declared everywhere pays one 200ms deadline over a benign baseline, not 14', () => {
     const allCategories = [
       'host', 'workflow', 'worktree', 'tracker', 'work-graph', 'ci-local', 'review', 'lint',
       'test-runner', 'e2e-quality', 'container-deploy', 'iac', 'platform-cloud', 'package-runner'
     ];
-    writeInstalledAdapter(
-      projectRoot,
-      'fixture-pkg',
-      'good-memo-tracker',
-      fixtureManifest({
-        adapter: 'good-memo-tracker',
-        categories: allCategories,
-        detect: [{ signal: 'file_exists', path: 'marker.txt' }]
-      })
-    );
-    writeInstalledAdapter(
-      projectRoot,
-      'fixture-pkg',
-      'bad-memo-tracker',
-      fixtureManifest({
-        adapter: 'bad-memo-tracker',
-        categories: allCategories,
-        detect: [{ signal: 'remote_url_matches', pattern: '^(x+x)+$' }]
-      })
-    );
+    // Runs the full 14-category `explain` sweep with a second adapter whose remote_url_matches
+    // pattern is `pattern`, returning wall-clock ms. Absolute wall-clock is dominated by node
+    // process spawn + module load and swings by seconds on loaded CI runners, so the assertion
+    // below is on the DELTA between a catastrophic pattern and a benign one in otherwise
+    // identical runs: that delta is the guard cost alone, and process/spawn overhead cancels.
+    const runSweep = (prefix, pattern) => {
+      const { projectRoot } = mkManyCategoryProject(prefix);
+      writeInstalledAdapter(
+        projectRoot,
+        'fixture-pkg',
+        'good-memo-tracker',
+        fixtureManifest({
+          adapter: 'good-memo-tracker',
+          categories: allCategories,
+          detect: [{ signal: 'file_exists', path: 'marker.txt' }]
+        })
+      );
+      writeInstalledAdapter(
+        projectRoot,
+        'fixture-pkg',
+        'bad-memo-tracker',
+        fixtureManifest({
+          adapter: 'bad-memo-tracker',
+          categories: allCategories,
+          detect: [{ signal: 'remote_url_matches', pattern }]
+        })
+      );
+      const xdgConfigHome = mkTempDir(prefix + 'xdg-');
+      const start = Date.now();
+      const res = spawnSync('node', [CLI, 'explain', '--json'], {
+        cwd: projectRoot,
+        env: { PATH: process.env.PATH, XDG_CONFIG_HOME: xdgConfigHome },
+        encoding: 'utf8'
+      });
+      const elapsedMs = Date.now() - start;
+      expect(res.status).toBe(0);
+      const parsed = JSON.parse(res.stdout);
+      expect(parsed.ok).toBe(true);
+      for (const category of allCategories) {
+        expect(parsed.data[category].adapter).toBe('good-memo-tracker');
+      }
+      return elapsedMs;
+    };
 
-    const xdgConfigHome = mkTempDir('toolchain-detect-memo-cli-xdg-');
-    const start = Date.now();
-    const res = spawnSync('node', [CLI, 'explain', '--json'], {
-      cwd: projectRoot,
-      env: { PATH: process.env.PATH, XDG_CONFIG_HOME: xdgConfigHome },
-      encoding: 'utf8'
-    });
-    const elapsedMs = Date.now() - start;
-
-    expect(res.status).toBe(0);
-    const parsed = JSON.parse(res.stdout);
-    expect(parsed.ok).toBe(true);
-    for (const category of allCategories) {
-      expect(parsed.data[category].adapter).toBe('good-memo-tracker');
-    }
-    // Without memoization this would cost roughly 14 * 200ms =~ 2.8s; with it, roughly one
-    // 200ms deadline total. Generous margin well below the unmemoized cost.
-    expect(elapsedMs).toBeLessThan(2000);
+    const baselineMs = runSweep('toolchain-detect-memo-cli-base-', '^y');
+    const catastrophicMs = runSweep('toolchain-detect-memo-cli-', '^(x+x)+$');
+    const guardCostMs = catastrophicMs - baselineMs;
+    // Memoized: ~one 200ms deadline over baseline. Unmemoized: 14 * 200ms = 2800ms over baseline.
+    // 1400ms is the midpoint, so it tolerates ~1.2s of noise yet still fails without the cache.
+    expect(guardCostMs).toBeLessThan(1400);
   });
 
   describe('mutation-proof: removing the memoization cache re-evaluates the same pattern once per category', () => {
