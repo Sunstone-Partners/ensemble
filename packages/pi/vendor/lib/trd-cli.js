@@ -31,6 +31,7 @@
  *   beads-stage --match <title-substring> [--label <l>] [--check] [--dry-run]
  *   quickstart <trd-path> --out <path> [--json]
  *   resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>
+ *   resolve-bdd  [--bdd | --no-bdd] [--trd <path>]   (create-trd and implement-trd-beads: is the Reqnroll/BDD path on?)
  *   validate     <trd-path> [--prd path]
  *   analyze      <trd-path> [--prd path]
  *   req-status   <trd-path> [--prd path] [--issues-json file] [--verified REQ-001,...] [--comments-json file]
@@ -85,6 +86,7 @@ const { stageBeadsExport, checkStagedExport } = require('./beads-stage');
 const { resolveCategory } = require('./toolchain/config');
 const { loadAdapter } = require('./toolchain/adapters');
 const { detectAdapter } = require('./toolchain/detect');
+const { resolveBdd } = require('./bdd-mode');
 const { runCapabilitySync } = require('./toolchain/runner');
 
 // ---------------------------------------------------------------------------
@@ -716,6 +718,31 @@ function runResolveSdlc(argv, env) {
     consolidatedMessage,
     host: { adapter: hostResolved.value, source: hostResolved.source },
     workflow: { adapter: workflowResolved.value, source: workflowResolved.source },
+  };
+}
+
+/**
+ * `resolve-bdd [--bdd | --no-bdd] [--trd <path>]`
+ *   -> { ok:true, enabled, source, evidence?, warning? }
+ *
+ * Thin CLI adapter over bdd-mode.js's resolveBdd (precedence: flag, ENSEMBLE_BDD, the TRD's
+ * `test_approach` frontmatter, on). BDD stays on by default; these are the ways to opt out. Run by both
+ * `create-trd` and `implement-trd-beads` so the two commands agree on whether Reqnroll is in play.
+ * Reads ENSEMBLE_BDD from the `env` param rather than process.env directly, like runResolveSdlc.
+ */
+function runResolveBdd(argv, env) {
+  const { flags } = parseArgs(argv, new Set(['trd']));
+  if (flags.bdd === true && flags['no-bdd'] === true) {
+    throw new Error('--bdd and --no-bdd are mutually exclusive');
+  }
+  const flag = flags.bdd === true ? 'bdd' : flags['no-bdd'] === true ? 'no-bdd' : undefined;
+  return {
+    ok: true,
+    ...resolveBdd({
+      flag,
+      env: env || {},
+      trdPath: flags.trd || undefined,
+    }),
   };
 }
 
@@ -1555,6 +1582,7 @@ const HANDLERS = {
   'next-task': (argv) => runNextTask(argv, process.env),
   'pr-plan': (argv) => runPrPlan(argv, process.env),
   'resolve-sdlc': (argv) => runResolveSdlc(argv, process.env),
+  'resolve-bdd': (argv) => runResolveBdd(argv, process.env),
   'validate-workstream': (argv) => runValidateWorkstream(argv),
   'create-workstream-trd': (argv) => runCreateWorkstreamTrd(argv),
   'workstream-plan': (argv) => runWorkstreamPlan(argv, process.env),
@@ -1590,7 +1618,7 @@ function main(argv) {
     process.stdout.write(
       JSON.stringify({
         error:
-          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|bead-context|phase-status|next-task|pr-plan|resolve-sdlc|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|beads-label|beads-stage|quickstart|list|status|migrate-frontmatter|choices-read|choices-write|validate|analyze|req-status|verify> <trd-path> [...]   (bead-context takes --bead <id> [--trd <path>] [--issue-json <file>] instead of <trd-path>)',
+          'Missing subcommand. Usage: trd-cli <parse|scaffold-plan|bead-context|phase-status|next-task|pr-plan|resolve-sdlc|resolve-bdd|validate-workstream|create-workstream-trd|workstream-plan|workstream-status|beads-label|beads-stage|quickstart|list|status|migrate-frontmatter|choices-read|choices-write|validate|analyze|req-status|verify> <trd-path> [...]   (bead-context takes --bead <id> [--trd <path>] [--issue-json <file>] instead of <trd-path>)',
       }) + '\n'
     );
     return 1;
@@ -1630,6 +1658,7 @@ module.exports = {
   runNextTask,
   runPrPlan,
   runResolveSdlc,
+  runResolveBdd,
   runQuickstart,
   runValidateWorkstream,
   runCreateWorkstreamTrd,

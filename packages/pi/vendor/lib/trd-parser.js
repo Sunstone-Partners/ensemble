@@ -1064,6 +1064,7 @@ function parseTRD(markdownString) {
 module.exports = {
   parseTRD,
   normalizeLineEndings,
+  splitFrontmatter,
   extractDesignReadinessScore,
   getFrontmatterField,
   PRD_REFERENCE_KEYS,
