@@ -38,16 +38,10 @@ before checking, never assume gh/GitHub.
 ### Step 2: Parse PRD, Ground Every REQ, Flag Gaps, and Resume-Scan
 
 TRD-025/TRD-042 (satisfies REQ-002, REQ-009, REQ-011): build the
-story's full coverage picture before asking anything else. This is
-what makes PR 1's promise real — "lists every AC for that story,
-whether it already has a confirmed test, and which REQ's
-implementation code was found." TRD-042 (found presenting this
-report to a QA engineer): a bare "gap" label doesn't say what's
-actually wrong — every gap in the report must be labeled with
-exactly one of four kinds, never a generic "gap":
-  - TRD gap: the TRD itself doesn't say what implements this REQ
-    at all (groundImplementation()'s gapType: 'trd-gap') — the
-    planning document has a hole, not the codebase.
+story's full coverage picture before asking anything else. Label
+every gap with exactly one of four kinds, never a generic "gap":
+  - TRD gap: the TRD names no implementation for this REQ
+    (groundImplementation()'s gapType: 'trd-gap').
   - Code gap: the TRD does say what should implement this REQ,
     but that code isn't actually there (gapType: 'code-gap').
   - AC gap: the code was found, but an agent's judgment (or a
@@ -96,14 +90,10 @@ before the first test run — do not re-ask per AC.
 
 TRD-013/TRD-026 (satisfies REQ-013): safety-critical — never let a
 test run against anything but the designated QA environment.
-TRD-034 (found live-dogfooding this feature): reachable is not the
-same as "running this branch's code." Many repos have more than
-one QA/staging deploy target (per-branch or per-developer slots
-are a common pattern, not specific to any one project) — a
-reachable-but-wrong slot produces test failures indistinguishable
-from a real regression. Confirm the resolved URL is actually the
-right one for this session before proceeding, not just that it
-responds.
+TRD-034: reachable is not the same as "running this branch's
+code" — a reachable-but-wrong per-branch or per-developer slot
+produces failures indistinguishable from a real regression, so
+confirm the URL is the right one, not just that it responds.
 
 **Actions:**
 1. Call resolveQaEnvUrl(opts) from $E2E_LIB/qa-env-guard.js with an explicit opts.url or opts.envVar naming where the target app's QA URL is configured — never hardcode or guess one
@@ -114,21 +104,26 @@ responds.
 
 ### Step 3: Offer a Follow-Along Pause (Headed Only) — Once Per Session
 
-A headed run at full speed is hard to follow, so a QA engineer
-checking that a proposed test does what they intended can ask for
-a pause after each browser action. This is Playwright's own
-`SlowMo` launch option (the Run request's `slowMoMs`, resolved by
-test-runner-mode.js's resolveRunConfig) — a run-time setting, never text inserted into the test source, so
-there is nothing to strip before the test lands in Phase 4 step 3
-and no way to commit a pause by accident. Asked after the QA
-environment is verified, so a session that halts there never
-prompts for it.
+A headed run at full speed is hard to follow, so the QA engineer can
+ask for a pause after each browser action: Playwright's own `SlowMo`
+launch option (the Run request's `slowMoMs`, resolved by
+test-runner-mode.js's resolveRunConfig), never text inserted into
+the test source. Asked after the QA environment is verified, so a
+session that halts there never prompts for it.
 
 **Actions:**
 1. If the mode recorded in step 1 is headless: skip this step entirely — no human is watching, so never ask and never set slowMoMs (validateRunRequest and resolveRunConfig both reject it in headless mode)
 2. If the mode is headed, ask once: "Add a 1-second pause after each browser action so you can follow along? (yes / no / or a different pause, e.g. 2s or 500ms)"
 3. No preference, or "yes": slowMoMs = 1000. A duration: convert it to whole milliseconds (a positive integer). "no": leave slowMoMs unset. If the answer is not a usable duration, say so and ask once more rather than guessing
 4. Record the result for the remainder of the session; do not re-ask per AC. Carry slowMoMs forward (when set) for every Run-stage delegation request in Phase 4
+
+### Step 4: Ensure the Screenshot Helper
+
+Every confirmed test opens an EvidenceCapture scope, so its end state is screenshotted on a pass and on a failure.
+
+**Actions:**
+1. Call resolveEvidenceDir(process.env) from $E2E_LIB/evidence-capture.js; carry it forward as evidenceDir for every Run request
+2. If the consuming E2E test project has no EvidenceCapture.cs, write renderEvidenceHelper({namespace}) from the same module into it and tell the QA engineer it lands in this PR — confirmed tests call it, so it must exist before the first Run
 
 ## Phase 3: REQ Batching and Delegation
 
@@ -146,17 +141,14 @@ re-processed, even mid-session on a resumed run.
 ### Step 2: Delegate the Proposal (Ground + Author, No Run) to @playwright-tester
 
 TRD-026/TRD-040 (satisfies REQ-005, REQ-013): the per-AC
-delegation this TRD's whole architecture is built around
-(TRD-008/TRD-040's two-stage contract). This stage only grounds
-and authors — it never runs the test. Running happens in Phase 4,
-step 2, only after the QA engineer confirms the proposal, so no
-real run against the QA environment is ever spent on a test
-they haven't seen yet.
+delegation of TRD-008/TRD-040's two-stage contract. This stage
+only grounds and authors; it never runs the test. Running
+happens in Phase 4, step 2, after the QA engineer confirms.
 
 **Actions:**
-1. Build a request {acText, groundingDiff} and validate it with validateProposalRequest(req) from $E2E_LIB/delegation-contract.js — acText is this AC's own text (not the whole REQ), groundingDiff is Phase 1's groundImplementation() result for its REQ
-2. Delegate the validated request to @playwright-tester (the ensemble-e2e-testing plugin's playwright-tester agent, resolved by name — not by file path), which grounds the AC and authors a test, plus a plainEnglishSummary of what it does — never running it at this stage
-3. Validate the response with validateProposalResponse(res) from delegation-contract.js — it always carries either {proposedTest, selectorsUsed, plainEnglishSummary} or an explicit authoringFailure, never neither
+1. Build a request {acText, groundingDiff, acId} and validate it with validateProposalRequest(req) from $E2E_LIB/delegation-contract.js — acText is this AC's own text (not the whole REQ), groundingDiff is Phase 1's groundImplementation() result for its REQ, acId is this AC's id
+2. Delegate the validated request to @playwright-tester (the ensemble-e2e-testing plugin's playwright-tester agent, resolved by name — not by file path), which grounds the AC and authors a test, plus a plainEnglishSummary of what it does — never running it at this stage. The test must open `await using var evidence = EvidenceCapture.For(page, acId);` right after its page exists (after any context it creates, so it disposes first)
+3. Validate the response with validateProposalResponse(res, req) from delegation-contract.js — it always carries either {proposedTest, selectorsUsed, plainEnglishSummary} or an explicit authoringFailure, never neither; a test without its EvidenceCapture scope is rejected: re-delegate once with that error
 4. If the response is an authoringFailure with no viable alternative: call markManual(acId, reason) from $E2E_LIB/manual-ac-tracker.js, log via logAction({type: "manual-ac-marked", acId, reason}), and move to the next AC — never proceed to Phase 4 with nothing to present
 
 ## Phase 4: Decision and Local Landing
@@ -165,13 +157,8 @@ they haven't seen yet.
 
 TRD-027/TRD-040 (satisfies REQ-003, REQ-017): the accept/
 request-changes/reject decision point now happens BEFORE the test
-ever runs against the QA environment — matching REQ-005's own
-wording ("a test the QA engineer HAS ACCEPTED... its pass/fail
-result is shown"). Found while adding this step: the prior
-single-delegation design actually ran the test before this
-decision point could ever be reached, silently inverting the
-PRD's intended accept-then-run order and spending a real QA-
-environment run on tests a QA engineer might still reject.
+ever runs against the QA environment (REQ-005: "a test the QA
+engineer HAS ACCEPTED... its pass/fail result is shown").
 
 **Actions:**
 1. Present the proposal's plainEnglishSummary to the QA engineer as the primary, easy-to-scan description of what the test does — the full proposedTest source is also available for anyone who wants to check the actual code
@@ -189,12 +176,12 @@ a failing run is not automatically a regression — check for an
 environment-mismatch signal before framing it as one.
 
 **Actions:**
-1. Build a request {acText, groundingDiff, proposedTest, targetEnv, mode, authStatePath, slowMoMs} and validate it with validateRunRequest(req) from $E2E_LIB/delegation-contract.js — proposedTest is the exact confirmed source from the previous step (never re-authored), acText/groundingDiff are repeated from Phase 3 step 2 (this is a fresh, stateless delegation with no memory of the Proposal stage), targetEnv/mode/authStatePath/slowMoMs are Phase 2's resolved values (omit slowMoMs when step 3 left it unset). The follow-along pause is a launch option applied at run time — never add a sleep or wait to proposedTest to get it
+1. Build a request {acText, groundingDiff, proposedTest, targetEnv, mode, authStatePath, slowMoMs, acId, evidenceDir} and validate it with validateRunRequest(req) from $E2E_LIB/delegation-contract.js — proposedTest is the exact confirmed source from the previous step (never re-authored), acText/groundingDiff are repeated from Phase 3 step 2 (this is a fresh, stateless delegation with no memory of the Proposal stage), targetEnv/mode/authStatePath/slowMoMs are Phase 2's resolved values (omit slowMoMs when step 3 left it unset), acId/evidenceDir are this AC's id and Phase 2 step 4's directory. The follow-along pause is a launch option applied at run time — never add a sleep or wait to proposedTest to get it
 2. Delegate the validated request to @playwright-tester, which runs the already-authored test per its own TRD-011 mode-aware logic (test-runner-mode.js's resolveRunConfig) — TRD-035: on a failed run, it also checks the live page for grounded-marker-checker.js's extractGroundedMarkers(groundingDiff.diffs) and reports whether an environment mismatch is suspected
-3. Validate the response with validateRunResponse(res) from delegation-contract.js
+3. Validate the response with validateRunResponse(res, req) from delegation-contract.js — it rejects any run, pass or fail, with no screenshot at runResult.evidencePath: re-delegate the Run once, then report the AC as blocked with its message
 4. Log the outcome via logAction({type: "run-result", acId, mode, runResult}) from $E2E_LIB/session-logger.js
 5. If the run failed and runResult.environmentMismatchSuspected is true: lead the failure report with buildEnvironmentMismatchHint({markersChecked: runResult.groundedMarkersChecked, markersFound: []}) from $E2E_LIB/grounded-marker-checker.js — present this as the LEADING hypothesis, before any suggestion that the implementation itself is broken, and prompt the QA engineer to confirm the environment (Phase 2 Step 2's question) before deciding what to do next
-6. The pass/fail result is shown to the QA engineer (AC-005-1) — no further accept/reject decision is needed here, since that already happened in the previous step; a failure is handled per @playwright-tester's own investigate/fix-and-rerun/surface-as-blocker responsibility, not a re-ask. Continue to the next step to land the test only once runResult.passed is true
+6. The pass/fail result and its screenshot path (runResult.evidencePath) are shown to the QA engineer (AC-005-1) — no further accept/reject decision is needed here, since that already happened in the previous step; a failure is handled per @playwright-tester's own investigate/fix-and-rerun/surface-as-blocker responsibility, not a re-ask. Continue to the next step to land the test only once runResult.passed is true
 
 ### Step 3: Land the Confirmed, Passed Test
 
@@ -213,12 +200,9 @@ must be checked before scaffolding a redundant new one.
 
 TRD-038 (satisfies REQ-007): every Test Suite belongs to a Test
 Plan — testplan_list_test_suites and testplan_create_test_suite
-both require a planId. Found live-dogfooding this feature against
-a real project with zero existing Test Plans: never assume one
-already exists, and never auto-pick or auto-name one — a Test
-Plan is shared, project-wide infrastructure (often scoped to a
-single release/iteration and later folded into a longer-lived
-regression plan), a real decision for the QA engineer to make.
+both require a planId. Never assume one exists, and never
+auto-pick or auto-name one: a Test Plan is shared, project-wide
+infrastructure, a real decision for the QA engineer.
 
 **Actions:**
 1. Fetch the project's existing Test Plans (e.g. via the Azure DevOps MCP server's testplan_list_test_plans-equivalent tool)
@@ -230,10 +214,8 @@ regression plan), a real decision for the QA engineer to make.
 ### Step 2: Resolve or Confirm the Story's Test Suite
 
 TRD-039 (satisfies REQ-007): once per story, not once per AC.
-Found live-dogfooding this feature alongside TRD-038: never treat
-"no suite matches this story yet" as silent permission to create
-one — confirm with the QA engineer first, same principle as the
-QA-environment-verification fix (TRD-034).
+Never treat "no suite matches this story yet" as silent
+permission to create one — confirm with the QA engineer first.
 
 **Actions:**
 1. Fetch the story's existing Test Suites within the resolved planId (e.g. via the Azure DevOps MCP server's testplan_list_test_suites-equivalent tool) and call resolveOrCreateTestSuite({planId, workItemId, storyTitle, existingSuites}) from $E2E_LIB/ado-test-suite.js
@@ -250,7 +232,8 @@ resilience, both apply here.
 1. For each just-landed, tagged test: extract its ordered plain-text step descriptions (from its narration/comments) and check findAdoTestCaseTag(fileContent, acId) from $E2E_LIB/traceability-tagger.js for an already-synced id
 2. Call planTestCaseSync({acId, acText, steps, suiteId, existingAdoTestCaseId}) from $E2E_LIB/ado-test-case-sync.js, then call the MCP Test-Case create/update tool (testplan_create_test_case / add-to-suite equivalent) accordingly
 3. On success: call recordSyncedTestCase(decision, mcpResponse), then addAdoTestCaseTag(fileContent, acId, testCaseId) from traceability-tagger.js to persist the id for future re-syncs; log via logAction({type: "sync-result", acId, ...syncedRecord})
-4. On failure: call recordSyncAttempt(state, {success: false, error}) from $E2E_LIB/ado-sync-resilience.js. Decision "retry": troubleshoot per its note and retry this step for the same AC. Decision "flag-unsynced": call flagUnsynced(acId, state), log it, and move on — the local test file landed in the previous phase is NEVER rolled back regardless of sync outcome
+4. Attach the AC's runResult.evidencePath to that Test Case: use an ADO MCP attachment-create tool if the server has one; else resolveAttachCommand(process.env) from $E2E_LIB/evidence-capture.js and run buildAttachCommand(template, {workItemId: testCaseId, path}) with your shell tool; else report the capability gap (AC-015-2) with the file path and continue. Log via logAction({type: "evidence-attach", acId, testCaseId, method, ok, error, path, reason}); a failed attach never rolls back the landed test
+5. On failure: call recordSyncAttempt(state, {success: false, error}) from $E2E_LIB/ado-sync-resilience.js. Decision "retry": troubleshoot per its note and retry this step for the same AC. Decision "flag-unsynced": call flagUnsynced(acId, state), log it, and move on — the local test file landed in the previous phase is NEVER rolled back regardless of sync outcome
 
 ## Phase 6: AC-Gap Task Filing
 
