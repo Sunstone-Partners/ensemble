@@ -32,7 +32,7 @@ const TRACKER_BINARY_INVOCATION = /\b(?:br|bv) /;
 // here for ASCII word chars).
 const AC1_PATTERN = /\b(?:br|bv) (?:show|list|update|close|comment|comments|dep|sync|ready)|--robot-/;
 
-const PRE_REFACTOR_REF = '881381c6119176c48d44e0fc91c90d5cec8d02b1';
+const PRE_REFACTOR_REF = 'dfbd1f1';
 const WAVE_SCHEMA_LINE_PREFIX = "- 'Schema (one line, valid JSON): {";
 
 function findInvocationLines(contents, pattern) {

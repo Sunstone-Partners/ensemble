@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-infrastructure",
-  "version": "6.0.0",
+  "version": "6.1.1",
   "description": "Infrastructure management for AWS, Kubernetes, Docker, Helm, Fly.io",
   "main": "lib/index.js",
   "scripts": {
@@ -16,7 +16,7 @@
     "ensemble"
   ],
   "author": "Sunstone Partners",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Sunstone-Partners/ensemble.git",

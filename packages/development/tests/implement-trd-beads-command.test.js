@@ -10,7 +10,11 @@ const yaml = require('js-yaml');
 const YAML_PATH = path.join(__dirname, '../commands/implement-trd-beads.yaml');
 const REF_PATH = path.join(__dirname, '../skills/implement-trd-beads-reference/SKILL.md');
 const text = fs.readFileSync(YAML_PATH, 'utf8');
-const ref = fs.readFileSync(REF_PATH, 'utf8');
+// The reference skill's companion files (reference/*.md) hold detail moved out of the budgeted SKILL.md.
+const REF_DIR = path.join(path.dirname(REF_PATH), 'reference');
+const ref = [REF_PATH, ...fs.readdirSync(REF_DIR).sort().map((f) => path.join(REF_DIR, f))]
+  .map((f) => fs.readFileSync(f, 'utf8'))
+  .join('\n');
 const doc = yaml.load(text);
 
 const phase = (name) => doc.workflow.phases.find((p) => p.name === name);

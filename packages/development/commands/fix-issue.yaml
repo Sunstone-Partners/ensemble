@@ -76,17 +76,14 @@ constraints:
 mission:
   summary: |
     Orchestrate a bug fix workflow from analysis to PR, delegating to specialized agents.
-    Resumable and checkpointed: a run's stage and outcome are recorded via issue-run-index.ts after each of the 3 named phases, so a later invocation can resume, report status, or abandon it instead of re-deriving progress from conversation history.
+    Resumable and checkpointed: a run's stage and outcome are recorded via issue-run-index.ts after each of the 3 named phases, so a later invocation can resume, report status, or abandon it.
 
   behavior:
-    - Execute 4-phase workflow - Entry Point Resolution, Analysis & Planning, Execution, Validation & Delivery
-    - Resolve the entry point from description/issue/no-arg/--status/--abandon, mirroring ensemble:new-feature
-    - Checkpoint progress via issue-run-index.ts after each of the 3 named phases
-    - Interview the user only if the description is ambiguous or --interactive is set
-    - Track tasks with TodoWrite and delegate implementation to backend, frontend, or infrastructure agents
+    - Execute 4-phase workflow - Entry Point Resolution, Analysis & Planning, Execution, Validation & Delivery, checkpointing via issue-run-index.ts after each of the 3 named phases
+    - Interview the user only if the description is ambiguous or --interactive is set; track tasks with TodoWrite and delegate implementation to backend, frontend, or infrastructure agents
     - Run tests with at most 2 auto-fix attempts
     - Run an independent local review and one batched fix pass before any commit, push, or PR, gating `prApprovedAt` on `LOCAL_REVIEW_COMPLETE`
-    - Create the change request via the host adapter, then evaluate the head-bound remote CodeRabbit review before reporting success; a pending or blocked review returns a resumable report instead of a false completion
+    - Create the change request via the host adapter, then evaluate the head-bound remote CodeRabbit review before reporting success; a pending or blocked review returns a resumable report
 
 workflow:
   phases:
@@ -102,7 +99,7 @@ workflow:
         - order: 1
           title: Start New Run or Resume Active Run
           description: |
-            `description` or `issue` given: call IssueRunIndexStore.createRun(projectRoot, issueDescription) (`description`, else the issue body read from the project's issue host). It enforces one active run per project: on RUN_ALREADY_ACTIVE print the existing runId, tell the user to resume with no arguments (or --status, or --abandon first), and stop. Otherwise the run starts at stage analysis_planning; proceed to Analysis & Planning.
+            `description` or `issue` given: call IssueRunIndexStore.createRun(projectRoot, issueDescription) (`description`, else the issue body read from the project's issue host). One active run per project: on RUN_ALREADY_ACTIVE print the existing runId, tell the user to resume with no arguments (or --status, or --abandon first), and stop. Otherwise the run starts at stage analysis_planning; proceed to Analysis & Planning.
 
             None of description/issue/--status/--abandon given: call IssueRunIndexStore.findActive(projectRoot) and resume from the recorded checkpoint, never from conversation history. Exactly one branch applies, tested in this order:
             - No active run: print "No issue run found for this project. Start one with --issue <number> or a free-text description." and stop.
@@ -113,12 +110,12 @@ workflow:
         - order: 2
           title: "--status -- Read-Only Run Report"
           description: |
-            Only when --status is set. Call IssueRunIndexStore.findActive(projectRoot); with no run print "No issue runs found for this project." and stop. Otherwise print the run identifier, stage, stageOutcome.kind (with detail when pending or failure), every artifacts[] and beadRefs[] entry, and state "completed" or "abandoned" explicitly. No stage executes and no mutate() call is made.
+            Only when --status is set. Call IssueRunIndexStore.findActive(projectRoot); with no run print "No issue runs found for this project." and stop. Otherwise print the run identifier, stage, stageOutcome.kind (with detail when pending or failure), every artifacts[] and beadRefs[] entry, and "completed" or "abandoned" explicitly. No stage executes and no mutate() call is made.
 
         - order: 3
           title: "--abandon -- Explicit Confirmation Required"
           description: |
-            Only when --abandon is set. Call IssueRunIndexStore.findActive(projectRoot); with no active run print "No active issue run exists to abandon." and stop. Otherwise ask via AskUserQuestion "Abandon issue run <runId> at stage <stage>? [yes/no]"; no or no answer leaves the run unchanged with no mutate() call. On an explicit yes call IssueRunIndexStore.abandon(projectRoot, runId, reason) (reason defaults to "User abandoned run"); it sets status "abandoned" and releases active.lock. History is never deleted; a later --status still shows it.
+            Only when --abandon is set. Call IssueRunIndexStore.findActive(projectRoot); with no active run print "No active issue run exists to abandon." and stop. Otherwise ask via AskUserQuestion "Abandon issue run <runId> at stage <stage>? [yes/no]"; no or no answer leaves the run unchanged with no mutate() call. On an explicit yes call IssueRunIndexStore.abandon(projectRoot, runId, reason) (reason defaults to "User abandoned run"); it sets status "abandoned" and releases active.lock. History is never deleted.
 
     - name: Analysis & Planning
       order: 2
@@ -136,12 +133,12 @@ workflow:
         - order: 3
           title: User Interview (Conditional)
           description: |
-            Only when the description is ambiguous (under 20 words, vague terms such as "doesn't work", or several interpretations) or --interactive is set. Ask clarifying questions ONE AT A TIME (max 5) with AskUserQuestion, waiting for each answer, and fold the answers into the approach and acceptance criteria. Never when --foreman is set: skip and proceed on best-effort assumptions.
+            Only when the description is ambiguous (under 20 words, vague terms such as "doesn't work", or several interpretations) or --interactive is set. Ask clarifying questions ONE AT A TIME (max 5) with AskUserQuestion and fold the answers into the approach. Never when --foreman is set: proceed on best-effort assumptions.
 
         - order: 4
           title: Record Stage Checkpoint
           description: |
-            Persist this phase's outcome and advance the run via issue-run-index.ts: ONE call IssueRunIndexStore.mutate(projectRoot, runId, revision, (record) => { record.artifacts.push({ type: "fix-plan", path: <fix plan output path>, recordedAt: now() }); record.stage = "execution"; record.stageOutcome = { kind: "success", recordedAt: now() }; }). A second mutate() with the same `revision` throws REVISION_CONFLICT, so batch the changes. On a thrown error halt and report it; never proceed with an unrecorded checkpoint.
+            Persist this phase's outcome and advance the run via issue-run-index.ts: ONE call IssueRunIndexStore.mutate(projectRoot, runId, revision, (record) => { record.artifacts.push({ type: "fix-plan", path: <fix plan output path>, recordedAt: now() }); record.stage = "execution"; record.stageOutcome = { kind: "success", recordedAt: now() }; }). A second mutate() with the same `revision` throws REVISION_CONFLICT, so batch. On a thrown error halt; never proceed unrecorded.
 
     - name: Execution
       order: 3
@@ -156,16 +153,16 @@ workflow:
 
         - order: 2
           title: Task List Generation
-          description: Break the plan into 3-10 specific, testable tasks (implementation, test updates, validation), each tied to a file or component, tracked with TodoWrite (content, activeForm, status).
+          description: Break the plan into 3-10 specific, testable tasks (implementation, test updates, validation), each tied to a file or component, tracked with TodoWrite.
 
         - order: 3
           title: Task Execution
-          description: For each task set TodoWrite status "in_progress", delegate via Task (backend code to backend-developer, frontend to frontend-developer, infrastructure to infrastructure-developer, anything else to tech-lead-orchestrator), then set "completed". On failure leave it "in_progress", log the error, continue, and report failures at the end.
+          description: For each task set TodoWrite status "in_progress", delegate via Task (backend to backend-developer, frontend to frontend-developer, infrastructure to infrastructure-developer, else tech-lead-orchestrator), then set "completed". On failure leave it "in_progress", log the error, continue, and report failures at the end.
 
         - order: 4
           title: Record Stage Checkpoint
           description: |
-            Persist this phase's outcome and advance the run via issue-run-index.ts: IssueRunIndexStore.mutate(projectRoot, runId, revision, (record) => { record.stage = "validation_delivery"; record.stageOutcome = { kind: "success", recordedAt: now() }; }). On a thrown error halt and report it; never proceed with an unrecorded checkpoint.
+            Persist this phase's outcome and advance the run via issue-run-index.ts: IssueRunIndexStore.mutate(projectRoot, runId, revision, (record) => { record.stage = "validation_delivery"; record.stageOutcome = { kind: "success", recordedAt: now() }; }). On a thrown error halt; never proceed unrecorded.
 
     - name: Validation & Delivery
       order: 4
@@ -196,7 +193,8 @@ workflow:
             Commit, push, and open the change request via host/workflow toolchain adapters. Precondition: prApprovedAt (IssueRunIndexStore.loadRun(projectRoot, runId)) must be non-null, set only by Local Review and Batch Fix. Proceeds without pauses under --foreman.
             TOOLCHAIN_CLI and RUN_ID come from Branch Creation's preflight (a resume runs it first).
             Stage explicit paths only. First workflow write: confirm-status workflow.commit (if unconfirmed, AskUserQuestion "Allow commit/push this session? [yes/no]" (auto-confirmed under --foreman), then confirm-record workflow.commit). Run node "$TOOLCHAIN_CLI" run workflow.commit --arg message="fix: {description}", then node "$TOOLCHAIN_CLI" run workflow.push --arg branch="{branch-name}".
-            PR body: Problem/Solution/Changes/Test Plan/Checklist, "Fixes #{issue-number}"; title "Fix #{number}: {description}" or "Fix: {description}". Same gate for host.change-request-create. Run node "$TOOLCHAIN_CLI" run host.change-request-create --arg baseBranch=<DEFAULT_BRANCH> --arg headBranch="{branch-name}" --arg title="<title>" --arg description="<body>"; URL = data.url. --draft-pr has no capability input (note in body). No URL -> say so; Remote Review Disposition owns that block.
+            REQ-002 body PR_BODY: Problem/Solution/Changes/Testing/Risk/How to revert/Checklist, `Fixes #{issue-number}` and a `Directed by: @<login of whoever asked for this fix, never the agent>` line; template: the pr-review-cycle skill's `reference/fix-issue-pr-body.md`.
+            Body gate (REQ-002): hand PR_BODY to the pr-review-cycle skill (packages/development/skills/pr-review-cycle/SKILL.md (via tool-path-resolution)) with AGENT_AUTHORED=true and the BASE_SHA / HEAD_SHA / PR_ID Local Review and Batch Fix used; fill every section it reports missing, never create the PR on a body it reports not ready, never call the review CLI or its lib modules. Title "Fix #{number}: {description}" or "Fix: {description}". Same gate for host.change-request-create. Run node "$TOOLCHAIN_CLI" run host.change-request-create --arg baseBranch=<DEFAULT_BRANCH> --arg headBranch="{branch-name}" --arg title="<title>" --arg description="<body>"; URL = data.url. --draft-pr has no capability input (note in body). No URL -> say so; Remote Review Disposition owns that block.
 
         - order: 4
           title: Remote Review Disposition
@@ -218,7 +216,7 @@ workflow:
         - order: 5
           title: Record Stage Checkpoint
           description: |
-            Persist this phase's outcome and mark the run complete via issue-run-index.ts. Only reached when Remote Review Disposition's status is REVIEW_COMPLETE -- a pending or blocked outcome halts there instead. Call IssueRunIndexStore.complete(projectRoot, runId) to mark the run completed ("done") and release active.lock; history is never deleted and the PR reference was already recorded. On a thrown error halt and report it.
+            Persist this phase's outcome via issue-run-index.ts. Only reached when Remote Review Disposition's status is REVIEW_COMPLETE; a pending or blocked outcome halts there. Call IssueRunIndexStore.complete(projectRoot, runId) to mark the run completed and release active.lock. On a thrown error halt and report it.
 
 expectedInput:
   description: Issue description or GitHub issue number

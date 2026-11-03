@@ -1,0 +1,192 @@
+# PR Review Cycle -- Steps 3 and 3b (ledger, suppression, bot ingestion, verification votes)
+
+Companion to `SKILL.md`; every rule here is normative.
+
+### Step 3 -- Build ledger (CLI `ledger`)
+
+Run `node "$PR_REVIEW_CLI" ledger` with the findings from Step 2. The payload
+names one `action` and carries that action's keys. Every key is required: an
+absent or misspelt one is a CLI error (non-zero exit), never an empty default.
+
+* `validate` -- `{ action, findings }`
+* `isActionable` -- `{ action, finding }`
+* `dedupe` -- `{ action, findings }`
+* `merge` -- `{ action, existingLedger, incomingFindings, headSha }`
+* `scopeViolations` -- `{ action, changedFiles, scope, ledger }`
+* `recordRound` -- `{ action, ledger, incoming, round }` (TRD-013)
+
+A finding missing a required field is rejected and must be completed, not
+dropped. Duplicates found within the same round's own findings are merged
+under one fix id with `dedupe`, keeping every original link. It merges two
+kinds: findings with the same location and failure mode, and findings that are
+very probably one defect written up by different reviewers -- the same file,
+line ranges that overlap or lie within two lines of each other, and
+descriptions (failure mode and evidence), neither far longer than the other,
+that agree once the words most of the round's findings share are discounted.
+Anything not clearly the same defect stays separate: two defects on one line
+are two findings, one reviewer's own findings are never merged with each
+other, and neither is a finding with an open thread, an `uncertain` flag or
+another class, security relevance or
+Pre-existing status. A round of two findings, or a defect worded very
+differently, is not merged; that costs one repeated verification, where a wrong
+merge would drop a finding. An entry merged by resemblance lists its members in
+`mergedFrom` (`id`, `source`, `locationOrLink`): name each such merge in the
+report, never silently.
+
+**Cross-round suppression and class flags (TRD-013, AC-010-2, AC-011-1,
+AC-011-2).** `dedupe` joins by resemblance within one round only; a repeat
+is still exactly the same path, failure mode and class. Every round after
+`dedupe` runs `recordRound` with `ledger` set
+to the findings carried over in the review-state report (empty on round 1),
+`incoming` set to this round's deduped findings, and `round` set to the
+current round number. Its result names three outcomes per incoming finding:
+a `repeat` (the same path, failure mode and class already recorded -- the
+first record stands and only gains the round it was seen again in; it is
+never presented twice), an `attached` instance of a class already flagged
+(joins that one class finding instead of opening a new one), or a `new`
+finding. Report `repeats` as suppressed by name (not silently dropped) and
+`classes` by naming the class and listing every instance found so the batch
+fix in Step 5 covers all of them, not just the one just reported. Carry
+`findings` forward into the next round's `ledger` in the state report
+(Step 9).
+
+**Ingesting CodeRabbit and other review-bot findings (REQ-005, AC-005-3).**
+A finding posted by CodeRabbit (or any login in `BOT_LOGINS`) on this PR is
+a candidate like any other: convert each one into a ledger entry with
+`source` set to that bot's login, `locationOrLink` set to the file and line
+it anchored to, and `originalTextOrLink` set to the permalink of the comment
+it came from, then run it through the **same** `dedupe` / `recordRound` and
+the same verification in Step 3b as a local reviewer's candidate. A bot
+finding is never pre-trusted into `present` and never pre-dismissed: the
+verifiers decide, exactly as for a human reviewer's finding.
+
+The bot's own comments are **read-only** to this skill. Never edit, resolve,
+minimise, hide, delete or `@coderabbitai resolve` a CodeRabbit comment, and
+never push a commit whose purpose is to make one disappear. The bot's thread
+is the evidence a reader checks the ledger against; suppressing it would
+destroy the only independent record that a finding was ever raised. Answer it
+in the normal way -- fix it, or reply with the recorded reason it is deferred
+-- and leave the thread exactly as the bot left it. (Collecting these
+comments is Step 7's job in `MODE=remote`; this paragraph says what happens
+to them once collected, in either mode.)
+
+### Step 3b -- Verify the candidates before they are presented (CLI `votes`)
+
+Nothing collected so far is yet a finding the author must answer. Every
+candidate -- from every reviewer, every local tool and every review bot --
+goes through verification first (REQ-005), and nothing is dropped on the way
+(REQ-006).
+
+**Who verifies.** Dispatch exactly the verifier count the mode resolved in
+Step 1c (`bounds.verifiers`: Quick none, Standard 3, Deep 5), each a
+**fresh-context subagent** given the diff, the candidate and the applied
+rules -- never the authoring conversation and never the reviewer's reasoning
+for raising it. **A verifier never votes on a finding it produced itself**:
+each candidate records the `reviewer` that raised it, and that reviewer is
+excluded from that finding's verifier set. When the dispatch cannot exclude
+them (a single reviewer and a single verifier are the same agent), that
+finding has no usable verifier -- record it in `incompleteVerifiers` rather
+than letting the author of the finding confirm their own finding. A verifier
+meets the same agent requirement as a reviewer (Step 1c, "Which agent").
+
+Each verifier returns, per candidate, exactly one verdict: `real`,
+`not-real` or `abstain`. Anything else is not a vote and is ignored as one.
+
+**The verifier brief.** This is where the checks a reviewer may not run
+belong, on named findings only. With the diff, the findings it is to settle
+and the applied rules, every verifier is given the text below, word for word;
+like the reviewer brief it is editable policy, and until a maintainer edits it
+the limits bind.
+
+> You are verifying findings that someone else raised: decide, for each one
+> you are given, whether it is real. You are told each finding's file, line,
+> failure mode and evidence, and nothing about who raised it or why.
+>
+> Settle each finding with the narrowest check that bears on it and on no
+> other finding: read the code, run one snippet, or run the ONE test file
+> that exercises the claim. Never run a whole test suite, a build or a
+> generator. When a finding says that a test or a guard would not catch a
+> defect, you may prove it with ONE mutation: in your own throwaway copy of
+> the snapshot, change the one line, run that one test, then discard the
+> copy. Never change the shared working tree, the PR's branch or the snapshot
+> itself.
+>
+> Use at most 20 tool calls per finding. Return exactly one verdict per
+> finding -- `real`, `not-real` or `abstain` -- with the evidence for it. If
+> you reach the cap or your timebox before you have a verdict on a finding,
+> return NO verdict for it rather than guess: the cycle records you as
+> incomplete for that finding, which is the honest answer.
+
+**Tallying.** Run `node "$PR_REVIEW_CLI" votes` with
+`{ findings, depth, expectedVerifiers, verificationCapability }`:
+
+* `findings` are the candidates from Step 3, each
+  `{ id, severity, kind, security, reviewer, votes: [{ verifier, verdict }],
+  incompleteVerifiers }`;
+* `depth` is the `mode` Step 1c resolved;
+* `expectedVerifiers` is given only when the policy's bounds override the
+  mode's count -- leave it out otherwise, so the denominator stays the count
+  the depth **expects**, never the number of votes that happened to arrive;
+* `verificationCapability` is `false` only in the degraded case below.
+
+**What the author is asked to answer.** Present exactly `presented[]` --
+the `present`, `disputed` and `unverified` findings -- and nothing else. A
+`filtered` finding (a non-finding kind, or one the majority did not reach) is
+**not** presented as something to fix, but it stays in the ledger with its
+tally and reason so the round is auditable. Use each finding's `authorLabel`
+verbatim: a finding that failed verification reads **"verifier disagrees"**,
+never "required fix", and a `disputed` one reads "disputed" and goes to a
+person, because a vote does not close a critical or security-relevant
+finding.
+
+**A verifier that did not come back.** When a verifier assigned to a finding
+returns no usable vote -- it timed out or hit its cap before a verdict, the
+tool failed, the dispatch returned nothing ("No result provided"), or it was
+excluded as its own reviewer -- name it on that finding's `incompleteVerifiers`
+as `{ verifier, reason }`. A dispatch that returns nothing was assigned every
+finding in its batch, so it is named on every one of them, not on one. Then
+**move on**: do not wait for it past the cycle budget, do not re-dispatch it,
+do not vote for it and do not hold the round for it. That finding comes back
+`unverified` / `verifier-incomplete` and is presented and marked **even if the
+votes that did arrive would have reached a majority**: incomplete coverage is
+never read as agreement. Report the result's `recoveryAction`
+(`supply-the-missing-votes`) with it, and say in the report, in plain words,
+which verifiers did not return, on which findings and why: the review is
+partially verified, not verified, and those words are what goes under
+`reducedReview` in the state report (Step 9). For example:
+
+> REDUCED REVIEW: verifier v3 returned no usable vote on 4 findings, so they
+> are presented unverified (verification: partial, reason:
+> some-verifiers-did-not-return). Supply the missing votes before relying on
+> them.
+
+The fixed text of the degraded mode below is for a runtime with no subagents
+and is never used here, because here the verifiers exist and did not answer.
+
+**Degraded mode: a runtime with no subagents (AC-006-4).** When the runtime
+cannot dispatch subagents at all -- so neither the multi-reviewer dispatch of
+Step 1c nor the verifiers here can run -- do not skip the review and do not
+pretend it ran:
+
+1. perform a **single-pass review** of the whole `range` directly, recording
+   candidates exactly as Step 2 does;
+2. call `votes` with `verificationCapability: false`. Every finding comes
+   back `unverified` / `no-subagent-capability`, `verification` is
+   `not-performed`, and nothing is dropped;
+3. carry a **visible reduced-review notice** in the report *and* in the state
+   report (Step 9), in these words, naming what was reduced and what to do:
+
+   ```
+   REDUCED REVIEW: this runtime has no subagent capability, so one reviewer
+   reviewed the diff and no finding was independently verified
+   (verification: not-performed, reason: no-subagent-capability).
+   Re-run this review on a runtime with subagents before relying on it.
+   ```
+
+   The notice is never omitted because the findings look clean, and a reduced
+   review is never reported as a verified one. `recoveryAction` from the CLI
+   (`re-run-verification`) is reported with it.
+
+A `verification: 'blocked'` result means the payload itself could not be
+read: that is `REVIEW_BLOCKED` naming the CLI's `reason`, not a round with no
+findings.

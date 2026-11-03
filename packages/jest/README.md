@@ -348,7 +348,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and updates.
 
 ## License
 
-MIT
+Apache License 2.0. See the repository [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE).
 
 ## Support
 

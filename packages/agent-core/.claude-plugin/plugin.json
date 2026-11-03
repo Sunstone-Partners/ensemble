@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "ensemble",
     "agent-core"

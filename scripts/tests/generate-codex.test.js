@@ -19,6 +19,7 @@ const {
   generateCodexSubcommandsSection,
   generateCommandSkills,
   normalizeSkillBody,
+  sandboxModeFor,
   copyAdapterSkills,
   vendorCodexToolchain,
 } = require('../generate-codex/index.js');
@@ -374,6 +375,21 @@ describe('normalizeSkillBody / buildCodexAgentsMd — dotnet skill', () => {
 
   test('lists dotnet among the framework skills in the generated AGENTS.md', () => {
     expect(buildCodexAgentsMd(1, 1, 1)).toContain('`blazor`, `dotnet`');
+  });
+});
+
+describe('agent sandbox mode (final-gate F15)', () => {
+  test('the documented read-only code-reviewer gets the read-only sandbox; every other agent keeps workspace-write', () => {
+    expect(sandboxModeFor('code-reviewer')).toBe('read-only');
+    expect(sandboxModeFor('backend-developer')).toBe('workspace-write');
+  });
+
+  test('the generated Codex code-reviewer file declares what the generator says', () => {
+    const toml = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'packages', 'codex', '.codex', 'agents', 'code-reviewer.toml'),
+      'utf8'
+    );
+    expect(toml).toMatch(/^sandbox_mode = "read-only"$/m);
   });
 });
 

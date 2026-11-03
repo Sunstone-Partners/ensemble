@@ -327,4 +327,4 @@ function evaluateRemoteReview(facts = {}) {
   };
 }
 
-module.exports = { evaluateRemoteReview };
+module.exports = { evaluateRemoteReview, checkOutcome };

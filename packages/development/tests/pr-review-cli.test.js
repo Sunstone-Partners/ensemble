@@ -16,18 +16,40 @@ const { spawnSync } = require('child_process');
 
 const {
   runScope,
+  runReviewRange,
   runLedger,
   runRemote,
   runStatus,
   runStateRead,
   runStateWrite,
+  runPolicy,
+  runRules,
+  runPaths,
+  runDescription,
+  runVotes,
+  runDepth,
+  runSlices,
+  runTier,
+  runApprovals,
+  runGate,
   LEDGER_ACTIONS,
+  HANDLERS,
   main,
 } = require('../lib/pr-review-cli');
 
-const { resolveReviewScope } = require('../lib/pr-review-scope');
+const { resolveReviewScope, chooseReviewRange } = require('../lib/pr-review-scope');
 const { evaluateRemoteReview } = require('../lib/pr-review-remote');
 const { deriveStatus } = require('../lib/pr-review-status');
+const { loadPolicy, DEFAULT_ROUND_CAP } = require('../lib/pr-review-policy');
+const { resolveRuleFiles, NO_AREA_RULES_NOTE } = require('../lib/pr-review-rules');
+const { classifyPaths } = require('../lib/pr-review-paths');
+const { checkDescription } = require('../lib/pr-review-description');
+const { tallyVotes } = require('../lib/pr-review-votes');
+const { resolveDepth, checkBounds, boundsFor, planSlices, verifyCoverage } = require('../lib/pr-review-depth');
+const { assignTier, effectiveTier, tierRecord, HUMANS_REQUIRED } = require('../lib/pr-review-tier');
+const { evaluateApprovals } = require('../lib/pr-review-approvals');
+const { evaluateGate } = require('../lib/pr-review-gate');
+const { statePath, readState } = require('../lib/pr-review-state');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 
@@ -42,7 +64,7 @@ function completeStatusFacts(overrides = {}) {
     headSha: HEAD_SHA,
     reviewedHeadSha: HEAD_SHA,
     findingCounts: { total: 0, actionable: 0, deferred: 0 },
-    tests: { passed: true, skipped: false, command: 'npm test' },
+    tests: { exitCode: 0, skipped: false, command: 'npm test' },
     remotePhase: 'REMOTE_REVIEW_COMPLETE',
     ...overrides,
   };
@@ -115,6 +137,43 @@ describe('pr-review-cli: delegation to the matching module (handler functions)',
     expect(result.range).toBeUndefined();
   });
 
+  test('review-range delegates to chooseReviewRange and returns its exact result (TRD-013, AC-010-1)', () => {
+    const payload = { baseSha: BASE_SHA, headSha: HEAD_SHA };
+    expect(runReviewRange(payload)).toEqual(chooseReviewRange(payload));
+    const result = runReviewRange(payload);
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('full');
+    expect(result.reason).toBe('first-round');
+  });
+
+  test('review-range with a vouched-for last reviewed head narrows to the delta (AC-010-1, AC-010-3)', () => {
+    const payload = {
+      baseSha: BASE_SHA,
+      headSha: HEAD_SHA,
+      lastReviewedSha: BASE_SHA,
+      commits: [{ sha: HEAD_SHA, parents: [BASE_SHA] }],
+      remediationShas: [HEAD_SHA],
+    };
+    const result = runReviewRange(payload);
+    expect(result).toEqual(chooseReviewRange(payload));
+    expect(result.mode).toBe('delta');
+    expect(result.range).toBe(`${BASE_SHA}..${HEAD_SHA}`);
+  });
+
+  test('review-range with an unvouched push falls back to the full base-correct range (AC-010-3)', () => {
+    const payload = {
+      baseSha: BASE_SHA,
+      headSha: HEAD_SHA,
+      lastReviewedSha: BASE_SHA,
+      commits: [{ sha: HEAD_SHA, parents: [BASE_SHA, 'f'.repeat(40)] }],
+      remediationShas: [],
+    };
+    const result = runReviewRange(payload);
+    expect(result.mode).toBe('full');
+    expect(result.range).toBe(`${BASE_SHA}..${HEAD_SHA}`);
+    expect(result.unvouched.length).toBeGreaterThan(0);
+  });
+
   test('remote delegates to evaluateRemoteReview and returns its exact result', () => {
     const payload = {
       headSha: 'head-1',
@@ -178,6 +237,26 @@ describe('pr-review-cli: delegation to the matching module (handler functions)',
     expect(result.violations).toEqual(['src/out-of-scope.js']);
   });
 
+  test('ledger recordRound action suppresses a repeat and flags a class across rounds (TRD-013, AC-010-2, AC-011-1, AC-011-2)', () => {
+    const round1 = runLedger({
+      action: 'recordRound',
+      ledger: [],
+      incoming: [makeFinding({ id: 'f1', failureMode: 'missing-null-check' })],
+      round: 1,
+    });
+    expect(round1.newFindings).toHaveLength(1);
+    expect(round1.repeats).toHaveLength(0);
+
+    const round2 = runLedger({
+      action: 'recordRound',
+      ledger: round1.findings,
+      incoming: [makeFinding({ id: 'f1', failureMode: 'missing-null-check' })],
+      round: 2,
+    });
+    expect(round2.repeats).toEqual([{ id: 'f1', repeatOf: 'f1', fingerprint: expect.any(String), reason: 'already-recorded' }]);
+    expect(round2.presented).toHaveLength(0);
+  });
+
   test('ledger with an unknown action throws naming the valid actions', () => {
     expect(() => runLedger({ action: 'bogus' })).toThrow(/Unknown ledger action 'bogus'/);
   });
@@ -209,6 +288,21 @@ describe('pr-review-cli: delegation to the matching module (handler functions)',
     }).not.toThrow();
     expect(read.ok).toBe(false);
     expect(read.reason).toBe('corrupt');
+  });
+
+  test('a hostile targetPath is refused by state-write and state-read through the CLI handlers, and nothing is written', () => {
+    const cwd = tmpCwd();
+    const outside = path.join(cwd, 'evil.json');
+    for (const targetPath of [outside, '../evil.json', '.ensemble/pr-review/../../evil.json']) {
+      const written = runStateWrite({ targetPath, cwd, state: { headSha: 'h1', ledger: [] } });
+      expect(written.ok).toBe(false);
+      expect(written.reason).toBe('path outside .ensemble/pr-review/');
+      expect(fs.existsSync(path.join(cwd, 'evil.json'))).toBe(false);
+    }
+    fs.writeFileSync(outside, JSON.stringify({ headSha: 'h1', ledger: [] }));
+    const read = runStateRead({ targetPath: outside, cwd, headSha: 'h1' });
+    expect(read.ok).toBe(false);
+    expect(read.reason).toBe('path outside .ensemble/pr-review/');
   });
 });
 
@@ -328,6 +422,7 @@ const LEDGER_PAYLOADS = {
     headSha: 'h1',
   },
   scopeViolations: { action: 'scopeViolations', changedFiles: ['src/a.js'], scope: ['src/a.js'], ledger: [] },
+  recordRound: { action: 'recordRound', ledger: [], incoming: [makeFinding()], round: 1 },
 };
 const KEY_KINDS = {
   findings: 'array',
@@ -338,6 +433,8 @@ const KEY_KINDS = {
   changedFiles: 'array',
   scope: 'array',
   ledger: 'array',
+  incoming: 'array',
+  round: 'integer',
 };
 const KEY_CASES = Object.entries(LEDGER_PAYLOADS).flatMap(([action, payload]) =>
   Object.keys(payload)
@@ -348,6 +445,7 @@ const isKind = {
   array: (value) => Array.isArray(value),
   object: (value) => value !== null && typeof value === 'object' && !Array.isArray(value),
   text: (value) => typeof value === 'string' && value.trim() !== '',
+  integer: (value) => Number.isInteger(value),
 };
 const outcomeOf = (fn) => {
   try {
@@ -403,8 +501,10 @@ describe('pr-review-cli: subcommands and ledger actions are matched as own prope
     expect(() => runLedger({ action, findings: [], changedFiles: [], scope: [], ledger: [] })).toThrow(/Unknown ledger action/);
   });
 
-  test('the ledger actions are exactly the documented five', () => {
-    expect(Object.keys(LEDGER_ACTIONS).sort()).toEqual(['dedupe', 'isActionable', 'merge', 'scopeViolations', 'validate']);
+  test('the ledger actions are exactly the documented six', () => {
+    expect(Object.keys(LEDGER_ACTIONS).sort()).toEqual(
+      ['dedupe', 'isActionable', 'merge', 'recordRound', 'scopeViolations', 'validate']
+    );
   });
 });
 
@@ -586,6 +686,40 @@ describe('pr-review-cli: adversarial sweep over every subcommand -- no invalid p
       expect(typeof result.error).toBe('string');
     }
   });
+
+  // The guidance subcommands (TRD-005) are graded in band like scope/remote/status: a payload
+  // they cannot read is a fail-closed RESULT, never a clean pass.
+  test.each(PAYLOADS)('policy %s: strict defaults, never a repository policy', (json) => {
+    const { code, result } = run('policy', json);
+    expect(code).toBe(0);
+    expect(result.source).toBe('defaults');
+    expect(result.policy.roundCap).toBe(DEFAULT_ROUND_CAP);
+    expect(result.policy.lowWaiverEnabled).toBe(false);
+  });
+
+  test.each(PAYLOADS)('rules %s: no rules file is ever reported as applied', (json) => {
+    const { code, result } = run('rules', json);
+    expect(code).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.applied).toEqual([]);
+    expect(result.notes).toContain(NO_AREA_RULES_NOTE);
+  });
+
+  test.each(PAYLOADS)('paths %s: sensitive, never a clean not-sensitive answer', (json) => {
+    const { code, result } = run('paths', json);
+    expect(code).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.prSensitive).toBe(true);
+    expect(result.declarationChanged).toBe(true);
+    expect(result.declarationSource).toBe('defaults');
+  });
+
+  test.each(PAYLOADS)('description %s: never ready for approval', (json) => {
+    const { code, result } = run('description', json);
+    expect(code).toBe(0);
+    expect(result.ready).toBe(false);
+    expect(result.missing.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -736,5 +870,859 @@ describe('pr-review-cli: tree facts carry a locally reviewed snapshot through to
       expect(runStateWrite({ prId: '42', cwd, state: { headSha: S, ledger: [] } }).ok).toBe(true);
       expect(runStateWrite({ prId: '43', cwd, state: { headSha: S, reviewedTreeSha: null, ledger: [] } }).ok).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TRD-005. The four guidance subcommands -- policy, rules, paths, description.
+// The CLI stays a dispatcher: each one hands its payload to the matching module
+// and prints that module's return value, so a caller can never be told something
+// the library would not say on the same input.
+// ---------------------------------------------------------------------------
+
+describe('pr-review-cli: the guidance subcommands are registered and documented (TRD-005)', () => {
+  const SOURCE = fs.readFileSync(CLI, 'utf8');
+  const GUIDANCE = ['policy', 'rules', 'paths', 'description'];
+
+  test('HANDLERS is exported, frozen, and holds exactly the twenty-four subcommands', () => {
+    expect(Object.keys(HANDLERS).sort()).toEqual(
+      [
+        'approvals', 'depth', 'description', 'eval-compare', 'eval-score', 'eval-stale', 'explainer-offer', 'gate',
+        'ledger', 'metrics', 'metrics-compare', 'paths', 'policy', 'reachability', 'remote', 'review-range', 'rules',
+        'scope', 'slices', 'state-read', 'state-write', 'status', 'tier', 'votes',
+      ].sort()
+    );
+    expect(Object.isFrozen(HANDLERS)).toBe(true);
+    for (const name of Object.keys(HANDLERS)) expect(typeof HANDLERS[name]).toBe('function');
+  });
+
+  test('a frozen map cannot gain a subcommand or have one replaced at runtime', () => {
+    expect(() => {
+      HANDLERS.evil = () => ({ ok: true });
+    }).toThrow(TypeError);
+    expect(() => {
+      HANDLERS.policy = () => ({ ok: true });
+    }).toThrow(TypeError);
+    expect(HANDLERS.evil).toBeUndefined();
+  });
+
+  test.each(GUIDANCE)('%s is registered to its own handler function', (name) => {
+    const expected = { policy: runPolicy, rules: runRules, paths: runPaths, description: runDescription }[name];
+    expect(typeof expected).toBe('function');
+    expect(HANDLERS[name]).toBe(expected);
+  });
+
+  test('both usage strings -- the header comment and the unknown-subcommand error -- list every handler', () => {
+    const usageLines = SOURCE.split('\n').filter((line) => line.includes('Usage:'));
+    expect(usageLines).toHaveLength(2);
+    for (const line of usageLines) {
+      for (const name of Object.keys(HANDLERS)) {
+        expect([line.trim(), name, line.includes(name)]).toEqual([line.trim(), name, true]);
+      }
+    }
+  });
+
+  test('the error a caller actually receives names the new subcommands', () => {
+    const { code, captured } = captureStdout(() => main(['polcy']));
+    expect(code).toBe(1);
+    const { error } = JSON.parse(captured);
+    for (const name of GUIDANCE) expect(error).toContain(name);
+  });
+
+  test.each(INHERITED_NAMES)('%s is still not a subcommand once the map has grown', (name) => {
+    const { code, captured } = captureStdout(() => main([name]));
+    expect(code).toBe(1);
+    expect(JSON.parse(captured).error).toMatch(/Unknown subcommand/);
+  });
+});
+
+describe('pr-review-cli: the guidance subcommands delegate, and the CLI result equals the module result (TRD-005)', () => {
+  const POLICY_TEXT = [
+    '# Review rules',
+    '',
+    '```ensemble-review-policy',
+    JSON.stringify({ sourceSha: BASE_SHA, roundCap: 5, maintainerLogins: ['ldangelo'], lowWaiverEnabled: true }),
+    '```',
+    '',
+  ].join('\n');
+
+  /** One good payload per guidance subcommand, with the module call it must equal. */
+  const CASES = {
+    policy: {
+      payload: { text: POLICY_TEXT, baseSha: BASE_SHA, sourceSha: BASE_SHA },
+      direct: (p) => loadPolicy(p),
+      handler: (p) => runPolicy(p),
+    },
+    rules: {
+      payload: {
+        changedPaths: ['packages/development/lib/a.js', 'docs/guides/b.md'],
+        ruleFiles: ['REVIEW.md', 'packages/development/REVIEW.md'],
+        baseSha: BASE_SHA,
+        sourceSha: BASE_SHA,
+      },
+      direct: (p) => resolveRuleFiles(p),
+      handler: (p) => runRules(p),
+    },
+    paths: {
+      payload: {
+        changedPaths: ['.github/workflows/ci.yml', 'src/app.js'],
+        declaration: { sourceSha: BASE_SHA, sensitive: ['src/**'] },
+        codeowners: '/src/ @team-a\n',
+        baseSha: BASE_SHA,
+      },
+      direct: (p) => classifyPaths(p),
+      handler: (p) => runPaths(p),
+    },
+    description: {
+      payload: { body: '## Testing\nnpm test\n\n## Risk\nlow\n\n## How to revert\nrevert the commit\n\nDirected by: @ldangelo\n' },
+      direct: (p) => checkDescription(p),
+      handler: (p) => runDescription(p),
+    },
+  };
+
+  test.each(Object.keys(CASES))('%s: the handler returns exactly what the module returns', (name) => {
+    const { payload, direct, handler } = CASES[name];
+    expect(handler(payload)).toEqual(direct(payload));
+  });
+
+  test.each(Object.keys(CASES))('%s through main() prints one JSON object equal to the module result', (name) => {
+    const { payload, direct } = CASES[name];
+    const { code, captured } = withStdin(payload, () => captureStdout(() => main([name])));
+    expect(code).toBe(0);
+    expect(captured.trimEnd().split('\n')).toHaveLength(1);
+    expect(JSON.parse(captured)).toEqual(JSON.parse(JSON.stringify(direct(payload))));
+  });
+
+  test.each(Object.keys(CASES))('%s through the real process equals the module called directly', (name) => {
+    const { payload, direct } = CASES[name];
+    const res = spawnSync('node', [CLI, name], { input: JSON.stringify(payload), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    expect(res.stderr).toBe('');
+    expect(JSON.parse(res.stdout)).toEqual(JSON.parse(JSON.stringify(direct(payload))));
+  });
+
+  test('the configured policy really is in force through the CLI, not a default', () => {
+    const result = runPolicy(CASES.policy.payload);
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe('policy');
+    expect(result.policy.roundCap).toBe(5);
+    expect(result.policy.maintainerLogins).toEqual(['ldangelo']);
+  });
+
+  test.each([null, undefined, [], 'x', 5, true, false, {}])(
+    'every guidance handler on %p equals its module called directly',
+    (payload) => {
+      expect(runPolicy(payload)).toEqual(loadPolicy(payload));
+      expect(runRules(payload)).toEqual(resolveRuleFiles(payload));
+      expect(runPaths(payload)).toEqual(classifyPaths(payload));
+      expect(runDescription(payload)).toEqual(checkDescription(payload));
+    }
+  );
+});
+
+describe('pr-review-cli: the guidance subcommands fail closed at the boundary (TRD-005)', () => {
+  test.each(['policy', 'rules', 'paths', 'description'])('%s with unparseable stdin exits 1 with a JSON error', (name) => {
+    const { code, captured } = withStdin('{ not json', () => captureStdout(() => main([name])));
+    expect(code).toBe(1);
+    expect(JSON.parse(captured).error).toMatch(/invalid JSON on stdin/);
+  });
+
+  test('a __proto__ payload neither pollutes a result nor relaxes the policy in force', () => {
+    const json = '{"__proto__":{"roundCap":99,"lowWaiverEnabled":true},"baseSha":"' + BASE_SHA + '"}';
+    const { code, result } = (() => {
+      const { code: c, captured } = withStdin(json, () => captureStdout(() => main(['policy'])));
+      return { code: c, result: JSON.parse(captured) };
+    })();
+    expect(code).toBe(0);
+    expect(result.source).toBe('defaults');
+    expect(result.policy.roundCap).toBe(DEFAULT_ROUND_CAP);
+    expect(result.policy.lowWaiverEnabled).toBe(false);
+    expect({}.roundCap).toBeUndefined();
+  });
+
+  test('a policy block the PR brought with it (sourceSha not the base) is refused, and the defaults apply', () => {
+    const result = runPolicy({
+      text: '```ensemble-review-policy\n' + JSON.stringify({ sourceSha: HEAD_SHA, roundCap: 5, lowWaiverEnabled: true }) + '\n```\n',
+      baseSha: BASE_SHA,
+      sourceSha: HEAD_SHA,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('policy-not-from-base');
+    expect(result.policy.roundCap).toBe(DEFAULT_ROUND_CAP);
+    expect(result.policy.lowWaiverEnabled).toBe(false);
+  });
+
+  test('paths with no declaration still reports CI workflow definitions as sensitive (AC-003-2)', () => {
+    const result = runPaths({ changedPaths: ['.github/workflows/release.yml'], baseSha: BASE_SHA });
+    expect(result.ok).toBe(true);
+    expect(result.sensitive).toEqual(['.github/workflows/release.yml']);
+    expect(result.prSensitive).toBe(true);
+    expect(result.paths[0].source).toBe('default');
+  });
+
+  test('rules with no rules file at all reports that none were found (AC-001-4)', () => {
+    const result = runRules({ changedPaths: ['src/app.js'], ruleFiles: [] });
+    expect(result.applied).toEqual([]);
+    expect(result.notes).toContain(NO_AREA_RULES_NOTE);
+  });
+
+  test('description missing a section is not ready and names it (AC-002-3)', () => {
+    const result = runDescription({ body: '## Testing\nnpm test\n\n## Risk\nlow\n', agentAuthored: false });
+    expect(result.ready).toBe(false);
+    expect(result.missing).toContain('how-to-revert');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TRD-018. The three verification subcommands -- votes, depth, slices. Same
+// dispatcher contract as TRD-005: each hands its payload to the matching pure
+// module and prints what that module returned, so the CLI and a direct
+// `require(...)` call can never diverge, and no hostile payload is ever told
+// that verification passed or that a large PR was fully covered.
+// ---------------------------------------------------------------------------
+
+describe('pr-review-cli: votes, depth and slices are registered and documented (TRD-018)', () => {
+  const VERIFICATION = ['votes', 'depth', 'slices'];
+
+  test.each(VERIFICATION)('%s is registered to its own handler function', (name) => {
+    const expected = { votes: runVotes, depth: runDepth, slices: runSlices }[name];
+    expect(typeof expected).toBe('function');
+    expect(HANDLERS[name]).toBe(expected);
+  });
+
+  test('the error a caller actually receives names them', () => {
+    const { code, captured } = captureStdout(() => main(['vote']));
+    expect(code).toBe(1);
+    const { error } = JSON.parse(captured);
+    for (const name of VERIFICATION) expect(error).toContain(name);
+  });
+});
+
+describe('pr-review-cli: votes delegates the tally, and the CLI result equals the module result (TRD-018)', () => {
+  /** One round at Standard depth: a majority-real finding, a style one, a rejected security one. */
+  const PAYLOAD = {
+    depth: 'standard',
+    findings: [
+      {
+        id: 'F1',
+        severity: 'important',
+        reviewer: 'reviewer-a',
+        votes: [
+          { verifier: 'v1', verdict: 'real' },
+          { verifier: 'v2', verdict: 'real' },
+          { verifier: 'v3', verdict: 'not-real' },
+        ],
+      },
+      {
+        id: 'F2',
+        severity: 'nit',
+        kind: 'style',
+        reviewer: 'reviewer-a',
+        votes: [
+          { verifier: 'v1', verdict: 'real' },
+          { verifier: 'v2', verdict: 'real' },
+          { verifier: 'v3', verdict: 'real' },
+        ],
+      },
+      {
+        id: 'F3',
+        severity: 'important',
+        security: true,
+        reviewer: 'reviewer-b',
+        votes: [
+          { verifier: 'v1', verdict: 'not-real' },
+          { verifier: 'v2', verdict: 'not-real' },
+          { verifier: 'v3', verdict: 'not-real' },
+        ],
+      },
+    ],
+  };
+
+  test('the handler returns exactly what tallyVotes returns', () => {
+    expect(runVotes(PAYLOAD)).toEqual(tallyVotes(PAYLOAD));
+  });
+
+  test('through the real process the answer is the module answer, and it grades the round (AC-005-1)', () => {
+    const res = spawnSync('node', [CLI, 'votes'], { input: JSON.stringify(PAYLOAD), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    expect(res.stderr).toBe('');
+    const result = JSON.parse(res.stdout);
+    expect(result).toEqual(JSON.parse(JSON.stringify(tallyVotes(PAYLOAD))));
+
+    const byId = Object.fromEntries(result.findings.map((entry) => [entry.id, entry]));
+    expect(byId.F1.outcome).toBe('present');
+    expect(byId.F2.outcome).toBe('filtered');
+    expect(byId.F3.outcome).toBe('disputed');
+    expect(result.verification).toBe('performed');
+  });
+
+  test.each([null, undefined, [], 'x', 5, true, false, {}])('votes on %p equals tallyVotes called directly', (payload) => {
+    expect(runVotes(payload)).toEqual(tallyVotes(payload));
+  });
+});
+
+describe('pr-review-cli: depth resolves the mode and grades the counts in one answer (TRD-018)', () => {
+  test('a tier alone resolves the mode and the bounds in force, and grades nothing', () => {
+    const result = runDepth({ tier: 'high' });
+    expect(result).toMatchObject({ ok: true, mode: 'deep', source: 'tier' });
+    expect(result.bounds).toEqual(resolveDepth({ tier: 'high' }).bounds);
+    expect(result.violations).toEqual([]);
+  });
+
+  test('a Low PR is Standard until the waiver is enabled, exactly as the module decides (AC-016-3)', () => {
+    expect(runDepth({ tier: 'low' })).toMatchObject({ mode: 'standard', reasons: ['low-treated-as-medium'] });
+    expect(runDepth({ tier: 'low', lowWaiverEnabled: true })).toMatchObject({ mode: 'quick' });
+  });
+
+  test('planned and used counts are graded against the resolved mode, each set named (AC-016-1)', () => {
+    const result = runDepth({ tier: 'medium', planned: { reviewers: 2, verifiers: 3 }, used: { reviewers: 1, verifiers: 2 } });
+    expect(result.ok).toBe(false);
+    expect(result.mode).toBe('standard');
+    expect(result.violations).toEqual(
+      checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: 3 }, used: { reviewers: 1, verifiers: 2 } }).violations
+    );
+    expect(result.violations.map((violation) => `${violation.set}.${violation.role}.${violation.kind}`)).toEqual([
+      'used.reviewers.below-minimum',
+      'used.verifiers.below-minimum',
+    ]);
+  });
+
+  test('a Quick run that exceeds its ceiling is a violation, not a quietly deeper review', () => {
+    const result = runDepth({ tier: 'low', lowWaiverEnabled: true, used: { reviewers: 3, verifiers: 5 } });
+    expect(result.mode).toBe('quick');
+    expect(result.ok).toBe(false);
+    expect(result.violations.map((violation) => violation.kind)).toEqual(['exceeds-maximum', 'exceeds-maximum']);
+  });
+
+  test('an explicit request wins and is recorded when it asks for less than the tier default', () => {
+    const result = runDepth({ tier: 'high', requested: 'quick' });
+    expect(result).toMatchObject({ mode: 'quick', source: 'requested' });
+    expect(result.reasons).toContain('requested-below-tier-default');
+  });
+
+  test('a tier nobody can read is the deepest review, never the cheapest, and says so', () => {
+    const result = runDepth({ tier: 'whatever' });
+    expect(result).toMatchObject({ ok: false, mode: 'deep' });
+    expect(result.reasons).toContain('unknown-tier');
+  });
+
+  test('unreadable bounds are a violation: the default bounds are never substituted for a policy nobody could read', () => {
+    const result = runDepth({ tier: 'medium', used: { reviewers: 2, verifiers: 3 }, bounds: 'all of them' });
+    expect(result.ok).toBe(false);
+    expect(result.bounds).toBeNull();
+    expect(result.violations.length).toBeGreaterThan(0);
+  });
+
+  test('a policy bounds override is in force before any reviewer is planned, not only when counts are graded', () => {
+    const bounds = { standard: { reviewers: { min: 3, max: null }, verifiers: { min: 4, max: null } } };
+    const result = runDepth({ tier: 'medium', bounds });
+
+    expect(result.mode).toBe('standard');
+    expect(result.bounds).toEqual(boundsFor('standard', bounds).bounds);
+    expect(result.bounds.reviewers.min).toBe(3);
+    expect(result.violations).toEqual([]);
+
+    // The same override still grades the counts once they exist.
+    expect(runDepth({ tier: 'medium', bounds, used: { reviewers: 2, verifiers: 4 } }).violations).toEqual([
+      { set: 'used', role: 'reviewers', kind: 'below-minimum', bound: 3, count: 2 },
+    ]);
+  });
+
+  test('an override nobody can read is never the defaults quietly standing in, even with nothing to grade', () => {
+    const result = runDepth({ tier: 'medium', bounds: 'all of them' });
+    expect(result.ok).toBe(false);
+    expect(result.bounds).toBeNull();
+    expect(result.warnings).toContain('invalid-bounds');
+  });
+
+  test('through the real process the answer is the same one', () => {
+    const payload = { tier: 'medium', used: { reviewers: 1, verifiers: 0 } };
+    const res = spawnSync('node', [CLI, 'depth'], { input: JSON.stringify(payload), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    expect(res.stderr).toBe('');
+    expect(JSON.parse(res.stdout)).toEqual(JSON.parse(JSON.stringify(runDepth(payload))));
+  });
+});
+
+describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-018)', () => {
+  const PATHS = [
+    { path: 'packages/development/lib/a.js', lines: 900 },
+    { path: 'packages/development/lib/b.js', lines: 400 },
+    { path: 'packages/quality/skills/c.md', lines: 500 },
+    { path: 'README.md', lines: 60 },
+  ];
+  const AREAS = ['packages/development', 'packages/quality'];
+
+  test('a PR over the threshold is partitioned by area, every path in exactly one slice (AC-018-1)', () => {
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500 });
+    expect(result).toEqual(planSlices({ paths: PATHS, areas: AREAS, threshold: 1500 }));
+    expect(result.sliced).toBe(true);
+
+    const planned = result.slices.flatMap((slice) => slice.paths);
+    expect(planned.sort()).toEqual(PATHS.map((entry) => entry.path).sort());
+    expect(new Set(planned).size).toBe(PATHS.length);
+  });
+
+  test('a PR under the threshold is one slice, not a plan nobody asked for', () => {
+    const result = runSlices({ paths: [{ path: 'README.md', lines: 10 }] });
+    expect(result.sliced).toBe(false);
+    expect(result.slices).toEqual([{ id: 'whole-pr', area: '', paths: ['README.md'], lines: 10 }]);
+  });
+
+  test('with reviewed slice ids the answer names every path that was not covered (AC-018-2)', () => {
+    const plan = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500 });
+    const reviewed = plan.slices.map((slice) => slice.id).filter((id) => id !== 'packages/quality');
+
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewed });
+    expect(result.covered).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.uncovered).toEqual(['packages/quality/skills/c.md']);
+    expect(result.unreviewedSlices).toEqual(['packages/quality']);
+  });
+
+  test('every slice reviewed is full coverage, and it equals verifyCoverage on the same plan', () => {
+    const plan = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500 });
+    const reviewed = plan.slices.map((slice) => slice.id);
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewed });
+
+    expect(result.covered).toBe(true);
+    expect(result.uncovered).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(result.reviewedSlices).toEqual(verifyCoverage({ slices: plan.slices, reviewed }).reviewedSlices);
+  });
+
+  test('a plan the module refused is never read as covered, whatever slice ids the caller claims', () => {
+    const result = runSlices({ paths: 'everything', reviewed: ['whole-pr'] });
+    expect(result.ok).toBe(false);
+    expect(result.slices).toEqual([]);
+    expect(result.covered).not.toBe(true);
+  });
+
+  test('through the real process the answer is the same one', () => {
+    const payload = { paths: PATHS, areas: AREAS, threshold: 1500 };
+    const res = spawnSync('node', [CLI, 'slices'], { input: JSON.stringify(payload), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    expect(res.stderr).toBe('');
+    expect(JSON.parse(res.stdout)).toEqual(JSON.parse(JSON.stringify(planSlices(payload))));
+  });
+});
+
+describe('pr-review-cli: the verification subcommands fail closed at the boundary (TRD-018)', () => {
+  // The same payloads the TRD-005 sweep uses: not an object, or an empty one.
+  const PAYLOADS = ['null', '[]', '"x"', '5', 'true', 'false', '{}', '[{}]', '{"__proto__":{"depth":"deep"}}', '{"constructor":{"prototype":{}}}'];
+
+  const run = (subcommand, json) => {
+    const { code, captured } = withStdin(json, () => captureStdout(() => main([subcommand])));
+    return { code, result: JSON.parse(captured) };
+  };
+
+  test.each(PAYLOADS)('votes %s: blocked, never a presented finding', (json) => {
+    const { code, result } = run('votes', json);
+    expect(code).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.verification).toBe('blocked');
+    expect(result.presented).toEqual([]);
+  });
+
+  test.each(PAYLOADS)('depth %s: the deepest review, never a clean Quick', (json) => {
+    const { code, result } = run('depth', json);
+    expect(code).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.mode).toBe('deep');
+    expect(result.reasons).toContain('unknown-tier');
+  });
+
+  test.each(PAYLOADS)('slices %s: no plan at all, never one safe slice', (json) => {
+    const { code, result } = run('slices', json);
+    expect(code).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.slices).toEqual([]);
+    expect(result.covered).not.toBe(true);
+  });
+
+  test.each(['votes', 'depth', 'slices'])('%s with unparseable stdin exits 1 with a JSON error', (name) => {
+    const { code, captured } = withStdin('{ not json', () => captureStdout(() => main([name])));
+    expect(code).toBe(1);
+    expect(JSON.parse(captured).error).toMatch(/invalid JSON on stdin/);
+  });
+
+  test('a __proto__ payload neither pollutes a result nor buys a cheaper review', () => {
+    const { code, result } = run('depth', '{"__proto__":{"tier":"low","lowWaiverEnabled":true},"used":{"reviewers":1,"verifiers":0}}');
+    expect(code).toBe(0);
+    expect(result.mode).toBe('deep');
+    expect({}.tier).toBeUndefined();
+  });
+
+  test('votes never drops a finding it cannot read: it comes back unverified and presented (REQ-006)', () => {
+    const { result } = run('votes', JSON.stringify({ depth: 'standard', findings: [{ id: 'F1', votes: 'two of them said yes' }] }));
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].outcome).toBe('unverified');
+    expect(result.presented.map((entry) => entry.id)).toEqual(['F1']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TRD-026. The tier, approval and merge-gate subcommands, and the tier decision
+// as it is RECORDED in the review-state report (REQ-015, AC-015-1, AC-015-2).
+// ---------------------------------------------------------------------------
+
+/** The classifier's output and the path classification for an ordinary product PR. */
+function tierPayload(overrides = {}) {
+  return {
+    kinds: [{ kind: 'product', paths: ['src/app.js'] }],
+    paths: { ok: true, sensitive: [], high: [], paths: ['src/app.js'] },
+    assignedBy: 'pr-review-cycle/classifier',
+    ...overrides,
+  };
+}
+
+/** The same composition the CLI performs, built here from the modules directly. */
+function tierDirect(payload) {
+  const assignment = assignTier(payload);
+  const effective = effectiveTier({
+    assignment,
+    policy: payload && payload.policy,
+    evidence: payload && payload.evidence,
+    enabledBy: payload && payload.enabledBy,
+    author: payload && payload.author,
+  });
+  const record = tierRecord({
+    assignment,
+    effective,
+    assignedBy: payload && payload.assignedBy,
+    at: payload && payload.at,
+  });
+  return { ...record, ok: record.ok === true && assignment.ok === true && effective.ok === true };
+}
+
+describe('pr-review-cli: tier, approvals and gate are registered and documented (TRD-026)', () => {
+  const SOURCE = fs.readFileSync(CLI, 'utf8');
+  const TRD_026 = ['tier', 'approvals', 'gate'];
+
+  test.each(TRD_026)('%s is registered to its own handler function', (name) => {
+    const expected = { tier: runTier, approvals: runApprovals, gate: runGate }[name];
+    expect(typeof expected).toBe('function');
+    expect(Object.prototype.hasOwnProperty.call(HANDLERS, name)).toBe(true);
+    expect(HANDLERS[name]).toBe(expected);
+  });
+
+  test('both usage strings -- the header comment and the unknown-subcommand error -- name all three', () => {
+    const usageLines = SOURCE.split('\n').filter((line) => line.includes('Usage:'));
+    expect(usageLines).toHaveLength(2);
+    for (const line of usageLines) {
+      for (const name of TRD_026) expect([line.trim(), name, line.includes(name)]).toEqual([line.trim(), name, true]);
+    }
+  });
+
+  test('the error a caller actually receives names them', () => {
+    const { code, captured } = captureStdout(() => main(['teir']));
+    expect(code).toBe(1);
+    const { error } = JSON.parse(captured);
+    for (const name of TRD_026) expect(error).toContain(name);
+  });
+});
+
+describe('pr-review-cli: tier composes assign -> effective -> record, and nothing else (TRD-026)', () => {
+  test('an ordinary product PR is Medium, one human, with the characteristics that drove it', () => {
+    const payload = tierPayload();
+    const result = runTier(payload);
+    expect(result).toEqual(tierDirect(payload));
+    expect(result.ok).toBe(true);
+    expect(result.tier).toBe('medium');
+    expect(result.effectiveTier).toBe('medium');
+    expect(result.humansRequired).toBe(HUMANS_REQUIRED.medium);
+    expect(result.characteristics).toEqual([{ kind: 'product', paths: ['src/app.js'] }]);
+    expect(result.assignedBy).toBe('pr-review-cycle/classifier');
+    expect(result.reasons).toContain('product-change');
+  });
+
+  test('AC-015-2: a sensitive path raises the tier, and the record shows original, final and reason', () => {
+    const payload = tierPayload({
+      kinds: [{ kind: 'docs', paths: ['docs/auth.md'] }, { kind: 'product', paths: ['src/auth/token.js'] }],
+      paths: { ok: true, sensitive: ['src/auth/token.js'], high: [], paths: ['docs/auth.md', 'src/auth/token.js'] },
+    });
+    const result = runTier(payload);
+    expect(result).toEqual(tierDirect(payload));
+    expect(result.originalTier).toBe('medium');
+    expect(result.finalTier).toBe('high');
+    expect(result.tier).toBe('high');
+    expect(result.humansRequired).toBe(HUMANS_REQUIRED.high);
+    expect(result.reasons).toContain('sensitive-path');
+    expect(result.paths.sensitive).toEqual(['src/auth/token.js']);
+  });
+
+  test('AC-015-2: a second assessment raises the tier and the raise records its reason', () => {
+    const payload = tierPayload({
+      secondAssessment: { needsAnotherPerson: true, reason: 'touches the release path', evidencePaths: ['src/app.js'] },
+    });
+    const result = runTier(payload);
+    expect(result.originalTier).toBe('medium');
+    expect(result.finalTier).toBe('high');
+    expect(result.raised).toEqual([{ from: 'medium', to: 'high', reason: 'touches the release path' }]);
+  });
+
+  test('a lowering proposal from a non-owner is ignored and the record says why (AC-013-2)', () => {
+    const result = runTier(tierPayload({ proposedTier: 'low', proposedBy: { login: 'author', isCodeOwner: false } }));
+    expect(result.tier).toBe('medium');
+    expect(result.ignored).toEqual([{ proposedTier: 'low', by: 'author', reason: 'lowering-needs-code-owner' }]);
+  });
+
+  test('the dispatcher only ever makes ok stricter: a refused waiver is not a clean tier result', () => {
+    const payload = tierPayload({
+      kinds: [{ kind: 'docs', paths: ['README.md'] }],
+      paths: { ok: true, sensitive: [], high: [], paths: ['README.md'] },
+      policy: { lowWaiverEnabled: true, maintainerLogins: ['maint'] },
+      enabledBy: { login: 'maint', isCodeOwner: true },
+      author: 'maint',
+    });
+    const result = runTier(payload);
+    expect(result.tier).toBe('low');
+    expect(result.effectiveTier).toBe('medium');
+    expect(result.humansRequired).toBe(HUMANS_REQUIRED.medium);
+    expect(result.waiver.applies).toBe(false);
+    expect(result.refusals.map((entry) => entry.code)).toContain('low-waiver-unsupported');
+  });
+});
+
+describe('pr-review-cli: approvals and gate are pass-throughs to their one module (TRD-026)', () => {
+  const APPROVALS = {
+    reviews: [{ login: 'reviewer-a', state: 'approved', commitSha: HEAD_SHA }],
+    headSha: HEAD_SHA,
+    tier: runTier(tierPayload()),
+    author: 'author',
+  };
+
+  test('approvals returns evaluateApprovals verbatim', () => {
+    expect(runApprovals(APPROVALS)).toEqual(evaluateApprovals(APPROVALS));
+    expect(runApprovals(APPROVALS).satisfied).toBe(true);
+  });
+
+  test('gate returns evaluateGate verbatim', () => {
+    const payload = {
+      ledger: [],
+      approvals: runApprovals(APPROVALS),
+      tier: runTier(tierPayload()),
+      description: checkDescription({ body: '## Testing\nran\n## Risk\nlow\n## Rollback\nrevert\n' }),
+      security: { status: 'clean' },
+      headSha: HEAD_SHA,
+    };
+    expect(runGate(payload)).toEqual(evaluateGate(payload));
+  });
+
+  test.each([null, undefined, [], 'x', 5, true, false, {}])('approvals and gate of %p equal the module called directly', (payload) => {
+    expect(runApprovals(payload)).toEqual(evaluateApprovals(payload));
+    expect(runGate(payload)).toEqual(evaluateGate(payload));
+  });
+});
+
+describe('pr-review-cli: tier, approvals and gate fail closed at the boundary (TRD-026)', () => {
+  const PAYLOADS = ['null', '[]', '"x"', '5', 'true', 'false', '{}', '[{}]', '{"__proto__":{"tier":"low"}}', '{"constructor":{"prototype":{}}}'];
+
+  const run = (subcommand, json) => {
+    const { code, captured } = withStdin(json, () => captureStdout(() => main([subcommand])));
+    return { code, result: JSON.parse(captured) };
+  };
+
+  test.each(PAYLOADS)('tier %s: High with two humans, never a cheaper review', (json) => {
+    const { code, result } = run('tier', json);
+    expect(code).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.tier).toBe('high');
+    expect(result.effectiveTier).toBe('high');
+    expect(result.finalTier).toBe('high');
+    expect(result.humansRequired).toBe(HUMANS_REQUIRED.high);
+    expect(result.waiver.applies).toBe(false);
+  });
+
+  test.each(PAYLOADS)('approvals %s: never satisfied, two humans required', (json) => {
+    const { code, result } = run('approvals', json);
+    expect(code).toBe(0);
+    expect(result.satisfied).toBe(false);
+    expect(result.humansRequired).toBe(HUMANS_REQUIRED.high);
+    expect(result.approvedBy).toEqual([]);
+  });
+
+  test.each(PAYLOADS)('gate %s: never mergeable, and it names the missing data', (json) => {
+    const { code, result } = run('gate', json);
+    expect(code).toBe(0);
+    expect(result.mergeable).toBe(false);
+    expect(result.blockers.length).toBeGreaterThan(0);
+    for (const blocker of result.blockers) {
+      expect(typeof blocker.code).toBe('string');
+      expect(typeof blocker.message).toBe('string');
+      expect(typeof blocker.nextAction).toBe('string');
+    }
+  });
+
+  test.each(['tier', 'approvals', 'gate'])('%s with unparseable stdin exits 1 with a JSON error', (name) => {
+    const { code, captured } = withStdin('{ not json', () => captureStdout(() => main([name])));
+    expect(code).toBe(1);
+    expect(JSON.parse(captured).error).toMatch(/invalid JSON on stdin/);
+  });
+
+  test('a __proto__ payload neither pollutes a result nor buys a cheaper tier', () => {
+    const { code, result } = run('tier', '{"__proto__":{"kinds":[{"kind":"docs","paths":["a.md"]}],"paths":{"ok":true,"sensitive":[],"high":[]}}}');
+    expect(code).toBe(0);
+    expect(result.tier).toBe('high');
+    expect({}.kinds).toBeUndefined();
+  });
+
+  test.each([
+    ['a tier word instead of a tier result', 'low'],
+    ['a tier result the module refused', { ok: false, effectiveTier: 'low', humansRequired: 0 }],
+  ])('approvals with %s is never satisfied: two humans are required', (_label, tier) => {
+    const { result } = run('approvals', JSON.stringify({
+      reviews: [{ login: 'reviewer-a', state: 'approved', commitSha: HEAD_SHA }],
+      headSha: HEAD_SHA,
+      tier,
+    }));
+    expect(result.ok).toBe(false);
+    expect(result.satisfied).toBe(false);
+    expect(result.humansRequired).toBe(HUMANS_REQUIRED.high);
+    expect(result.approvedBy).toEqual([]);
+  });
+});
+
+describe('pr-review-cli: state-write records the tier decision and state-read returns it (AC-015-1, AC-015-2)', () => {
+  const run = (subcommand, payload) => {
+    const { code, captured } = withStdin(JSON.stringify(payload), () => captureStdout(() => main([subcommand])));
+    return { code, result: JSON.parse(captured) };
+  };
+
+  test('the recorded report carries tier, reasons, original and final tier for the same head', () => {
+    const cwd = tmpCwd();
+    const tier = runTier(tierPayload({
+      kinds: [{ kind: 'product', paths: ['src/auth/token.js'] }],
+      paths: { ok: true, sensitive: ['src/auth/token.js'], high: [], paths: ['src/auth/token.js'] },
+    }));
+    expect(tier.originalTier).toBe('medium');
+    expect(tier.finalTier).toBe('high');
+
+    const written = run('state-write', { prId: '42', cwd, state: { headSha: HEAD_SHA, tier } });
+    expect(written.code).toBe(0);
+    expect(written.result.ok).toBe(true);
+    // The report lives under the untracked .ensemble/pr-review/ directory.
+    expect(written.result.path).toBe(statePath('42', cwd));
+    expect(written.result.path).toContain(path.join('.ensemble', 'pr-review'));
+
+    const read = run('state-read', { prId: '42', cwd, headSha: HEAD_SHA });
+    expect(read.code).toBe(0);
+    expect(read.result.ok).toBe(true);
+    expect(read.result.discarded).toBe(false);
+    expect(read.result.state.tier).toEqual(tier);
+    expect(read.result.state.tier.tier).toBe('high');
+    expect(read.result.state.tier.originalTier).toBe('medium');
+    expect(read.result.state.tier.finalTier).toBe('high');
+    expect(read.result.state.tier.reasons).toContain('sensitive-path');
+    expect(read.result.state.tier.assignedBy).toBe('pr-review-cycle/classifier');
+
+    // The same decision read straight off disk -- the CLI did not re-grade it.
+    expect(readState(statePath('42', cwd), HEAD_SHA, { cwd }).state.tier).toEqual(tier);
+  });
+
+  test('a report written for one head is not resumed for another: the tier is not reused', () => {
+    const cwd = tmpCwd();
+    const tier = runTier(tierPayload());
+    expect(run('state-write', { prId: '43', cwd, state: { headSha: HEAD_SHA, tier } }).result.ok).toBe(true);
+    const read = run('state-read', { prId: '43', cwd, headSha: 'c'.repeat(40) });
+    expect(read.result.discarded).toBe(true);
+    expect(read.result.state).toBeNull();
+  });
+});
+
+describe('pr-review-cli: tier, approvals and gate over a real shell invocation (TRD-026)', () => {
+  test.each([
+    ['tier', tierPayload()],
+    ['approvals', { reviews: [], headSha: HEAD_SHA, tier: runTier(tierPayload()) }],
+    ['gate', { ledger: [], approvals: runApprovals({ reviews: [], headSha: HEAD_SHA, tier: runTier(tierPayload()) }), description: checkDescription({ body: '' }), security: { status: 'clean' } }],
+  ])('%s through the executable equals the direct handler call', (subcommand, payload) => {
+    const run = spawnSync('node', [CLI, subcommand], { input: JSON.stringify(payload), encoding: 'utf8' });
+    expect(run.status).toBe(0);
+    const direct = { tier: runTier, approvals: runApprovals, gate: runGate }[subcommand](payload);
+    expect(JSON.parse(run.stdout)).toEqual(JSON.parse(JSON.stringify(direct)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review-only and CI as the tests fact, through the entry points the skill uses. A review of someone else's PR reports; it
+// is never REVIEW_COMPLETE, and the host's CI stands in for its tests only as check runs the CLI itself derives a pass from.
+// ---------------------------------------------------------------------------
+
+describe('pr-review-cli: status for a review of someone else\'s PR (review-only, CI as the tests)', () => {
+  const ciTests = (conclusion = 'success', commitSha = HEAD_SHA) => ({
+    source: 'ci',
+    checkRuns: [{ id: 1, name: 'test', commitSha, conclusion }],
+    totalCount: 1,
+    command: 'npm test',
+  });
+  const reviewOnlyFacts = (overrides = {}) => completeStatusFacts({ reviewOnly: true, tests: ciTests(), ...overrides });
+  const viaShell = (payload) => {
+    const res = spawnSync('node', [CLI, 'status'], { input: JSON.stringify(payload), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    return JSON.parse(res.stdout);
+  };
+
+  test('a review-only run is REVIEW_PENDING through the real executable, never REVIEW_COMPLETE, with every other fact complete', () => {
+    const payload = reviewOnlyFacts();
+    const result = viaShell(payload);
+    expect(result).toEqual(JSON.parse(JSON.stringify(deriveStatus(payload))));
+    expect(runStatus(payload)).toEqual(deriveStatus(payload));
+    expect([result.status, result.localPhase, result.remotePhase, result.reviewOnly]).toEqual([
+      'REVIEW_PENDING',
+      'LOCAL_REVIEW_PENDING',
+      'REMOTE_REVIEW_COMPLETE',
+      true,
+    ]);
+    expect(result.reasons.some((reason) => /review-only/.test(reason))).toBe(true);
+    // The identical facts without it complete, so the refusal above is the flag's doing.
+    expect(viaShell(completeStatusFacts()).status).toBe('REVIEW_COMPLETE');
+  });
+
+  test.each([
+    ['a failed run', ciTests('failure'), 'REVIEW_PENDING'],
+    ['a run that has not concluded', ciTests(null), 'REVIEW_PENDING'],
+    ['runs for another commit', ciTests('success', 'a'.repeat(40)), 'REVIEW_PENDING'],
+    ['a typed pass with no runs behind it', { source: 'ci', passed: true, exitCode: 0 }, 'REVIEW_BLOCKED'],
+  ])('CI that does not show a pass never counts as passing tests (%s)', (_label, tests, status) => {
+    const result = viaShell(reviewOnlyFacts({ tests }));
+    expect([result.status, result.tests.passed]).toEqual([status, false]);
+    if (status === 'REVIEW_PENDING') expect(result.next).toBe('run-tests:npm test');
+  });
+
+  test('a full run, and local changes in particular, are unchanged: reviewOnly false completes, and CI is no way to pass its tests', () => {
+    expect(viaShell(completeStatusFacts({ reviewOnly: false })).status).toBe('REVIEW_COMPLETE');
+    const withCi = viaShell(completeStatusFacts({ tests: ciTests() }));
+    expect([withCi.status, withCi.localPhase, withCi.tests.passed]).toEqual(['REVIEW_BLOCKED', 'LOCAL_REVIEW_BLOCKED', false]);
+    const neverRan = viaShell(completeStatusFacts({ tests: undefined, remotePhase: undefined }));
+    expect([neverRan.status, neverRan.next]).toEqual(['REVIEW_PENDING', 'run-tests']);
+  });
+
+  test('the review-only report is recorded and read back; a remote phase that drops reviewOnly cannot turn its CI into a completed review', () => {
+    const cwd = tmpCwd();
+    const local = runStatus(reviewOnlyFacts({ remotePhase: undefined }));
+    expect([local.status, local.reviewOnly, local.tests.passed]).toEqual(['REVIEW_PENDING', true, true]);
+    expect(runStateWrite({ prId: 'pr-7', cwd, state: { ...local, ledger: [] } }).ok).toBe(true);
+
+    const read = runStateRead({ prId: 'pr-7', cwd, headSha: HEAD_SHA });
+    expect(read).toMatchObject({ ok: true, discarded: false });
+    expect(read.state.reviewOnly).toBe(true);
+
+    // The remote phase builds its facts from the recorded report.
+    const remoteFacts = (recorded, overrides = {}) =>
+      completeStatusFacts({
+        baseSha: recorded.baseSha,
+        headSha: HEAD_SHA,
+        reviewedHeadSha: recorded.reviewedHeadSha,
+        findingCounts: recorded.findingCounts,
+        tests: recorded.tests,
+        remotePhase: 'REMOTE_REVIEW_COMPLETE',
+        ...overrides,
+      });
+    // Carrying `reviewOnly` as the report recorded it keeps the review a report ...
+    expect(runStatus(remoteFacts(read.state, { reviewOnly: read.state.reviewOnly })).status).toBe('REVIEW_PENDING');
+    // ... and a remote phase that forgets it is refused for the CI it recorded: CI is a review-only run's tests alone.
+    const forgotten = runStatus(remoteFacts(read.state));
+    expect(forgotten.status).toBe('REVIEW_BLOCKED');
+    expect(forgotten.tests.passed).toBe(false);
   });
 });

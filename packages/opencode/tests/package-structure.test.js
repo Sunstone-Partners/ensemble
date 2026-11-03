@@ -20,14 +20,13 @@ describe('OC-S1-PKG-001: packages/opencode/ directory structure', () => {
 
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
     expect(pkg.name).toBe('@sunstone-partners/ensemble-opencode');
-    expect(pkg.version).toBe('5.3.1');
     // Author can be string or object with name field (TRD specifies object form)
     if (typeof pkg.author === 'string') {
       expect(pkg.author).toBe('Sunstone Partners');
     } else {
       expect(pkg.author).toHaveProperty('name', 'Sunstone Partners');
     }
-    expect(pkg.license).toBe('MIT');
+    expect(pkg.license).toBe('Apache-2.0');
   });
 
   it('should have a plugin.json manifest', () => {
@@ -36,7 +35,6 @@ describe('OC-S1-PKG-001: packages/opencode/ directory structure', () => {
 
     const plugin = JSON.parse(fs.readFileSync(pluginPath, 'utf-8'));
     expect(plugin.name).toBe('ensemble-opencode');
-    expect(plugin.version).toBe('5.3.1');
     expect(plugin.author).toHaveProperty('name', 'Sunstone Partners');
     expect(plugin.author).toHaveProperty('email', 'info@sunstonepartners.com');
   });

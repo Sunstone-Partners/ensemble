@@ -118,7 +118,9 @@ describe('safety constraints preserved', () => {
   test.each([
     ['no-test-weakening', 'NEVER delete, skip, xfail'],
     ['no-force-push / no-bypass', 'NEVER force-push'],
-    ['max-rounds bound', 'Bound remediation to --max-rounds'],
+    // The round bound is deliberately reworded by the shared-round-cap change (AC-009-3): a command keeps no
+    // private number, the repository policy cap applies and --max-rounds may only lower it. Its safety meaning
+    // (bounded, HALT-and-escalate, every open finding listed) is asserted in the dedicated test below.
     ['independent re-verify', 'independently re-verified'],
     ['concurrent dispatch', 'dispatches ALL findings'],
   ])('%s equals its committed text and is present', (_n, needle) => {
@@ -127,6 +129,16 @@ describe('safety constraints preserved', () => {
     // TRD-039 reworded only the state source of the re-verify rule (host-neutral, no `gh`); its meaning is unchanged.
     const expected = _n === 'independent re-verify' ? before.replace('fresh gh state', 'fresh host-adapter state') : before;
     expect(source.constraints).toContain(expected);
+  });
+
+  test('max-rounds bound still bounds remediation and escalates (reworded to the shared policy cap, AC-009-3)', () => {
+    const bound = source.constraints.find((c) => c.includes('Bound remediation to the repository\'s SHARED round cap'));
+    expect(bound).toBeDefined();
+    expect(bound).toContain('--max-rounds=N may only LOWER that cap');
+    expect(bound).toContain('HALT-and-escalate');
+    expect(bound).toContain('every still-open finding');
+    // The old private-number wording is gone from the constraints.
+    expect(source.constraints.some((c) => /Bound remediation to --max-rounds \(default 5\)/.test(c))).toBe(false);
   });
 
   test('--dry-run behaviour and parameter unchanged', () => {

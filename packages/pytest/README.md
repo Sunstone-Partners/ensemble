@@ -304,7 +304,7 @@ For issues, questions, or contributions, please visit the [ensemble repository](
 
 ## License
 
-MIT
+Apache License 2.0. See the repository [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE).
 
 ---
 

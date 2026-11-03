@@ -1,6 +1,6 @@
 {
   "name": "ensemble-plugins",
-  "version": "7.0.0",
+  "version": "8.1.0",
   "private": true,
   "description": "Ensemble Plugin Ecosystem - Modular Claude Code plugins for development workflows",
   "workspaces": [
@@ -57,5 +57,5 @@
     "url": "https://github.com/Sunstone-Partners/ensemble.git"
   },
   "author": "Sunstone Partners",
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

@@ -31,6 +31,7 @@ const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 
 const RUNS_DIR = path.join('.ensemble', 'local-ci-runs');
+const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const DEFAULT_STALE_MS = 60 * 60 * 1000;
 const DEFAULT_SECRETS_FILE = path.join('.ensemble', 'local-ci.secrets.env');
@@ -53,12 +54,20 @@ function defaultDeps() {
       const r = spawnSync('git', args, { cwd, input, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
       return { status: r.error ? 127 : r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? String(r.error.message) : '') };
     },
-    run(cmd, { cwd, env } = {}) {
+    run(cmd, { cwd, env, timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}) {
       // Same fail-fast shell GitHub Actions uses for `shell: bash` steps (-e -o pipefail). Plain `bash -c` returns only the LAST
       // command's status, so a failure in the middle of a multi-command step (a loop, a script block) would be graded as a pass
       // here while hosted CI fails it. --noprofile --norc keeps the maintainer's shell startup files out of the step.
-      const r = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', cmd], { cwd, env, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
-      return { status: r.error ? 127 : r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? String(r.error.message) : '') };
+      // A hung step must fail, not block the gate forever: `timeout` SIGKILLs bash, and `detached` makes bash a process-group
+      // leader so the whole group (its children) is SIGKILLed too. Limit: a descendant that calls setsid() escapes the group.
+      const r = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', cmd], {
+        cwd, env, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL', detached: true,
+      });
+      const timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
+      if (timedOut && r.pid) {
+        try { process.kill(-r.pid, 'SIGKILL'); } catch { /* group already gone */ }
+      }
+      return { status: r.error ? 127 : r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? String(r.error.message) : ''), timedOut };
     },
     resolveNodeBinDir(major) {
       const r = spawnSync('npx', ['--yes', '-p', `node@${major}`, 'node', '-p', 'process.execPath'], { encoding: 'utf8' });
@@ -646,15 +655,18 @@ function runGate(options, injected) {
 
       // Every trusted command is run by the runner; the verdict is its exit status.
       for (const s of steps) {
-        const r = deps.run(s.cmd, { cwd: dir, env: stepEnv });
-        if (r.status === 0) {
+        const r = deps.run(s.cmd, { cwd: dir, env: stepEnv, timeoutMs: opts.stepTimeoutMs });
+        if (r.status === 0 && !r.timedOut) {
           node.steps.push({ name: s.name, status: 'PASS' });
         } else {
           node.steps.push({ name: s.name, status: 'FAIL' });
           const logFile = opts.failureLogDir
             ? writeFailureLog({ dir: opts.failureLogDir, sha, major, stepName: s.name, cmd: s.cmd, status: r.status, stdout: r.stdout, stderr: r.stderr, secretValues })
             : null;
-          fail('step-failed', s.name, major, `step "${s.name}" failed on Node ${major} at ${sha} (exit ${r.status})${logFile ? `; full output: ${logFile}` : ''}: ${tail(`${r.stdout}\n${r.stderr}`)}`);
+          const why = r.timedOut
+            ? `step ${s.name} timed out after ${Math.round((opts.stepTimeoutMs || DEFAULT_STEP_TIMEOUT_MS) / 1000)}s (hung?)`
+            : `step "${s.name}" failed on Node ${major} at ${sha} (exit ${r.status})`;
+          fail('step-failed', s.name, major, `${why}${logFile ? `; full output: ${logFile}` : ''}: ${tail(`${r.stdout}\n${r.stderr}`)}`);
         }
         // After EVERY step, whether it passed or not: a step may only leave untracked files under the base config's
         // output_paths. Anything else is a file the next command (or this step's own test) could read as permission.
@@ -704,6 +716,7 @@ function executedMatches(executed, steps) {
 }
 
 module.exports = {
+  defaultDeps,
   runGate,
   cloneAtSha,
   sweepStaleClones,

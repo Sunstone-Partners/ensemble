@@ -29,8 +29,9 @@ without the approval gate. The payload is the plan; its bead ids, scope,
 `track_beads` order, sequentially. Claim with `br update <BEAD_ID> --status=in_progress`,
 close with `br close <BEAD_ID>` only after the parent-supplied commit gate passes,
 export with `br sync --flush-only`. Follow the supplied `quality_loop` (claim,
-implement, run tests, delegate to code-reviewer, parse verdict, max 2 rejection
-rounds). Never re-call `bv --robot-plan` or re-partition the bead list. If either
+implement, run tests, delegate to code-reviewer, parse verdict, review rounds bounded by
+the repository's shared round cap from the pr-review-cycle skill's policy -- never a private number;
+at the cap, stop iterating and ask the author to step back and reconsider the approach). Never re-call `bv --robot-plan` or re-partition the bead list. If either
 invariant (non-empty `track_beads`, `scope` object) is missing, fall back to the
 approval gate.
 

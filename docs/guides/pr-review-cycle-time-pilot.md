@@ -19,6 +19,7 @@ run by hand (or from a throwaway script) against the GitHub API through the alre
    - [3.5 Review wait time](#35-review-wait-time)
 4. [Running the pilot](#4-running-the-pilot)
 5. [Current status: target not met, causality not inferred](#5-current-status-target-not-met-causality-not-inferred)
+6. [Review-process baseline capture (TRD-044)](#6-review-process-baseline-capture-trd-044-req-019)
 
 ---
 
@@ -228,7 +229,8 @@ A **fix round** is a review that was acted on: a review (as defined above) follo
 commit made after it and before the next review or, for the last review, before the merge. Reviews
 nobody acted on — an approval, a bot summary, a comment answered in the thread — are not rounds,
 and two reviews with no commit between them are at most one round, since only the second can be
-followed by a fix. The `pr-review-cycle` skill's `MAX_AUTO_ROUNDS = 2` caps the *automatic* rounds a
+followed by a fix. The `pr-review-cycle` skill's shared round cap (the `roundCap` policy key in
+REVIEW.md: 1-5, default 3) caps the *automatic* rounds a
 PR goes through; this is the observable proxy for the rounds actually used, not a read of the
 skill's own state, so it also counts rounds a human reviewer prompted.
 
@@ -302,3 +304,127 @@ have not shipped yet, so there is no "after" data to compare against the baselin
   same five metrics, applied to a genuine post-change population) — it is never inferred from
   baseline numbers in isolation, and it is never inferred from a single PR or a cohort that fails
   either threshold in §2.
+
+## 6. Review-process baseline capture (TRD-044, REQ-019)
+
+This section defines the metrics REQ-019 requires (AC-019-1, AC-019-2) as `gh` and `jq` queries and
+the rule for when a baseline may be reported. The result is committed as
+`docs/guides/review-baseline-<date>.json` **before PR 2 of the code-review-process TRD lands**, and
+the PR 5 metrics library (`computeMetrics`, TRD-030) must later reproduce it exactly from the same
+inputs.
+
+### 6.1 Cohort rule
+
+A baseline is reportable only if its cohort has **at least 20 PRs AND spans at least 30 calendar
+days** (earliest to latest `createdAt`). This is the same AND rule as §2. The capture below computes
+both checks (`cohort.meets_min_prs`, `cohort.meets_min_span_days`) and the committed file must record
+the cohort definition actually used, the PR count and the date range.
+
+If the §2 marker-defined cohort (`fix-issue` / `implement-trd-beads` PRs) is too small, the cohort
+may be widened (for example to all merged PRs) **only** by recording that decision and an explicit
+note in the result file's `cohort.note`; a widened cohort is not the marker-defined cohort and must
+not be compared with one as if it were.
+
+### 6.2 Metrics
+
+| Metric | Definition (per cohort, never blended with another cohort) |
+|---|---|
+| `human_approvals_per_pr` | Per PR: reviews with state `APPROVED` by a human other than the PR author. Reported as median and p95 (nearest rank) over every PR in the cohort (0 for PRs with none). |
+| `human_comments` | Non-empty issue comments plus non-empty review bodies by a human other than the author: total, and per-PR median / p95. |
+| `wait_on_human_hours` | Hours from PR creation to the first human (non-author) review or comment. Median / p95 over PRs that got one; `prs_with_no_human_response` counts the rest (they are excluded, not zero). |
+| `rounds_to_pass` | Fix rounds as defined in §3.4 (a review followed by a commit before the next review or the merge), per PR, median / p95 / mean over the cohort. PRs with 100+ commits are listed in `prs_commit_data_truncated` (the oldest-100-commits limit of §3). |
+| `share_needing_5plus_rounds` | PRs with `rounds >= 5` divided by cohort size (count and share). |
+| `noise_rate_by_author_response_class` | Needs per-finding records of what was presented plus the author's response (fixed / said wrong / said intentional / judged unimportant). Those records come from the review ledger (TRD-009) and classifier (TRD-032/TRD-042). Historical PRs have none, so it is `null` with a reason, never a hand-classified estimate. |
+| `reverts` | `revert_prs_in_cohort`: cohort PRs whose title starts with `Revert`; `revert_commits_on_default_branch`: commits on the default branch whose subject starts with `Revert` (passed in as `$reverts_on_default`). |
+| `incidents` | Needs an incident tracker or alerting export. If the repository has none it is `null` with a reason; it is never asserted. |
+
+A *human* is an author whose login is not in the bot list, does not end in `[bot]` and does not start
+with `app/`. The bot list used is recorded in the result as `bots`.
+
+### 6.3 Capture
+
+```bash
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+# 1. Cohort: every merged PR (change --state/--search to narrow to the §2 marker cohort).
+gh pr list --repo "$REPO" --state merged --limit 1000 --json number > /tmp/baseline-numbers.json
+jq 'length' /tmp/baseline-numbers.json    # WARNING if this equals --limit: cohort truncated.
+# 2. Per-PR data (reviews, issue comments, commits).
+for n in $(jq -r '.[].number' /tmp/baseline-numbers.json); do
+  gh pr view "$n" --repo "$REPO" --json number,title,author,createdAt,mergedAt,reviews,comments,commits
+done | jq -s '.' > /tmp/baseline-prs.json
+# 3. Reverts that landed on the default branch.
+REVERTS=$(git log --format=%s origin/HEAD | grep -c '^Revert')
+# 4. Save the jq program in 6.4 as /tmp/baseline.jq, then compute.
+jq -f /tmp/baseline.jq /tmp/baseline-prs.json \
+  --argjson reverts_on_default "$REVERTS" \
+  --arg captured_on "$(date +%F)" \
+  --arg cohort_definition "<what you selected, e.g. all merged PRs>" \
+  --arg cohort_note "<why, and how it differs from the §2 cohort>" \
+  > docs/guides/review-baseline-"$(date +%F)".json
+```
+
+### 6.4 The `jq` program
+
+```jq
+# baseline.jq - input: array of `gh pr view --json number,title,author,createdAt,mergedAt,reviews,comments,commits`
+def bots: ["github-actions", "coderabbitai", "dependabot", "copilot-pull-request-reviewer", "renovate"];
+def is_human($login): ($login // "") as $l
+  | ($l != "") and ((bots | index($l)) == null) and (($l | endswith("[bot]")) | not) and (($l | startswith("app/")) | not);
+def sorted_nums: [.[] | select(. != null)] | sort;
+def at($i): to_entries | map(select(.key == $i) | .value) | .[0];
+def median: sorted_nums | if length == 0 then null elif length % 2 == 1 then at(((length - 1) / 2) | floor) else (at(length / 2 - 1) + at(length / 2)) / 2 end;
+def pctl($p): sorted_nums | if length == 0 then null else at(((($p * length + 99) / 100) | floor) - 1) end;
+def mean: [.[] | select(. != null)] | if length == 0 then null else (add / length) end;
+def ts: fromdateiso8601;
+def human_reviews: .author.login as $a | [.reviews[] | select(is_human(.author.login) and .author.login != $a)];
+def counted_reviews: .author.login as $a | [.reviews[] | select(.submittedAt != null and ($a == null or .author.login != $a))];
+def human_comment_count: .author.login as $a
+  | ([.comments[] | select(is_human(.author.login) and .author.login != $a and ((.body // "") | length) > 0)] | length)
+  + ([human_reviews[] | select(((.body // "") | length) > 0)] | length);
+def first_human_response_hours: (.createdAt | ts) as $o | .author.login as $a
+  | [ (.reviews[] | select(is_human(.author.login) and .author.login != $a and .submittedAt != null) | .submittedAt),
+      (.comments[] | select(is_human(.author.login) and .author.login != $a) | .createdAt) ]
+  | map(ts) | if length == 0 then null else ((min - $o) / 3600) end;
+def fix_rounds: (.mergedAt | if . == null then null else ts end) as $merged
+  | ([counted_reviews[].submittedAt | ts] | sort) as $reviews
+  | ([.commits[].committedDate | ts]) as $commits
+  | [ range(0; $reviews | length) as $i | $reviews[$i] as $review
+      | (($reviews[$i + 1]) // $merged) as $until
+      | select([ $commits[] | select(. > $review and ($until == null or . < $until)) ] | length > 0) ]
+  | length;
+. as $prs
+| ($prs | map(.createdAt | ts)) as $created
+| (if ($prs | length) == 0 then 0 else (((($created | max) - ($created | min)) / 86400) | floor) end) as $span
+| ($prs | map(human_reviews | map(select(.state == "APPROVED")) | length)) as $approvals
+| ($prs | map(human_comment_count)) as $hcomments
+| ($prs | map(first_human_response_hours)) as $waits
+| ($prs | map(fix_rounds)) as $rounds
+| {
+    captured_on: $captured_on,
+    repository: "Sunstone-Partners/ensemble",
+    cohort: {
+      definition: $cohort_definition,
+      note: $cohort_note,
+      pr_count: ($prs | length),
+      earliest_created_at: ($prs | map(.createdAt) | min),
+      latest_created_at: ($prs | map(.createdAt) | max),
+      span_days: $span,
+      meets_min_prs: (($prs | length) >= 20),
+      meets_min_span_days: ($span >= 30)
+    },
+    bots: bots,
+    metrics: {
+      human_approvals_per_pr: { median: ($approvals | median), p95: ($approvals | pctl(95)), prs_with_any: ($approvals | map(select(. > 0)) | length) },
+      human_comments: { total: ($hcomments | add // 0), median_per_pr: ($hcomments | median), p95_per_pr: ($hcomments | pctl(95)), prs_with_any: ($hcomments | map(select(. > 0)) | length) },
+      wait_on_human_hours: { median: ($waits | median), p95: ($waits | pctl(95)), prs_with_human_response: ($waits | map(select(. != null)) | length), prs_with_no_human_response: ($waits | map(select(. == null)) | length) },
+      rounds_to_pass: { median: ($rounds | median), p95: ($rounds | pctl(95)), mean: ($rounds | mean), max: ($rounds | max), prs_commit_data_truncated: [$prs[] | select((.commits | length) >= 100) | .number] },
+      share_needing_5plus_rounds: { count: ($rounds | map(select(. >= 5)) | length), share: (if ($prs | length) == 0 then null else (($rounds | map(select(. >= 5)) | length) / ($prs | length)) end) },
+      noise_rate_by_author_response_class: { value: null, reason: "requires per-finding records with the author's response class (fixed / said wrong / said intentional / judged unimportant); the review ledger (TRD-009) and classifier (TRD-032/TRD-042) that produce them do not exist for historical PRs, and hand-classifying comments would be an invented measurement" },
+      reverts: { revert_prs_in_cohort: ($prs | map(select((.title // "") | startswith("Revert"))) | length), revert_commits_on_default_branch: $reverts_on_default },
+      incidents: { value: null, reason: "no incident tracker or alerting export exists for this repository, so an incident count could only be asserted, not measured" }
+    }
+  }
+```
+
+The run is read-only: it queries GitHub and writes one file. Re-running it on the same PR set must
+yield identical numbers (apart from `captured_on`), which is what TRD-030 checks.

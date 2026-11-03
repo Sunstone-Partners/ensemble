@@ -20,4 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `/ensemble:pr-merge` — resolves an open PR's CI failures and review change-requests by dispatching one subagent per finding, routed through tech-lead-orchestrator (code), qa-orchestrator (tests), build-orchestrator/infrastructure-orchestrator (pipeline/infra), or github-specialist (PR mechanics), then re-verifies against live state and merges once green. Never deletes or weakens a test to force a check green.
 
+- `/ensemble:pr-merge` now runs the shared review gate before it merges (TRD-2026-70e784f2, PR 4). It invokes `MODE=gate` of the `pr-review-cycle` skill against freshly read GitHub state and merges only on `mergeable: true`. The gate refuses — naming the blocker and a `nextAction` — on an open Important finding, an unanswered security finding, an incomplete description, human approvals short of the PR's risk tier, or review data it could not read; it never passes on missing data. Approvals count only when bound to the commit under review (a push invalidates them), bot approvals never count, and the author never fills a required slot. **Honest limit:** this runs where ensemble runs; server-side enforcement still needs a branch-protection rule, which `pr-merge` reports as absent and recommends but cannot create.
+
 - Plugin extraction and population (in progress)

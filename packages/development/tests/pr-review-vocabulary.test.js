@@ -62,7 +62,7 @@ const passing = {
   headSha: SHA_HEAD,
   reviewedHeadSha: SHA_HEAD,
   findingCounts: { total: 0, actionable: 0, deferred: 0 },
-  tests: { passed: true, skipped: false, command: 'npm test' },
+  tests: { exitCode: 0, skipped: false, command: 'npm test' },
   remotePhase: 'REMOTE_REVIEW_COMPLETE',
 };
 // Fact sets chosen to walk every branch of the grader: all good, failed tests, the round cap, no access, no facts.

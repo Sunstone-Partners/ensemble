@@ -227,6 +227,43 @@ function renderBody(raw: Record<string, unknown>, agentName: string): string {
     }
   }
 
+  // Render the output contract when an agent declares one (the read-only code
+  // reviewer's ledger findings and summary rule). Absent on every other agent,
+  // so no other generated file changes.
+  if (raw.outputContract && typeof raw.outputContract === 'object') {
+    const contract = raw.outputContract as Record<string, unknown>;
+    const guide = (contract.fieldGuide && typeof contract.fieldGuide === 'object'
+      ? contract.fieldGuide
+      : {}) as Record<string, unknown>;
+    sections.push('## Output Contract');
+    sections.push('');
+    if (Array.isArray(contract.findingFields)) {
+      sections.push('### Finding Fields');
+      sections.push('');
+      for (const field of contract.findingFields as string[]) {
+        const note = typeof guide[field] === 'string' ? `: ${guide[field] as string}` : '';
+        sections.push(`- \`${field}\`${note}`);
+      }
+      sections.push('');
+    }
+    if (Array.isArray(contract.severities)) {
+      sections.push(`**Severities:** ${(contract.severities as string[]).map((word) => `\`${word}\``).join(', ')}`);
+      sections.push('');
+    }
+    if (typeof contract.summaryRule === 'string') {
+      sections.push('### Summary');
+      sections.push('');
+      sections.push(contract.summaryRule.trim());
+      sections.push('');
+    }
+    if (typeof contract.secretHandling === 'string') {
+      sections.push('### Secrets');
+      sections.push('');
+      sections.push(contract.secretHandling.trim());
+      sections.push('');
+    }
+  }
+
   // Render delegation criteria if present (useful for routing awareness)
   if (raw.delegationCriteria && typeof raw.delegationCriteria === 'object') {
     const dc = raw.delegationCriteria as Record<string, unknown>;

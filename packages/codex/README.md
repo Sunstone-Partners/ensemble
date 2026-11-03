@@ -107,4 +107,4 @@ The main release workflow now generates general Ensemble release notes from conv
 
 ## License
 
-MIT
+Apache License 2.0. See the repository [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE).

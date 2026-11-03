@@ -732,3 +732,42 @@ describe('local-ci-runner: secrets', () => {
     expect(JSON.stringify(r)).not.toContain(SECRET);
   });
 });
+
+describe('local-ci-runner: a hung step fails the gate instead of blocking it', () => {
+  const { defaultDeps } = require('../lib/local-ci-runner');
+  // The `npm test` step really runs `cmd` through the real process runner; every other step is an instant scripted pass.
+  const realEnvGate = (cmd, extra) => {
+    const deps = fakeDeps();
+    const real = defaultDeps().run;
+    deps.run = (c, o) => {
+      if (c === 'node --version') return fakeDeps().run(c, o);
+      return c === 'npm test' ? real(cmd, { ...o, env: { PATH: process.env.PATH } }) : { status: 0, stdout: '', stderr: '' };
+    };
+    return gate({ ...extra }, deps);
+  };
+
+  test('a step that outlives stepTimeoutMs is a FAILED step with the exact timeout message', () => {
+    const started = Date.now();
+    const r = realEnvGate('sleep 30', { stepTimeoutMs: 1000 });
+    expect(Date.now() - started).toBeLessThan(20000);
+    expect(r.ok).toBe(false);
+    const f = r.failures.find((x) => x.kind === 'step-failed' && x.step === 'test');
+    expect(f).toBeDefined();
+    expect(f.message).toContain('step test timed out after 1s (hung?)');
+    expect(r.nodes[0].steps.find((s) => s.name === 'test').status).toBe('FAIL');
+  });
+
+  test('a fast step still passes under the same timeout', () => {
+    const r = realEnvGate('true', { stepTimeoutMs: 1000 });
+    expect(r.failures).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  test('the process group is killed, so a backgrounded child does not survive the timeout', () => {
+    const marker = path.join(tmp, 'child-survived.txt');
+    const r = realEnvGate(`(sleep 3; echo alive > ${marker}) & sleep 30`, { stepTimeoutMs: 1000 });
+    expect(r.ok).toBe(false);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+});

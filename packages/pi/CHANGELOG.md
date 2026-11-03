@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Regenerated skills, prompts and the `code-reviewer` agent for the code-review final fixes (gate ledger-unavailable wording, `disposition` output field); re-vendored `lib/pr-review-*.js`.
 - Preserve explicitly declared `Task` as native `task` in generated agents so OMP orchestrators can delegate, without granting delegation to agents whose source does not declare it.
 
 ### Security

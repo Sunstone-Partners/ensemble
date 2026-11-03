@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 const analyzer = require('../lib/complexity-analyzer');
 
 describe('complexity-analyzer input contract', () => {
@@ -122,6 +123,38 @@ describe('complexity-analyzer overrides, disable controls, and fallback', () => 
     expect(first.ok).toBe(true);
     expect(first.fallback.applied).toBe(true);
     expect(first.selectedRoute).toBe(second.selectedRoute);
+  });
+});
+
+describe('complexity-analyzer adaptive_planning config detection', () => {
+  test.each([
+    ['nested enabled false', 'adaptive_planning:\n  enabled: false\n', true],
+    ['CRLF line endings', 'adaptive_planning:\r\n  enabled: false\r\n', true],
+    ['trailing spaces after the key', 'adaptive_planning:  \n  enabled: false\n', true],
+    ['other settings before enabled', 'adaptive_planning:\n  mode: strict\n  # why\n  enabled: false\n', true],
+    ['blank line before enabled', 'adaptive_planning:\n\n  enabled: false\n', true],
+    ['settings around the block', 'name: demo\nadaptive_planning:\n  enabled: false\nother: 1\n', true],
+    ['enabled true', 'adaptive_planning:\n  enabled: true\n', false],
+    ['enabled falsey', 'adaptive_planning:\n  enabled: falsey\n', false],
+    ['enabled false outside the block', 'adaptive_planning:\n  mode: strict\nenabled: false\n', false],
+    ['no adaptive_planning key', 'other:\n  enabled: false\n', false],
+  ])('%s', (_name, text, expected) => {
+    expect(analyzer.isAdaptivePlanningDisabled(text)).toBe(expected);
+  });
+
+  // The pattern that reads this block once backtracked exponentially on whitespace-only lines
+  // under the key (CodeQL js/redos). A hard deadline makes a regression throw instead of
+  // hanging the suite, the same way toolchain/detect.js bounds its own pattern evaluation.
+  function detectWithin(deadlineMs, text) {
+    const context = vm.createContext({ detect: analyzer.isAdaptivePlanningDisabled, text, result: undefined });
+    new vm.Script('result = detect(text);').runInContext(context, { timeout: deadlineMs });
+    return context.result;
+  }
+
+  test('a long run of whitespace-only lines under the key is matched in linear time', () => {
+    const blankLines = `adaptive_planning:\n${' \n'.repeat(100000)}`;
+    expect(detectWithin(3000, blankLines)).toBe(false);
+    expect(detectWithin(3000, `${blankLines}  enabled: false\n`)).toBe(true);
   });
 });
 

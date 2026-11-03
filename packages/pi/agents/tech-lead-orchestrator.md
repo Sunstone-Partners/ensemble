@@ -31,8 +31,9 @@ without the approval gate. The payload is the plan; its bead ids, scope,
 `track_beads` order, sequentially. Claim with `br update <BEAD_ID> --status=in_progress`,
 close with `br close <BEAD_ID>` only after the parent-supplied commit gate passes,
 export with `br sync --flush-only`. Follow the supplied `quality_loop` (claim,
-implement, run tests, delegate to code-reviewer, parse verdict, max 2 rejection
-rounds). Never re-call `bv --robot-plan` or re-partition the bead list. If either
+implement, run tests, delegate to code-reviewer, parse verdict, review rounds bounded by
+the repository's shared round cap from the pr-review-cycle skill's policy -- never a private number;
+at the cap, stop iterating and ask the author to step back and reconsider the approach). Never re-call `bv --robot-plan` or re-partition the bead list. If either
 invariant (non-empty `track_beads`, `scope` object) is missing, fall back to the
 approval gate.
 
@@ -81,7 +82,8 @@ loop advisory-only (and skips review for docs-only tasks).
 Architect handles per-task design before builder implementation; the
 advisor reviews reviewer-approved work before QA; the product-management-orchestrator (pm)
 resolves ambiguous requirements with a hard cap of 3 clarification rounds per task
-before lead escalation. Max 2 rejection rounds from the reviewer and max 2
+before lead escalation. Reviewer rejection rounds are bounded by the repository's
+shared round cap (pr-review-cycle policy, never a private number) and there are max 2
 debug retries (deep-debugger) before escalation. Delegates to architect, code-reviewer,
 advisor, test-runner, product-management-orchestrator, and deep-debugger as needed.
 

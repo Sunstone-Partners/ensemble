@@ -16,4 +16,4 @@ Skills are short conventions-and-gotchas notes (the model already knows the fram
 
 ## License
 
-MIT
+Apache License 2.0. See the repository [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE).

@@ -41,6 +41,8 @@ Inputs: `--branch=<name>` -> `BRANCH_REQUESTED`; `--use-current-branch` -> `USE_
 
 `PR_BODY`: `PR/Phase <N> of TRD <TRD_SLUG>.`, `**Shippable:** <shippableState or 'See TRD for scope'>`, strategy, task ids, coverage, story bead id.
 
+REQ-002 bodies (required in every agent-authored PR body; the Testing, Risk and How to revert sections and the `Directed by:` line are graded by the pr-review-cycle skill with `PR_BODY=<body>` and `AGENT_AUTHORED=true`, never through the review CLI, and every section it reports missing is filled in before the PR is created): the Phase PR `PR_BODY` and Completion PR `COMPLETION_BODY` templates are in `reference/pr-bodies.md` -- read it before building either body.
+
 Create the PR per `PR_BACKEND` (base = `parentBranch` or the default branch) via toolchain capabilities:
 - GitHub + git-town: `node "$TOOLCHAIN_CLI" run workflow.propose --arg headBranch=<branch> --arg baseBranch=<base> --arg title="<proposeTitle>"` (no body).
 - GitHub + plain-git: `node "$TOOLCHAIN_CLI" run workflow.push --arg branch=<branch>`, then `node "$TOOLCHAIN_CLI" run host.change-request-create --arg baseBranch=<base> --arg headBranch=<branch> --arg title="<proposeTitle>" --arg description="<PR_BODY>"`.
@@ -59,8 +61,7 @@ Two or more TRD paths without either flag HALT before side effects, pointing at 
 - `--workstream`: `node "$TRD_CLI" create-workstream-trd <paths...>` -> `{ok,path}`; failure -> print and HALT; continue as a normal single-TRD run on that path. With `--generate-only` (plus optional `--out <path>`, `--allow-invalid`) stop after reporting. Output `docs/TRD/workstreams/TRD-YYYY-<8hex>-workstream-<slug>.md` holds: Source TRD Manifest, normalized Master Task List, source provenance, verbatim source task markdown, and per PRD acceptance criterion implementation, test and validation tasks.
 - `--legacy-multi` (deprecated; print a DEPRECATED notice listing each TRD): `COMBINED_WORKSTREAM_MODE=true`, `SOURCE_TRD_PATHS` = ordered paths.
 - Validation: `node "$TRD_CLI" validate-workstream <paths...>` is all-or-nothing before any tracker/branch/scaffold side effect; `ok:false` -> print every failing TRD and HALT.
-- Scaffold: `node "$TRD_CLI" workstream-plan <paths...>` (+ `--stacked` when `ENSEMBLE_USE_STACKED_PRS=true`) -> `{workstreamSlug, releaseTrain, trdEpics, scaffoldPlans, crossTrd}` ; ambiguities/conflicts -> print and HALT, never guess edges. Create/reuse the release train, then each TRD epic, then execute each `scaffoldPlans[n].plan` with the single-TRD scaffold procedure, recording every titlePrefix -> bead id in `GLOBAL_BEAD_MAP`. After local deps, execute `WORKSTREAM_PLAN.deps` and `crossTrd.edges` through `GLOBAL_BEAD_MAP`, adding `edge.metadata` as a comment on the blocked bead. On a cycle or contradictory direction print the edge and ask retry / skip (record a skipped-edge comment) / reverse (show the reversed command, require confirmation) / abort.
-- `--status`: `ISSUES_JSON=$(mktemp)`; write tracker.list's `data` (`node "$TOOLCHAIN_CLI" run tracker.list --run-id "$RUN_ID" --json`) to it, then `node "$TRD_CLI" workstream-status --issues-json "$ISSUES_JSON" [--workstream <slug>]` -> progress/epics/blocked/ready/streams; failure -> print and HALT.
+- Scaffold (`workstream-plan`, release train, `GLOBAL_BEAD_MAP`, cross-TRD edges) and `--status` (`workstream-status`): read `reference/workstream-scaffold.md` before running either.
 
 ## 5. Resume and recovery
 

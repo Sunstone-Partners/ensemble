@@ -154,6 +154,13 @@ describe('Fix-Issue Command', () => {
       expect(pr).toContain('loadRun');
     });
 
+    test('PR Creation body carries the graded Testing, Risk and How to revert sections and a body gate (REQ-002)', () => {
+      const pr = descriptionOf('PR Creation');
+      for (const needle of ['Testing', 'Risk', 'How to revert', 'Directed by:', 'Body gate (REQ-002)', 'pr-review-cycle', 'AGENT_AUTHORED=true']) {
+        expect(pr).toContain(needle);
+      }
+    });
+
     test('publishing capabilities appear only in PR Creation', () => {
       // Only PR Creation RUNS a publishing capability. Branch Creation merely lists the ids on its
       // single toolchain preflight line, and Remote Review mentions host.change-request-create only

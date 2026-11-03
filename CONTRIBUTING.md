@@ -106,7 +106,7 @@ git rebase upstream/main
        "url": "https://github.com/yourname"
      },
      "repository": "https://github.com/Sunstone-Partners/ensemble",
-     "license": "MIT",
+     "license": "Apache-2.0",
      "keywords": ["my-plugin", "ensemble"],
      "agents": "./agents",
      "commands": "./commands",
@@ -128,7 +128,7 @@ git rebase upstream/main
      },
      "keywords": ["my-plugin", "ensemble"],
      "author": "Your Name",
-     "license": "MIT",
+     "license": "Apache-2.0",
      "repository": {
        "type": "git",
        "url": "https://github.com/Sunstone-Partners/ensemble.git",
@@ -307,7 +307,7 @@ Each plugin README should include:
 - **Installation**: How to install the plugin
 - **Features**: Key capabilities
 - **Usage**: Examples of using agents/commands
-- **License**: MIT license statement
+- **License**: Apache-2.0 license statement
 
 ### CHANGELOG.md Requirements
 
@@ -419,4 +419,4 @@ Maintainers only:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the Apache License 2.0.

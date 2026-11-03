@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `/ensemble:init-project` Step 6 scaffolds the three files every pull-request review reads: `.github/pull_request_template.md`, the root `REVIEW.md` (carrying the fenced `ensemble-review-policy` block read only from the base branch) and `.github/CODEOWNERS`. Existing files are never overwritten: a missing file is written from the template, an existing file is diffed and merged (missing sections appended, no line removed) unless "force" is requested, and the PR template's `Testing` section fails the real description check (`pr-review-description.js`) when left as a comment, a bare list marker or blank.
+
 ## [5.0.0] - 2026-05-27
 
 ### Breaking Changes

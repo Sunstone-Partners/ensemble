@@ -72,7 +72,7 @@ describe('TRD-006-TEST: status through the real CLI returns the contract', () =>
       headSha: HEAD_SHA,
       reviewedHeadSha: HEAD_SHA,
       findingCounts: { total: 3, actionable: 1, deferred: 2 },
-      tests: { passed: true, skipped: false, command: 'npm test' },
+      tests: { exitCode: 0, skipped: false, command: 'npm test' },
       remotePhase: 'REMOTE_REVIEW_COMPLETE',
     };
 
@@ -178,7 +178,7 @@ describe('fail-closed grading through the real CLI', () => {
     headSha: HEAD_SHA,
     reviewedHeadSha: HEAD_SHA,
     findingCounts: { total: 0, actionable: 0, deferred: 0 },
-    tests: { passed: true, skipped: false, command: 'npm test' },
+    tests: { exitCode: 0, skipped: false, command: 'npm test' },
     remotePhase: 'REMOTE_REVIEW_COMPLETE',
   });
 
@@ -192,7 +192,7 @@ describe('fail-closed grading through the real CLI', () => {
   });
 
   test('a payload that only reports a complete remote review and passing tests is not complete', () => {
-    const { stdout } = runCli(['status'], { remotePhase: 'REMOTE_REVIEW_COMPLETE', tests: { passed: true } });
+    const { stdout } = runCli(['status'], { remotePhase: 'REMOTE_REVIEW_COMPLETE', tests: { exitCode: 0 } });
     const result = JSON.parse(stdout);
     expect(result.status).not.toBe('REVIEW_COMPLETE');
     expect(result.localPhase).not.toBe('LOCAL_REVIEW_COMPLETE');
@@ -388,7 +388,7 @@ describe('fail-closed CLI contract through the real process (round 2)', () => {
     });
 
     test('a payload that smuggles __proto__ keys through the process never completes either', () => {
-      const raw = `{"__proto__":{"baseSha":"${BASE_SHA}","headSha":"${HEAD_SHA}","reviewedHeadSha":"${HEAD_SHA}","remotePhase":"REMOTE_REVIEW_COMPLETE"},"findingCounts":{"total":0,"actionable":0,"deferred":0},"tests":{"passed":true}}`;
+      const raw = `{"__proto__":{"baseSha":"${BASE_SHA}","headSha":"${HEAD_SHA}","reviewedHeadSha":"${HEAD_SHA}","remotePhase":"REMOTE_REVIEW_COMPLETE"},"findingCounts":{"total":0,"actionable":0,"deferred":0},"tests":{"exitCode":0}}`;
       const res = spawnSync('node', [CLI, 'status'], { input: raw, encoding: 'utf8', env: NO_NETWORK_ENV });
       expect(res.status).toBe(0);
       const status = JSON.parse(res.stdout);
@@ -403,7 +403,7 @@ describe('fail-closed CLI contract through the real process (round 2)', () => {
       headSha: 'HEAD',
       reviewedHeadSha: 'HEAD',
       findingCounts: { total: 0, actionable: 0, deferred: 0 },
-      tests: { passed: true, skipped: false, command: 'npm test' },
+      tests: { exitCode: 0, skipped: false, command: 'npm test' },
       remotePhase: 'REMOTE_REVIEW_COMPLETE',
     };
     const result = parseOne(runCli(['status'], facts));
@@ -439,7 +439,7 @@ describe('local -> publish -> remote through the real CLI: a published commit ho
       reviewedHeadSha: SNAPSHOT,
       reviewedTreeSha: TREE,
       findingCounts: { total: 1, actionable: 0, deferred: 1 },
-      tests: { passed: true, skipped: false, command: 'npm test' },
+      tests: { exitCode: 0, skipped: false, command: 'npm test' },
       ...overrides,
     };
     const local = parseOne(runCli(['status'], facts));
@@ -499,7 +499,7 @@ describe('local -> publish -> remote through the real CLI: a published commit ho
         reviewedTreeSha: TREE,
         headTreeSha: TREE,
         findingCounts: { total: 0, actionable: 0, deferred: 0 },
-        tests: { passed: true, skipped: false, command: 'npm test' },
+        tests: { exitCode: 0, skipped: false, command: 'npm test' },
         remotePhase: 'REMOTE_REVIEW_COMPLETE',
       })
     );
@@ -575,7 +575,7 @@ describe('local -> publish -> remote through the real CLI: a published commit ho
       headSha: PUBLISHED,
       reviewedHeadSha: SNAPSHOT,
       findingCounts: { total: 0, actionable: 0, deferred: 0 },
-      tests: { passed: true, skipped: false, command: 'npm test' },
+      tests: { exitCode: 0, skipped: false, command: 'npm test' },
       remotePhase: 'REMOTE_REVIEW_COMPLETE',
       ...overrides,
     });

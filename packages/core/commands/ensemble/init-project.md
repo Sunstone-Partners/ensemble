@@ -29,6 +29,7 @@ Examples:
 - Create `docs/standards/constitution.md` with project guardrails
 - Set up `docs/PRD/` and `docs/TRD/` directories
 - Configure `.gitignore` for state files
+- Scaffold the review files every PR review reads (PR template, `REVIEW.md`, `CODEOWNERS`)
 - Provide foundation for `/ensemble:create-prd`, `/ensemble:create-trd`, and `/ensemble:implement-trd-beads` workflows
 
 ---
@@ -237,7 +238,207 @@ Append to `.gitignore` if not already present:
 .trd-state/
 ```
 
-### Step 6: Completion Report
+### Step 6: Scaffold Review Files
+
+Scaffold the three files every pull-request review reads: the pull-request
+template, the root review rules file (which also carries the review policy
+block) and the ownership declaration. All three are plain text a maintainer
+edits directly — changing them changes the next review with no code change,
+rebuild or release.
+
+**Existing files are never overwritten.** For each target:
+
+1. If the file does not exist: write the template below.
+2. If it exists and "force" was not requested: show the difference between the
+   existing file and the template, then **merge** the missing sections (append
+   a missing heading or policy key, preserving every existing line) or **skip**
+   the file when the user declines. Never overwrite and never delete a line the
+   user wrote.
+3. If it exists and "force" was requested: replace it, after showing the
+   difference.
+
+#### `.github/pull_request_template.md`
+
+```markdown
+## Summary
+
+<!-- What changed, and why. One short paragraph. -->
+
+<!--
+An agent-authored PR must name the accountable human on its own line,
+outside any comment, like this:  Directed by: @your-github-login
+-->
+
+## Testing
+
+<!--
+The commands you ran and what they proved; name any test you added.
+Replace this comment with your answer: a section left as a comment, a bare
+list marker or a blank line counts as MISSING, not answered.
+-->
+
+## Risk
+
+<!-- What could break, who is affected, and how it would be noticed. -->
+
+## How to revert
+
+<!-- The exact revert path: a `git revert <sha>`, a flag flip, or a rollback. -->
+```
+
+#### `REVIEW.md`
+
+Written at the repository root. The fenced `ensemble-review-policy` block is
+the **only** place policy keys are read from, and only the copy on the base
+branch is read — a pull request cannot relax its own review by editing it.
+Set `sourceSha` to the commit the policy takes effect from
+(the HEAD commit id after the file lands); while it does not match a
+review's base commit, the strict defaults apply.
+
+````markdown
+# Review Rules
+
+What a reviewer of this repository should care about. Edit this file to
+change the next review; no code change, rebuild or release is needed.
+
+## What every review checks
+
+- Behaviour is covered by a test that fails without the change.
+- Errors are handled where they occur; nothing is silently swallowed.
+- No secret, token or credential is added to the repository.
+- Public interfaces are documented where callers will look.
+
+## Area rules
+
+Any directory may carry its own `REVIEW.md`. A change is reviewed against
+the root file plus the nearest such file above it — for example
+`packages/api/REVIEW.md` governs everything under `packages/api/`. When two
+area files conflict, the more restrictive instruction wins.
+
+## Policy
+
+```ensemble-review-policy
+{
+  "sourceSha": "0000000000000000000000000000000000000000",
+  "roundCap": 3,
+  "maintainerLogins": ["@your-maintainer"],
+  "botLogins": ["@coderabbitai"],
+  "sensitivePaths": ["infra/**"],
+  "highPaths": ["src/payments/**"],
+  "lowWaiverEnabled": false,
+  "sliceThreshold": 1500
+}
+```
+
+- `sensitivePaths` — areas an owner declares sensitive. A pull request that
+  touches one is treated as sensitive by every review and approval rule.
+  These ADD to the built-in set (CI workflows, release gates, installers,
+  the generation pipeline and the constitution); they can never shrink it.
+- `highPaths` — areas that start at the High risk tier.
+- `roundCap` — review rounds before the cycle escalates (1–5, default 3).
+- `maintainerLogins` / `botLogins` — who may approve, and which reviewers
+  are bots (a bot approval never satisfies a human-approval requirement).
+````
+
+#### `.github/CODEOWNERS`
+
+```text
+# Default owners for everything in the repository.
+* @your-org/maintainers
+
+# Narrower areas override the default.
+/.github/workflows/ @your-org/platform
+```
+
+#### `.github/workflows/review-sweep.yml` (opt-in, ask first)
+
+**Never write this file unless the user asks for it.** The three files above
+are scaffolded by default because every review reads them. This one is
+different: it is a **recurring job**, and recurrence belongs to the repository
+that owns the schedule, never to ensemble (Constitution Rule 4). Ensemble's own
+`.github/workflows` carry no `schedule:` trigger, and this command adds one
+here only on an explicit yes.
+
+Ask once, plainly:
+
+```
+Scaffold an opt-in weekly code-sweep workflow (.github/workflows/review-sweep.yml)?
+It runs `pr-review-sweep` over your sensitive areas first and reports
+pre-existing findings. It is YOUR workflow once written: your cron, your
+runner, your agent credentials (it needs an API key for whichever coding agent
+runs the review, set as a repository secret).
+
+The core review needs no new CI secret -- pr-review-cycle and pr-merge run in a
+session you already authenticated, with the gh CLI you already use. This
+workflow is an optional convenience, not a dependency. [y/N]
+```
+
+On anything but an explicit yes: write nothing, and say so in the completion
+report. On yes, write the template below and tell the user it is now their
+file to tune, and that it stays inert until they add the secret it names.
+
+```yaml
+# Opt-in weekly code sweep. This file belongs to THIS repository, not to
+# ensemble: change the cadence, the scope or the runner freely.
+#
+# Recurrence lives here (or in Foreman) by design -- ensemble itself never
+# schedules anything. Recommended cadence: weekly. Sensitive areas (the paths
+# your REVIEW.md declares) are swept first by the skill itself.
+#
+# Credentials: this workflow drives a coding agent in CI, so it needs that
+# agent's API key as a repository secret (AGENT_API_KEY below -- rename it to
+# whatever your agent expects). The core review path -- pr-review-cycle and
+# /ensemble:pr-merge -- needs NO new CI secret; it runs in an authenticated
+# session with the gh CLI. Without the secret this workflow does nothing, and
+# nothing else in ensemble stops working.
+name: Weekly code sweep
+
+on:
+  schedule:
+    # Mondays at 07:00 UTC. Yours to change.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Paths, directories or globs to sweep (default: the whole repository)"
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    # Remove this line to let the schedule run; it keeps the template inert
+    # until you have added the secret and chosen your agent.
+    if: ${{ vars.ENSEMBLE_SWEEP_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run the pr-review-sweep skill
+        env:
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
+        run: |
+          # Invoke your coding agent with the pr-review-sweep skill. The skill
+          # reads REVIEW.md from the swept commit, sweeps sensitive areas first,
+          # verifies every candidate, and tags every finding Pre-existing.
+          #
+          #   SCOPE=${{ inputs.scope || '.' }}
+          #   SWEEP_SHA=$(git rev-parse HEAD)
+          #   REQUESTED_BY=github-actions[bot]
+          #
+          # Replace the line below with your agent's CLI invocation.
+          echo "Configure your coding agent here, then remove this echo." >&2
+          exit 1
+      - name: Report
+        if: always()
+        run: echo "Sweep findings are reported by the step above; file what you choose to fix."
+```
+
+### Step 7: Completion Report
 
 Output summary:
 
@@ -249,15 +450,30 @@ Created:
   docs/PRD/                       - Product Requirements Documents
   docs/TRD/                       - Technical Requirements Documents
   docs/TRD/completed/             - Archived completed TRDs
+  REVIEW.md                       - Review rules and policy block (edit freely)
+  .github/pull_request_template.md - Testing, Risk, How to revert
+  .github/CODEOWNERS              - Ownership declaration
+  .github/workflows/review-sweep.yml - ONLY if the user opted in: their weekly
+                                    sweep workflow (their cron, their agent
+                                    credentials; inert until enabled)
 
 Updated:
   .gitignore                      - Added .trd-state/ exclusion
 
+Skipped (already present, not overwritten):
+  [list of existing review files, with the difference shown above]
+
+Not created (opt-in, not requested):
+  .github/workflows/review-sweep.yml - no recurring job was added; ensemble
+                                    schedules nothing, and the core review
+                                    needs no new CI secret
+
 Next steps:
   1. Review docs/standards/constitution.md and customize as needed
-  2. Create a PRD with /ensemble:create-prd for new features
-  3. Generate TRD with /ensemble:create-trd from approved PRD
-  4. Implement with /ensemble:implement-trd-beads
+  2. Set REVIEW.md sourceSha (git rev-parse HEAD) and list your maintainers
+  3. Create a PRD with /ensemble:create-prd for new features
+  4. Generate TRD with /ensemble:create-trd from approved PRD
+  5. Implement with /ensemble:implement-trd-beads
 
 Tech stack detected:
   [summary of detected stack]

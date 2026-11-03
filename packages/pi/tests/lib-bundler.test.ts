@@ -574,8 +574,12 @@ describe('bundleLibs against real packages directory', () => {
 
   it('bundles the real entry points plus their full require closure', async () => {
     const results = await bundleLibs(repoRoot, outputRoot, { dryRun: true });
+    // The names below are the entry points and pr-review-cli.js's siblings (the
+    // TRD-018 verification, TRD-026 tier/approvals/gate, TRD-032 metrics/eval,
+    // TRD-037 reachability and TRD-043 explainer modules). A failure here means the
+    // closure changed: confirm the module belongs in the Pi bundle, then update this list.
     const names = results.map((r) => path.basename(r.outputPath));
-    for (const expected of ['trd-cli.js', 'trd-checks.js', 'pr-review-cli.js', 'pr-review-ledger.js', 'local-ci-cli.js', 'local-ci-record.js', 'local-ci-runner.js']) {
+    for (const expected of ['trd-cli.js', 'trd-checks.js', 'pr-review-cli.js', 'pr-review-ledger.js', 'pr-review-tier.js', 'pr-review-approvals.js', 'pr-review-gate.js', 'pr-review-metrics.js', 'pr-review-eval.js', 'pr-review-votes.js', 'pr-review-depth.js', 'pr-review-explainer-offer.js', 'pr-review-reachability.js', 'local-ci-cli.js', 'local-ci-record.js', 'local-ci-runner.js']) {
       expect(names).toContain(expected);
     }
     expect(new Set(names).size).toBe(names.length);
@@ -617,7 +621,20 @@ describe('bundleLibs against real packages directory', () => {
       'pr-review-ledger.js',
       'pr-review-remote.js',
       'pr-review-status.js',
+      'pr-review-ci-tests.js',
       'pr-review-state.js',
+      'pr-review-policy.js',
+      'pr-review-rules.js',
+      'pr-review-paths.js',
+      'pr-review-description.js',
+      'pr-review-votes.js',
+      'pr-review-depth.js',
+      'pr-review-explainer-offer.js',
+      'pr-review-metrics.js',
+      'pr-review-eval.js',
+      'pr-review-tier.js',
+      'pr-review-approvals.js',
+      'pr-review-gate.js',
     ]) {
       expect(vendoredNames).toContain(expected);
     }

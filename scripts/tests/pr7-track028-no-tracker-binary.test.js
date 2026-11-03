@@ -15,7 +15,7 @@
  *    hand-rolled check.
  *  - AC-3 (retro.yaml non-tracker steps unchanged): diffs the 10 git-log/estimate/PRD-metric/
  *    incident/report-writing action lines against the pre-refactor commit
- *    (881381c6119176c48d44e0fc91c90d5cec8d02b1) for byte-identity.
+ *    (dfbd1f1) for byte-identity.
  *  - AC-4 (command preamble): asserts each file's toolchain-cli preflight line lists exactly
  *    its declared capability ids (required + optional), and that tracker.create-declaring
  *    files (onboard, retro) call confirm-status before their first tracker.create call while
@@ -55,7 +55,7 @@ function findInvocationLines(contents) {
     .filter(({ line }) => TRACKER_BINARY_INVOCATION.test(line));
 }
 
-const PRE_REFACTOR_REF = '881381c6119176c48d44e0fc91c90d5cec8d02b1';
+const PRE_REFACTOR_REF = 'dfbd1f1';
 const CATEGORIES_DIR = path.join(REPO_ROOT, 'packages', 'development', 'toolchain', 'categories');
 
 function readPreRefactorFile(relPath) {

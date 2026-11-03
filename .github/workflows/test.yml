@@ -16,6 +16,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # REVIEW.md sourceSha test runs `git cat-file -t` on a historical commit.
+          fetch-depth: 0
 
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6

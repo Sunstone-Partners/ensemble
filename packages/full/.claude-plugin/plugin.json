@@ -1,6 +1,6 @@
 {
   "name": "ensemble-full",
-  "version": "7.0.0",
+  "version": "8.1.0",
   "description": "Complete ensemble ecosystem (meta-package with all plugins)",
   "author": {
     "name": "Sunstone Partners",
@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "full",
     "complete",
