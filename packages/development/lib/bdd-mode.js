@@ -15,12 +15,17 @@
  *                   self-describing and implement-trd-beads honours an opt-out without the env var
  *   4. `default`  — on
  *
+ * Whichever source decides, nothing found on the way is dropped: an unrecognised ENSEMBLE_BDD or
+ * `test_approach` value (ignored) and a TRD that cannot be read (its stamp was not consulted) are each
+ * reported as a warning. `trd-cli resolve-bdd` goes further for an explicit `--trd` that cannot be read
+ * and makes it an error.
+ *
  * Pure and injectable (`env`) so tests never touch process state.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { splitFrontmatter, normalizeLineEndings, getFrontmatterField } = require('./trd-parser');
+const { scanFrontmatter, normalizeLineEndings, getFrontmatterField } = require('./trd-parser');
 
 const ENV_VAR = 'ENSEMBLE_BDD';
 const STAMP_KEY = 'test_approach';
@@ -41,15 +46,20 @@ function parseEnv(value) {
   return null;
 }
 
-/** Read the TRD's `test_approach` frontmatter. @returns {{value:boolean|null, raw:string|null}} */
+/**
+ * Read the TRD's `test_approach` frontmatter. The frontmatter may sit under an H1 or an HTML comment, as
+ * several TRDs under docs/TRD/ do, so it is found with scanFrontmatter rather than by requiring `---` on line 1.
+ * @returns {{value:boolean|null, raw:string|null, unreadable?:string}} `unreadable` is why the file could not be read
+ */
 function readStamp(trdPath) {
-  let raw;
+  let text;
   try {
-    const { frontmatter } = splitFrontmatter(normalizeLineEndings(fs.readFileSync(trdPath, 'utf8')));
-    raw = getFrontmatterField(frontmatter, STAMP_KEY);
-  } catch {
-    return { value: null, raw: null };
+    text = fs.readFileSync(trdPath, 'utf8');
+  } catch (err) {
+    return { value: null, raw: null, unreadable: err.code || err.message };
   }
+  const { frontmatter } = scanFrontmatter(normalizeLineEndings(text));
+  const raw = getFrontmatterField(frontmatter, STAMP_KEY);
   if (raw == null || String(raw).trim() === '') return { value: null, raw: null };
   const v = String(raw).trim().toLowerCase();
   if (v === STAMP_BDD) return { value: true, raw: v };
@@ -58,15 +68,16 @@ function readStamp(trdPath) {
 }
 
 /**
- * Build the result. `message` is the one line the commands print (the warning, if any, first), so
- * the wording lives here rather than in two command prompts. The default says how to opt out.
+ * Build the result. `message` is the text the commands print (a `Warning:` line for each warning, then the
+ * approach), so the wording lives here rather than in two command prompts. The default says how to opt out.
+ * @param {string[]} warnings
  */
-function decide(enabled, source, evidence, warning) {
+function decide(enabled, source, evidence, warnings) {
   const out = { enabled, source };
   if (evidence) out.evidence = evidence;
-  if (warning) out.warning = warning;
+  if (warnings.length) out.warning = warnings.join('\n');
   const where = source === 'default' ? 'default; opt out with --no-bdd or ENSEMBLE_BDD=0' : source;
-  out.message = `${warning ? `Warning: ${warning}\n` : ''}Test approach: ${enabled ? 'BDD (Reqnroll)' : 'standard'} [${where}]`;
+  out.message = `${warnings.map((w) => `Warning: ${w}\n`).join('')}Test approach: ${enabled ? 'BDD (Reqnroll)' : 'standard'} [${where}]`;
   return out;
 }
 
@@ -76,28 +87,35 @@ function decide(enabled, source, evidence, warning) {
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {string} [opts.trdPath]   consult this TRD's `test_approach`
  * @returns {{enabled:boolean, source:'flag'|'env'|'trd'|'default', evidence?:string, warning?:string, message:string}}
+ *   `warning` holds one line per warning
  */
 function resolveBdd(opts = {}) {
   const { flag, env = process.env, trdPath } = opts;
-  let warning;
+  const warnings = [];
 
-  if (flag === 'bdd' || flag === 'no-bdd') return decide(flag === 'bdd', 'flag');
-
-  const envValue = parseEnv(env[ENV_VAR]);
-  if (envValue !== null) return decide(envValue, 'env');
-  if (env[ENV_VAR] != null && String(env[ENV_VAR]).trim() !== '') {
-    warning = `${ENV_VAR}='${env[ENV_VAR]}' is not one of 1/true/on/yes or 0/false/off/no; ignored`;
+  // Every input is checked and every problem reported before precedence picks the winner, so a warning is
+  // never lost because a higher-precedence source decided.
+  const envRaw = env[ENV_VAR];
+  const envValue = parseEnv(envRaw);
+  if (envValue === null && envRaw != null && String(envRaw).trim() !== '') {
+    warnings.push(`${ENV_VAR}='${envRaw}' is not one of 1/true/on/yes or 0/false/off/no; ignored`);
   }
 
+  const where = trdPath ? toPosix(trdPath) : undefined;
+  let stamp = { value: null, raw: null };
   if (trdPath) {
-    const stamp = readStamp(trdPath);
-    if (stamp.value !== null) return decide(stamp.value, 'trd', toPosix(trdPath));
-    if (stamp.raw !== null) {
-      warning = `${STAMP_KEY} '${stamp.raw}' in ${toPosix(trdPath)} is not '${STAMP_BDD}' or '${STAMP_STANDARD}'; ignored`;
+    stamp = readStamp(trdPath);
+    if (stamp.unreadable) {
+      warnings.push(`cannot read ${where} (${stamp.unreadable}); its ${STAMP_KEY} was not consulted`);
+    } else if (stamp.value === null && stamp.raw !== null) {
+      warnings.push(`${STAMP_KEY} '${stamp.raw}' in ${where} is not '${STAMP_BDD}' or '${STAMP_STANDARD}'; ignored`);
     }
   }
 
-  return decide(true, 'default', undefined, warning);
+  if (flag === 'bdd' || flag === 'no-bdd') return decide(flag === 'bdd', 'flag', undefined, warnings);
+  if (envValue !== null) return decide(envValue, 'env', undefined, warnings);
+  if (stamp.value !== null) return decide(stamp.value, 'trd', where, warnings);
+  return decide(true, 'default', undefined, warnings);
 }
 
 module.exports = { resolveBdd, ENV_VAR, STAMP_KEY, STAMP_BDD, STAMP_STANDARD };

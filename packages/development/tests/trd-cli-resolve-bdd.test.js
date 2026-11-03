@@ -32,8 +32,8 @@ function cleanEnv(extra) {
   if (!extra || !('ENSEMBLE_BDD' in extra)) delete env.ENSEMBLE_BDD;
   return env;
 }
-function cli(args, env) {
-  const res = spawnSync('node', [CLI, 'resolve-bdd', ...args], { encoding: 'utf8', env: cleanEnv(env) });
+function cli(args, env, cwd) {
+  const res = spawnSync('node', [CLI, 'resolve-bdd', ...args], { encoding: 'utf8', env: cleanEnv(env), cwd });
   return { status: res.status, json: JSON.parse(res.stdout.trim()) };
 }
 
@@ -86,5 +86,90 @@ describe('trd-cli resolve-bdd (process)', () => {
   test('is listed in the usage line, so a caller can discover it', () => {
     const res = spawnSync('node', [CLI], { encoding: 'utf8' });
     expect(JSON.parse(res.stdout).error).toContain('resolve-bdd');
+  });
+});
+
+describe('--trd names the TRD the caller is about to implement: one that cannot be read is an error, never the default', () => {
+  test('a missing file throws, so the commands HALT instead of carrying on with BDD on', () => {
+    const missing = path.join(tmp(), 'nope.md');
+    expect(() => runResolveBdd(['--trd', missing], {})).toThrow(`Cannot read TRD file '${missing}'`);
+  });
+
+  test('--no-bdd and ENSEMBLE_BDD do not paper over a TRD path that cannot be read', () => {
+    const missing = path.join(tmp(), 'nope.md');
+    expect(() => runResolveBdd(['--no-bdd', '--trd', missing], {})).toThrow(/Cannot read TRD file/);
+    expect(() => runResolveBdd(['--trd', missing], { ENSEMBLE_BDD: '0' })).toThrow(/Cannot read TRD file/);
+  });
+
+  test('a directory is not a TRD', () => {
+    const dir = tmp();
+    expect(() => runResolveBdd(['--trd', dir], {})).toThrow(`Cannot read TRD file '${dir}'`);
+  });
+
+  test('--trd with no path is an error: it is not quietly dropped', () => {
+    expect(() => runResolveBdd(['--trd'], {})).toThrow(/--trd requires a TRD path/);
+    expect(() => runResolveBdd(['--trd', ''], {})).toThrow(/--trd requires a TRD path/);
+  });
+
+  test('the process prints {error} and exits 1, with no enabled/source for a caller to act on', () => {
+    const { status, json } = cli(['--trd', path.join(tmp(), 'nope.md')]);
+    expect(status).toBe(1);
+    expect(json.error).toMatch(/Cannot read TRD file/);
+    expect(json).not.toHaveProperty('enabled');
+    expect(json).not.toHaveProperty('source');
+  });
+});
+
+describe('--trd paths resolve like the other subcommands do, and then from the repo root', () => {
+  function repo() {
+    const root = tmp();
+    spawnSync('git', ['init', '-q'], { cwd: root });
+    fs.mkdirSync(path.join(root, 'packages', 'app'), { recursive: true });
+    return root;
+  }
+  function put(root, rel, stamp) {
+    const file = path.join(root, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `---\ntest_approach: ${stamp}\n---\n# TRD\n`);
+  }
+
+  test('a repo-root-relative path, which is how the commands pass it, is found from a subdirectory', () => {
+    const root = repo();
+    put(root, 'docs/TRD/x.md', 'standard');
+    const { status, json } = cli(['--trd', 'docs/TRD/x.md'], {}, path.join(root, 'packages', 'app'));
+    expect(status).toBe(0);
+    expect(json).toMatchObject({ ok: true, enabled: false, source: 'trd' });
+  });
+
+  test('a path that exists relative to the cwd is the file used, the same one parse and validate would read', () => {
+    const root = repo();
+    put(root, 'docs/TRD/x.md', 'standard');
+    put(root, 'packages/app/docs/TRD/x.md', 'bdd-reqnroll');
+    const { json } = cli(['--trd', 'docs/TRD/x.md'], {}, path.join(root, 'packages', 'app'));
+    expect(json).toMatchObject({ ok: true, enabled: true, source: 'trd', evidence: 'docs/TRD/x.md' });
+  });
+
+  test('a path found in neither place is an error that names it', () => {
+    const root = repo();
+    const { status, json } = cli(['--trd', 'docs/TRD/missing.md'], {}, path.join(root, 'packages', 'app'));
+    expect(status).toBe(1);
+    expect(json.error).toContain("Cannot read TRD file 'docs/TRD/missing.md'");
+  });
+});
+
+describe('what bdd-mode finds in the TRD reaches the CLI result', () => {
+  test('an unrecognised ENSEMBLE_BDD is reported even though the TRD stamp decides', () => {
+    const { status, json } = cli(['--trd', trdWith('standard')], { ENSEMBLE_BDD: 'maybe' });
+    expect(status).toBe(0);
+    expect(json).toMatchObject({ ok: true, enabled: false, source: 'trd' });
+    expect(json.warning).toContain("ENSEMBLE_BDD='maybe'");
+    expect(json.message).toContain("Warning: ENSEMBLE_BDD='maybe'");
+  });
+
+  test('a stamp under an H1 is honoured, so a TRD titled before its frontmatter still opts out', () => {
+    const file = path.join(tmp(), 'TRD.md');
+    fs.writeFileSync(file, '# TRD: Title\n\n---\ndocument_id: TRD-2026-eeeeeeee\ntest_approach: standard\n---\n\n## Body\n');
+    expect(cli(['--trd', file]).json).toMatchObject({ ok: true, enabled: false, source: 'trd' });
+    expect(runResolveBdd(['--trd', file], {})).toMatchObject({ enabled: false, source: 'trd' });
   });
 });

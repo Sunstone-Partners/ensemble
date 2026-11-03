@@ -31,7 +31,7 @@
  *   beads-stage --match <title-substring> [--label <l>] [--check] [--dry-run]
  *   quickstart <trd-path> --out <path> [--json]
  *   resolve-sdlc --git-town-exit-code <0-4> --remote-url <url>
- *   resolve-bdd  [--bdd | --no-bdd] [--trd <path>]   (create-trd and implement-trd-beads: is the Reqnroll/BDD path on?)
+ *   resolve-bdd  [--bdd | --no-bdd] [--trd <path>]   (create-trd and implement-trd-beads: is the Reqnroll/BDD path on? --trd must be a readable file, as given or under the repo root; otherwise {error}, never the default)
  *   validate     <trd-path> [--prd path]
  *   analyze      <trd-path> [--prd path]
  *   req-status   <trd-path> [--prd path] [--issues-json file] [--verified REQ-001,...] [--comments-json file]
@@ -42,13 +42,11 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-let yaml = null;
-try { yaml = require('js-yaml'); } catch { yaml = null; }
-
 const { extractPrdContext } = require('./prd-parser');
 
 const {
   parseTRD,
+  scanFrontmatter,
   extractDesignReadinessScore,
   getFrontmatterField,
   PRD_REFERENCE_KEYS,
@@ -722,13 +720,48 @@ function runResolveSdlc(argv, env) {
 }
 
 /**
+ * Resolve an explicit `--trd <path>` to a readable file. A relative path is tried as given (from the cwd,
+ * where `parse`, `validate` and every other subcommand read the same string) and then under the repo root,
+ * because the commands pass repo-root-relative paths (`docs/TRD/<file>.md`) from whatever directory the
+ * shell is in. Throws when neither is a readable file: the caller named a TRD, and carrying on without it
+ * would run the default test approach on a TRD that may have opted out.
+ *
+ * @param {string} given
+ * @returns {string} `given` when it is readable as written, else the absolute path under the repo root
+ */
+function resolveTrdArg(given) {
+  const candidates = [given];
+  if (!path.isAbsolute(given)) {
+    const underRoot = path.resolve(repoRoot(), given);
+    if (underRoot !== path.resolve(given)) candidates.push(underRoot); // the cwd is not the repo root
+  }
+  let reason;
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.R_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+      reason = reason || 'not a file';
+    } catch (err) {
+      reason = reason || err.message;
+    }
+  }
+  const alsoTried = candidates.length > 1 ? ` (also tried ${candidates[1]})` : '';
+  throw new Error(`Cannot read TRD file '${given}': ${reason}${alsoTried}`);
+}
+
+/**
  * `resolve-bdd [--bdd | --no-bdd] [--trd <path>]`
- *   -> { ok:true, enabled, source, evidence?, warning? }
+ *   -> { ok:true, enabled, source, evidence?, warning?, message }
  *
  * Thin CLI adapter over bdd-mode.js's resolveBdd (precedence: flag, ENSEMBLE_BDD, the TRD's
  * `test_approach` frontmatter, on). BDD stays on by default; these are the ways to opt out. Run by both
  * `create-trd` and `implement-trd-beads` so the two commands agree on whether Reqnroll is in play.
  * Reads ENSEMBLE_BDD from the `env` param rather than process.env directly, like runResolveSdlc.
+ *
+ * `--trd` is an explicit request to consult that TRD, so it must name a readable file (see resolveTrdArg).
+ * An unreadable path, or `--trd` with no path, throws: main() prints `{error}` and exits 1, which the
+ * commands HALT on. It is never answered with the default, which would run BDD on for a TRD that opted out.
+ * That holds whichever source would have decided, so `--no-bdd` or ENSEMBLE_BDD cannot hide a bad path.
  */
 function runResolveBdd(argv, env) {
   const { flags } = parseArgs(argv, new Set(['trd']));
@@ -736,14 +769,12 @@ function runResolveBdd(argv, env) {
     throw new Error('--bdd and --no-bdd are mutually exclusive');
   }
   const flag = flags.bdd === true ? 'bdd' : flags['no-bdd'] === true ? 'no-bdd' : undefined;
-  return {
-    ok: true,
-    ...resolveBdd({
-      flag,
-      env: env || {},
-      trdPath: flags.trd || undefined,
-    }),
-  };
+  let trdPath;
+  if ('trd' in flags) {
+    if (flags.trd === '') throw new Error('--trd requires a TRD path');
+    trdPath = resolveTrdArg(flags.trd);
+  }
+  return { ok: true, ...resolveBdd({ flag, env: env || {}, trdPath }) };
 }
 
 /** Load all TRD paths for combined workstream helpers. */
@@ -839,76 +870,6 @@ function runWorkstreamStatus(argv) {
   }
   return summarizeWorkstream(issuesInput, { workstreamSlug: flags.workstream || null });
 }
-// ---------------------------------------------------------------------------
-// Frontmatter scanner — handles H1-then-frontmatter layout used by TRD/PRDs
-// ---------------------------------------------------------------------------
-
-/**
- * Parse a markdown file that may have a title/H1 before the frontmatter block.
- * Strategy:
- * 1. Find first `---` on its own line → frontmatter start
- * 2. Find second `---` on its own line → frontmatter end
- * 3. If yaml is available, use it; otherwise fall back to parseSimpleFrontmatter
- * Returns { frontmatter, body, yamlFailed } where yamlFailed=true when the
- * yaml parser threw (indicating the frontmatter uses non-standard syntax
- * such as bold-keyed lines).
- *
- * @param {string} md
- * @returns {{frontmatter: Object|null, body: string, yamlFailed: boolean}}
- */
-function scanFrontmatter(md) {
-  const lines = md.split('\n');
-  let start = -1;
-  let end = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
-      if (start === -1) start = i;
-      else if (start !== -1 && end === -1) { end = i; break; }
-    }
-  }
-  if (start === -1 || end === -1) {
-    return { frontmatter: null, body: md, yamlFailed: false };
-  }
-  const raw = lines.slice(start + 1, end).join('\n');
-  let frontmatter = null;
-  let yamlFailed = false;
-  if (yaml) {
-    try {
-      const loaded = yaml.load(raw);
-      if (loaded && typeof loaded === 'object') frontmatter = loaded;
-    } catch {
-      yamlFailed = true;
-    }
-  }
-  if (!frontmatter) { frontmatter = parseSimpleFrontmatter(raw); yamlFailed = true; }
-  const body = lines.slice(end + 1).join('\n');
-  return { frontmatter, body, yamlFailed };
-}
-
-/** Minimal key:value parser used as fallback when yaml is unavailable. */
-function parseSimpleFrontmatter(raw) {
-  const out = {};
-  for (const line of String(raw || '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const m = trimmed.match(/^([^:]+):\s*(.*)$/);
-    if (!m) continue;
-    const key = m[1].trim();
-    let value = m[2].trim();
-    const commentIndex = value.search(/\s+#/);
-    if (commentIndex !== -1) value = value.slice(0, commentIndex).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    } else if (/^-?\d+(?:\.\d+)?$/.test(value)) {
-      value = Number(value);
-    } else if (/^(true|false)$/i.test(value)) {
-      value = /^true$/i.test(value);
-    }
-    out[key] = value;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
 // ---------------------------------------------------------------------------
 // Registry subcommands — list, status, migrate-frontmatter
 // ---------------------------------------------------------------------------
