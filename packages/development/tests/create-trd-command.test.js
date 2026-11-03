@@ -310,6 +310,20 @@ describe('create-trd --parser-tables mode (folded in from create-trd-foreman)', 
     expect(contract).toContain('do not print the foreman sling prd next-step output');
   });
 
+  test.each([
+    ['source YAML', sourcePath],
+    ['generated command markdown', generatedPath],
+  ])('%s resolves the test approach in table mode too and stamps an explicit choice on the table-mode TRD', (_label, filePath) => {
+    const text = read(filePath);
+    // Table mode no longer skips the resolver: `--parser-tables --no-bdd` and ENSEMBLE_BDD=0 must reach the TRD.
+    expect(text).not.toContain('BDD_MODE is disabled');
+    const start = text.indexOf('Derive TRD_MICRO_UUID, TRD_LABEL, `prd_reference` (a file path)');
+    expect(start).toBeGreaterThan(-1);
+    expect(text.slice(start, start + 400)).toContain(
+      '`test_approach` (`bdd-reqnroll` if BDD_MODE.enabled, else `standard`; omit it when BDD_MODE.source is `default`)'
+    );
+  });
+
   test('generated command markdown renders the flag, the mode steps and the foreman sling prd next step', () => {
     const md = read(generatedPath);
     expect(md).toContain('argument-hint: "[prd-path] [--team] [--foundational] [--list] [--foreman] [--parser-tables] [--bdd | --no-bdd]"');
