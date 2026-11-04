@@ -133,16 +133,48 @@ export function assessSpawn(
   return { kind: "unstartable", agent, asked, unusable, defaultUnusable: resolve("@default") === undefined };
 }
 
+/** The longest agent name, in characters, that a notice shows. */
+const AGENT_NAME_LIMIT = 80;
+
+/** The longest host error text, in characters, that a notice shows. */
+const ERROR_TEXT_LIMIT = 200;
+
+/**
+ * Host-supplied text made safe to print. The notice goes raw to a terminal and back to the model,
+ * and an agent name comes from an agent file (any repository can ship one), so it cannot be trusted
+ * to carry no escape sequence or line break. The text is capped at `limit` characters; quotes,
+ * backslashes and C0 controls are then escaped the way JSON does it, and every other control
+ * character, format character (bidi marks, zero-width and tag characters) and line or paragraph
+ * separator, which JSON leaves raw, is written as its \u escape. The result holds no character a
+ * terminal or a reader would act on and no line break.
+ */
+function neutralize(text: string, limit: number): string {
+  const characters = Array.from(text);
+  const shown = characters.length > limit ? `${characters.slice(0, limit).join("")}...` : text;
+  return JSON.stringify(shown)
+    .slice(1, -1)
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code > 0xffff ? `\\u{${code.toString(16)}}` : `\\u${code.toString(16).padStart(4, "0")}`;
+    });
+}
+
+/** An agent name made safe to print, in double quotes: `"code-reviewer"`. */
+export function quoteAgentName(agent: string): string {
+  return `"${neutralize(agent, AGENT_NAME_LIMIT)}"`;
+}
+
 /** The message for the user and, when the spawn is refused, for the model. */
 export function buildNotice(assessment: Notable): string {
   const roles: string[] = [...assessment.unusable];
   if (assessment.kind === "unstartable" && assessment.defaultUnusable) roles.unshift("default");
 
   const asked = assessment.asked.map((role) => `"${role}"`).join(" and ");
+  const agent = quoteAgentName(assessment.agent);
   const what =
     assessment.kind === "unstartable"
-      ? `Ensemble agent "${assessment.agent}" was not started: it asks for the OMP model role ${asked}, which is not set, and nothing it falls back to resolves to a model either. OMP would only fail it with "No model selected" and the advice to /login.`
-      : `Ensemble agent "${assessment.agent}" asked for the OMP model role ${asked}, which is not set, so it runs on ${assessment.runsOn} instead and its model tier has no effect.`;
+      ? `Ensemble agent ${agent} was not started: it asks for the OMP model role ${asked}, which is not set, and nothing it falls back to resolves to a model either. OMP would only fail it with "No model selected" and the advice to /login.`
+      : `Ensemble agent ${agent} asked for the OMP model role ${asked}, which is not set, so it runs on ${assessment.runsOn} instead and its model tier has no effect.`;
   const otherwise =
     assessment.kind === "unstartable"
       ? "Retrying the spawn fails the same way until the roles are set."
@@ -251,7 +283,8 @@ export function createSpawnHandler(): (event: unknown, ctx: unknown) => SpawnRes
     } catch (error) {
       // The check failed, not the spawn: let the spawn run, and say that the check did not.
       const reason = isRecord(error) && typeof error.message === "string" ? error.message : String(error);
-      tellOnce(host, "check-failed", `Ensemble model-role check skipped for "${spawn.agent}": ${reason}`, "warning");
+      const skipped = `Ensemble model-role check skipped for ${quoteAgentName(spawn.agent)}: ${neutralize(reason, ERROR_TEXT_LIMIT)}`;
+      tellOnce(host, "check-failed", skipped, "warning");
       return undefined;
     }
   };
