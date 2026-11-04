@@ -129,8 +129,10 @@ subcommands in this order, each one JSON payload in, one JSON object out:
 2. `node "$PR_REVIEW_CLI" approvals` with
    `{ reviews, headSha, headTreeSha, tier, policy, author, directedBy,
    agentAuthored }` -- `reviews` exactly as `gh` returned them (each with its
-   `author`, `state` and `commitSha`), `tier` the `tier` result's effective
-   tier. A bot approval never counts, an approval bound to another commit
+   `author`, `state` and `commitSha`), `tier` the WHOLE `tier` result object,
+   not just its effective-tier word (the solo-maintainer relaxation reads
+   `soloMaintainer` from it, and an evaluator handed only a word answers
+   `invalid-tier`). A bot approval never counts, an approval bound to another commit
    never counts, and on an agent-authored PR the `directedBy` person counts as
    one of the required reviewers (AC-014-3). `headTreeSha` is `git rev-parse
    <headSha>^{tree}` and any review `treeSha` is `git rev-parse
