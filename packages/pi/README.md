@@ -67,8 +67,9 @@ What an agent runs on depends on which roles are configured:
 2. The tier role is not configured but `modelRoles.default` is: the agent runs
    on the `default` model, so tiering has no effect.
 3. Neither the tier role nor `modelRoles.default` is configured: `@default`
-   resolves to nothing, the unresolved `@high` / `@medium` matches no model, and
-   the agent cannot start ("No model selected").
+   resolves to nothing and the unresolved `@high` / `@medium` matches no model.
+   OMP reports `Model "@high" not found` (`"@medium"` for the medium agents),
+   and the agent then fails with "No model selected".
 
 To pin a single agent regardless of its tier, set `task.agentModelOverrides` in
 the OMP config (agent name to model or role).
