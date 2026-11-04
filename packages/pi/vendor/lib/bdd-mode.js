@@ -76,7 +76,8 @@ function decide(enabled, source, evidence, warnings) {
   const out = { enabled, source };
   if (evidence) out.evidence = evidence;
   if (warnings.length) out.warning = warnings.join('\n');
-  const where = source === 'default' ? 'default; opt out with --no-bdd or ENSEMBLE_BDD=0' : source;
+  // implement-trd-beads has no --no-bdd flag, so the hint names the one opt-out both commands share.
+  const where = source === 'default' ? 'default; opt out with ENSEMBLE_BDD=0, or --no-bdd on create-trd' : source;
   out.message = `${warnings.map((w) => `Warning: ${w}\n`).join('')}Test approach: ${enabled ? 'BDD (Reqnroll)' : 'standard'} [${where}]`;
   return out;
 }

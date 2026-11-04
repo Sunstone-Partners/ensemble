@@ -13,7 +13,7 @@ const { spawnSync } = require('child_process');
 const { runResolveBdd } = require('../lib/trd-cli');
 
 const CLI = path.join(__dirname, '..', 'lib', 'trd-cli.js');
-const DEFAULT_MESSAGE = 'Test approach: BDD (Reqnroll) [default; opt out with --no-bdd or ENSEMBLE_BDD=0]';
+const DEFAULT_MESSAGE = 'Test approach: BDD (Reqnroll) [default; opt out with ENSEMBLE_BDD=0, or --no-bdd on create-trd]';
 
 const roots = [];
 function tmp() {
@@ -109,6 +109,20 @@ describe('--trd names the TRD the caller is about to implement: one that cannot 
   test('--trd with no path is an error: it is not quietly dropped', () => {
     expect(() => runResolveBdd(['--trd'], {})).toThrow(/--trd requires a TRD path/);
     expect(() => runResolveBdd(['--trd', ''], {})).toThrow(/--trd requires a TRD path/);
+  });
+
+  test('--trd=<path>, a bare path and an unknown flag are errors: none is dropped to the default', () => {
+    const file = trdWith('standard');
+    expect(() => runResolveBdd([`--trd=${file}`], {})).toThrow(/takes only --bdd, --no-bdd and --trd <path>/);
+    expect(() => runResolveBdd([file], {})).toThrow(/takes only --bdd, --no-bdd and --trd <path>/);
+    expect(() => runResolveBdd(['--no-bddd'], {})).toThrow(/got: --no-bddd/);
+  });
+
+  test('the process prints {error} and exits 1 for --trd=<path> instead of answering BDD on', () => {
+    const { status, json } = cli([`--trd=${trdWith('standard')}`]);
+    expect(status).toBe(1);
+    expect(json.error).toMatch(/takes only/);
+    expect(json).not.toHaveProperty('enabled');
   });
 
   test('the process prints {error} and exits 1, with no enabled/source for a caller to act on', () => {

@@ -13,7 +13,7 @@ const path = require('path');
 const bddMode = require('../lib/bdd-mode');
 const { resolveBdd } = bddMode;
 
-const DEFAULT_MESSAGE = 'Test approach: BDD (Reqnroll) [default; opt out with --no-bdd or ENSEMBLE_BDD=0]';
+const DEFAULT_MESSAGE = 'Test approach: BDD (Reqnroll) [default; opt out with ENSEMBLE_BDD=0, or --no-bdd on create-trd]';
 
 const roots = [];
 function tmp() {

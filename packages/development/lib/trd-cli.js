@@ -764,7 +764,13 @@ function resolveTrdArg(given) {
  * That holds whichever source would have decided, so `--no-bdd` or ENSEMBLE_BDD cannot hide a bad path.
  */
 function runResolveBdd(argv, env) {
-  const { flags } = parseArgs(argv, new Set(['trd']));
+  const { positionals, flags } = parseArgs(argv, new Set(['trd']));
+  // Anything else (`--trd=<path>`, a bare path, a typo) would be dropped and answered with the default, which is
+  // BDD on for a TRD that may have opted out. Refuse it like an unreadable --trd.
+  const unknown = [...positionals, ...Object.keys(flags).filter((k) => !['bdd', 'no-bdd', 'trd'].includes(k)).map((k) => `--${k}`)];
+  if (unknown.length) {
+    throw new Error(`resolve-bdd takes only --bdd, --no-bdd and --trd <path> (got: ${unknown.join(' ')})`);
+  }
   if (flags.bdd === true && flags['no-bdd'] === true) {
     throw new Error('--bdd and --no-bdd are mutually exclusive');
   }
