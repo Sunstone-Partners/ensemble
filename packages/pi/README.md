@@ -45,7 +45,7 @@ runtimes without a native `task` tool. The `Task` mapping does not change
 approval gates. Model routing is a separate mechanism, described in the next
 section.
 
-### Model tiers and omp roles
+### Model tiers and OMP roles
 
 Ensemble agents declare an abstract model tier (`high` or `medium`). The agent
 transformer writes it into the generated agent frontmatter as an OMP role-alias
@@ -67,9 +67,8 @@ What an agent runs on depends on which roles are configured:
 2. The tier role is not configured but `modelRoles.default` is: the agent runs
    on the `default` model, so tiering has no effect.
 3. Neither the tier role nor `modelRoles.default` is configured: `@default`
-   resolves to nothing and the unresolved `@high` / `@medium` matches no model.
-   OMP reports `Model "@high" not found` (`"@medium"` for the medium agents),
-   and the agent then fails with "No model selected".
+   resolves to nothing, the unresolved `@high` / `@medium` matches no model, and
+   the agent cannot start ("No model selected").
 
 To pin a single agent regardless of its tier, set `task.agentModelOverrides` in
 the OMP config (agent name to model or role).
