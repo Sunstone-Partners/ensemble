@@ -136,6 +136,9 @@ export function assessSpawn(
 /** The longest agent name, in characters, that a notice shows. */
 const AGENT_NAME_LIMIT = 80;
 
+/** The longest model name (`provider/id`), in characters, that a notice shows. */
+const MODEL_NAME_LIMIT = 120;
+
 /** The longest host error text, in characters, that a notice shows. */
 const ERROR_TEXT_LIMIT = 200;
 
@@ -174,7 +177,7 @@ export function buildNotice(assessment: Notable): string {
   const what =
     assessment.kind === "unstartable"
       ? `Ensemble agent ${agent} was not started: it asks for the OMP model role ${asked}, which is not set, and nothing it falls back to resolves to a model either. OMP would only fail it with "No model selected" and the advice to /login.`
-      : `Ensemble agent ${agent} asked for the OMP model role ${asked}, which is not set, so it runs on ${assessment.runsOn} instead and its model tier has no effect.`;
+      : `Ensemble agent ${agent} asked for the OMP model role ${asked}, which is not set, so it runs on ${neutralize(assessment.runsOn, MODEL_NAME_LIMIT)} instead and its model tier has no effect.`;
   const otherwise =
     assessment.kind === "unstartable"
       ? "Retrying the spawn fails the same way until the roles are set."

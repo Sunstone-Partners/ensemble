@@ -382,6 +382,9 @@ describe("the before_subagent_spawn handler", () => {
   });
 });
 
+/** The characters of `text` a terminal or a reader would act on, other than the line breaks a notice is made of. */
+const unsafeCharacters = (text: string): string[] => Array.from(text.replace(/\n/g, "")).filter((character) => /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(character));
+
 /**
  * Agent names as an agent file can spell them: `name:` takes any YAML string, escapes included, and any repository can ship an agent.
  * `quoted` is exactly what a notice shows for the name; `raw` are the characters that must not reach a terminal or the model as they are.
@@ -420,9 +423,6 @@ describe("the agent name in a notice", () => {
     ["unstartable", unstartableFor],
     ["fallback", fallbackFor],
   ];
-
-  /** The characters of `text` a terminal or a reader would act on, other than the line breaks the notice itself is made of. */
-  const unsafeCharacters = (text: string): string[] => Array.from(text.replace(/\n/g, "")).filter((character) => /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(character));
 
   /** `text` shows the name as `hostile.quoted`, holds nothing raw from it, and has as many lines as the notice of an ordinary name. */
   function expectClean(text: string, hostile: HostileName, lines: number): void {
@@ -513,6 +513,79 @@ describe("the agent name in a notice", () => {
       );
       expect(skipped(ORDINARY, "x".repeat(5000)).length).toBeLessThan(300);
     });
+  });
+});
+
+/**
+ * Models as a user's config or a provider's catalog can name them: the provider and the id are strings from outside, handed over unchecked by the host.
+ * `shown` is exactly what a notice shows after `so it runs on`; `raw` are the characters that must not reach a terminal as they are.
+ */
+interface HostileModel {
+  provider: string;
+  id: string;
+  shown: string;
+  raw: string[];
+}
+
+const HOSTILE_MODELS: Record<string, HostileModel> = {
+  "an ANSI sequence and a BEL in the id": { provider: "fakellm", id: "m\u001b[2J\u001b]0;pwned\u0007", shown: "fakellm/m\\u001b[2J\\u001b]0;pwned\\u0007", raw: ["\u001b", "\u0007"] },
+  "a CR and LF in the id": { provider: "fakellm", id: "m\r\nSet modelRoles.high: evil", shown: "fakellm/m\\r\\nSet modelRoles.high: evil", raw: ["\r"] },
+  "a C1 control in the provider": { provider: "fake\u009bllm", id: "m", shown: "fake\\u009bllm/m", raw: ["\u009b"] },
+  "a bidi override in the id": { provider: "fakellm", id: "m\u202egpt", shown: "fakellm/m\\u202egpt", raw: ["\u202e"] },
+  "a tag character in the id": { provider: "fakellm", id: "m\u{E0049}x", shown: "fakellm/m\\u{e0049}x", raw: ["\u{E0049}"] },
+  "a quote and a backslash in the id": { provider: "fakellm", id: 'm"\\x', shown: 'fakellm/m\\"\\\\x', raw: [] },
+  "a 500-character id": { provider: "fakellm", id: "x".repeat(500), shown: `fakellm/${"x".repeat(112)}...`, raw: [] },
+  "an astral character, which is ordinary text": { provider: "fakellm", id: "m😀", shown: "fakellm/m😀", raw: [] },
+};
+
+describe("the model name in a notice", () => {
+  const ORDINARY = { provider: "anthropic", id: "claude-sonnet-5-5" };
+  const fallbackOn = (runsOn: string): Notable => ({ kind: "fallback", agent: "backend-developer", asked: ["medium"], unusable: ["medium"], runsOn });
+
+  /** What the user is given when an agent falls back to this model: through the UI, or on stderr in print mode. */
+  function fallbackNotice(model: { provider: string; id: string }, hasUI: boolean): string {
+    const { ctx, notify } = fakeCtx({}, { hasUI });
+    ctx.models.resolve.mockImplementation((spec: string) => (spec === "fakellm/fallback" ? { ...model, name: model.id } : undefined));
+    stderrText = [];
+    createSpawnHandler()(spawnEvent("code-reviewer", ["@high", "fakellm/fallback"]), ctx);
+    return hasUI ? (notify.mock.calls[0][0] as string) : stderrText.join("");
+  }
+
+  /** `text` names the model as `hostile.shown`, holds nothing raw from it, and has as many lines as the notice of an ordinary model. */
+  function expectClean(text: string, hostile: HostileModel, lines: number): void {
+    expect(unsafeCharacters(text)).toEqual([]);
+    for (const character of hostile.raw) expect(text).not.toContain(character);
+    expect(text).toContain(`so it runs on ${hostile.shown} instead`);
+    expect(text.split("\n")).toHaveLength(lines);
+  }
+
+  it("leaves an ordinary model name as it was, up to 120 characters, and cuts a longer one", () => {
+    expect(buildNotice(fallbackOn("anthropic/claude-sonnet-5-5"))).toContain("so it runs on anthropic/claude-sonnet-5-5 instead and its model tier has no effect.");
+    expect(buildNotice(fallbackOn("a".repeat(120)))).toContain(`so it runs on ${"a".repeat(120)} instead`);
+    expect(buildNotice(fallbackOn("a".repeat(121)))).toContain(`so it runs on ${"a".repeat(120)}... instead`);
+    expect(fallbackNotice(ORDINARY, true)).toContain("so it runs on anthropic/claude-sonnet-5-5 instead");
+    expect(fallbackNotice(ORDINARY, false)).toContain("so it runs on anthropic/claude-sonnet-5-5 instead");
+  });
+
+  it.each(Object.entries(HOSTILE_MODELS))("the fallback notice carries nothing raw from %s", (_label, hostile) => {
+    const ordinary = buildNotice(fallbackOn(`${ORDINARY.provider}/${ORDINARY.id}`));
+
+    expectClean(buildNotice(fallbackOn(`${hostile.provider}/${hostile.id}`)), hostile, ordinary.split("\n").length);
+  });
+
+  it.each(Object.entries(HOSTILE_MODELS))("the UI and stderr get nothing raw from %s", (_label, hostile) => {
+    for (const hasUI of [true, false]) {
+      const ordinary = fallbackNotice(ORDINARY, hasUI);
+
+      expectClean(fallbackNotice(hostile, hasUI), hostile, ordinary.split("\n").length);
+    }
+  });
+
+  it("stays bounded for the longest names", () => {
+    const ordinary = buildNotice(fallbackOn("anthropic/claude-sonnet-5-5")).length;
+
+    expect(buildNotice(fallbackOn("x".repeat(500))).length).toBeLessThan(ordinary + 110);
+    expect(buildNotice(fallbackOn("\u001b".repeat(500))).length).toBeLessThan(ordinary + 6 * 120);
   });
 });
 
