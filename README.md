@@ -323,6 +323,7 @@ branch** — never the PR head, so a PR cannot loosen its own review:
 |---|---|---|
 | `roundCap` | Shared review-round cap before escalating to the author | `3` (valid 1–5) |
 | `lowWaiverEnabled` | Whether a Low-tier PR may merge with no human approval | `false` |
+| `soloMaintainer` | With exactly one maintainer login, a High PR that touches no sensitive path and was directed by that maintainer needs one human instead of two; the security lane still blocks | `false` |
 | `botLogins` | Logins whose approvals are never counted | empty |
 | `maintainerLogins` | Logins eligible to enable the Low waiver | empty |
 | `sensitivePaths` / `highPaths` | Globs that floor the tier at Medium / High | empty |

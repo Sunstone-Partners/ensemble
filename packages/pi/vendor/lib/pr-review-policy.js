@@ -84,6 +84,7 @@ const DEFAULT_POLICY = deepFreeze({
   sensitivePaths: [],
   highPaths: [],
   lowWaiverEnabled: false,
+  soloMaintainer: false,
   sliceThreshold: 1500,
   evalCasesDir: DEFAULT_EVAL_CASES_DIR,
 });
@@ -108,6 +109,7 @@ const SIMPLE_KEYS = Object.freeze({
   sensitivePaths: isPathList,
   highPaths: isPathList,
   lowWaiverEnabled: (value) => typeof value === 'boolean',
+  soloMaintainer: (value) => typeof value === 'boolean',
   sliceThreshold: (value) => Number.isInteger(value) && value >= 1,
   // A repository-relative directory: never absolute, never climbing out of the repository.
   evalCasesDir: (value) =>

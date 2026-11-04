@@ -842,6 +842,7 @@ Policy *keys* are read from the **root** file only, from a fenced ` ```ensemble-
 | `sensitivePaths` | Globs that floor the risk tier at High | a strict built-in set |
 | `highPaths` | Globs that floor the risk tier at Medium or above | none |
 | `lowWaiverEnabled` | Whether a Low tier may actually mean Low | `false` |
+| `soloMaintainer` | With exactly one maintainer login: a High PR that touches no sensitive path and was directed by that maintainer needs one human (the director) instead of two. The security lane still blocks High; a PR touching a sensitive path or the policy itself keeps two humans | `false` |
 | `sliceThreshold` | Changed lines above which a PR is reviewed area by area | `1500` |
 
 Two deliberate properties:

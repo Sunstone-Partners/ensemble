@@ -127,7 +127,7 @@ function bindingReason(review, headSha, headTreeSha) {
  * @param {string}  [input.directedBy]        The person who directed an agent-authored PR (AC-014-3).
  * @param {boolean} [input.agentAuthored]     True when an agent wrote the PR; `directedBy` is read only then.
  * @returns {{ok:boolean, satisfied:boolean, reason:string, tier:string, humansRequired:number,
- *   humansCounted:number, approvedBy:string[], directedBy:string|null,
+ *   soloMaintainer:boolean, humansCounted:number, approvedBy:string[], directedBy:string|null,
  *   ignored:Array<{login:string|null, reason:string, commitSha:string|null}>,
  *   refusals:Object[], reasons:string[], warnings:string[]}}
  */
@@ -249,9 +249,25 @@ function evaluateApprovals(input) {
   const hasRefusal = refusals.length > 0;
   if (hasRefusal) reasons.push('tier-relaxation-refused');
 
-  const satisfied = !hasRefusal && humansCounted >= humansRequired;
+  // Solo maintainer: the tier evaluator decides ELIGIBILITY (policy flag, one
+  // maintainer, High, no sensitive path). Here the one fact only this module
+  // sees is checked: the sole maintainer directed this PR, so they fill the
+  // single required slot. The security lane still blocks High in the gate. An
+  // unreadable tier record, refusal or director leaves two humans required.
+  const solo = isObject(tierResult.soloMaintainer) ? tierResult.soloMaintainer : null;
+  const soloLogin = solo !== null && solo.eligible === true ? normalizeLogin(solo.login) : null;
+  const soloApplies =
+    soloLogin !== null &&
+    effective === 'high' &&
+    humansRequired === HUMANS_REQUIRED.high &&
+    !hasRefusal &&
+    directedBy === soloLogin;
+  const required = soloApplies ? 1 : humansRequired;
+  if (soloApplies) reasons.push('solo-maintainer-applied');
+
+  const satisfied = !hasRefusal && humansCounted >= required;
   const reason = satisfied
-    ? humansRequired === 0
+    ? required === 0
       ? 'no-human-approval-required'
       : 'required-approvals-present'
     : hasRefusal
@@ -265,7 +281,8 @@ function evaluateApprovals(input) {
     reason,
     tier: effective,
     headSha,
-    humansRequired,
+    humansRequired: required,
+    soloMaintainer: soloApplies,
     humansCounted,
     approvedBy: counted,
     directedBy,

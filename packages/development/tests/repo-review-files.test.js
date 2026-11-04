@@ -15,7 +15,6 @@
  * strict defaults.
  */
 
-const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -33,13 +32,11 @@ const BASE_SHA = 'b'.repeat(40);
 const read = (relative) => fs.readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 const exists = (relative) => fs.existsSync(path.join(REPO_ROOT, relative));
 
-/** The repository's own policy, re-pointed at a test base commit. */
+/** The repository's own policy, read as the review reads it: from a base commit, identified by the caller. */
 function repoPolicy() {
   const text = read('REVIEW.md');
-  const block = /```ensemble-review-policy\n([\s\S]*?)\n```/.exec(text);
-  expect(block).not.toBeNull();
-  const declared = JSON.parse(block[1]).sourceSha;
-  return loadPolicy({ text: text.replace(declared, BASE_SHA), baseSha: BASE_SHA });
+  expect(/```ensemble-review-policy\n([\s\S]*?)\n```/.exec(text)).not.toBeNull();
+  return loadPolicy({ text, baseSha: BASE_SHA, sourceSha: BASE_SHA });
 }
 
 describe('this repository ships a root REVIEW.md (AC-002-4)', () => {
@@ -47,18 +44,9 @@ describe('this repository ships a root REVIEW.md (AC-002-4)', () => {
     expect(exists('REVIEW.md')).toBe(true);
   });
 
-  test('its sourceSha names a real commit in this repository', () => {
+  test('its policy block declares no sourceSha: a commit cannot name itself, and a declared one is never the base', () => {
     const block = /```ensemble-review-policy\n([\s\S]*?)\n```/.exec(read('REVIEW.md'));
-    const declared = JSON.parse(block[1]).sourceSha;
-    expect(declared).toMatch(/^[0-9a-f]{40}$/);
-
-    // A typo'd or invented sha would silently demote every review to the
-    // strict defaults; it must be a commit object that exists here.
-    const type = execFileSync('git', ['cat-file', '-t', declared], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-    }).trim();
-    expect(type).toBe('commit');
+    expect(Object.prototype.hasOwnProperty.call(JSON.parse(block[1]), 'sourceSha')).toBe(false);
   });
 
   test('its policy block is accepted by the loader with nothing rejected', () => {

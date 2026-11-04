@@ -93,6 +93,7 @@ function readPaths(value, warnings) {
     blocked: false,
     sensitive: value.sensitive === undefined ? [] : value.sensitive.slice(),
     high: value.high === undefined ? [] : value.high.slice(),
+    declarationChanged: typeof value.declarationChanged === 'boolean' ? value.declarationChanged : null,
     changedPaths,
   };
 }
@@ -188,6 +189,7 @@ function assignTier(input) {
   let tier = floor === null ? baseTier : higher(baseTier, floor);
 
   // --- The second assessment (AC-012-3) -----------------------------------
+  let peerDemanded = false;
   const assessment = input.secondAssessment;
   if (assessment !== undefined && assessment !== null) {
     let needsAnotherPerson;
@@ -203,6 +205,7 @@ function assignTier(input) {
     }
 
     if (needsAnotherPerson !== false) {
+      peerDemanded = true;
       if (needsAnotherPerson !== true) reason = 'second-assessment-unreadable';
       const next = raiseOne(tier);
       if (next !== tier) raised.push({ from: tier, to: next, reason });
@@ -215,6 +218,8 @@ function assignTier(input) {
     const proposed = fromSet(input.proposedTier, TIERS);
     const by = isObject(input.proposedBy) && isText(input.proposedBy.login) ? input.proposedBy.login : null;
     const isCodeOwner = isObject(input.proposedBy) && input.proposedBy.isCodeOwner === true;
+
+    if (proposed === 'high') peerDemanded = true;
 
     if (proposed === null) {
       warnings.push('unknown-proposed-tier');
@@ -244,7 +249,14 @@ function assignTier(input) {
     // The paths that drove the floor, kept so the recorded decision can name
     // them (TRD-041, AC-015-1) rather than make the reader re-derive them.
     sensitivePaths: classification.sensitive.slice(),
+    // Whether the PR edits the review declaration itself (a policy change
+    // with no listed sensitive path still counts). `null` = not stated.
+    declarationChanged: classification.declarationChanged,
     highPaths: classification.high.slice(),
+    // An explicit "another person must look at this" signal (a second
+    // assessment that did not say no, or a proposal of High), kept even when
+    // the tier was already High and nothing rose.
+    peerDemanded,
     uncitedPaths,
     reasons,
     raised,
@@ -264,6 +276,37 @@ const WAIVER_EVIDENCE_MINIMUMS = Object.freeze({ lowPrs: 20, days: 30, maxRevert
 /** Humans required by effective tier: an effective-Low PR needs none, Medium one, High two. */
 const HUMANS_REQUIRED = Object.freeze({ low: 0, medium: 1, high: 2 });
 
+const SOLO_NOT_ELIGIBLE = Object.freeze({ eligible: false, login: null });
+
+/**
+ * Whether the solo-maintainer rule MAY relax a High PR from two humans to one
+ * (policy `soloMaintainer: true`). Eligible only when every fact is readable
+ * and holds: the policy names exactly one maintainer, the tier is High, and
+ * the PR touches no sensitive path (the guards guard themselves: CI, release
+ * gates, the review policy and review code always keep two humans). Whether
+ * the sole maintainer actually directed the PR is checked by the approvals
+ * evaluator, which sees the director; the gate checks both agree.
+ *
+ * @returns {{eligible:boolean, login:string|null}}
+ */
+function soloEligibility(tier, policy, assignment) {
+  if (tier !== 'high' || policy === null || policy.soloMaintainer !== true) return SOLO_NOT_ELIGIBLE;
+  if (!Array.isArray(policy.maintainerLogins)) return SOLO_NOT_ELIGIBLE;
+  const logins = new Set(
+    policy.maintainerLogins.filter(isText).map((login) => login.trim().replace(/^@/, '').toLowerCase())
+  );
+  if (logins.size !== 1) return SOLO_NOT_ELIGIBLE;
+  if (assignment.declarationChanged !== false) return SOLO_NOT_ELIGIBLE;
+  if (!Array.isArray(assignment.sensitivePaths) || assignment.sensitivePaths.length !== 0) return SOLO_NOT_ELIGIBLE;
+  // A tier that was RAISED (a second assessment or a proposal) reached High
+  // precisely to demand another person; the solo rule must not cancel that.
+  if (!Array.isArray(assignment.raised) || assignment.raised.length !== 0) return SOLO_NOT_ELIGIBLE;
+  // The same demand when the tier was ALREADY High and so nothing rose: a
+  // second assessment that did not say no, or a proposal of High.
+  if (assignment.peerDemanded !== false) return SOLO_NOT_ELIGIBLE;
+  return { eligible: true, login: [...logins][0] };
+}
+
 /** The fail-closed effective tier: High, two humans, no waiver, the reason named. */
 function blockedEffective(reason) {
   return {
@@ -271,6 +314,7 @@ function blockedEffective(reason) {
     tier: 'high',
     effectiveTier: 'high',
     humansRequired: HUMANS_REQUIRED.high,
+    soloMaintainer: SOLO_NOT_ELIGIBLE,
     waiver: { applies: false, reason, evidence: null, enabledBy: null },
     refusals: [],
     reasons: [reason],
@@ -357,6 +401,7 @@ function effectiveTier(input) {
       tier,
       effectiveTier: tier === 'low' ? 'medium' : tier,
       humansRequired: HUMANS_REQUIRED[tier === 'low' ? 'medium' : tier],
+      soloMaintainer: soloEligibility(tier, policy, assignment),
       waiver: { applies: false, reason, evidence: null, enabledBy: enabledByLogin },
       refusals,
       reasons,
@@ -391,6 +436,7 @@ function effectiveTier(input) {
     tier,
     effectiveTier: 'low',
     humansRequired: HUMANS_REQUIRED.low,
+    soloMaintainer: SOLO_NOT_ELIGIBLE,
     waiver: { applies: true, reason: 'low-waiver-applied', evidence: evidence.evidence, enabledBy: enabledByLogin },
     refusals,
     reasons,
@@ -414,6 +460,7 @@ function blockedRecord(reason) {
     lowered: [],
     ignored: [],
     waiver: { applies: false, reason, evidence: null, enabledBy: null },
+    soloMaintainer: { ...SOLO_NOT_ELIGIBLE },
     refusals: [],
     assignedBy: null,
     warnings: [reason],
@@ -465,6 +512,9 @@ function tierRecord(input) {
     lowered: Array.isArray(assignment.lowered) ? assignment.lowered.map((entry) => ({ ...entry })) : [],
     ignored: Array.isArray(assignment.ignored) ? assignment.ignored.map((entry) => ({ ...entry })) : [],
     waiver: isObject(effective.waiver) ? { ...effective.waiver } : { applies: false, reason: 'no-waiver-record', evidence: null, enabledBy: null },
+    soloMaintainer: isObject(effective.soloMaintainer) && effective.soloMaintainer.eligible === true && isText(effective.soloMaintainer.login)
+      ? { eligible: true, login: effective.soloMaintainer.login }
+      : { ...SOLO_NOT_ELIGIBLE },
     refusals: Array.isArray(effective.refusals) ? effective.refusals.map((entry) => ({ ...entry })) : [],
     assignedBy: isText(input.assignedBy) ? input.assignedBy.trim() : null,
     warnings: [...(Array.isArray(assignment.warnings) ? assignment.warnings : []), ...(Array.isArray(effective.warnings) ? effective.warnings : [])],

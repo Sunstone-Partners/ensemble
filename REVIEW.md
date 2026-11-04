@@ -65,16 +65,16 @@ pipeline and the project constitution); it can never shrink it.
 
 ## Policy
 
-The fenced block below is the only place policy keys are read from. Keep
-`sourceSha` pointing at the commit this policy takes effect from — refresh it
-with `git rev-parse HEAD` after a change to this block lands on the default
-branch. While it does not match a review's base commit, the strict defaults
-apply (round cap 3, Quick at one reviewer and no verifier, no Low waiver),
-which is the safe outcome, never a relaxed one.
+The fenced block below is the only place policy keys are read from. The
+review reads it from the base commit of the PR, and that commit is the policy's
+identity. Do NOT add a `sourceSha` key: a commit cannot name itself, so a
+declared `sourceSha` can never equal the base and the whole block is rejected
+(`policy-not-from-base`), leaving the strict defaults in force (round cap 3,
+Quick at one reviewer and no verifier, no Low waiver, no maintainer or bot
+logins).
 
 ```ensemble-review-policy
 {
-  "sourceSha": "4c1639e25ae0bba09d2dd533ffd9b7c29f9c8aa5",
   "roundCap": 3,
   "maintainerLogins": ["@ldangelo"],
   "botLogins": ["@coderabbitai", "@claude", "@github-actions"],
@@ -99,19 +99,20 @@ which is the safe outcome, never a relaxed one.
     "packages/pi-extension/**"
   ],
   "lowWaiverEnabled": false,
+  "soloMaintainer": true,
   "sliceThreshold": 1500
 }
 ```
 
 | Key | Meaning |
 |---|---|
-| `sourceSha` | The commit this policy is in force at. A mismatch means strict defaults. |
 | `roundCap` | Review rounds before the cycle escalates (1–5; 3 here). |
 | `maintainerLogins` | Logins whose approval counts for this repository. |
 | `botLogins` | Review bots. A bot approval never satisfies a human-approval requirement. |
 | `sensitivePaths` | Owner-declared sensitive areas, added to the built-in floor. |
 | `highPaths` | Areas that start at the High risk tier. |
 | `lowWaiverEnabled` | Whether a Low-risk PR may waive review with evidence (off here). |
+| `soloMaintainer` | With exactly one maintainer login: a High PR that touches no sensitive path and was directed by that maintainer needs one human (the director) instead of two. The security lane still blocks High. Sensitive-path PRs keep two humans. |
 | `sliceThreshold` | Changed-line count above which a PR is reviewed in slices. |
 
 ## Ownership
