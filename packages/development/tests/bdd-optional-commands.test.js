@@ -71,16 +71,10 @@ describe('create-trd resolves the test approach once, before it needs it', () =>
     expect(stepIndex(doc, P1, 'Resolve Test Approach')).toBeLessThan(stepIndex(doc, P1, 'Requirements Validation'));
   });
 
-  // Foreman table mode used to skip the resolver ("BDD_MODE is disabled"). It then wrote no test_approach even for
-  // an explicit --no-bdd / ENSEMBLE_BDD=0, which broke the contract that create-trd stamps every explicit choice.
-  test('Resolve Test Approach runs in every mode, Foreman table mode included, so an explicit choice always reaches the TRD', () => {
-    const resolver = step(doc, P1, 'Resolve Test Approach');
-    const text = actions(doc, P1, 'Resolve Test Approach');
-    expect(resolver.description).toContain('every mode');
-    expect(text).toContain('node "$TRD_CLI" resolve-bdd');
-    expect(text).not.toContain('--parser-tables'); // no table-mode branch at all, so no way to skip it
-    expect(text).not.toMatch(/skip this step/i);
-    expect(text).not.toContain('BDD_MODE is disabled');
+  test('Foreman table mode skips the resolver, so it gains no new dependency on Node or the CLI', () => {
+    const first = String(step(doc, P1, 'Resolve Test Approach').actions[0]);
+    expect(first).toContain("If $ARGUMENTS contains '--parser-tables': skip this step");
+    expect(first).toContain('BDD_MODE is disabled');
   });
 
   test('step numbering stays sequential from 1', () => {
@@ -116,25 +110,6 @@ describe('create-trd resolves the test approach once, before it needs it', () =>
   test('only an explicit choice is stamped: a TRD written on the default carries no test_approach', () => {
     const text = actions(doc, 'Output Management', 'TRD Document Generation');
     expect(text).toContain('omit it when BDD_MODE.source is `default`');
-  });
-
-  describe('every step that saves a TRD records an explicit choice', () => {
-    const STAMP_RULE = '`test_approach` (`bdd-reqnroll` if BDD_MODE.enabled, else `standard`; omit it when BDD_MODE.source is `default`)';
-    const WRITERS = [
-      ['Output Management', 'TRD Document Generation'],
-      ['Output Management', 'Foreman TRD Document Generation (--parser-tables)'],
-    ];
-
-    test.each(WRITERS)('%s / %s carries the same stamp rule', (phaseName, title) => {
-      expect(actions(doc, phaseName, title)).toContain(STAMP_RULE);
-    });
-
-    test('these two are all the steps that save a TRD, so a new one cannot be added without the rule', () => {
-      const savers = doc.workflow.phases.flatMap((p) =>
-        p.steps.filter((s) => s.actions.map(String).join('\n').includes('File: docs/TRD/TRD-YYYY-')).map((s) => [p.name, s.title])
-      );
-      expect(savers).toEqual(WRITERS);
-    });
   });
 });
 

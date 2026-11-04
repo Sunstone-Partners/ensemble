@@ -35,8 +35,9 @@ Foreman subject contract (--foreman): FOREMAN_TASK_TITLE / FOREMAN_TASK_DESCRIPT
 - Read the PRD. With --foundational and no full PRD, accept a short capability brief, skip PRD-structure validation and the readiness gate, and register capabilities instead of REQ-NNN IDs.
 
 **2. Resolve Test Approach**
-   Decide BDD_MODE (Reqnroll path on or off) in every mode
+   Decide BDD_MODE (Reqnroll path on or off)
 
+- If $ARGUMENTS contains '--parser-tables': skip this step; BDD_MODE is disabled.
 - Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR `which node` fails: print "ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present." and HALT.
 - Run `node "$TRD_CLI" resolve-bdd` adding `--bdd` or `--no-bdd` if $ARGUMENTS has it, parse {enabled,source,message} as BDD_MODE and print `message`. An `error` key -> HALT.
 
@@ -211,7 +212,7 @@ Foreman subject contract (--foreman): FOREMAN_TASK_TITLE / FOREMAN_TASK_DESCRIPT
    Generate a Foreman-native TRD document with parser-compatible sections
 
 - Runs only when $ARGUMENTS contains '--parser-tables'. If it is absent, skip this step and the two steps after it. It replaces TRD Document Generation.
-- Metadata: **Document ID**, **PRD Reference**, **Version**, **Status**, **Date**, **Design Readiness Score**. Derive TRD_MICRO_UUID, TRD_LABEL, `prd_reference` (a file path), `kind`, `test_approach` (`bdd-reqnroll` if BDD_MODE.enabled, else `standard`; omit it when BDD_MODE.source is `default`) and the --foundational `capabilities:` list as in TRD Document Generation.
+- Metadata: **Document ID**, **PRD Reference**, **Version**, **Status**, **Date**, **Design Readiness Score**. Derive TRD_MICRO_UUID, TRD_LABEL, `prd_reference` (a file path), `kind` and the --foundational `capabilities:` list as in TRD Document Generation.
 - Sections: Architecture Decision (approach and alternatives), Master Task List (all parser-compatible task tables), Sprint Planning (dependency-ordered phases). Preserve the sprint/story/table structure exactly; never prose checklists or `### PR N:` sections.
 - File: docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-<slug>.md, NO `-foreman` suffix. Write exactly one primary parser-compatible TRD file (no -data-model.md/-research.md); auxiliary summaries must not replace or redefine the task tables.
 
