@@ -297,7 +297,11 @@ function evaluateGate(input) {
       );
       // Solo maintainer: the tier record says the PR is eligible and the
       // approvals result says the eligible maintainer directed it. Both must
-      // name the same person, else the two-human floor stands.
+      // name the same person, else the two-human floor stands. The evaluator
+      // reports `soloMaintainer: true` only for a director it authenticated
+      // (not the PR author, with an APPROVED review bound to the head); the
+      // gate has no reviews to re-check that against, so it holds the claim to
+      // the same person, the same tier and the one-human floor, never lower.
       const solo = isObject(tierResult.soloMaintainer) ? tierResult.soloMaintainer : null;
       const soloLogin = solo !== null && solo.eligible === true && isText(solo.login) ? solo.login.trim().replace(/^@/, '').toLowerCase() : null;
       const directed = isText(approvalsResult.directedBy) ? approvalsResult.directedBy.trim().replace(/^@/, '').toLowerCase() : null;

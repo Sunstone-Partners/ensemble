@@ -17,9 +17,15 @@
  *     with `ok:false`;
  *   - a missing, unknown or uncited kind is `other`, which is Medium: a
  *     classifier that says nothing cannot buy a cheaper review;
- *   - a second assessment that is not exactly `false` raises the tier;
+ *   - a second assessment that is not exactly `false` raises the tier; one
+ *     nobody gave (omitted or null) cannot say "no" either, so it raises
+ *     nothing but demands another person, which keeps the solo-maintainer
+ *     discount off;
  *   - a proposal may raise a tier; lowering one needs a CODEOWNERS-checked
- *     owner decision, and nothing lowers it below the sensitive floor.
+ *     owner decision, and nothing lowers it below the sensitive floor;
+ *   - the solo-maintainer discount leans on a changed-path list it can trust:
+ *     present, non-empty and made of verbatim names. A list that is missing,
+ *     or holds a name git quoted, cannot vouch that no sensitive path changed.
  *
  * The Low WAIVER and the effective tier it produces are TRD-041's: this
  * function answers the assigned tier and the facts behind it.
@@ -37,6 +43,24 @@ const LOW_KINDS = Object.freeze(['docs', 'copy', 'additive-behind-flag']);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const isPathList = (value) => Array.isArray(value) && value.every((entry) => isText(entry));
+
+/**
+ * Whether `name` is a verbatim path. Git prints a name in double quotes, with
+ * C escapes (`".github/workflows/\303\251.yml"`), when it holds a non-ASCII
+ * byte, a control character, `"` or `\` -- unless the listing is
+ * NUL-delimited (`-z`), when it prints every name as it is. A quoted name
+ * matches no sensitive pattern, and neither does one with a tab or newline
+ * left in it by a `--name-status` or newline-split listing, so an entry like
+ * either means the list was not produced the documented way.
+ */
+function isVerbatimName(name) {
+  if (name.startsWith('"')) return false;
+  for (let index = 0; index < name.length; index += 1) {
+    const code = name.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
 
 /** A word from a closed set, compared on letter case only -- a padded word is not the word. */
 function fromSet(value, set) {
@@ -89,12 +113,22 @@ function readPaths(value, warnings) {
     }
   }
 
+  // The list can vouch for what the classification says about it only when it
+  // is there, names something, and names it verbatim.
+  let changedPathsReadable = false;
+  if (changedPaths !== null) {
+    const verbatim = changedPaths.every(isVerbatimName);
+    if (!verbatim) warnings.push('non-verbatim-changed-path');
+    changedPathsReadable = verbatim && changedPaths.length > 0;
+  }
+
   return {
     blocked: false,
     sensitive: value.sensitive === undefined ? [] : value.sensitive.slice(),
     high: value.high === undefined ? [] : value.high.slice(),
     declarationChanged: typeof value.declarationChanged === 'boolean' ? value.declarationChanged : null,
     changedPaths,
+    changedPathsReadable,
   };
 }
 
@@ -189,6 +223,11 @@ function assignTier(input) {
   let tier = floor === null ? baseTier : higher(baseTier, floor);
 
   // --- The second assessment (AC-012-3) -----------------------------------
+  // An assessment that did not say "no" demands another person. So does one
+  // nobody gave: a subagent that failed, timed out or was skipped leaves the
+  // key out, and an absence cannot be read as "no". Nothing is raised for it
+  // (a PR no one assessed keeps the tier its change earns); `peerDemanded`
+  // keeps the solo-maintainer discount off.
   let peerDemanded = false;
   const assessment = input.secondAssessment;
   if (assessment !== undefined && assessment !== null) {
@@ -211,6 +250,9 @@ function assignTier(input) {
       if (next !== tier) raised.push({ from: tier, to: next, reason });
       tier = next;
     }
+  } else {
+    peerDemanded = true;
+    reasons.push('second-assessment-missing');
   }
 
   // --- The proposal: raise-only (AC-013-2) --------------------------------
@@ -253,9 +295,14 @@ function assignTier(input) {
     // with no listed sensitive path still counts). `null` = not stated.
     declarationChanged: classification.declarationChanged,
     highPaths: classification.high.slice(),
-    // An explicit "another person must look at this" signal (a second
-    // assessment that did not say no, or a proposal of High), kept even when
-    // the tier was already High and nothing rose.
+    // Whether the changed-path list those facts were computed from can be
+    // trusted: present, non-empty and made of verbatim names. The solo-
+    // maintainer discount leans on `sensitivePaths` and `declarationChanged`,
+    // which say nothing about a path the list does not name as it is.
+    changedPathsReadable: classification.changedPathsReadable,
+    // An "another person must look at this" signal: a second assessment that
+    // did not say no (one nobody gave included) or a proposal of High, kept
+    // even when the tier was already High and nothing rose.
     peerDemanded,
     uncitedPaths,
     reasons,
@@ -281,11 +328,12 @@ const SOLO_NOT_ELIGIBLE = Object.freeze({ eligible: false, login: null });
 /**
  * Whether the solo-maintainer rule MAY relax a High PR from two humans to one
  * (policy `soloMaintainer: true`). Eligible only when every fact is readable
- * and holds: the policy names exactly one maintainer, the tier is High, and
- * the PR touches no sensitive path (the guards guard themselves: CI, release
- * gates, the review policy and review code always keep two humans). Whether
- * the sole maintainer actually directed the PR is checked by the approvals
- * evaluator, which sees the director; the gate checks both agree.
+ * and holds: the policy names exactly one maintainer, the tier is High, the
+ * changed-path list can be trusted, and the PR touches no sensitive path (the
+ * guards guard themselves: CI, release gates, the review policy and review
+ * code always keep two humans). Whether the sole maintainer actually directed
+ * the PR, did not write it and approved its head is checked by the approvals
+ * evaluator, which sees the reviews; the gate checks both agree.
  *
  * @returns {{eligible:boolean, login:string|null}}
  */
@@ -296,13 +344,18 @@ function soloEligibility(tier, policy, assignment) {
     policy.maintainerLogins.filter(isText).map((login) => login.trim().replace(/^@/, '').toLowerCase())
   );
   if (logins.size !== 1) return SOLO_NOT_ELIGIBLE;
+  // `declarationChanged` and `sensitivePaths` are only as good as the list they
+  // came from: one that is missing, empty or holds a quoted name cannot vouch
+  // that no sensitive path changed.
+  if (assignment.changedPathsReadable !== true) return SOLO_NOT_ELIGIBLE;
   if (assignment.declarationChanged !== false) return SOLO_NOT_ELIGIBLE;
   if (!Array.isArray(assignment.sensitivePaths) || assignment.sensitivePaths.length !== 0) return SOLO_NOT_ELIGIBLE;
   // A tier that was RAISED (a second assessment or a proposal) reached High
   // precisely to demand another person; the solo rule must not cancel that.
   if (!Array.isArray(assignment.raised) || assignment.raised.length !== 0) return SOLO_NOT_ELIGIBLE;
   // The same demand when the tier was ALREADY High and so nothing rose: a
-  // second assessment that did not say no, or a proposal of High.
+  // second assessment that did not say no (one nobody gave included), or a
+  // proposal of High.
   if (assignment.peerDemanded !== false) return SOLO_NOT_ELIGIBLE;
   return { eligible: true, login: [...logins][0] };
 }

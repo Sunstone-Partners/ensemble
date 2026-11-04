@@ -88,6 +88,16 @@ describe('the declared sensitive paths cover this repository (AC-003-1)', () => 
     ['the generation pipeline', 'scripts/generate-markdown.js'],
     ['a generation pipeline subtree file', 'scripts/generate-codex/index.js'],
     ['the constitution', 'docs/standards/constitution.md'],
+    ['the review gate code', 'packages/development/lib/pr-review-gate.js'],
+    ['a local-CI gate module', 'packages/development/lib/local-ci-runner.js'],
+    ['the local-CI approval set', '.ensemble/local-ci.yaml'],
+    ['a vendored copy of the review gate', 'packages/pi/vendor/lib/pr-review-gate.js'],
+    ['a vendored copy of a local-CI gate module', 'packages/pi/vendor/lib/local-ci-status.js'],
+    ['the merge-gate procedure', 'packages/development/skills/pr-review-cycle/reference/merge-gate.md'],
+    ['the merge-gate procedure copy shipped for Pi', 'packages/pi/skills/pr-review-cycle/reference/merge-gate.md'],
+    ['the changed-path procedure', 'packages/development/skills/pr-review-cycle/reference/scope-guidance-depth.md'],
+    ['the changed-path procedure copy shipped for Pi', 'packages/pi/skills/pr-review-cycle/reference/scope-guidance-depth.md'],
+    ['the pr-merge command source', 'packages/git/commands/pr-merge.yaml'],
   ])('%s is treated as sensitive', (_label, changedPath) => {
     const result = sensitiveFor([changedPath]);
     expect(result.ok).toBe(true);
@@ -97,6 +107,13 @@ describe('the declared sensitive paths cover this repository (AC-003-1)', () => 
 
   test('an ordinary source file is not sensitive', () => {
     const result = sensitiveFor(['packages/development/lib/trd-parser.js']);
+    expect(result.ok).toBe(true);
+    expect(result.sensitive).toEqual([]);
+    expect(result.prSensitive).toBe(false);
+  });
+
+  test('a vendored copy of an ordinary library is not sensitive: only the review and local-CI guards are', () => {
+    const result = sensitiveFor(['packages/pi/vendor/lib/trd-parser.js']);
     expect(result.ok).toBe(true);
     expect(result.sensitive).toEqual([]);
     expect(result.prSensitive).toBe(false);

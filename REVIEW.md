@@ -61,7 +61,11 @@ An owner declares sensitive areas in the `sensitivePaths` list below. A pull
 request touching one of them is treated as sensitive by every review and
 approval rule that consults sensitivity. The declared list **adds to** the
 built-in floor (CI workflows, release gates, installers, the generation
-pipeline and the project constitution); it can never shrink it.
+pipeline and the project constitution); it can never shrink it. The review
+guards are declared here too -- the review and local-CI gate code and its
+vendored copies, the local-CI approval set, the merge-gate and changed-path
+procedure files and the `pr-merge` command source -- so a change to them
+always keeps two humans, whatever `soloMaintainer` says.
 
 ## Policy
 
@@ -91,7 +95,14 @@ logins).
     "REVIEW.md",
     ".github/CODEOWNERS",
     ".github/pull_request_template.md",
-    "packages/development/lib/pr-review-*.js"
+    "packages/development/lib/pr-review-*.js",
+    "packages/development/lib/local-ci-*.js",
+    "packages/*/vendor/lib/pr-review-*.js",
+    "packages/*/vendor/lib/local-ci-*.js",
+    ".ensemble/local-ci.yaml",
+    "packages/*/skills/pr-review-cycle/reference/merge-gate.md",
+    "packages/*/skills/pr-review-cycle/reference/scope-guidance-depth.md",
+    "packages/git/commands/pr-merge.yaml"
   ],
   "highPaths": [
     "packages/development/lib/**",
@@ -112,7 +123,7 @@ logins).
 | `sensitivePaths` | Owner-declared sensitive areas, added to the built-in floor. |
 | `highPaths` | Areas that start at the High risk tier. |
 | `lowWaiverEnabled` | Whether a Low-risk PR may waive review with evidence (off here). |
-| `soloMaintainer` | With exactly one maintainer login: a High PR that touches no sensitive path and was directed by that maintainer needs one human (the director) instead of two. The security lane still blocks High. Sensitive-path PRs keep two humans. |
+| `soloMaintainer` | With exactly one maintainer login: a High PR that touches no sensitive path and was directed by that maintainer needs one human instead of two, provided that maintainer is not the PR's author and has approved the current head on the host. A `Directed by:` line alone never lowers the requirement. The security lane still blocks High. Sensitive-path PRs keep two humans. |
 | `sliceThreshold` | Changed-line count above which a PR is reviewed in slices. |
 
 ## Ownership
