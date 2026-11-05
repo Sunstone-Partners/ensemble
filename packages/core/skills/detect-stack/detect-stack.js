@@ -28,7 +28,65 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const { glob } = require('glob');
+// `glob` is a dependency of the package that ships this skill, but an
+// out-of-repo copy - a marketplace cache, a manual `cp -r` - has no
+// node_modules above it, because nothing there ran an install. A bare require
+// threw at load time, before argument parsing, for all four axes at once.
+// Degrade instead: the directory-walk signals report that they could not run
+// and everything readable from a manifest still answers.
+let glob = null;
+try {
+  glob = require('glob').glob;
+} catch {
+  glob = null;
+}
+
+/**
+ * List files matching a glob pattern, or `null` when the search could not be
+ * performed. `null` is deliberately distinct from an empty list: "no such
+ * files" is an answer, "could not look" is not, and only the first may count as
+ * a negative signal.
+ *
+ * @param {string} pattern - Glob pattern
+ * @param {Object} options - glob options (cwd, ignore, nodir, absolute, maxDepth)
+ * @returns {Promise<string[]|null>} Matching paths, or null when unavailable
+ */
+async function globAny(pattern, options) {
+  // A pattern with no magic is a plain path: it can be stat'd directly, so it
+  // needs no dependency and resolves identically either way.
+  if (!hasGlobMagic(pattern)) {
+    return literalMatch(options.cwd, pattern, options);
+  }
+  if (!glob) {
+    return null;
+  }
+  try {
+    return await glob(pattern, options);
+  } catch {
+    return [];
+  }
+}
+
+
+/** True when a pattern needs a directory walk; the magic test glob itself uses. */
+function hasGlobMagic(pattern) {
+  return pattern.includes('*') || pattern.includes('?') || pattern.includes('[');
+}
+
+/** Resolve a magic-free pattern (a plain path) without the dependency. */
+function literalMatch(base, pattern, options = {}) {
+  const abs = path.resolve(base || process.cwd(), pattern);
+  try {
+    if (!fs.statSync(abs).isFile()) {
+      return [];
+    }
+  } catch {
+    return [];
+  }
+  // Return the pattern as given when it was relative: callers resolve it
+  // against the same base, and path.relative would mangle an absolute cwd.
+  return [options.absolute ? abs : pattern];
+}
 
 const AXES = ['framework', 'test', 'tooling', 'cloud'];
 const PATTERNS_DIR = path.join(__dirname, 'patterns');
@@ -128,6 +186,8 @@ class FrameworkDetector {
     // Manual override support (TRD-014)
     this.manualOverride = options.framework || null;
     this.skipDetection = options.skipDetection || false;
+    // Set by a file signal that could not be evaluated (missing `glob`).
+    this.fileWalkUnavailable = false;
   }
 
   /**
@@ -137,6 +197,9 @@ class FrameworkDetector {
    * @returns {Promise<Object>} Raw result: primary framework, confidence, alternates, details, scores
    */
   async detect(options = {}) {
+    // Per-run: a previous call must not leave a stale flag on this instance.
+    this.fileWalkUnavailable = false;
+
     // Handle manual override (TRD-014)
     const manualFramework = options.framework || this.manualOverride;
 
@@ -184,6 +247,7 @@ class FrameworkDetector {
         framework: c.framework,
         confidence: c.confidence
       })),
+      file_walk_unavailable: this.fileWalkUnavailable,
       details: Object.fromEntries(this.detectionResults),
       // Every framework that produced at least one signal (including those
       // below the confidence threshold), best first. Feeds all_results.
@@ -292,10 +356,15 @@ class FrameworkDetector {
    */
   async detectFromCsproj() {
     try {
-      const csprojFiles = await glob('**/*.csproj', {
+      const csprojFiles = await globAny('**/*.csproj', {
         cwd: this.projectRoot,
         ignore: ['**/node_modules/**', '**/bin/**', '**/obj/**']
       });
+      if (csprojFiles === null) {
+        // Could not look, which is not evidence of a dotnet project.
+        this.fileWalkUnavailable = true;
+        return;
+      }
 
       if (csprojFiles.length === 0) return;
 
@@ -374,11 +443,15 @@ class FrameworkDetector {
       try {
         // Find source files with matching extensions
         const globPattern = `**/*{${fileExtensions.join(',')}}`;
-        const files = await glob(globPattern, {
+        const files = await globAny(globPattern, {
           cwd: this.projectRoot,
           ignore: ['**/node_modules/**', '**/dist/**', '**/build/**', '**/vendor/**'],
           nodir: true
         });
+        if (files === null) {
+          this.fileWalkUnavailable = true;
+          continue;
+        }
 
         let totalMatches = 0;
 
@@ -488,7 +561,11 @@ class FrameworkDetector {
 
       // React
       hasJsxFiles: async () => {
-        const files = await glob('**/*.{jsx,tsx}', { cwd: this.projectRoot, nodir: true });
+        const files = await globAny('**/*.{jsx,tsx}', { cwd: this.projectRoot, nodir: true });
+        if (files === null) {
+          this.fileWalkUnavailable = true;
+          return false;
+        }
         return files.length > 0;
       },
       hasUseStateOrEffect: () => this.searchInFiles('useState|useEffect', ['.jsx', '.tsx', '.js', '.ts']),
@@ -511,7 +588,11 @@ class FrameworkDetector {
 
       // Blazor
       hasRazorFiles: async () => {
-        const files = await glob('**/*.razor', { cwd: this.projectRoot, nodir: true });
+        const files = await globAny('**/*.razor', { cwd: this.projectRoot, nodir: true });
+        if (files === null) {
+          this.fileWalkUnavailable = true;
+          return false;
+        }
         return files.length > 0;
       },
       hasPageDirective: () => this.searchInFiles('@page', ['.razor']),
@@ -569,10 +650,11 @@ class FrameworkDetector {
    * Check if file exists (supports wildcards)
    */
   async fileExists(filePath) {
-    if (filePath.includes('*')) {
-      const files = await glob(filePath, { cwd: this.projectRoot, nodir: true });
+    const files = await globAny(filePath, { cwd: this.projectRoot, nodir: true });
+    if (files !== null) {
       return files.length > 0;
     }
+    this.fileWalkUnavailable = true;
 
     try {
       await fsp.access(path.join(this.projectRoot, filePath));
@@ -588,11 +670,15 @@ class FrameworkDetector {
   async searchInFiles(pattern, extensions) {
     try {
       const globPattern = `**/*{${extensions.join(',')}}`;
-      const files = await glob(globPattern, {
+      const files = await globAny(globPattern, {
         cwd: this.projectRoot,
         ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
         nodir: true
       });
+      if (files === null) {
+        this.fileWalkUnavailable = true;
+        return false;
+      }
 
       const regex = new RegExp(pattern, 'i');
 
@@ -662,6 +748,8 @@ class TestFrameworkDetector {
   constructor(projectPath) {
     this.projectPath = path.resolve(projectPath);
     this.patterns = null;
+    // Set when the test-file search could not run (missing `glob`).
+    this.fileWalkUnavailable = false;
     this.debug = process.env.DEBUG === 'true';
   }
 
@@ -677,6 +765,7 @@ class TestFrameworkDetector {
   }
 
   async detect() {
+    this.fileWalkUnavailable = false;
     await this.loadPatterns();
 
     const results = {
@@ -709,6 +798,7 @@ class TestFrameworkDetector {
 
     // Every runner evaluated, including those with no signal. Feeds all_results.
     results.all = all.sort((a, b) => b.confidence - a.confidence);
+    results.file_walk_unavailable = this.fileWalkUnavailable;
 
     return results;
   }
@@ -776,19 +866,13 @@ class TestFrameworkDetector {
   async checkPackageDependencies(config) {
     for (const packageFile of config.packageFiles) {
       // Handle glob patterns in package files (e.g., *.csproj)
-      let packagePaths;
-      try {
-        packagePaths = await glob(packageFile, {
-          cwd: this.projectPath,
-          absolute: true
-        });
-      } catch (error) {
-        this.log(`Glob error for ${packageFile}: ${error.message}`);
+      const packagePaths = await globAny(packageFile, {
+        cwd: this.projectPath,
+        absolute: true
+      });
+      if (packagePaths === null) {
+        this.fileWalkUnavailable = true;
         continue;
-      }
-
-      if (!Array.isArray(packagePaths)) {
-        packagePaths = [packagePaths];
       }
 
       for (const packagePath of packagePaths) {
@@ -853,15 +937,17 @@ class TestFrameworkDetector {
     const files = [];
 
     for (const pattern of patterns) {
-      try {
-        const matches = await glob(pattern, {
-          cwd: this.projectPath,
-          ignore: ['node_modules/**', 'vendor/**', '.git/**']
-        });
-        files.push(...matches);
-      } catch {
-        // Ignore glob errors for unsupported patterns
+      const matches = await globAny(pattern, {
+        cwd: this.projectPath,
+        ignore: ['node_modules/**', 'vendor/**', '.git/**']
+      });
+      if (matches === null) {
+        // Without the dependency this search cannot run at all; the signals
+        // already gathered (config files, directories, dependencies) stand.
+        this.fileWalkUnavailable = true;
+        break;
       }
+      files.push(...matches);
     }
 
     return [...new Set(files)]; // Remove duplicates
@@ -984,14 +1070,17 @@ const TOOLING_SCAN_DEPTH = 5; // deep limit for content scans
  * @param {string} pattern - Glob pattern
  * @param {string[]} ignore - Ignore patterns
  * @param {number} [maxDepth] - Directory depth limit (unlimited when omitted)
- * @returns {Promise<string[]>} Matching paths relative to projectPath
+ * @returns {Promise<string[]|null>} Matching paths, or null when unavailable
  */
 async function globFiles(projectPath, pattern, ignore, maxDepth) {
   const options = { cwd: projectPath, ignore, nodir: true };
   if (maxDepth) {
     options.maxDepth = maxDepth;
   }
-  const matches = await glob(pattern, options);
+  const matches = await globAny(pattern, options);
+  if (matches === null) {
+    return null;
+  }
   return matches.filter(match => {
     try {
       return fs.lstatSync(path.join(projectPath, match)).isFile();
@@ -1006,7 +1095,7 @@ async function globFiles(projectPath, pattern, ignore, maxDepth) {
  * Optimized: direct paths are checked before any glob runs
  * @param {string} projectPath - Root project directory
  * @param {string|string[]} files - File path or list of file paths to check (supports glob patterns)
- * @returns {Promise<boolean>} True if any files exist
+ * @returns {Promise<boolean|null>} True if any exist, null if a pattern could not be checked
  */
 async function checkFiles(projectPath, files) {
   const fileList = Array.isArray(files) ? files : [files];
@@ -1023,14 +1112,14 @@ async function checkFiles(projectPath, files) {
   // Then check glob patterns
   const globPatterns = fileList.filter(f => f.includes('*') || f.includes('?') || f.includes('['));
   for (const file of globPatterns) {
-    try {
-      const matches = await globFiles(projectPath, file, TOOLING_IGNORE, TOOLING_FILE_DEPTH);
-      if (matches.length > 0) {
-        return true;
-      }
-    } catch {
-      // If glob fails, continue to next file
-      continue;
+    const matches = await globFiles(projectPath, file, TOOLING_IGNORE, TOOLING_FILE_DEPTH);
+    if (matches === null) {
+      // "Could not look" is not "not found": stop rather than report the
+      // remaining patterns as absent.
+      return null;
+    }
+    if (matches.length > 0) {
+      return true;
     }
   }
   return false;
@@ -1062,12 +1151,11 @@ function checkDirectories(projectPath, directories) {
  * @returns {Promise<number>} Number of files with matches
  */
 async function analyzeFiles(projectPath, filePattern, patterns, existenceOnly = false) {
-  let fileList;
-  try {
-    fileList = await globFiles(projectPath, filePattern, TOOLING_IGNORE, TOOLING_SCAN_DEPTH);
-  } catch {
-    // If glob fails, return 0
-    return 0;
+  const fileList = await globFiles(projectPath, filePattern, TOOLING_IGNORE, TOOLING_SCAN_DEPTH);
+  if (fileList === null) {
+    // The dependency needed to find the files is not installed. Returning 0
+    // here would claim the signal was checked and absent.
+    return null;
   }
 
   let filesWithMatches = 0;
@@ -1107,10 +1195,18 @@ async function detectToolSignals(projectPath, toolKey, toolConfig, detection_rul
   const signalChecks = Object.entries(toolConfig.detection_signals).map(
     async ([signalType, signalConfig]) => {
       let detected = false;
+      // Set when this signal reads files and could not, so the axis can say so
+      // instead of presenting an unchecked signal as a checked negative.
+      let unavailable = false;
 
       // File existence check (simple check, supports glob patterns)
       if (signalConfig.files) {
-        detected = await checkFiles(projectPath, signalConfig.files);
+        const found = await checkFiles(projectPath, signalConfig.files);
+        if (found === null) {
+          unavailable = true;
+        } else {
+          detected = found;
+        }
       }
       // Directory existence check
       else if (signalConfig.directories) {
@@ -1120,7 +1216,11 @@ async function detectToolSignals(projectPath, toolKey, toolConfig, detection_rul
       else if (signalConfig.file_pattern && signalConfig.patterns) {
         // Use existenceOnly mode for faster detection (early exit)
         const matches = await analyzeFiles(projectPath, signalConfig.file_pattern, signalConfig.patterns, true);
-        detected = matches > 0;
+        if (matches === null) {
+          unavailable = true;
+        } else {
+          detected = matches > 0;
+        }
       }
       // File pattern analysis with content patterns (multiple patterns)
       else if (signalConfig.file_patterns && signalConfig.patterns) {
@@ -1129,10 +1229,13 @@ async function detectToolSignals(projectPath, toolKey, toolConfig, detection_rul
           analyzeFiles(projectPath, filePattern, signalConfig.patterns, true)
         );
         const results = await Promise.all(patternChecks);
+        if (results.some(result => result === null)) {
+          unavailable = true;
+        }
         detected = results.some(r => r > 0);
       }
 
-      return { signalType, detected, weight: signalConfig.weight };
+      return { signalType, detected, unavailable, weight: signalConfig.weight };
     }
   );
 
@@ -1141,8 +1244,12 @@ async function detectToolSignals(projectPath, toolKey, toolConfig, detection_rul
 
   // Process results; flag tools whose primary signal (weight >= 0.7) fired
   let highConfidenceDetected = false;
-  for (const { signalType, detected, weight } of signalResults) {
+  let fileWalkUnavailable = false;
+  for (const { signalType, detected, unavailable, weight } of signalResults) {
     signals[signalType] = detected;
+    if (unavailable) {
+      fileWalkUnavailable = true;
+    }
     if (detected) {
       signalCount++;
       if (weight >= 0.7) {
@@ -1167,7 +1274,8 @@ async function detectToolSignals(projectPath, toolKey, toolConfig, detection_rul
     confidence,
     signals,
     signal_count: signalCount,
-    high_confidence: highConfidenceDetected
+    high_confidence: highConfidenceDetected,
+    file_walk_unavailable: fileWalkUnavailable
   };
 }
 
@@ -1227,6 +1335,11 @@ async function detectTooling(projectPath, options = {}) {
     detected: detectedTools.length > 0,
     tools: detectedTools,
     all_results: toolDetections,
+    // Every tool rule reads files, so on an install without `glob` this axis
+    // answers "nothing found" for all of them at once. Say so explicitly -
+    // including on a later call answered from the cache, which would otherwise
+    // replay the same silence.
+    file_walk_unavailable: toolDetections.some(tool => tool.file_walk_unavailable),
     detection_summary: {
       total_analyzed: toolDetections.length,
       detected_count: detectedTools.length,
@@ -1269,10 +1382,13 @@ function checkConfigFiles(projectPath, files) {
  * Analyze Terraform files for provider patterns
  * @param {string} projectPath - Root project directory
  * @param {string[]} patterns - Provider-specific Terraform patterns
- * @returns {Promise<number>} Match count
+ * @returns {Promise<number|null>} Match count, or null when the walk could not run
  */
 async function analyzeTerraform(projectPath, patterns) {
-  const tfFiles = await glob('**/*.tf', { cwd: projectPath, ignore: ['**/node_modules/**', '**/.git/**'] });
+  const tfFiles = await globAny('**/*.tf', { cwd: projectPath, ignore: ['**/node_modules/**', '**/.git/**'] });
+  if (tfFiles === null) {
+    return null;
+  }
 
   let totalMatches = 0;
   for (const file of tfFiles) {
@@ -1322,10 +1438,13 @@ function analyzePythonPackages(projectPath, patterns) {
  * Analyze shell scripts for CLI usage
  * @param {string} projectPath - Root project directory
  * @param {string[]} patterns - Provider-specific CLI patterns
- * @returns {Promise<number>} Match count
+ * @returns {Promise<number|null>} Match count, or null when the walk could not run
  */
 async function analyzeCloudCliScripts(projectPath, patterns) {
-  const scriptFiles = await glob('**/*.sh', { cwd: projectPath, ignore: ['**/node_modules/**', '**/.git/**'] });
+  const scriptFiles = await globAny('**/*.sh', { cwd: projectPath, ignore: ['**/node_modules/**', '**/.git/**'] });
+  if (scriptFiles === null) {
+    return null;
+  }
 
   let totalMatches = 0;
   for (const file of scriptFiles) {
@@ -1341,10 +1460,13 @@ async function analyzeCloudCliScripts(projectPath, patterns) {
  * Analyze Dockerfiles for base images
  * @param {string} projectPath - Root project directory
  * @param {string[]} patterns - Provider-specific Docker patterns
- * @returns {Promise<number>} Match count
+ * @returns {Promise<number|null>} Match count, or null when the walk could not run
  */
 async function analyzeDockerfiles(projectPath, patterns) {
-  const dockerFiles = await glob('**/Dockerfile*', { cwd: projectPath, ignore: ['**/node_modules/**', '**/.git/**'] });
+  const dockerFiles = await globAny('**/Dockerfile*', { cwd: projectPath, ignore: ['**/node_modules/**', '**/.git/**'] });
+  if (dockerFiles === null) {
+    return null;
+  }
 
   let totalMatches = 0;
   for (const file of dockerFiles) {
@@ -1389,12 +1511,18 @@ async function detectCloudProvider(projectPath, options = {}) {
   for (const [providerKey, providerConfig] of Object.entries(providers)) {
     const signals = {};
     let signalCount = 0;
+    // Set when a file-based signal for this provider could not be evaluated.
+    let fileWalkUnavailable = false;
 
     // Terraform analysis
     if (providerConfig.detection_signals.terraform) {
       const matches = await analyzeTerraform(projectPath, providerConfig.detection_signals.terraform.patterns);
-      signals.terraform = matches > 0;
-      if (matches > 0) signalCount++;
+      if (matches === null) {
+        fileWalkUnavailable = true;
+      } else {
+        signals.terraform = matches > 0;
+        if (matches > 0) signalCount++;
+      }
     }
 
     // NPM package analysis
@@ -1414,15 +1542,23 @@ async function detectCloudProvider(projectPath, options = {}) {
     // CLI script analysis
     if (providerConfig.detection_signals.cli) {
       const matches = await analyzeCloudCliScripts(projectPath, providerConfig.detection_signals.cli.patterns);
-      signals.cli = matches > 0;
-      if (matches > 0) signalCount++;
+      if (matches === null) {
+        fileWalkUnavailable = true;
+      } else {
+        signals.cli = matches > 0;
+        if (matches > 0) signalCount++;
+      }
     }
 
     // Docker analysis
     if (providerConfig.detection_signals.docker) {
       const matches = await analyzeDockerfiles(projectPath, providerConfig.detection_signals.docker.patterns);
-      signals.docker = matches > 0;
-      if (matches > 0) signalCount++;
+      if (matches === null) {
+        fileWalkUnavailable = true;
+      } else {
+        signals.docker = matches > 0;
+        if (matches > 0) signalCount++;
+      }
     }
 
     // Config file analysis
@@ -1446,7 +1582,8 @@ async function detectCloudProvider(projectPath, options = {}) {
       name: providerConfig.name,
       confidence,
       signals,
-      signal_count: signalCount
+      signal_count: signalCount,
+      file_walk_unavailable: fileWalkUnavailable
     });
   }
 
@@ -1467,6 +1604,7 @@ async function detectCloudProvider(projectPath, options = {}) {
       signals: topResult.signals,
       signal_count: topResult.signal_count,
       all_results: results,
+      file_walk_unavailable: results.some(r => r.file_walk_unavailable),
       minimum_confidence: minimumConfidence
     };
   }
@@ -1475,6 +1613,7 @@ async function detectCloudProvider(projectPath, options = {}) {
     detected: false,
     confidence: topResult ? topResult.confidence : 0,
     all_results: results,
+    file_walk_unavailable: results.some(r => r.file_walk_unavailable),
     minimum_confidence: minimumConfidence
   };
 }
@@ -1491,8 +1630,25 @@ async function detectCloudProvider(projectPath, options = {}) {
 
 const FRAMEWORK_SIGNAL_TYPES = ['packageJson', 'gemfile', 'mixExs', 'csproj', 'files', 'imports'];
 
-function buildEnvelope(axis, { results, allResults, threshold, flags = {} }) {
+/**
+ * Attach the degradation marker to one axis envelope. Absent from every
+ * envelope of an install that has `glob`, so normal output is unchanged.
+ */
+function stamp(axis, envelope, degraded) {
+  if (degraded && WALKING_AXES.includes(axis)) {
+    envelope.degraded = 'glob-unavailable';
+  }
+  return envelope;
+}
+
+// Every axis walks the tree for at least one of its signals.
+const WALKING_AXES = ['framework', 'test', 'tooling', 'cloud'];
+
+function buildEnvelope(axis, { results, allResults, threshold, flags = {}, degraded = false }) {
   const primary = results.length > 0 ? results[0] : null;
+  // Present only when a file signal could not be evaluated, so the output of a
+  // normal install is unchanged. `degraded` names what is missing rather than
+  // leaving a partial scan to look like a complete one.
   return {
     axis,
     detected: primary !== null,
@@ -1501,7 +1657,8 @@ function buildEnvelope(axis, { results, allResults, threshold, flags = {} }) {
     threshold,
     results,
     all_results: allResults,
-    ...flags
+    ...flags,
+    ...(degraded ? { degraded: 'glob-unavailable' } : {})
   };
 }
 
@@ -1563,7 +1720,11 @@ function normalizeFramework(raw, patterns) {
     ...Object.keys(configs).filter(name => !scored.has(name)).map(name => item(name, 0))
   ];
 
-  return buildEnvelope('framework', { results, allResults, threshold });
+  return buildEnvelope('framework', {
+    results,
+    allResults,
+    threshold,
+  });
 }
 
 function normalizeTest(raw) {
@@ -1592,7 +1753,7 @@ function normalizeTest(raw) {
     results: raw.frameworks.map(item),
     allResults: raw.all.map(item),
     threshold: null, // any confidence above 0 counts
-    flags: raw.message ? { message: raw.message } : {}
+    flags: raw.message ? { message: raw.message } : {},
   });
 }
 
@@ -1637,7 +1798,7 @@ function normalizeCloud(raw, patterns) {
   return buildEnvelope('cloud', {
     results: allResults.filter(r => r.confidence >= raw.minimum_confidence),
     allResults,
-    threshold: raw.minimum_confidence
+    threshold: raw.minimum_confidence,
   });
 }
 
@@ -1708,9 +1869,18 @@ const AXIS_RUNNERS = {
 async function detect(axis, projectPath = process.cwd(), options = {}) {
   const root = path.resolve(projectPath);
 
+  // A missing `glob` is a property of the install, not of the project, and it
+  // affects every axis that reads files - including tooling, whose per-project
+  // cache can serve a result recorded before any walk was skipped.
+  const fileWalkUnavailable = !glob;
+
   if (axis === 'all') {
     const entries = await Promise.all(AXES.map(name => AXIS_RUNNERS[name](root, options)));
-    const axes = Object.fromEntries(AXES.map((name, i) => [name, entries[i]]));
+    // The axes run concurrently, so degradation is stamped once they resolve: a
+    // walk skipped anywhere in this run applies to every axis that reads files.
+    const axes = Object.fromEntries(
+      AXES.map((name, i) => [name, stamp(name, entries[i], fileWalkUnavailable)])
+    );
     return {
       axis: 'all',
       detected: entries.some(entry => entry.detected),
@@ -1721,7 +1891,7 @@ async function detect(axis, projectPath = process.cwd(), options = {}) {
   if (!AXES.includes(axis)) {
     throw new Error(`Unknown axis '${axis}'. Valid axes: ${AXES.join(', ')}, all`);
   }
-  return AXIS_RUNNERS[axis](root, options);
+  return AXIS_RUNNERS[axis](root, options).then(envelope => stamp(axis, envelope, fileWalkUnavailable));
 }
 
 // ===========================================================================
