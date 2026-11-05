@@ -25,7 +25,8 @@
  *     owner decision, and nothing lowers it below the sensitive floor;
  *   - the solo-maintainer discount leans on a changed-path list it can trust:
  *     present, non-empty and made of verbatim names. A list that is missing,
- *     or holds a name git quoted, cannot vouch that no sensitive path changed.
+ *     or holds a name git quoted, or one with a control character or a line or
+ *     paragraph separator in it, cannot vouch that no sensitive path changed.
  *
  * The Low WAIVER and the effective tier it produces are TRD-041's: this
  * function answers the assigned tier and the facts behind it.
@@ -45,21 +46,26 @@ const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const isPathList = (value) => Array.isArray(value) && value.every((entry) => isText(entry));
 
 /**
+ * The characters no verbatim name holds: the control characters (C0, DEL and
+ * C1, which has NEL, U+0085) and the Unicode line and paragraph separators
+ * (U+2028, U+2029).
+ */
+const NOT_VERBATIM = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
+/**
  * Whether `name` is a verbatim path. Git prints a name in double quotes, with
  * C escapes (`".github/workflows/\303\251.yml"`), when it holds a non-ASCII
  * byte, a control character, `"` or `\` -- unless the listing is
  * NUL-delimited (`-z`), when it prints every name as it is. A quoted name
  * matches no sensitive pattern, and neither does one with a tab or newline
  * left in it by a `--name-status` or newline-split listing, so an entry like
- * either means the list was not produced the documented way.
+ * either means the list was not produced the documented way. Even `-z` leaves
+ * a name holding a control character or a line or paragraph separator (git
+ * prints U+2028 and U+2029 raw) as a name no pattern can be trusted to read, so
+ * such a name fails closed too: it is no evidence that nothing sensitive changed.
  */
 function isVerbatimName(name) {
-  if (name.startsWith('"')) return false;
-  for (let index = 0; index < name.length; index += 1) {
-    const code = name.charCodeAt(index);
-    if (code < 0x20 || code === 0x7f) return false;
-  }
-  return true;
+  return !name.startsWith('"') && !NOT_VERBATIM.test(name);
 }
 
 /** A word from a closed set, compared on letter case only -- a padded word is not the word. */
@@ -345,8 +351,9 @@ function soloEligibility(tier, policy, assignment) {
   );
   if (logins.size !== 1) return SOLO_NOT_ELIGIBLE;
   // `declarationChanged` and `sensitivePaths` are only as good as the list they
-  // came from: one that is missing, empty or holds a quoted name cannot vouch
-  // that no sensitive path changed.
+  // came from: one that is missing, empty or holds a name that is not verbatim
+  // (quoted by git, or holding a control character or a line or paragraph
+  // separator) cannot vouch that no sensitive path changed.
   if (assignment.changedPathsReadable !== true) return SOLO_NOT_ELIGIBLE;
   if (assignment.declarationChanged !== false) return SOLO_NOT_ELIGIBLE;
   if (!Array.isArray(assignment.sensitivePaths) || assignment.sensitivePaths.length !== 0) return SOLO_NOT_ELIGIBLE;

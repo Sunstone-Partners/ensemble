@@ -62,10 +62,15 @@ request touching one of them is treated as sensitive by every review and
 approval rule that consults sensitivity. The declared list **adds to** the
 built-in floor (CI workflows, release gates, installers, the generation
 pipeline and the project constitution); it can never shrink it. The review
-guards are declared here too -- the review and local-CI gate code and its
-vendored copies, the local-CI approval set, the merge-gate and changed-path
-procedure files and the `pr-merge` command source -- so a change to them
-always keeps two humans, whatever `soloMaintainer` says.
+guards are declared here too -- the review and local-CI gate code under any
+file name or extension and every copy of it (the vendored ones and the full
+bundle's links), the local-CI approval set and its runner script, the whole
+`pr-review-cycle` skill, which is the procedure that feeds the gate, and the
+`pr-merge` command source with its generated copies -- so a change to them
+always keeps two humans, whatever `soloMaintainer` says. A pattern that names
+a path is matched ignoring letter case, because a case-insensitive checkout
+(macOS, Windows) writes `PR-REVIEW-GATE.JS` over `pr-review-gate.js`; a bare
+file name such as `REVIEW.md` is matched exactly, at any depth.
 
 ## Policy
 
@@ -95,14 +100,17 @@ logins).
     "REVIEW.md",
     ".github/CODEOWNERS",
     ".github/pull_request_template.md",
-    "packages/development/lib/pr-review-*.js",
-    "packages/development/lib/local-ci-*.js",
-    "packages/*/vendor/lib/pr-review-*.js",
-    "packages/*/vendor/lib/local-ci-*.js",
+    "packages/**/lib/pr-review-*",
+    "packages/**/lib/local-ci-*",
     ".ensemble/local-ci.yaml",
-    "packages/*/skills/pr-review-cycle/reference/merge-gate.md",
-    "packages/*/skills/pr-review-cycle/reference/scope-guidance-depth.md",
-    "packages/git/commands/pr-merge.yaml"
+    "scripts/ci-local.js",
+    "packages/**/skills/pr-review-cycle",
+    "packages/**/skills/pr-review-cycle/**",
+    "packages/git/commands/pr-merge.yaml",
+    "packages/**/commands/ensemble/pr-merge.md",
+    "packages/**/ensemble-pr-merge.md",
+    "packages/**/ensemble-pr-merge/SKILL.md",
+    "packages/full/commands/git"
   ],
   "highPaths": [
     "packages/development/lib/**",

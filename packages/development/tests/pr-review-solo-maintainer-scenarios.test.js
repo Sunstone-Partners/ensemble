@@ -434,9 +434,38 @@ describe('solo maintainer: a changed-path list the rule cannot trust keeps two h
     ['a name-status line, with a tab before the path', 'D\t.github/workflows/ci.yml'],
     ['a name with a newline in it', 'packages/agent-core/src/a\nb.ts'],
     ['a name with a DEL character in it', 'packages/agent-core/src/a\u007f.ts'],
+    ['a name with a carriage return in it', 'packages/agent-core/src/a\rb.ts'],
+    ['a name with a line separator (U+2028) in it', 'packages/agent-core/src/a\u2028b.ts'],
+    ['a name with a paragraph separator (U+2029) in it', 'packages/agent-core/src/a\u2029b.ts'],
+    ['a name with a next-line character (U+0085) in it', 'packages/agent-core/src/a\u0085b.ts'],
+    ['a name with a C1 control character (U+009F) in it', 'packages/agent-core/src/a\u009fb.ts'],
   ])('%s is no verbatim path, so the list cannot vouch that nothing sensitive changed', (_label, entry) => {
     const assignment = expectTwoHumans(chainFor([...HIGH_PATHS, entry]));
     expect(assignment.warnings).toContain('non-verbatim-changed-path');
+  });
+
+  /** Whether the tier module lets this ONE name count as part of a path list it can vouch for. */
+  const readable = (name) =>
+    assignTier({
+      paths: { sensitive: [], high: [name], paths: [name] },
+      kinds: [{ kind: 'product', paths: [name] }],
+      secondAssessment: NO_PEER,
+    }).changedPathsReadable;
+
+  test('exactly the control characters, DEL, NEL and the Unicode line and paragraph separators are refused (U+0000 to U+2FFF)', () => {
+    const range = (from, to) => Array.from({ length: to - from + 1 }, (_, offset) => from + offset);
+    const refused = [];
+    for (let code = 0; code <= 0x2fff; code += 1) {
+      if (!readable(`packages/agent-core/src/a${String.fromCharCode(code)}b.ts`)) refused.push(code);
+    }
+    // C0, DEL and C1 (which holds NEL, U+0085), then the line and the paragraph separator.
+    expect(refused).toEqual([...range(0x00, 0x1f), ...range(0x7f, 0x9f), 0x2028, 0x2029]);
+  });
+
+  test('ordinary non-ASCII names stay readable: a no-break space, a hyphenation point, CJK, an emoji', () => {
+    for (const name of ['a\u00a0b.ts', 'a\u2027b.ts', '\u6587\u4ef6.ts', 'a\ud83d\ude00b.ts', 'caf\u00e9.ts']) {
+      expect(readable(`packages/agent-core/src/${name}`)).toBe(true);
+    }
   });
 
   /**
@@ -609,6 +638,21 @@ describe("solo maintainer: through the subcommands the skill calls, under this r
     'packages/development/skills/pr-review-cycle/reference/scope-guidance-depth.md',
     'packages/pi/skills/pr-review-cycle/reference/scope-guidance-depth.md',
     'packages/git/commands/pr-merge.yaml',
+    'packages/full/lib/pr-review-gate.js',
+    'packages/full/lib/local-ci-runner.js',
+    'packages/development/lib/pr-review-gate',
+    'packages/development/lib/local-ci-runner.mjs',
+    'packages/development/lib/PR-REVIEW-GATE.JS',
+    'packages/pi/vendor/lib/pr-review-gate.cjs',
+    'packages/development/skills/pr-review-cycle/SKILL.md',
+    'packages/development/skills/pr-review-cycle/reference/inputs.md',
+    'packages/pi/skills/pr-review-cycle/SKILL.md',
+    'packages/full/skills/pr-review-cycle',
+    'packages/git/commands/ensemble/pr-merge.md',
+    'packages/pi/prompts/ensemble-pr-merge.md',
+    'packages/pi/skills/ensemble-pr-merge/SKILL.md',
+    'packages/codex/.codex/skills/commands/ensemble-pr-merge/SKILL.md',
+    'scripts/ci-local.js',
   ])('%s is a guard: a PR that also changes it keeps two humans', (guard) => {
     const { tier, gate } = run({ changedPaths: [...LIB, guard] });
     expect(tier.paths.sensitive).toContain(guard);
@@ -628,6 +672,25 @@ describe("solo maintainer: through the subcommands the skill calls, under this r
     expect(tier.warnings).toContain('non-verbatim-changed-path');
     expect(tier.soloMaintainer).toEqual({ eligible: false, login: null });
     expect(gate.mergeable).toBe(false);
+  });
+
+  test.each([
+    ['a line separator (U+2028)', '\u2028'],
+    ['a paragraph separator (U+2029)', '\u2029'],
+    ['a next-line character (U+0085)', '\u0085'],
+  ])('a workflow whose name holds %s keeps two humans: a sensitive path in a list that is no verbatim one', (_label, character) => {
+    const workflow = `.github/workflows/ev${character}il.yml`;
+    const { tier, gate } = run({ changedPaths: [...LIB, workflow] });
+    expect(tier.paths.sensitive).toContain(workflow);
+    expect(tier.warnings).toContain('non-verbatim-changed-path');
+    expect(tier.soloMaintainer).toEqual({ eligible: false, login: null });
+    expect(gate.mergeable).toBe(false);
+  });
+
+  test('a High path whose name holds a line separator is still graded High, not waved through as Medium', () => {
+    const { paths, tier } = run({ changedPaths: ['packages/development/lib/a\u2028b.js'] });
+    expect(paths.high).toEqual(['packages/development/lib/a\u2028b.js']);
+    expect(tier.effectiveTier).toBe('high');
   });
 });
 
