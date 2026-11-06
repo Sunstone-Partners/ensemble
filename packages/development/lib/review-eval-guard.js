@@ -32,7 +32,7 @@
  *     pipeline must satisfy; `failOnStale` makes it fail.
  *
  * Usage:
- *   node pr-review-eval-guard.js --findings <file> [--cases <dir>] [--repo <root>]
+ *   node review-eval-guard.js --findings <file> [--cases <dir>] [--repo <root>]
  *        [--history <file>] [--reviewer <label>] [--fail-on-stale]
  *
  *   --findings  JSON `{ "findingsByCase": { "<case id>": [ finding... ] } }`

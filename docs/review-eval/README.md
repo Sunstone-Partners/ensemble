@@ -14,7 +14,7 @@ regression, not a win*).
 ## Running the guard
 
 ```bash
-node packages/development/lib/pr-review-eval-guard.js \
+node packages/development/lib/review-eval-guard.js \
   --findings <pipeline findings.json> \
   --history docs/review-eval/history.jsonl --reviewer <label>
 ```
@@ -23,7 +23,7 @@ Exit 0 only when every expected Important finding is present; exit 1 otherwise,
 with the missed case ids and the false-negative rate in the JSON on stdout. A
 pipeline-changing child (`runner`, `verifyassign`, `shard`, `carry`) runs this
 before it lands and records the result in its PR. How the guard decides is in
-the header of `packages/development/lib/pr-review-eval-guard.js`; the procedure
+the header of `packages/development/lib/review-eval-guard.js`; the procedure
 is `packages/development/skills/pr-review-eval/SKILL.md`, Step R3a.
 
 ## Cases

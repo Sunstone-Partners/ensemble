@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * kata cwd4: the quality guard (`pr-review-eval-guard.js`) fails when an
+ * kata cwd4: the quality guard (`review-eval-guard.js`) fails when an
  * Important finding the eval set expects is lost.
  *
  * Two layers:
@@ -23,11 +23,11 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { runGuard, main, checkPin } = require('../lib/pr-review-eval-guard');
+const { runGuard, main, checkPin } = require('../lib/review-eval-guard');
 const { validateCase, staleCases } = require('../lib/pr-review-eval');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const GUARD = path.join(REPO_ROOT, 'packages', 'development', 'lib', 'pr-review-eval-guard.js');
+const GUARD = path.join(REPO_ROOT, 'packages', 'development', 'lib', 'review-eval-guard.js');
 const SHA = 'a'.repeat(40);
 
 const CODEOWNERS = '* @owner\n';
@@ -284,7 +284,7 @@ describe('the committed eval set (#228, #233, #234 findings)', () => {
   let scratch;
 
   beforeAll(() => {
-    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-eval-guard-'));
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'review-eval-guard-'));
   });
   afterAll(() => fs.rmSync(scratch, { recursive: true, force: true }));
 

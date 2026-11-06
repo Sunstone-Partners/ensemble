@@ -187,7 +187,7 @@ found — each would make the eval unable to fail.
 
 ### Step R3a — Guard
 
-Before a pipeline-changing PR lands, run `pr-review-eval-guard.js` (`reference/eval-details.md`); exit 1 means a lost Important finding.
+Before a pipeline-changing PR lands, run `review-eval-guard.js` (`reference/eval-details.md`); exit 1 means a lost Important finding.
 
 ### Step R4 — Recurrence belongs to the host repository
 

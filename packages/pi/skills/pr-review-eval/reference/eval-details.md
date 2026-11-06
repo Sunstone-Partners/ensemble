@@ -71,7 +71,7 @@ jq -n --slurpfile cases /tmp/eval-cases.json \
 A change to how the review runs (the runner, verifier assignment, sharding, carried verdicts) is a regression if a real Important finding stops being reported, however much wall time it saves. Before such a change lands, run the pipeline's output for the committed cases (`docs/review-eval/cases`: the #228, #233 and #234 findings, each pinned to the commit it was found at) through the guard:
 
 ```bash
-PR_REVIEW_EVAL_GUARD_CLI="$(dirname "$PR_REVIEW_CLI")/pr-review-eval-guard.js"
+PR_REVIEW_EVAL_GUARD_CLI="$(dirname "$PR_REVIEW_CLI")/review-eval-guard.js"
 node "$PR_REVIEW_EVAL_GUARD_CLI" --findings "$PIPELINE_FINDINGS" \
   --history docs/review-eval/history.jsonl --reviewer "$REVIEWER"
 ```
