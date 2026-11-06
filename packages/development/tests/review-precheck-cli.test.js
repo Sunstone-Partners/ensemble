@@ -658,6 +658,60 @@ describe('the comment leaves this machine redacted and path-free (review round 1
   });
 });
 
+describe('what a run touches is what the header says (review round 1, finding 7)', () => {
+  const walk = (dir, base = dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name), base) : [path.relative(base, path.join(dir, e.name))]));
+
+  it('the header no longer claims to touch only .ensemble/pr-review/, and names everything else a run touches', () => {
+    const header = fs.readFileSync(path.join(__dirname, '..', 'lib', 'review-precheck-cli.js'), 'utf8').split('*/')[0];
+    expect(header).not.toMatch(/reads and writes only/i);
+    for (const needle of ['git fetch origin <base>', 'refs/remotes/origin/<base>', 'FETCH_HEAD', '.ensemble/local-ci-runs/<sha>', 'the ONE PR comment', 'kill -KILL -- -<pid>']) {
+      expect(header).toContain(needle);
+    }
+  });
+
+  it('against a real repository: the fetch moves origin/<base> and writes FETCH_HEAD, and every file this module creates outside .git is under .ensemble/pr-review/', async () => {
+    const git = (cwd, ...args) => cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
+    const origin = path.join(root, 'origin.git');
+    const work = path.join(root, 'work');
+    fs.mkdirSync(work);
+    git(root, 'init', '--quiet', '--bare', origin);
+    git(work, 'init', '--quiet');
+    git(work, 'remote', 'add', 'origin', origin);
+    fs.writeFileSync(path.join(work, 'a.txt'), '1');
+    git(work, 'add', 'a.txt');
+    git(work, 'commit', '--quiet', '-m', 'c1');
+    const first = git(work, 'rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(work, 'b.txt'), '2');
+    git(work, 'add', 'b.txt');
+    git(work, 'commit', '--quiet', '-m', 'c2');
+    const tip = git(work, 'rev-parse', 'HEAD');
+    git(work, 'push', '--quiet', 'origin', 'HEAD:refs/heads/dev');
+    git(work, 'update-ref', 'refs/remotes/origin/dev', first); // a stale tracking ref
+    fs.rmSync(path.join(work, '.git', 'FETCH_HEAD'), { force: true });
+    const files = () => walk(work).filter((f) => !f.startsWith('.git/')).sort();
+    const before = files();
+
+    const d = makeDeps({ repo: 'o/r', pr: 9, repoRoot: work, spawnProcess: fakeSpawn().spawnProcess, kill: () => {} }); // real git
+    expect(await d.prepareGate({ headSha: tip, baseRefName: 'dev', dryRun: false })).toEqual({ ok: true });
+    expect(git(work, 'rev-parse', 'refs/remotes/origin/dev')).toBe(tip);
+    expect(fs.existsSync(path.join(work, '.git', 'FETCH_HEAD'))).toBe(true);
+    expect(d.claimGateStart({ headSha: tip, dryRun: false }).claimed).toBe(true);
+    expect((await d.startGate({ headSha: tip, baseRefName: 'dev', dryRun: false })).ok).toBe(true);
+    const created = files().filter((f) => !before.includes(f));
+    expect(created.length).toBeGreaterThan(0);
+    expect(created.filter((f) => !f.startsWith('.ensemble/pr-review/'))).toEqual([]);
+  });
+
+  it('the posted comment shows the gate log repo-relative, never the absolute location on this machine', async () => {
+    const { run, calls } = fakeRun(table());
+    const r = await runPrecheck({}, deps({ run, spawnProcess: fakeSpawn().spawnProcess }));
+    expect(r.gate.action).toBe('started');
+    const body = calls.find((c) => c[0] === 'gh' && c.includes('POST')).find((a) => a.startsWith('body='));
+    expect(body).toContain(`log \`.ensemble/pr-review/precheck-pr-9-${HEAD}.gate.log\``);
+    expect(body).not.toContain(root);
+  });
+});
+
 describe('readPr', () => {
   const prWith = (over) => fakeRun({ 'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: 'b', author: { login: 'a' }, isCrossRepository: false, ...over }) }).run;
 

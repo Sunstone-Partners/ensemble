@@ -8,15 +8,29 @@
  *   payload: { repo: "owner/name", pr: 234, repoRoot: "/path/to/clone", dryRun?: true, tier?: <pr-review-cli tier record> }
  *
  * Prints ONE JSON object on stdout (the precheck result, token-shaped strings redacted) and exits 0, or 1 when the
- * result is `ok:false`. `dryRun` posts no comment and starts the gate in ITS dry-run mode (no commit status is
- * published), under a separate start marker so a dry marker never makes a later real run read as "already started".
- * A dry gate and a real gate for one head still share the runner's one clone of it (`.ensemble/local-ci-runs/<sha>`, keyed
- * by the sha alone), so the second is refused, with a named reason, while the first is running.
+ * result is `ok:false`. A gate that could not be started is NOT a failed run (the comment still goes up and the exit code
+ * is 0): read `gate.action` in the result. `dryRun` posts no comment and starts the gate in ITS dry-run mode (no commit
+ * status is published), under a separate start marker so a dry marker never makes a later real run read as "already
+ * started". A dry gate and a real gate for one head still share the runner's one clone of it
+ * (`.ensemble/local-ci-runs/<sha>`, keyed by the sha alone), so the second is refused, with a named reason, while the first
+ * is running.
  *
  * Shell-outs live here, never in the pure module: `gh` and `git` run as argv arrays (never a shell) with the
- * maintainer's own login, and every value that reaches argv was validated first. This module reads and writes only
- * under `<repoRoot>/.ensemble/pr-review/` (start markers, gate input and log) -- the directory the review state
- * reports already use and that .gitignore already excludes.
+ * maintainer's own login, and every value that reaches argv was validated first.
+ *
+ * WHAT A RUN TOUCHES -- all of it:
+ *   - files this module creates: only under `<repoRoot>/.ensemble/pr-review/` (start markers, the gate's input and its log),
+ *     the directory the review state reports already use and that .gitignore already excludes;
+ *   - `git fetch origin <base>` and, when the head commit is not already local, `git fetch origin <head sha>` (fallback
+ *     `refs/pull/<n>/head`), run in `<repoRoot>`: they move `refs/remotes/origin/<base>`, write `.git/FETCH_HEAD` and add
+ *     objects to the repository;
+ *   - read-only git (`rev-parse`, `cat-file`, `show` of REVIEW.md and `.ensemble/local-ci.yaml` at `origin/<base>`) and
+ *     read-only `gh` (the PR, its reviews, the head commit, branch protection, commit statuses, the viewer, the comments);
+ *   - the ONE PR comment it creates or edits (`gh api -X POST|PATCH`), redacted and with local paths stripped;
+ *   - the gate it starts, a detached `local-ci-cli.js gate`: it clones the head into
+ *     `<repoRoot>/.ensemble/local-ci-runs/<sha>` (removed when it finishes), runs the base-ref command list there and, unless
+ *     `dryRun`, posts the commit status on the head. The recorded pid leads the gate's process group and its steps run in that
+ *     group, so stop a gate with `kill -KILL -- -<pid>`: killing the pid alone leaves its steps running.
  *
  * Why not the host adapter: `host.yaml` has no PR-comment, commit-status-list or branch-protection capability, and the
  * GitHub adapter's command allowlist is a fixed TRD-036 list (no `api` REST). Adding capabilities to every host
@@ -108,7 +122,10 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
     if (typeof home === 'string' && home.length > 1) out = out.split(home).join('~');
     return out;
   };
-  /** Whether a process exists: true or false, or null when `pid` is not a usable pid. EPERM means it exists but is not ours. */
+  /**
+   * Whether a process with this pid exists: true or false, or null when `pid` is not a usable pid. EPERM means it exists but is
+   * not ours. It cannot tell the gate from an unrelated process that reused its pid, so "alive" means "a process has that pid".
+   */
   const probe = (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return null;
     try {
@@ -119,8 +136,9 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
     }
   };
   /**
-   * What a start marker says now. A recorded gate is `alive` or not. A claim with NO gate recorded is `alive: null` while it
-   * is young and the run that made it is still going; otherwise that run died first and the marker is `orphaned`.
+   * What a start marker says now. A recorded gate is `alive` or not (see `probe`). A claim with NO gate recorded is
+   * `alive: null` while it is young and the run that made it is still going; otherwise that run died first and the marker is
+   * `orphaned`.
    */
   const describeMarker = (file) => {
     let data = {};

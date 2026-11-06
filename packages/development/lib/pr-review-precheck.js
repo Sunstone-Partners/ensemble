@@ -25,7 +25,9 @@
  *   - The gate runs the HEAD's own code (its dependency install scripts, then its tests) on this machine, so it is
  *     started only for a head on THIS repository. A head on a fork, or one whose repository GitHub did not state, gets
  *     a named refusal (`cross-repository-head`, `head-repository-unknown`): nothing is fetched, cloned or marked for it.
- *   - Nothing here is a lock: `claimGateStart` is only an atomic create-once marker; queueing belongs to `gatelock`.
+ *   - Nothing here is a lock: `claimGateStart` is only an atomic create-once marker; queueing belongs to `gatelock`. The same
+ *     goes for the comment: two runs at the same instant can both find none and both post. Later runs update the oldest marker
+ *     comment and never add another; the surplus one is left as it was (delete it by hand).
  *
  * deps (every one returns a Promise or a value; a read answers `{ok:true, ...}` or `{ok:false, error}`):
  *   readPr()                        -> {ok, headSha, baseRefName, state, body, author, isCrossRepository}
