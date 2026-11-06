@@ -17,8 +17,7 @@ This skill owns editable prose only (Rule 8); every judgement that grades a
 claim is made by `pr-review-cli.js` (Rule 7). Resolve `PR_REVIEW_CLI` for
 `packages/development/lib/pr-review-cli.js` per the tool-path-resolution skill
 (`packages/development/skills/tool-path-resolution/SKILL.md`) before running any
-command below. Recurrence is the host repository's (Rule 4): this skill holds no
-timer, no schedule and no watcher.
+command below.
 
 Detail (field table, hash snippet, case example, verification command,
 compare/stale commands): `reference/eval-details.md`, read when a step names it.
@@ -187,7 +186,7 @@ found — each would make the eval unable to fail.
 
 ### Step R3a — Guard
 
-Before a pipeline-changing PR lands, run `review-eval-guard.js` (`reference/eval-details.md`); exit 1 means a lost Important finding.
+Before a pipeline-changing PR lands, run `review-eval-guard.js --base "$BASE_SHA"` (`reference/eval-details.md`). It matches by location and severity, not by what a finding says; exit 1: a lost Important finding or unproven input.
 
 ### Step R4 — Recurrence belongs to the host repository
 
