@@ -127,3 +127,27 @@ that head (`MODE=gate`, this skill), confirm `posted:true` and `mergeReady:true`
 then open the PR. The status is attached to the commit, so the PR's head carries
 it from the moment it opens. If any commit is added afterwards the head moves and
 the gate must run again; a status on an older commit never counts.
+
+## One gate per machine (lock, queue, load policy)
+
+`gate` takes a machine-wide lock around the run step (`lib/local-ci-lock.js`). The lock is a PID lockfile at
+`~/.ensemble/locks/local-ci-gate.lock`: outside every worktree and persistent (never `/tmp`). A holder whose pid is dead
+(or whose record is unreadable) is reclaimed; a live holder is honoured; a lock written by another host cannot be judged
+and is honoured. A second gate waits its turn, polling (waiters are not served first-come-first-served), and the report
+carries `queued_ms`. Posting the status happens after the lock is released, and the lock is released when the run throws.
+A gate that cannot get the lock stops at `stage:"lock"` with `errorCode` `lock-timeout` and runs and posts nothing; the
+error names the holder pid. If that pid is gone but its number was reused by an unrelated process, remove the file by
+hand after checking: the gate never deletes a lock held by a live pid.
+
+Policy comes from the maintainer's environment (the payload cannot carry it; a malformed value refuses the gate with
+`errorCode` `bad-lock-policy`):
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `ENSEMBLE_LOCAL_CI_LOCK_DIR` | directory holding the lock file | `~/.ensemble/locks` |
+| `ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS` | longest wait for the lock (`0` = try once) | `1800000` |
+| `ENSEMBLE_LOCAL_CI_MAX_LOAD` | 1-minute load-average ceiling; unset = no load check | unset |
+| `ENSEMBLE_LOCAL_CI_LOAD_POLICY` | above the ceiling: `wait` (until the timeout) or `refuse` (`errorCode` `load-too-high`) | `wait` |
+
+Do not start gates during a reviewer swarm. The lock keeps gates from overlapping each other; it does not know about
+reviewer or verifier agents, so the caller sequences those: run the gate before they are dispatched or after they finish.
