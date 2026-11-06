@@ -118,8 +118,11 @@
  *                    `.<dir name>.collected` beside `dir`, never inside it), and the answer holds `reviewedSlices` (the
  *                    `reviewed` of `slices`) and, when `depth` is given, `votesInput` (the payload of `votes`). An
  *                    agent that did not arrive is never reviewed: its slice is unreviewed, its candidates unverified
- *   failure          { status?, retryAfterSec?, message?, attempt?, failFastAfterSec? } -- retry, back off, fall back
- *                    to the alternate model route, or fail fast to a recorded `partial` state
+ *   failure          { status?, retryAfterSec?, message?, attempt?, failFastAfterSec?, waitedSec?, deadlineAt?, now? }
+ *                    -- retry, back off, fall back to the alternate model route, or fail fast to a recorded `partial`
+ *                    state; `waitedSec` (the wait already spent on this agent) counts toward `failFastAfterSec`, and
+ *                    given the agent's `deadlineAt` (and `now`, default: the current time) a wait that would end at or
+ *                    after the deadline fails fast
  *              HONEST LIMIT: this computes deadlines and classifies; it does not stop an agent. Killing one at its
  *              `deadlineAt` is the dispatcher's job, and nothing here may be read as enforcement.
  *
@@ -551,15 +554,16 @@ function runReachability(payload) {
 /**
  * `results` selects one function of pr-review-results.js via `action`, mirroring the `reachability` precedent. The
  * module owns the file reads (injectable deps, real fs here); this dispatcher only supplies the clock when the payload
- * names none and, for `collect`, attaches the `votes` payload built from what was collected. An unknown action is
- * refused in-band: a guessed deadline or classification would be worse than none.
+ * names none (the deadline of `failure` is checked against it) and, for `collect`, attaches the `votes` payload built
+ * from what was collected. An unknown action is refused in-band: a guessed deadline or classification would be worse
+ * than none.
  */
 function runResults(payload) {
   const request = isObject(payload) ? payload : {};
   const action = typeof request.action === 'string' ? request.action.trim().toLowerCase() : null;
   const now = request.now === undefined ? Date.now() : request.now;
   if (action === 'deadlines') return reviewDeadlines({ ...request, now });
-  if (action === 'failure') return classifyAgentFailure(request);
+  if (action === 'failure') return classifyAgentFailure({ ...request, now });
   if (action === 'collect') {
     const collected = collectResults({ ...request, now });
     if (request.depth === undefined) return collected;

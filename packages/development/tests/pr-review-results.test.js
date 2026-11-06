@@ -19,7 +19,8 @@
  *   AC6  (review round 1) a result arrives only when its CHANGE time, which no
  *        writer can set backwards, lies in [dispatchedAt, deadlineAt]: stale
  *        files, another round's scratch copies and backdated mtimes do not count;
- *   AC7  (review round 1) a sliced reviewer must name its paths.
+ *   AC7  (review round 1) a sliced reviewer must name its paths, and a retry never
+ *        waits past the agent's deadline or past the total wait cap.
  */
 
 const fs = require('fs');
@@ -636,6 +637,88 @@ describe('classifyAgentFailure', () => {
 });
 
 // ---------------------------------------------------------------------------
+// AC7: a retry is bounded by the agent's deadline and by the total wait (review round 1)
+// ---------------------------------------------------------------------------
+
+describe('AC7: classifyAgentFailure is bounded by the agent deadline and by the total wait', () => {
+  const deadlineAt = T0 + 5 * MIN; // a verifier's whole budget
+  const at = (seconds) => T0 + seconds * 1000;
+
+  test('a retry-after that would end past the deadline fails fast (429 at 240 s, retry-after 299 s)', () => {
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 299, now: at(240), deadlineAt })).toMatchObject({
+      retry: false,
+      delayMs: 0,
+      failFast: true,
+      state: 'partial',
+      reason: 'retry-would-pass-deadline',
+    });
+  });
+
+  test('a wait that ends before the deadline is retried; one that ends exactly at it is not', () => {
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 59, now: at(240), deadlineAt })).toMatchObject({ retry: true, delayMs: 59000 });
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 60, now: at(240), deadlineAt })).toMatchObject({
+      retry: false,
+      reason: 'retry-would-pass-deadline',
+    });
+  });
+
+  test('a backoff the server did not specify is bounded the same way', () => {
+    // attempt 2 backs off 120 s
+    expect(classifyAgentFailure({ status: 429, attempt: 2, now: at(180), deadlineAt })).toMatchObject({ failFast: true, reason: 'retry-would-pass-deadline' });
+    expect(classifyAgentFailure({ status: 429, attempt: 2, now: at(179), deadlineAt })).toMatchObject({ retry: true, delayMs: 120000 });
+  });
+
+  test('an agent whose deadline has passed is not retried at all', () => {
+    expect(classifyAgentFailure({ status: 503, now: at(301), deadlineAt })).toMatchObject({ failFast: true, reason: 'deadline-passed' });
+    expect(classifyAgentFailure({ status: 503, now: deadlineAt, deadlineAt })).toMatchObject({ failFast: true, reason: 'deadline-passed' });
+  });
+
+  test('ISO timestamps are read, and an unreadable deadline or clock fails closed instead of lifting the bound', () => {
+    const iso = (ms) => new Date(ms).toISOString();
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 299, now: iso(at(240)), deadlineAt: iso(deadlineAt) })).toMatchObject({
+      failFast: true,
+      reason: 'retry-would-pass-deadline',
+    });
+    expect(classifyAgentFailure({ status: 429, deadlineAt: 'soon', now: at(1) })).toMatchObject({ retry: false, failFast: true, reason: 'invalid-deadlineAt' });
+    expect(classifyAgentFailure({ status: 429, deadlineAt })).toMatchObject({ retry: false, failFast: true, reason: 'invalid-now' });
+  });
+
+  test('without a deadline the answer says so: that retry is not bounded by one', () => {
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 20 }).warnings).toContain('no-deadline-given');
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 20, now: at(1), deadlineAt }).warnings).not.toContain('no-deadline-given');
+  });
+
+  test('the total wait is capped, not just each wait: a second 299 s wait would make 598 s of waiting', () => {
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 299, attempt: 0 })).toMatchObject({ retry: true, delayMs: 299000 });
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 299, attempt: 1, waitedSec: 299 })).toMatchObject({
+      retry: false,
+      failFast: true,
+      state: 'partial',
+      reason: 'total-wait-too-long',
+    });
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 100, attempt: 1, waitedSec: 200 }).retry).toBe(true); // 300 s in all: at the cap
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 101, attempt: 1, waitedSec: 200 }).failFast).toBe(true);
+    expect(classifyAgentFailure({ status: 429, retryAfterSec: 10, waitedSec: -1 })).toMatchObject({ failFast: true, reason: 'invalid-waitedSec' });
+  });
+
+  test('a caller that feeds back its own waits and clock never waits past the cap or the deadline (reviewer budget 900 s)', () => {
+    const reviewerDeadline = T0 + 15 * MIN;
+    let clock = T0 + 10 * 1000;
+    let waitedSec = 0;
+    const waits = [];
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const answer = classifyAgentFailure({ status: 429, retryAfterSec: 299, attempt, waitedSec, now: clock, deadlineAt: reviewerDeadline });
+      if (!answer.retry) break;
+      waits.push(answer.delayMs / 1000);
+      waitedSec += answer.delayMs / 1000;
+      clock += answer.delayMs;
+    }
+    expect(waits).toEqual([299]);
+    expect(clock).toBeLessThan(reviewerDeadline);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AC5: what an agent that can write into dir must not be able to do (review round 1)
 // ---------------------------------------------------------------------------
 
@@ -1076,7 +1159,16 @@ describe('pr-review-cli results (real process)', () => {
 
   test('deadlines and failure answer through the CLI, an unknown action is refused', () => {
     expect(run({ action: 'deadlines', role: 'verifier', now: T0 }).body).toMatchObject({ ok: true, dispatchedAt: T0, deadlineAt: T0 + 5 * MIN });
+    expect(run({ action: 'failure', status: 429, retryAfterSec: 299, now: T0 + 240 * 1000, deadlineAt: T0 + 5 * MIN }).body).toMatchObject({
+      failFast: true,
+      reason: 'retry-would-pass-deadline',
+    });
     expect(run({ action: 'failure', status: 429, retryAfterSec: 99999 }).body).toMatchObject({ failFast: true, state: 'partial' });
+    // No `now` in the payload: the CLI supplies the clock, so the deadline is still checked against the real time.
+    expect(run({ action: 'failure', status: 429, retryAfterSec: 299, deadlineAt: Date.now() + 60 * 1000 }).body).toMatchObject({
+      failFast: true,
+      reason: 'retry-would-pass-deadline',
+    });
     expect(run({ action: 'kill-agent' }).body).toMatchObject({ ok: false });
     expect(run({}).body.reason).toMatch(/unknown results action/);
   });

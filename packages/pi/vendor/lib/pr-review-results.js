@@ -103,13 +103,18 @@
  *     `ok` is true only when the request was readable and every agent
  *     arrived; the lists are filled either way so a partial result is usable.
  *
- *   classifyAgentFailure({status, retryAfterSec, message, attempt?}) ->
+ *   classifyAgentFailure({status, retryAfterSec, message, attempt?, waitedSec?, now?, deadlineAt?}) ->
  *       {retry, delayMs, fallbackRoute, failFast, state, kind, reason}
  *     Rate limits and overloads are retried after a backoff, on the alternate
  *     model route; a retry-after beyond `failFastAfterSec` (default 300, the
  *     length of a verifier's whole budget), unreadable failures, client errors
  *     and exhausted retries fail fast to `state: 'partial'`, which the caller
- *     records, instead of stalling for hours.
+ *     records, instead of stalling for hours. That threshold caps the TOTAL
+ *     waiting too: the caller passes the seconds it has already waited for this
+ *     agent (`waitedSec`), so three 299 s retry-afters cannot eat a whole
+ *     budget. Given the agent's `deadlineAt` and the current `now`, a wait that
+ *     would end at or after that deadline fails fast as well: `now` already
+ *     contains the earlier waits, so waiting cannot run past the deadline.
  *
  * Wiring: `collectResults` -> `toVotesInput` produces the exact payload of the
  * `votes` subcommand / `tallyVotes`; `reviewedSlices` is the `reviewed` array
@@ -797,7 +802,8 @@ function failureAnswer(fields) {
 }
 
 /**
- * What to do about one failed agent API call.
+ * What to do about one failed agent API call. A retry is advised only when it can still finish inside the agent's
+ * deadline (see `deadlineAt` and `now` below).
  *
  * @param {Object} input
  * @param {number|string} [input.status]       HTTP status of the failure.
@@ -806,6 +812,13 @@ function failureAnswer(fields) {
  *   `retryAfterSec` is absent, for a duration ("try again in 27 hours").
  * @param {number} [input.attempt]             Retries already made (default 0); `3` is exhausted.
  * @param {number} [input.failFastAfterSec]    A wait longer than this fails fast (default 300).
+ * @param {number} [input.waitedSec]           Seconds already spent waiting on earlier retries of this agent (default 0);
+ *   `waitedSec` plus this wait may not exceed `failFastAfterSec` either (`total-wait-too-long`).
+ * @param {number|string} [input.deadlineAt]   The agent's deadline (epoch ms or ISO). With it, a wait that would end
+ *   at or after the deadline fails fast (`retry-would-pass-deadline`); without it the retry is bounded only by
+ *   `failFastAfterSec` and the attempt count, and the answer carries the warning `no-deadline-given`.
+ * @param {number|string} [input.now]          The current time; required with `deadlineAt`. It already contains the
+ *   earlier waits, so the total time spent waiting cannot run past the deadline.
  * @returns {{ok:boolean, kind:string, retry:boolean, delayMs:number, fallbackRoute:boolean, failFast:boolean,
  *   state:'retry'|'partial', reason:string, warnings:string[]}}
  *   `state: 'partial'` is the state to RECORD: the agent's slice or candidates are not reviewed.
@@ -839,6 +852,10 @@ function classifyAgentFailure(input) {
   if (!Number.isFinite(failFastAfterSec) || failFastAfterSec < 0) {
     return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'invalid-failFastAfterSec', warnings });
   }
+  const waitedSec = input.waitedSec === undefined ? 0 : input.waitedSec;
+  if (!Number.isFinite(waitedSec) || waitedSec < 0) {
+    return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'invalid-waitedSec', warnings });
+  }
 
   if (kind === 'client-error' || kind === 'unknown') {
     // Nothing a retry changes (a 401, a 400) or nothing this module can read: record it, do not loop.
@@ -849,6 +866,16 @@ function classifyAgentFailure(input) {
       reason: kind === 'client-error' ? `client-error-${status}` : 'unclassified-failure',
       warnings,
     });
+  }
+
+  // The agent's own deadline bounds every retry. An unreadable one fails closed rather than lifting the bound.
+  let deadlineAt = null;
+  let now = null;
+  if (input.deadlineAt !== undefined && input.deadlineAt !== null) {
+    deadlineAt = toMillis(input.deadlineAt);
+    if (deadlineAt === null) return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'invalid-deadlineAt', warnings });
+    now = toMillis(input.now);
+    if (now === null) return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'invalid-now', warnings });
   }
 
   // Retry-after: the explicit field wins over a duration found in the text. A value that is not a
@@ -869,10 +896,22 @@ function classifyAgentFailure(input) {
   }
 
   const backoffMs = (kind === 'rate-limit' || kind === 'overloaded' ? RATE_LIMIT_BACKOFF_MS : TRANSIENT_BACKOFF_MS) * 2 ** attempt;
+  const delayMs = retryAfterSec !== null ? Math.round(retryAfterSec * 1000) : backoffMs;
+  if (waitedSec + delayMs / 1000 > failFastAfterSec) {
+    return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'total-wait-too-long', warnings });
+  }
+  if (deadlineAt === null) {
+    warnings.push('no-deadline-given');
+  } else if (now >= deadlineAt) {
+    return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'deadline-passed', warnings });
+  } else if (now + delayMs >= deadlineAt) {
+    // The retry would resume with no time left, or after the agent was already stopped.
+    return failureAnswer({ kind, failFast: true, state: 'partial', reason: 'retry-would-pass-deadline', warnings });
+  }
   return failureAnswer({
     kind,
     retry: true,
-    delayMs: retryAfterSec !== null ? Math.round(retryAfterSec * 1000) : backoffMs,
+    delayMs,
     // A limit on one model route does not bind the alternate one; a plain timeout says nothing about the route.
     fallbackRoute: kind === 'rate-limit' || kind === 'overloaded',
     state: 'retry',
