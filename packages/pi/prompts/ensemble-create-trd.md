@@ -9,13 +9,13 @@
 > **Constraints:**
 > - DO NOT implement, build, or execute any technical work described in the requirements; this command creates ONLY a TRD document, then stops for user approval
 > - DO NOT save the TRD until the Constitution Gate passes
-> - Every functional REQ-NNN decomposes into multiple Given/When/Then AC-NNN-M scenarios (happy path, edge, error); each AC-NNN-M becomes one BDD scenario consumed by reqnroll-cli during implementation. This command SPECIFIES scenarios; it does not generate .feature files.
+> - Every functional REQ-NNN decomposes into Given/When/Then AC-NNN-M scenarios; if BDD_MODE.enabled each becomes one BDD scenario ("TRD commands" in `packages/reqnroll/skills/reqnroll/SKILL.md`), otherwise the TRD never mentions Reqnroll. This command SPECIFIES scenarios; it does not generate .feature files.
 > - When --parser-tables is set (Foreman table mode): the Master Task List MUST be parser-compatible sprint/story markdown tables (never prose checklists or PR-section checkboxes), the adversarial review phase MUST NOT run, every task Status cell MUST be `[ ]` (never `[x]` or `done`), and after creating the TRD stop for user approval; the only next step printed is `foreman sling prd <original-prd-path>`.
 
 ## Arguments
 
 - **`foreman`** (boolean, optional, default: `false`): Foreman-native non-interactive mode: skip questions that only gather optional human preference. Auto-select the PRD for --list only when exactly one candidate exists (otherwise HALT with the candidate list), proceed past the CONCERNS-band (3.0-3.9) PRD readiness warning, and auto-pick Option C for the architecture. Hard FAIL gates (PRD readiness < 3.0, Design Readiness Gate FAIL, Constitution Gate failures) still HALT. Never implements; the command stops after producing the TRD. When --foreman is present and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories) in addition to any repo-local report. Never invent or alter the path; an unset FOREMAN_ARTIFACT_PATH is not an error.
-- **`parser-tables`** (boolean, optional, default: `false`): Foreman table mode -- folds in the former standalone /ensemble-create-trd-foreman command. The Master Task List is parser-compatible sprint/story markdown tables that Foreman's parseTrd() reads (for `foreman sling prd`), and the adversarial review phase is OMITTED: no Architecture Self-Critique, Task Coverage Analysis, Dependency and Estimate Review, Testability Review or Design Readiness Gate. Steps titled "(--parser-tables)" run only in this mode and replace the standard steps. Asks the user nothing (only the optional --list picker is interactive): the PRD readiness CONCERNS band proceeds with a logged warning, the architecture option is chosen automatically unless interactive architecture review was explicitly requested, and constitution violations stay non-bypassable. Writes exactly one TRD file (no companion artifacts), does not auto-run configure-team for --team, and prints `foreman sling prd <original-prd-path>` as its only next step. Not the same as --foreman, which keeps the standard checkbox TRD (### PR N: headings, adversarial review, Design Readiness Gate) and only removes prompts and adds the Foreman artifact/subject contracts. The flags combine: --foreman --parser-tables applies those contracts to this mode.
+- **`parser-tables`** (boolean, optional, default: `false`): Foreman table mode -- folds in the former standalone /ensemble-create-trd-foreman command. The Master Task List is parser-compatible sprint/story markdown tables that Foreman's parseTrd() reads (for `foreman sling prd`), and the adversarial review phase is OMITTED. Steps titled "(--parser-tables)" run only in this mode and replace the standard steps. Only the optional --list picker is interactive; every other step states how it proceeds without asking. Not the same as --foreman, which keeps the standard checkbox TRD (### PR N: headings, adversarial review, Design Readiness Gate) and only removes prompts and adds the Foreman artifact/subject contracts. The flags combine: --foreman --parser-tables applies those contracts to this mode.
 
 ## Phase 1: PRD Ingestion and Validation
 
@@ -28,15 +28,24 @@ Resolve the PRD from the argument, --list, or FOREMAN_SOURCE_PRD_PATH
 2. If --list: resolve PRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/prd-cli.js, run `node "$PRD_CLI" list --type prd` and parse {ok,type,items}; on failure print the error and HALT. Show a table (ID/Name, Status, Score, Version, Last Modified) and ask the user to pick one via ask (id `prd_select`). Under --foreman see the parameter rules: one candidate auto-selects, otherwise print `ERROR: --list with --foreman requires an unambiguous PRD. Candidates: <list>. Pass a specific prd-path instead.` and HALT. Map the selected slug to docs/PRD/<file>.md; HALT if it does not exist.
 3. Read the PRD. With --foundational and no full PRD, accept a short capability brief, skip PRD-structure validation and the readiness gate, and register capabilities instead of REQ-NNN IDs.
 
-### Step 2: Requirements Validation
+### Step 2: Resolve Test Approach
 
-Check PRD completeness and the BDD scenario floor
+Decide BDD_MODE (Reqnroll path on or off)
+
+**Actions:**
+1. If $ARGUMENTS contains '--parser-tables': skip this step; BDD_MODE is disabled.
+2. Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR `which node` fails: print "ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present." and HALT.
+3. Run `node "$TRD_CLI" resolve-bdd` adding `--bdd` or `--no-bdd` if $ARGUMENTS has it, parse {enabled,source,message} as BDD_MODE and print `message`. An `error` key -> HALT.
+
+### Step 3: Requirements Validation
+
+Check PRD completeness and the scenario floor
 
 **Actions:**
 1. Unless --foundational with a brief: verify the PRD has Product Summary, User Analysis, Goals, Technical Requirements, Acceptance Criteria; REQ-NNN numbering is consistent; acceptance criteria are testable Given/When/Then with AC-NNN-M sub-items; constraints and non-goals are documented. Build the REQ registry for traceability.
-2. Flag any functional REQ-NNN with fewer than 3 AC-NNN-M sub-items (happy path, edge, error) as insufficient BDD coverage in the readiness scorecard.
+2. If BDD_MODE.enabled, flag any functional REQ-NNN with fewer than 3 AC-NNN-M sub-items (happy path, edge, error) as insufficient BDD coverage in the readiness scorecard; otherwise only note it (never blocks or lowers the score).
 
-### Step 3: Implementation Readiness Gate Check
+### Step 4: Implementation Readiness Gate Check
 
 Check the PRD's own readiness gate and review history
 
@@ -95,16 +104,16 @@ Generate task list with TRD-NNN IDs and traceability annotations
 3. Every task line MUST begin with a GitHub checkbox -- `- [ ] ` (or `- [x] ` if already complete) -- immediately before **TRD-NNN**; without it trd-cli.js and implement-trd-beads create zero task beads.
 4. Each task includes: description, hour estimate (Nh), [satisfies REQ-NNN] annotation (use [satisfies INFRA] or [satisfies ARCH] when there is no direct REQ), a `Validates PRD ACs:` field listing the AC-NNN-M items covered, and an `Implementation AC:` checklist of Given/When/Then items.
 
-### Step 2: Test Task Generation (BDD)
+### Step 2: Test Task Generation
 
-Generate a paired BDD/Reqnroll test task for every user-facing implementation task
+Generate a paired test task for every user-facing implementation task
 
 **Actions:**
 1. If $ARGUMENTS contains '--parser-tables': skip this step.
-2. For every user-facing TRD-NNN task generate a TRD-NNN-TEST task. Every TRD-NNN-TEST line MUST begin with the same checkbox-prefix requirement as implementation tasks -- `- [ ] ` (or `- [x] ` if already complete) -- immediately before **TRD-NNN-TEST**. implement-trd-beads routes any task whose id matches `-TEST` through the reqnroll BDD path.
+2. For every user-facing TRD-NNN task generate a TRD-NNN-TEST task. Every TRD-NNN-TEST line MUST begin with the same checkbox-prefix requirement as implementation tasks -- `- [ ] ` (or `- [x] ` if already complete) -- immediately before **TRD-NNN-TEST**.
 3. Test tasks carry `[verifies TRD-NNN] [satisfies REQ-NNN] [depends: TRD-NNN]` annotations and a `Validates PRD ACs: AC-NNN-M, ...` field.
-4. Under each test task add a `Test AC:` checklist with one single-line `- [ ] Scenario: <title> -- Given <...>, When <...>, Then <...>` item per AC-NNN-M in its Validates PRD ACs, indented strictly deeper than the `Test AC:` label (items at the same or shallower indent are silently dropped by the parser). This is the only place scenario text goes; no separate `## Scenarios` heading. Because each functional REQ has >=3 ACs, each test task carries >=3 scenario items.
-5. implement-trd-beads later scaffolds these as .feature files via reqnroll-cli and delegates reqnroll-binding-specialist (see packages/reqnroll/skills/reqnroll/SKILL.md); this command only specifies titles and Given/When/Then text.
+4. Under each test task add a `Test AC:` checklist with one single-line `- [ ] Scenario: <title> -- Given <...>, When <...>, Then <...>` item per AC-NNN-M in its Validates PRD ACs, indented strictly deeper than the `Test AC:` label (items at the same or shallower indent are silently dropped by the parser). This is the only place scenario text goes; no separate `## Scenarios` heading.
+5. If BDD_MODE.enabled each test task carries >=3 scenario items and implement-trd-beads routes `-TEST` tasks through Reqnroll ("TRD commands" in `packages/reqnroll/skills/reqnroll/SKILL.md`); otherwise write one item per AC-NNN-M and never mention Reqnroll.
 
 ### Step 3: Dependency Mapping and PR Boundary Design
 
@@ -132,7 +141,7 @@ Generate a parser-compatible Foreman task breakdown with deterministic markdown 
 Generate paired validation tasks that still satisfy Foreman table parsing
 
 **Actions:**
-1. Runs only when $ARGUMENTS contains '--parser-tables'. If it is absent, skip this step. It replaces Test Task Generation (BDD).
+1. Runs only when $ARGUMENTS contains '--parser-tables'. If it is absent, skip this step. It replaces Test Task Generation.
 2. For every user-facing implementation task add a validation/test task using the same table format (never narrative bullet lists), with the prerequisite implementation task IDs in the Dependencies column rather than free-form annotations. Cover at least one happy path and one edge case per major feature area. All test/validation Status cells must also be `[ ]`.
 
 ### Step 6: Foreman Dependency Mapping (--parser-tables)
@@ -161,9 +170,8 @@ Verify PRD requirement coverage and PR shippability
 **Actions:**
 1. If $ARGUMENTS contains '--parser-tables': skip this step.
 2. Check every PRD REQ-NNN has a task with [satisfies REQ-NNN] and a test task, that no task cites a nonexistent REQ-NNN, and every `### PR N:` has a meaningful `**Shippable State:**`.
-3. Resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR `which node` fails: print "ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present." and HALT.
-4. Write the draft Master Task List to a scratch file (session scratchpad, NOT docs/TRD/) and run: node "$TRD_CLI" parse <scratch-path>. Parse {ok, trd:{tasksById, warnings}}.
-5. If ok is false, tasksById is missing an intended task, or warnings contains 'No tasks found in the TRD', report a Task Coverage issue naming the offending lines (a missing checkbox prefix) before presenting the Design Readiness score.
+3. Write the draft Master Task List to a scratch file (session scratchpad, NOT docs/TRD/) and run: node "$TRD_CLI" parse <scratch-path>. Parse {ok, trd:{tasksById, warnings}}.
+4. If ok is false, tasksById is missing an intended task, or warnings contains 'No tasks found in the TRD', report a Task Coverage issue naming the offending lines (a missing checkbox prefix) before presenting the Design Readiness score.
 
 ### Step 3: Dependency and Estimate Review
 
@@ -210,7 +218,7 @@ Generate the TRD with frontmatter and structured sections
 1. If $ARGUMENTS contains '--parser-tables': skip this step.
 2. Derive the TRD document micro UUID from the source PRD so the artifacts share one 8-hex correlation id: parse PRD-YYYY-<micro_uuid> from the PRD filename or frontmatter Document ID and set TRD_MICRO_UUID to it. Only if the PRD has a legacy sequence id or none, generate a new 8-hex micro UUID. Do NOT scan for highest TRD sequence number or increment NNN.
 3. Label: take the PRD's `label: prd-<stem>` (or derive from its title) and set TRD_LABEL = trd-<stem>. Display-only; never a reference key.
-4. Frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), Label, `prd_reference`, version 1.0.0, status Draft, date, Design Readiness Score, kind (default `trd`), and Constitution compliance: passed.
+4. Frontmatter: Document ID (TRD-YYYY-<TRD_MICRO_UUID>), Label, `prd_reference`, version 1.0.0, status Draft, date, Design Readiness Score, kind (default `trd`), `test_approach` (`bdd-reqnroll` if BDD_MODE.enabled, else `standard`; omit it when BDD_MODE.source is `default`), and Constitution compliance: passed.
 5. The PRD reference is emitted as the frontmatter key `prd_reference`, spelled exactly that way, and its VALUE IS THE PRD'S FILE PATH -- `prd_reference: docs/PRD/PRD-YYYY-<micro_uuid>-<slug>.md`. It is not the PRD's document id. `trd-parser.js` resolves this key through `looksLikePath()`, which accepts a value only when it contains `/` or ends in `.md`; an id value is silently discarded and the TRD reads as having no PRD, with no error. Emit the path.
 6. --foundational: set `kind: foundational`, make the PRD reference optional, and add a `capabilities:` frontmatter list of machine-matchable capability tokens this TRD provides (e.g. order-domain) for other TRDs' Capability Reuse Check.
 7. Sections: Architecture Decision (chosen approach and alternatives), System Architecture, Master Task List (TRD-NNN and TRD-NNN-TEST tasks under `### PR N:` headings, each followed by its **Shippable State:** line), optional informational `## Sprint Planning` (not parsed by implement-trd-beads), Quality Requirements, Design Readiness Scorecard.

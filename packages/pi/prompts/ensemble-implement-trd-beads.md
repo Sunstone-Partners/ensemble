@@ -57,7 +57,8 @@ Locate the TRD and validate it before any side effect.
 1. TRD_FILE_PATH priority: `.md` argument -> name search in `docs/TRD/` -> the single in-progress TRD in `docs/TRD/` -> ask. It must exist, contain `## Master Task List` and at least one `- [ ] **TRD-` entry.
 2. TRD_SLUG = filename lowercased, non-alphanumerics -> `-`, trimmed of leading/trailing `-`. TRD_LABEL = TRD_SLUG: the label every scaffolded bead carries and the work-graph scheduler scopes by (not the TRD's display-only frontmatter Label).
 3. Design readiness (frontmatter `design_readiness_score`): >= 4.0 pass; 3.0-3.99 warn and ask to continue (non-interactive: continue); < 3.0 HALT suggesting /ensemble-refine-trd; absent: note and continue.
-4. Traceability: run `node "$TRD_CLI" validate "<TRD_FILE_PATH>"`. `error` key -> HALT. Print `errors`, `warnings` and `skipped`. `ok:false` -> HALT ('Fix orphaned [satisfies] annotations ... run /ensemble-validate-requirements for details'); warnings alone continue. No beads or git changes have been made at this point.
+4. Traceability: run `node "$TRD_CLI" validate "<TRD_FILE_PATH>"`. `error` key -> HALT. Print `errors`, `warnings` and `skipped`. `ok:false` -> HALT ('Fix orphaned [satisfies] annotations ... run /ensemble-validate-requirements for details'); warnings alone continue.
+5. `node "$TRD_CLI" resolve-bdd --trd "<TRD_FILE_PATH>"` -> BDD_MODE {enabled,source,message}; print `message`; `error` -> HALT.
 
 ### Step 5: Resume detection, staleness gate, strategy
 
@@ -98,7 +99,7 @@ Skipped when IS_RESUME or EXECUTE_ONLY. The scaffold-plan PLAN is authoritative;
 4. Create in order `plan.epic`, `plan.stories[]`, `plan.tasks[]`, `plan.synthesizedTests[]`. Skip any entry whose titlePrefix is cached (use the cached id). Otherwise run node "$TOOLCHAIN_CLI" run tracker.create --arg title="<title>" --arg type=<type> --arg description="<description>" and capture `.data.id` (no priority/labels/externalRef arg; externalRef folds into description, labels backfilled later). Beads open with `## References`. HALT on any failure or empty id. Record ROOT_EPIC_ID, story ids by phase, TRD_TO_BEAD_MAP[task id], PHASE_TASK_IDS[phaseN].
 5. Then wire `plan.deps` once: each `{type, blockerId, blockedId}` has title-prefix endpoints (`[trd:<slug>]` -> epic, `...:pr:<n>`/`...:phase:<n>` -> story, `...:task:<id>` -> task bead); run node "$TOOLCHAIN_CLI" run tracker.dep-add --arg id=<blocked_bead_id> --arg dependsOnId=<blocker_bead_id> --arg type=blocks. `{ok:false,unavailable:true}` -> warn once, skip remaining edges. Otherwise: existing edges are a no-op; warn and skip unresolvable ones. Also remove stale inter-phase edges from older scaffolds (reference section 5).
 6. node "$TOOLCHAIN_CLI" run tracker.sync. Print epic id and story/task/dep counts.
-7. Test task beads (`isTest`) carry their `Test AC:` scenarios in the description. For BDD scenarios the specialist that implements the bead resolves REQNROLL_CLI (`packages/product/lib/reqnroll-cli.js`), runs `generate-bindings <PRD_PATH> --out tests --sut <SUT_CSPROJ>`, confirms RED, delegates to reqnroll-binding-specialist (`packages/reqnroll/skills/reqnroll/SKILL.md`), and re-confirms RED before the paired implementation bead goes GREEN.
+7. Test task beads (`isTest`) carry their `Test AC:` scenarios in the description. If BDD_MODE.enabled the specialist follows "TRD commands" in `packages/reqnroll/skills/reqnroll/SKILL.md`; otherwise it writes them in the repo's own framework and runs them with `test-runner.run`. RED before the paired implementation bead goes GREEN.
 
 ### Step 2: Work-graph analysis and handoff
 
