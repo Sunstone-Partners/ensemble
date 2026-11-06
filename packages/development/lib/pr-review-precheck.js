@@ -22,10 +22,13 @@
  *     hold WITHOUT the director credit.
  *   - Branch protection that cannot be read is `unknown`, never `enforced`. A status or review that cannot be read is
  *     reported as unreadable, never as "nothing missing" and never as "no status" (which would start a second gate).
+ *   - The gate runs the HEAD's own code (its dependency install scripts, then its tests) on this machine, so it is
+ *     started only for a head on THIS repository. A head on a fork, or one whose repository GitHub did not state, gets
+ *     a named refusal (`cross-repository-head`, `head-repository-unknown`): nothing is fetched, cloned or marked for it.
  *   - Nothing here is a lock: `claimGateStart` is only an atomic create-once marker; queueing belongs to `gatelock`.
  *
  * deps (every one returns a Promise or a value; a read answers `{ok:true, ...}` or `{ok:false, error}`):
- *   readPr()                        -> {ok, headSha, baseRefName, state, body, author}
+ *   readPr()                        -> {ok, headSha, baseRefName, state, body, author, isCrossRepository}
  *   readReviews()                   -> {ok, reviews[{login, state, commitSha, authorType?, submittedAt?}]}
  *   readHeadTree(headSha)           -> {ok, treeSha}
  *   readProtection(baseRefName)     -> {ok, notProtected?, protection?}          (GET branches/<base>/protection)
@@ -296,6 +299,17 @@ function formatComment(report, gate) {
 }
 
 /**
+ * The gate runs the head's own code on this machine. A head on another repository is code from outside this one, and
+ * so is a head whose repository GitHub did not state (not knowing is not "same repository"): refuse both, by name.
+ */
+function refuseHead(isCrossRepository, statusContext) {
+  const why = isCrossRepository === true
+    ? { code: 'cross-repository-head', reason: 'the head of this pull request is on a fork, and the gate runs the head\'s own code (its dependency install scripts and its tests) on this machine, so it is not started for a head from outside this repository; read the diff, and run the gate by hand if you trust it' }
+    : { code: 'head-repository-unknown', reason: 'GitHub did not say whether the head of this pull request is on this repository, and the gate runs the head\'s own code on this machine, so it is not started' };
+  return { action: 'not-started', ...why, statusContext };
+}
+
+/**
  * Run the precheck for one PR. Never throws on a failed read: the failure is in the result and in the comment.
  *
  * @param {{dryRun?:boolean, tier?:Object}} input `tier` is an optional `pr-review-cli tier` record; absent at minute 1.
@@ -331,6 +345,7 @@ async function runPrecheck(input, deps) {
   let gate;
   if (decision.action === 'status-present') gate = { ...decision };
   else if (decision.action === 'unknown') gate = { action: 'not-started', reason: decision.reason };
+  else if (pr.isCrossRepository !== false) gate = refuseHead(pr.isCrossRepository, statusContext);
   else {
     const claim = await settle(() => deps.claimGateStart({ headSha, dryRun }));
     if (!isObject(claim) || (claim.claimed !== true && !isObject(claim.existing))) {

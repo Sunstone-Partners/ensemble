@@ -19,7 +19,7 @@ const review = (login, state, commitSha, extra = {}) => ({ login, state, commitS
 function makeDeps(over = {}) {
   const calls = { startGate: 0, claim: 0, release: 0, post: [], update: [], find: 0 };
   const deps = {
-    readPr: async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body: GOOD_BODY, author: 'someone' }),
+    readPr: async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body: GOOD_BODY, author: 'someone', isCrossRepository: false }),
     readReviews: async () => ({ ok: true, reviews: [] }),
     readHeadTree: async () => ({ ok: true, treeSha: TREE }),
     readProtection: async () => ({ ok: true, protection: { required_pull_request_reviews: { required_approving_review_count: 2 } } }),
@@ -140,6 +140,48 @@ describe('gate start (AC1)', () => {
 
   it('decideGate only trusts statuses carrying the head sha', () => {
     expect(decideGate({ statusesResult: { ok: true, statuses: [{ context: CONTEXT, state: 'success' }] }, statusContext: CONTEXT, headSha: HEAD }).action).toBe('start');
+  });
+});
+
+describe('the gate runs the head\'s own code, so only a same-repository head starts it (review round 1, finding 3)', () => {
+  const prFrom = (extra) => async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body: GOOD_BODY, author: 'someone', ...extra });
+
+  it('refuses a fork head with a named reason and claims, prepares and starts nothing, dry run or not', async () => {
+    for (const dryRun of [false, true]) {
+      const { deps, calls } = makeDeps({ readPr: prFrom({ isCrossRepository: true }) });
+      const r = await runPrecheck({ dryRun }, deps);
+      expect(r.gate).toMatchObject({ action: 'not-started', code: 'cross-repository-head' });
+      expect(calls.claim + calls.startGate + calls.release).toBe(0);
+      expect(r.comment.body).toContain('Local CI gate: not started. the head of this pull request is on a fork');
+    }
+  });
+
+  it('refuses when GitHub did not say where the head is: not knowing is not "same repository"', async () => {
+    for (const extra of [{}, { isCrossRepository: null }, { isCrossRepository: 'false' }, { isCrossRepository: 0 }]) {
+      const { deps, calls } = makeDeps({ readPr: prFrom(extra) });
+      const r = await runPrecheck({}, deps);
+      expect(r.gate).toMatchObject({ action: 'not-started', code: 'head-repository-unknown' });
+      expect(calls.claim + calls.startGate).toBe(0);
+    }
+  });
+
+  it('still posts the blocker list for a fork head: only the gate start is refused', async () => {
+    const { deps, calls } = makeDeps({ readPr: prFrom({ isCrossRepository: true, body: '## Testing\nok\n' }) });
+    const r = await runPrecheck({}, deps);
+    expect(r.comment.action).toBe('created');
+    expect(calls.post[0]).toContain('PR description is missing');
+    expect(r.ok).toBe(true);
+  });
+
+  it('starts the gate for a head on this repository', async () => {
+    const { deps, calls } = makeDeps({ readPr: prFrom({ isCrossRepository: false }) });
+    expect((await runPrecheck({}, deps)).gate.action).toBe('started');
+    expect(calls.startGate).toBe(1);
+  });
+
+  it('reports a status already on a fork head as it is: nothing is started either way', async () => {
+    const { deps } = makeDeps({ readPr: prFrom({ isCrossRepository: true }), readStatuses: async () => ({ ok: true, statuses: [{ context: CONTEXT, state: 'success', sha: HEAD }] }) });
+    expect((await runPrecheck({}, deps)).gate.action).toBe('status-present');
   });
 });
 

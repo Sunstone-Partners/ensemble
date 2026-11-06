@@ -187,7 +187,7 @@ describe('startGate', () => {
 
 describe('start-once through the entry flow (AC1)', () => {
   const table = (extra = {}) => ({
-    'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nx\n## Risk\nx\n## How to revert\nx\n', author: { login: 'author' } }),
+    'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nx\n## Risk\nx\n## How to revert\nx\n', author: { login: 'author' }, isCrossRepository: false }),
     'pulls/9/reviews': ok([[]]),
     'git/commits': ok({ tree: { sha: 'c'.repeat(40) } }),
     'branches/dev/protection': fail('gh: Branch not protected (HTTP 404)', JSON.stringify({ message: 'Branch not protected' })),
@@ -233,6 +233,38 @@ describe('start-once through the entry flow (AC1)', () => {
     const { run } = fakeRun(table());
     const r = await runPrecheck({ dryRun: true }, deps({ run, spawnProcess: fakeSpawn().spawnProcess }));
     expect(r.approvals).toMatchObject({ required: 1, lowerBound: true });
+  });
+
+  it('asks GitHub whether the head is on a fork and starts nothing for one: no fetch, no claim, no gate (review round 1, finding 3)', async () => {
+    const forkPr = ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nx\n## Risk\nx\n## How to revert\nx\n', author: { login: 'author' }, isCrossRepository: true });
+    const { run, calls } = fakeRun(table({ 'pr view': forkPr }));
+    const { spawnProcess, spawned } = fakeSpawn();
+    const r = await runPrecheck({}, deps({ run, spawnProcess }));
+    const view = calls.find((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'view');
+    expect(view[view.indexOf('--json') + 1].split(',')).toContain('isCrossRepository');
+    expect(r.gate).toMatchObject({ action: 'not-started', code: 'cross-repository-head' });
+    expect(spawned).toHaveLength(0);
+    expect(fs.existsSync(path.join(root, STATE_SUBDIR))).toBe(false);
+    expect(calls.some((c) => c[0] === 'git' && c.includes('fetch') && c.includes(HEAD))).toBe(false);
+    expect(r.comment.action).toBe('created');
+  });
+});
+
+describe('readPr', () => {
+  const prWith = (over) => fakeRun({ 'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: 'b', author: { login: 'a' }, isCrossRepository: false, ...over }) }).run;
+
+  it('passes the fork answer through unchanged', async () => {
+    expect(await deps({ run: prWith({ isCrossRepository: true }) }).readPr()).toMatchObject({ ok: true, isCrossRepository: true });
+    expect(await deps({ run: prWith({}) }).readPr()).toMatchObject({ ok: true, isCrossRepository: false });
+  });
+
+  it('refuses a base branch that could be read as an option, that gh did not state, or that the gate would refuse', async () => {
+    for (const baseRefName of ['--prune', '-x', '.hidden', 'a..b', 'x.lock', 'dev/', undefined, 42]) {
+      expect((await deps({ run: prWith({ baseRefName }) }).readPr()).ok).toBe(false);
+    }
+    for (const baseRefName of ['dev', 'release/1.2', 'feat/a_b-c.d']) {
+      expect((await deps({ run: prWith({ baseRefName }) }).readPr()).ok).toBe(true);
+    }
   });
 });
 

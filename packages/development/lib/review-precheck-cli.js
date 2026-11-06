@@ -30,12 +30,18 @@ const { runPrecheck, COMMENT_MARKER } = require('./pr-review-precheck');
 const { redact } = require('./local-ci-status');
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const BRANCH_RE = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+const BRANCH_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*)*$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const MAX_STDIN_BYTES = 1024 * 1024;
 const PAYLOAD_KEYS = ['repo', 'pr', 'repoRoot', 'dryRun', 'tier'];
 const STATE_SUBDIR = path.join('.ensemble', 'pr-review');
 const GH_TIMEOUT_MS = 60000;
+
+/**
+ * A base branch name the precheck will put on a git argv and hand to the gate as `origin/<name>`: a string that cannot be
+ * read as an option (no leading dash or dot) and that the gate's own `isBaseRef` will not refuse (no `..`, no `.lock`).
+ */
+const isBranchName = (v) => typeof v === 'string' && v.length <= 200 && BRANCH_RE.test(v) && !v.includes('..') && !v.split('/').some((part) => part.endsWith('.lock'));
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isText = (v) => typeof v === 'string' && v.trim() !== '';
@@ -84,7 +90,7 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
   let baseFetch = null;
   const fetchBase = (baseRefName) => {
     if (baseFetch === null) {
-      baseFetch = BRANCH_RE.test(String(baseRefName))
+      baseFetch = isBranchName(baseRefName)
         ? git(['fetch', '--quiet', 'origin', baseRefName]).then((r) => (r.status === 0 ? { ok: true } : { ok: false, error: `git fetch origin ${baseRefName} failed: ${tail(r.stderr)}` }))
         : Promise.resolve({ ok: false, error: 'the base branch name is not usable' });
     }
@@ -100,11 +106,11 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
 
   return {
     async readPr() {
-      const r = await ghJson(['pr', 'view', String(pr), '--repo', repo, '--json', 'headRefOid,baseRefName,state,body,author']);
+      const r = await ghJson(['pr', 'view', String(pr), '--repo', repo, '--json', 'headRefOid,baseRefName,state,body,author,isCrossRepository']);
       if (!r.ok) return r;
       const d = r.data;
-      if (!isObject(d) || !BRANCH_RE.test(String(d.baseRefName))) return { ok: false, error: 'gh pr view returned no usable base branch' };
-      return { ok: true, headSha: d.headRefOid, baseRefName: d.baseRefName, state: d.state, body: typeof d.body === 'string' ? d.body : '', author: isObject(d.author) ? d.author.login : undefined };
+      if (!isObject(d) || !isBranchName(d.baseRefName)) return { ok: false, error: 'gh pr view returned no usable base branch' };
+      return { ok: true, headSha: d.headRefOid, baseRefName: d.baseRefName, state: d.state, body: typeof d.body === 'string' ? d.body : '', author: isObject(d.author) ? d.author.login : undefined, isCrossRepository: d.isCrossRepository };
     },
 
     async readReviews() {
@@ -128,7 +134,7 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
     },
 
     async readProtection(baseRefName) {
-      if (!BRANCH_RE.test(String(baseRefName))) return { ok: false, error: 'the base branch name is not usable' };
+      if (!isBranchName(baseRefName)) return { ok: false, error: 'the base branch name is not usable' };
       const r = await gh(['api', `repos/${repo}/branches/${baseRefName}/protection`]);
       if (r.status === 0) {
         try {
