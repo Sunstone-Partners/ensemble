@@ -320,6 +320,14 @@ is for the verifiers to settle (Step 3b), on that one finding.
 > far, plus the paths you did not get to. A short honest list now is worth
 > more than a complete one late.
 >
+> Do not spend calls re-deriving glob or path-matching edge cases (case-fold
+> aliases, ligatures, newline, space or NUL in a name) in `pr-review-paths.js`
+> or approval-gate sequences: the property test covers this
+> (`packages/development/tests/pr-review-paths-property.test.js`, and
+> `pr-review-gate-chain.test.js` for the gate). Report a finding there only
+> when the change adds a path form or gate transition those tests do not
+> generate.
+>
 > Record each finding with its file and line, its failure mode and the
 > evidence, as Step 2 describes.
 
