@@ -35,7 +35,9 @@
  *   readStatuses(headSha)           -> {ok, statuses[{context, state, sha?, description?}]}
  *   readGateConfig(baseRefName)     -> {ok, statusContext} | {ok:false, error}   (base-ref `.ensemble/local-ci.yaml`)
  *   readPolicy(baseRefName)         -> {ok, policy}                              (base-ref REVIEW.md; optional)
- *   claimGateStart({headSha, dryRun}) -> {claimed:true} | {claimed:false, existing:{pid, startedAt, alive}}
+ *   prepareGate({headSha, baseRefName, dryRun}) -> {ok} | {ok:false, error}      (every network step: fetch the base and the head)
+ *   claimGateStart({headSha, dryRun}) -> {claimed:true} | {claimed:false, existing:{pid?, startedAt?, alive, orphaned?, claimer?, marker?}}
+ *                                        (`alive:null` = a young claim whose run is still going; `orphaned` = its run died first)
  *   startGate({headSha, baseRefName, dryRun}) -> {ok, pid?, logPath?, error?}
  *   releaseGateStart({headSha, dryRun})       -> void   (only after a failed `startGate`, so a retry can start)
  *   findComment()                   -> {ok, comment: null | {id, body}}          (our one comment on this PR)
@@ -252,8 +254,14 @@ function gateLine(gate) {
   switch (gate.action) {
     case 'started':
       return `Local CI gate: started in the background at ${gate.startedAt || 'this run'}${gate.dryRun ? ' (dry run: it will not post a status)' : ''}${gate.logPath ? `, log \`${gate.logPath}\`` : ''}.${gate.dryRun ? '' : ` It posts \`${gate.statusContext}\` on this head when it finishes.`}`;
-    case 'already-started':
-      return `Local CI gate: already started${gate.existing && gate.existing.startedAt ? ` at ${gate.existing.startedAt}` : ''}; not started again.${gate.existing && gate.existing.alive === false ? ' That process is no longer running and has posted no status: read its log before relying on it.' : ''}`;
+    case 'already-started': {
+      const e = isObject(gate.existing) ? gate.existing : {};
+      if (e.orphaned === true) {
+        return `Local CI gate: an earlier start was interrupted${e.marker ? ` (marker \`${e.marker}\`)` : ''}: the run that began it${Number.isInteger(e.claimer) ? ` (pid ${e.claimer})` : ''} is gone and never recorded a gate process, so a gate may or may not have been launched, and no status has been posted. Not started again, so as not to start a second one. Look for a running \`local-ci-cli.js gate\`; if there is none, delete the marker and run the precheck again.`;
+      }
+      if (e.alive === null && e.pid === undefined) return 'Local CI gate: another precheck run is starting it right now; not started again.';
+      return `Local CI gate: already started${e.startedAt ? ` at ${e.startedAt}` : ''}; not started again.${e.alive === false ? ' That process is no longer running and has posted no status: read its log before relying on it.' : ''}`;
+    }
     case 'status-present':
       return `Local CI gate: \`${gate.statusContext}\` is already posted on this head (${gate.state}); not started.`;
     case 'start-failed':
@@ -309,6 +317,31 @@ function refuseHead(isCrossRepository, statusContext) {
   return { action: 'not-started', ...why, statusContext };
 }
 
+const settle = (fn) => Promise.resolve().then(fn).catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
+
+/**
+ * Start the gate for this head at most once, in an order that leaves no claim behind that never started a gate:
+ *   1. `prepareGate` does every network step (fetch the base and the head) BEFORE anything is marked, so a run that
+ *      dies while fetching leaves nothing behind;
+ *   2. `claimGateStart` is the atomic create-once marker;
+ *   3. `startGate` spawns the gate and records its process.
+ */
+async function startOnce({ deps, headSha, baseRefName, dryRun, statusContext, oldHeadStatus }) {
+  const prepared = await settle(() => deps.prepareGate({ headSha, baseRefName, dryRun }));
+  if (!isObject(prepared) || prepared.ok !== true) return { action: 'start-failed', reason: `could not prepare the start: ${errorText(prepared)}`, statusContext };
+  const claim = await settle(() => deps.claimGateStart({ headSha, dryRun }));
+  if (!isObject(claim) || (claim.claimed !== true && !isObject(claim.existing))) {
+    return { action: 'start-failed', reason: `could not record the start: ${errorText(claim)}`, statusContext };
+  }
+  if (claim.claimed !== true) return { action: 'already-started', statusContext, existing: claim.existing };
+  const started = await settle(() => deps.startGate({ headSha, baseRefName, dryRun }));
+  if (isObject(started) && started.ok === true) {
+    return { action: 'started', statusContext, dryRun, pid: started.pid, logPath: started.logPath, startedAt: started.startedAt, ...(oldHeadStatus ? { oldHeadStatus } : {}) };
+  }
+  await settle(() => deps.releaseGateStart({ headSha, dryRun }));
+  return { action: 'start-failed', reason: errorText(started), statusContext };
+}
+
 /**
  * Run the precheck for one PR. Never throws on a failed read: the failure is in the result and in the comment.
  *
@@ -326,7 +359,6 @@ async function runPrecheck(input, deps) {
   if (pr.state !== 'OPEN') return { ok: false, stage: 'pr', headSha, error: `the pull request is ${JSON.stringify(pr.state)}, not OPEN` };
   const baseRefName = pr.baseRefName;
 
-  const settle = (fn) => Promise.resolve().then(fn).catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
   const [reviewsResult, treeResult, protectionResult, statusesResult, configResult, policyResult] = await Promise.all([
     settle(() => deps.readReviews()),
     settle(() => deps.readHeadTree(headSha)),
@@ -339,29 +371,14 @@ async function runPrecheck(input, deps) {
 
   const report = buildReport({ headSha, baseRefName, pr, reviewsResult, headTreeSha, protectionResult, policyResult, tier });
 
-  // The gate: decided from what GitHub says now. Claim-then-start so two precheck runs cannot both start it.
+  // The gate: decided from what GitHub says now (see `startOnce` for the order of the start).
   const statusContext = isObject(configResult) && configResult.ok === true ? configResult.statusContext : undefined;
   const decision = decideGate({ statusesResult, statusContext, headSha });
   let gate;
   if (decision.action === 'status-present') gate = { ...decision };
   else if (decision.action === 'unknown') gate = { action: 'not-started', reason: decision.reason };
   else if (pr.isCrossRepository !== false) gate = refuseHead(pr.isCrossRepository, statusContext);
-  else {
-    const claim = await settle(() => deps.claimGateStart({ headSha, dryRun }));
-    if (!isObject(claim) || (claim.claimed !== true && !isObject(claim.existing))) {
-      gate = { action: 'start-failed', reason: `could not record the start: ${errorText(claim)}`, statusContext };
-    } else if (claim.claimed !== true) {
-      gate = { action: 'already-started', statusContext, existing: claim.existing };
-    } else {
-      const started = await settle(() => deps.startGate({ headSha, baseRefName, dryRun }));
-      if (isObject(started) && started.ok === true) {
-        gate = { action: 'started', statusContext, dryRun, pid: started.pid, logPath: started.logPath, startedAt: started.startedAt, ...(decision.oldHeadStatus ? { oldHeadStatus: decision.oldHeadStatus } : {}) };
-      } else {
-        await settle(() => deps.releaseGateStart({ headSha, dryRun }));
-        gate = { action: 'start-failed', reason: errorText(started), statusContext };
-      }
-    }
-  }
+  else gate = await startOnce({ deps, headSha, baseRefName, dryRun, statusContext, oldHeadStatus: decision.oldHeadStatus });
 
   const body = formatComment(report, gate);
   const comment = { dryRun, body };

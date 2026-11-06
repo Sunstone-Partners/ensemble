@@ -16,6 +16,7 @@ const { runPrecheck, COMMENT_MARKER } = require('../lib/pr-review-precheck');
 
 const HEAD = 'a'.repeat(40);
 const BASE_SHA = 'e'.repeat(40);
+const DEAD_PID = 2 ** 22 + 12345; // above every platform's pid range: no such process
 // The repository's own committed gate config: a real, valid one (a hand-made stub would not pass validateConfig).
 const CONFIG_YAML = fs.readFileSync(path.join(__dirname, '..', '..', '..', '.ensemble', 'local-ci.yaml'), 'utf8');
 const CONTEXT = /^status_context:\s*(\S+)/m.exec(CONFIG_YAML)[1];
@@ -247,6 +248,118 @@ describe('start-once through the entry flow (AC1)', () => {
     expect(fs.existsSync(path.join(root, STATE_SUBDIR))).toBe(false);
     expect(calls.some((c) => c[0] === 'git' && c.includes('fetch') && c.includes(HEAD))).toBe(false);
     expect(r.comment.action).toBe('created');
+  });
+
+  it('does its network steps BEFORE the claim marker exists, so a run that dies while fetching leaves no claim (review round 1, finding 4)', async () => {
+    const marker = path.join(root, STATE_SUBDIR, `precheck-pr-9-${HEAD}.gate.json`);
+    const markerWhenFetching = [];
+    const { run } = fakeRun(table({ [`fetch --quiet origin ${HEAD}`]: () => { markerWhenFetching.push(fs.existsSync(marker)); return ok(''); } }));
+    const { spawnProcess, spawned } = fakeSpawn();
+    const r = await runPrecheck({}, deps({ run, spawnProcess }));
+    expect(r.gate.action).toBe('started');
+    expect(markerWhenFetching).toEqual([false]);
+    expect(spawned).toHaveLength(1);
+  });
+
+  it('a failed fetch leaves no marker and starts nothing; the next run can start the gate', async () => {
+    const { run } = fakeRun(table({ [`fetch --quiet origin ${HEAD}`]: fail('network down'), 'refs/pull/9/head': fail('network down') }));
+    const { spawnProcess, spawned } = fakeSpawn();
+    const first = await runPrecheck({}, deps({ run, spawnProcess }));
+    expect(first.gate).toMatchObject({ action: 'start-failed' });
+    expect(fs.existsSync(path.join(root, STATE_SUBDIR, `precheck-pr-9-${HEAD}.gate.json`))).toBe(false);
+    const again = fakeRun(table());
+    expect((await runPrecheck({}, deps({ run: again.run, spawnProcess }))).gate.action).toBe('started');
+    expect(spawned).toHaveLength(1);
+  });
+
+  it('a claim whose run died before it recorded a gate is reported as interrupted and no second gate is started (review round 1, finding 4)', async () => {
+    const { run } = fakeRun(table());
+    const { spawnProcess, spawned } = fakeSpawn();
+    // The run that claimed the start and then died: the marker holds the claim and a claimer pid that no longer exists.
+    expect(deps({ run, spawnProcess }).claimGateStart({ headSha: HEAD, dryRun: false }).claimed).toBe(true);
+    const marker = path.join(root, STATE_SUBDIR, `precheck-pr-9-${HEAD}.gate.json`);
+    fs.writeFileSync(marker, JSON.stringify({ ...JSON.parse(fs.readFileSync(marker, 'utf8')), claimer: DEAD_PID }));
+    for (let i = 0; i < 2; i += 1) {
+      const r = await runPrecheck({}, deps({ run, spawnProcess }));
+      expect(r.gate).toMatchObject({ action: 'already-started', existing: { orphaned: true, alive: false, claimer: DEAD_PID } });
+      expect(r.comment.body).toContain('an earlier start was interrupted');
+      expect(r.comment.body).toContain(`\`.ensemble/pr-review/precheck-pr-9-${HEAD}.gate.json\``);
+    }
+    expect(spawned).toHaveLength(0);
+  });
+});
+
+describe('claim markers: recorded gate, young claim, orphaned claim (review round 1, finding 4)', () => {
+  const claimed = (over = {}) => {
+    const d = deps(over);
+    expect(d.claimGateStart({ headSha: HEAD, dryRun: false }).claimed).toBe(true);
+    const marker = path.join(root, STATE_SUBDIR, `precheck-pr-9-${HEAD}.gate.json`);
+    const rewrite = (patch) => fs.writeFileSync(marker, JSON.stringify({ ...JSON.parse(fs.readFileSync(marker, 'utf8')), ...patch }));
+    return { d, rewrite, marker };
+  };
+  const existing = (d) => d.claimGateStart({ headSha: HEAD, dryRun: false }).existing;
+
+  it('a claim records who made it, and a young claim from a run that is still going is in progress, not orphaned', () => {
+    const { d, marker } = claimed();
+    expect(JSON.parse(fs.readFileSync(marker, 'utf8'))).toMatchObject({ headSha: HEAD, pr: 9, claimer: process.pid });
+    expect(existing(d)).toMatchObject({ alive: null, orphaned: false, claimer: process.pid });
+  });
+
+  it('a claim whose run is gone is orphaned at once, without waiting for the grace period', () => {
+    const { d, rewrite } = claimed();
+    rewrite({ claimer: DEAD_PID });
+    expect(existing(d)).toMatchObject({ alive: false, orphaned: true, claimer: DEAD_PID, marker: `.ensemble/pr-review/precheck-pr-9-${HEAD}.gate.json` });
+  });
+
+  it('a claim with no gate recorded that is older than the grace period is orphaned even if its claimer pid looks alive (a reused pid)', () => {
+    const { rewrite } = claimed();
+    rewrite({ claimedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+    expect(existing(deps())).toMatchObject({ alive: false, orphaned: true });
+  });
+
+  it('a marker from before claims recorded their claimer (only headSha and claimedAt) is in progress while young and orphaned once old', () => {
+    const { rewrite, marker } = claimed();
+    fs.writeFileSync(marker, JSON.stringify({ headSha: HEAD, claimedAt: new Date().toISOString() }));
+    expect(existing(deps())).toMatchObject({ alive: null, orphaned: false });
+    rewrite({ claimedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+    expect(existing(deps())).toMatchObject({ alive: false, orphaned: true });
+  });
+
+  it('an empty or unreadable marker is judged by its age: in progress while young', () => {
+    const { marker } = claimed();
+    fs.writeFileSync(marker, '');
+    expect(existing(deps())).toMatchObject({ alive: null, orphaned: false });
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    fs.utimesSync(marker, old, old);
+    expect(existing(deps())).toMatchObject({ alive: false, orphaned: true });
+  });
+
+  it('a recorded gate is not orphaned: it is alive or it is not', () => {
+    const { rewrite } = claimed();
+    rewrite({ pid: process.pid, startedAt: 't0' });
+    expect(existing(deps())).toMatchObject({ pid: process.pid, alive: true, orphaned: false });
+    rewrite({ pid: DEAD_PID });
+    expect(existing(deps())).toMatchObject({ pid: DEAD_PID, alive: false, orphaned: false });
+  });
+
+  it('prepareGate fetches the base and the head, and skips the head fetch when the commit is already local', async () => {
+    const missing = fakeRun({ 'fetch --quiet origin dev': ok(''), [`fetch --quiet origin ${HEAD}`]: ok('') });
+    expect(await deps({ run: missing.run }).prepareGate({ headSha: HEAD, baseRefName: 'dev', dryRun: false })).toEqual({ ok: true });
+    expect(missing.calls.map((c) => c.join(' '))).toEqual(['git fetch --quiet origin dev', `git cat-file -e ${HEAD}^{commit}`, `git fetch --quiet origin ${HEAD}`]);
+    const local = fakeRun({ 'fetch --quiet origin dev': ok(''), 'cat-file -e': ok('') });
+    expect(await deps({ run: local.run }).prepareGate({ headSha: HEAD, baseRefName: 'dev', dryRun: false })).toEqual({ ok: true });
+    expect(local.calls.map((c) => c.join(' '))).toEqual(['git fetch --quiet origin dev', `git cat-file -e ${HEAD}^{commit}`]);
+  });
+
+  it('prepareGate reports a failed fetch and answers the same to every caller of the run', async () => {
+    const { run, calls } = fakeRun({ 'fetch --quiet origin dev': fail('network down') });
+    const d = deps({ run });
+    const a = await d.prepareGate({ headSha: HEAD, baseRefName: 'dev', dryRun: false });
+    const b = await d.prepareGate({ headSha: HEAD, baseRefName: 'dev', dryRun: false });
+    expect(a.ok).toBe(false);
+    expect(a.error).toContain('network down');
+    expect(b).toBe(a);
+    expect(calls).toHaveLength(1);
   });
 });
 

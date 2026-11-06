@@ -17,7 +17,7 @@ const DIRECTED_BODY = `${GOOD_BODY}\nDirected by: @maintainer\n`;
 const review = (login, state, commitSha, extra = {}) => ({ login, state, commitSha, ...extra });
 
 function makeDeps(over = {}) {
-  const calls = { startGate: 0, claim: 0, release: 0, post: [], update: [], find: 0 };
+  const calls = { prepare: 0, startGate: 0, claim: 0, release: 0, post: [], update: [], find: 0, order: [] };
   const deps = {
     readPr: async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body: GOOD_BODY, author: 'someone', isCrossRepository: false }),
     readReviews: async () => ({ ok: true, reviews: [] }),
@@ -26,12 +26,19 @@ function makeDeps(over = {}) {
     readStatuses: async () => ({ ok: true, statuses: [] }),
     readGateConfig: async () => ({ ok: true, statusContext: CONTEXT }),
     readPolicy: async () => ({ ok: true, policy: { lowWaiverEnabled: false } }),
+    prepareGate: async () => {
+      calls.prepare += 1;
+      calls.order.push('prepare');
+      return { ok: true };
+    },
     claimGateStart: async () => {
       calls.claim += 1;
+      calls.order.push('claim');
       return { claimed: true };
     },
     startGate: async () => {
       calls.startGate += 1;
+      calls.order.push('start');
       return { ok: true, pid: 4242, logPath: '/log', startedAt: '2026-11-06T00:00:00.000Z' };
     },
     releaseGateStart: async () => {
@@ -151,7 +158,7 @@ describe('the gate runs the head\'s own code, so only a same-repository head sta
       const { deps, calls } = makeDeps({ readPr: prFrom({ isCrossRepository: true }) });
       const r = await runPrecheck({ dryRun }, deps);
       expect(r.gate).toMatchObject({ action: 'not-started', code: 'cross-repository-head' });
-      expect(calls.claim + calls.startGate + calls.release).toBe(0);
+      expect(calls.prepare + calls.claim + calls.startGate + calls.release).toBe(0);
       expect(r.comment.body).toContain('Local CI gate: not started. the head of this pull request is on a fork');
     }
   });
@@ -182,6 +189,44 @@ describe('the gate runs the head\'s own code, so only a same-repository head sta
   it('reports a status already on a fork head as it is: nothing is started either way', async () => {
     const { deps } = makeDeps({ readPr: prFrom({ isCrossRepository: true }), readStatuses: async () => ({ ok: true, statuses: [{ context: CONTEXT, state: 'success', sha: HEAD }] }) });
     expect((await runPrecheck({}, deps)).gate.action).toBe('status-present');
+  });
+});
+
+describe('a start leaves no claim behind that never started a gate (review round 1, finding 4)', () => {
+  it('does every network step before it claims, and claims before it starts', async () => {
+    const { deps, calls } = makeDeps();
+    await runPrecheck({}, deps);
+    expect(calls.order).toEqual(['prepare', 'claim', 'start']);
+  });
+
+  it('a failed or throwing preparation claims nothing, starts nothing and says so', async () => {
+    for (const prepareGate of [async () => ({ ok: false, error: 'git fetch failed: network down' }), async () => { throw new Error('network down'); }]) {
+      const { deps, calls } = makeDeps({ prepareGate });
+      const r = await runPrecheck({}, deps);
+      expect(r.gate).toMatchObject({ action: 'start-failed' });
+      expect(calls.claim + calls.startGate + calls.release).toBe(0);
+      expect(r.comment.body).toContain('could NOT be started');
+      expect(r.comment.body).toContain('network down');
+    }
+  });
+
+  it('a claim whose run died before it recorded a gate is reported as interrupted, with how to retry, and starts no second gate', async () => {
+    const existing = { alive: false, orphaned: true, claimer: 4242, marker: '.ensemble/pr-review/precheck-pr-9-x.gate.json' };
+    const { deps, calls } = makeDeps({ claimGateStart: async () => ({ claimed: false, existing }) });
+    const r = await runPrecheck({}, deps);
+    expect(r.gate.action).toBe('already-started');
+    expect(calls.startGate).toBe(0);
+    expect(r.comment.body).toContain('an earlier start was interrupted');
+    expect(r.comment.body).toContain('`.ensemble/pr-review/precheck-pr-9-x.gate.json`');
+    expect(r.comment.body).toContain('delete the marker');
+    expect(r.comment.body).not.toContain('already started');
+  });
+
+  it('says another run is starting the gate while a young claim is still being made, and starts nothing', async () => {
+    const { deps, calls } = makeDeps({ claimGateStart: async () => ({ claimed: false, existing: { alive: null, orphaned: false, claimer: 4242 } }) });
+    const r = await runPrecheck({}, deps);
+    expect(calls.startGate).toBe(0);
+    expect(r.comment.body).toContain('another precheck run is starting it right now');
   });
 });
 

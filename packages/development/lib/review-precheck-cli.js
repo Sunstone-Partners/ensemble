@@ -36,6 +36,9 @@ const MAX_STDIN_BYTES = 1024 * 1024;
 const PAYLOAD_KEYS = ['repo', 'pr', 'repoRoot', 'dryRun', 'tier'];
 const STATE_SUBDIR = path.join('.ensemble', 'pr-review');
 const GH_TIMEOUT_MS = 60000;
+// A claim with no gate recorded is normal for the milliseconds between claiming and spawning. After this long the run that
+// made it died before it recorded a gate (a pid that merely looks alive may have been reused), so the claim is orphaned.
+const CLAIM_GRACE_MS = 60 * 1000;
 
 /**
  * A base branch name the precheck will put on a git argv and hand to the gate as `origin/<name>`: a string that cannot be
@@ -84,6 +87,51 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
     }
   };
   const markerPath = (headSha, dryRun) => path.join(stateDir, `precheck-pr-${pr}-${headSha}${dryRun ? '.dry' : ''}.gate.json`);
+  const rel = (p) => path.relative(root, p);
+  /** Whether a process exists: true or false, or null when `pid` is not a usable pid. EPERM means it exists but is not ours. */
+  const probe = (pid) => {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return err.code === 'EPERM';
+    }
+  };
+  /**
+   * What a start marker says now. A recorded gate is `alive` or not. A claim with NO gate recorded is `alive: null` while it
+   * is young and the run that made it is still going; otherwise that run died first and the marker is `orphaned`.
+   */
+  const describeMarker = (file) => {
+    let data = {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (isObject(parsed)) data = parsed;
+    } catch (_e) {
+      data = {};
+    }
+    const gatePid = Number.isInteger(data.pid) && data.pid > 0 ? data.pid : undefined;
+    const info = {
+      pid: gatePid,
+      startedAt: data.startedAt,
+      claimedAt: data.claimedAt,
+      claimer: Number.isInteger(data.claimer) ? data.claimer : undefined,
+      marker: rel(file),
+      mode: file.endsWith('.dry.gate.json') ? 'dry-run' : 'real',
+    };
+    if (gatePid !== undefined) return { ...info, alive: probe(gatePid), orphaned: false };
+    let claimedMs = Date.parse(data.claimedAt);
+    if (!Number.isFinite(claimedMs)) {
+      try {
+        claimedMs = fs.statSync(file).mtimeMs;
+      } catch (_e) {
+        claimedMs = NaN;
+      }
+    }
+    const young = Number.isFinite(claimedMs) && now().getTime() - claimedMs <= CLAIM_GRACE_MS;
+    const orphaned = !(young && probe(info.claimer) !== false);
+    return { ...info, alive: orphaned ? false : null, orphaned };
+  };
 
   // `origin/<base>` must be fresh before the base-ref config/policy are read and before the gate runs (it refuses a
   // stale or absent remote-tracking ref). Fetched once per run.
@@ -95,6 +143,28 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
         : Promise.resolve({ ok: false, error: 'the base branch name is not usable' });
     }
     return baseFetch;
+  };
+
+  // Every network step of a start, done BEFORE the claim (see `startOnce` in the pure module): a run that dies while
+  // fetching then leaves nothing behind. The gate checks the base/head relationship in THIS clone before it clones the
+  // head itself, so the head commit must be present locally; GitHub serves a commit by sha, the PR's own ref is the
+  // fallback. Memoized per base and head, so `startGate` re-reads the settled answer without touching the network.
+  const preparing = new Map();
+  const prepare = (headSha, baseRefName) => {
+    const key = `${baseRefName}@${headSha}`;
+    if (!preparing.has(key)) {
+      preparing.set(key, (async () => {
+        const f = await fetchBase(baseRefName);
+        if (!f.ok) return f;
+        if (!SHA_RE.test(headSha)) return { ok: false, error: 'the head commit is not a full sha' };
+        if ((await git(['cat-file', '-e', `${headSha}^{commit}`])).status === 0) return { ok: true };
+        let got = await git(['fetch', '--quiet', 'origin', headSha]);
+        if (got.status !== 0) got = await git(['fetch', '--quiet', 'origin', `refs/pull/${pr}/head`]);
+        if (got.status !== 0) return { ok: false, error: `git fetch of the PR head ${headSha} failed: ${tail(got.stderr)}` };
+        return { ok: true };
+      })());
+    }
+    return preparing.get(key);
   };
   let viewer = null;
   const viewerLogin = () => {
@@ -201,34 +271,29 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
       return loaded.ok === true ? { ok: true, policy: loaded.policy } : { ok: false, error: `policy not usable: ${loaded.reason}` };
     },
 
+    prepareGate({ headSha, baseRefName }) {
+      return prepare(headSha, baseRefName);
+    },
+
     /** Atomic create-once marker: exactly one concurrent caller gets `claimed:true` for a head. Not a queue or lock. */
     claimGateStart({ headSha, dryRun }) {
-      fs.mkdirSync(stateDir, { recursive: true });
       const file = markerPath(headSha, dryRun);
       let fd;
       try {
+        fs.mkdirSync(stateDir, { recursive: true });
         fd = fs.openSync(file, 'wx');
       } catch (e) {
-        if (e.code !== 'EEXIST') return { claimed: false, error: e.message };
-        let existing = {};
-        try {
-          existing = JSON.parse(fs.readFileSync(file, 'utf8'));
-        } catch (_e) {
-          existing = {};
-        }
-        let alive = null;
-        if (Number.isInteger(existing.pid)) {
-          try {
-            process.kill(existing.pid, 0);
-            alive = true;
-          } catch (err) {
-            alive = err.code === 'EPERM';
-          }
-        }
-        return { claimed: false, existing: { pid: existing.pid, startedAt: existing.startedAt, alive } };
+        if (e.code === 'EEXIST') return { claimed: false, existing: describeMarker(file) };
+        return { claimed: false, error: e.message };
       }
-      fs.writeSync(fd, JSON.stringify({ headSha, claimedAt: now().toISOString() }));
-      fs.closeSync(fd);
+      try {
+        fs.writeSync(fd, JSON.stringify({ headSha, pr, mode: dryRun ? 'dry-run' : 'real', claimedAt: now().toISOString(), claimer: process.pid }));
+      } catch (e) {
+        fs.rmSync(file, { force: true });
+        return { claimed: false, error: `could not record the claim: ${e.message}` };
+      } finally {
+        fs.closeSync(fd);
+      }
       return { claimed: true };
     },
 
@@ -238,14 +303,8 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
 
     /** Start the existing `local-ci-cli.js gate` detached, its input from a file and its output to a log. */
     async startGate({ headSha, baseRefName, dryRun }) {
-      const f = await fetchBase(baseRefName);
-      if (!f.ok) return f;
-      // The gate checks the base/head relationship in THIS clone before it clones the head itself, so the head
-      // commit must be present locally. GitHub serves a commit by sha; the PR's own ref is the fallback.
-      if (!SHA_RE.test(headSha)) return { ok: false, error: 'the head commit is not a full sha' };
-      let got = await git(['fetch', '--quiet', 'origin', headSha]);
-      if (got.status !== 0) got = await git(['fetch', '--quiet', 'origin', `refs/pull/${pr}/head`]);
-      if (got.status !== 0) return { ok: false, error: `git fetch of the PR head ${headSha} failed: ${tail(got.stderr)}` };
+      const prep = await prepare(headSha, baseRefName);
+      if (!prep.ok) return prep;
       const stem = path.join(stateDir, `precheck-pr-${pr}-${headSha}${dryRun ? '.dry' : ''}.gate`);
       const input = `${stem}-input.json`;
       const logPath = `${stem}.log`;
