@@ -9,8 +9,10 @@
  *
  * Two modes, one runner (docs/plans/pr-review-speedup-plan.md section 3G):
  *   - `light`  Low and Medium tier. The script alone runs the pipeline.
- *              Standard depth (>= 2 reviewers, 3 verifiers per finding) plus the
- *              security lane wherever the gate requires it (Medium included).
+ *              The depth `depth` resolves for the effective tier: Standard (>= 2
+ *              reviewers, 3 verifiers per finding) at Medium, Quick (1, 0) at an
+ *              effective Low under the waiver. Plus the security lane wherever
+ *              the gate requires it (Medium included).
  *   - `full`   High tier, a sensitive path, or anything ambiguous. Deep depth
  *              (>= 2 reviewers, 5 verifiers per finding) plus the security lane.
  *
@@ -21,7 +23,9 @@
  * FAIL CLOSED means FULL, here, never light: a record that is missing,
  * unreadable or only partly there, a tier or effective tier outside the closed
  * set, a tier word that contradicts the effective tier, a tier someone RAISED
- * (a second assessor included), a sensitive or High path -- each selects `full`.
+ * (a second assessor included), a sensitive or High path, a tier the tier
+ * module reached on partial evidence (no kind cited, an unknown kind, an
+ * uncited changed path, any warning) -- each selects `full`.
  * An ABSENT second assessment is not a raise: a local review never has one (the
  * assessor is a gate-mode step), and the tier module already keeps it from
  * lowering anything, so it neither selects `full` nor blocks `light`.
@@ -29,6 +33,7 @@
  */
 
 const { SECURITY_REQUIRED_TIERS } = require('./pr-review-gate');
+const { resolveDepth } = require('./pr-review-depth');
 
 /** The closed set of modes, cheapest first. */
 const MODES = Object.freeze(['light', 'full']);
@@ -40,14 +45,25 @@ const LIGHT_TIERS = Object.freeze(['low', 'medium']);
 const KNOWN_TIERS = Object.freeze(['low', 'medium', 'high']);
 
 /**
- * What each mode requires of the review, stated once so the runner and the
- * report read the same numbers the plan fixes. Depth itself stays owned by
- * `depth`; these name the floor the mode promises, not a second source of it.
+ * The tier module's own evidence flags. A record carrying one of these says the
+ * tier was reached on missing or partial evidence, and the module contract is
+ * that anything ambiguous selects `full`. `second-assessment-missing` and
+ * `low-treated-as-medium` are deliberately NOT here: a local review never has a
+ * second assessment and the waiver is off by default, so neither is ambiguity.
  */
-const MODE_REQUIREMENTS = Object.freeze({
-  light: Object.freeze({ depth: 'standard', minReviewers: 2, verifiersPerFinding: 3 }),
-  full: Object.freeze({ depth: 'deep', minReviewers: 2, verifiersPerFinding: 5 }),
-});
+const AMBIGUOUS_REASONS = Object.freeze(['no-kinds-cited', 'unknown-kind', 'uncited-path']);
+
+/**
+ * What a mode requires of the review, read from `depth` so there is one source
+ * of the numbers. `light` follows the effective tier (Quick under the Low
+ * waiver, Standard otherwise); `full` is Deep.
+ */
+function requiresFor(mode, effective) {
+  const depth = mode === 'full'
+    ? resolveDepth({ tier: 'high' })
+    : resolveDepth({ tier: effective, effectiveTier: effective, lowWaiverEnabled: effective === 'low' });
+  return { depth: depth.mode, minReviewers: depth.bounds.reviewers.min, verifiersPerFinding: depth.bounds.verifiers.min };
+}
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isNonEmptyList = (value) => Array.isArray(value) && value.length > 0;
@@ -62,7 +78,7 @@ function full(reasons, tier, effectiveTier, ok) {
     tier,
     effectiveTier,
     securityLane: true,
-    requires: { ...MODE_REQUIREMENTS.full },
+    requires: requiresFor('full'),
     reasons,
   };
 }
@@ -103,7 +119,24 @@ function selectMode(tierResult) {
   if (!isObject(paths) || !Array.isArray(paths.sensitive) || !Array.isArray(paths.high)) {
     unreadable.push('paths-unreadable');
   }
+  // The tier's own evidence flags: a record is only as readable as the evidence
+  // behind it. A tier reached with nothing cited, a kind it could not read or a
+  // changed path no kind covers says nothing reliable about what it left out.
+  if (!Array.isArray(tierResult.reasons)) unreadable.push('reasons-unreadable');
+  if (!Array.isArray(tierResult.warnings)) unreadable.push('warnings-unreadable');
+  if (isObject(paths) && !Array.isArray(paths.uncited)) unreadable.push('paths-unreadable');
   if (unreadable.length > 0) return full(unreadable, tier, effective, false);
+
+  const ambiguous = [];
+  if (isNonEmptyList(tierResult.reasons)) {
+    for (const reason of AMBIGUOUS_REASONS) if (tierResult.reasons.includes(reason)) ambiguous.push(reason);
+  }
+  if (paths.uncited.length > 0 && !ambiguous.includes('uncited-path')) ambiguous.push('uncited-path');
+  // Every warning the tier module emits (invalid-kind-record, invalid-kind-paths,
+  // invalid-changed-paths, non-verbatim-changed-path, unreadable-policy, ...)
+  // names input it could not read.
+  for (const warning of tierResult.warnings) ambiguous.push(`tier-warning:${typeof warning === 'string' ? warning : 'unreadable'}`);
+  if (ambiguous.length > 0) return full(ambiguous, tier, effective, false);
 
   // --- Readable, and still not light ---------------------------------------
   const reasons = [];
@@ -123,9 +156,9 @@ function selectMode(tierResult) {
     effectiveTier: effective,
     // The gate asks for the security lane at Medium and High. Light keeps it.
     securityLane: SECURITY_REQUIRED_TIERS.includes(tier) || SECURITY_REQUIRED_TIERS.includes(effective),
-    requires: { ...MODE_REQUIREMENTS.light },
+    requires: requiresFor('light', effective),
     reasons: [`${effective}-tier`],
   };
 }
 
-module.exports = { selectMode, MODES, MODE_REQUIREMENTS };
+module.exports = { selectMode, MODES };

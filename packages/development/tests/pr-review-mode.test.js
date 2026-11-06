@@ -17,6 +17,7 @@ const { spawnSync } = require('child_process');
 
 const { selectMode, MODES } = require('../lib/pr-review-mode');
 const { runTier, runMode, HANDLERS } = require('../lib/pr-review-cli');
+const { resolveDepth } = require('../lib/pr-review-depth');
 const { classifyPaths } = require('../lib/pr-review-paths');
 const { loadPolicy } = require('../lib/pr-review-policy');
 
@@ -61,6 +62,7 @@ const record = (overrides = {}) => ({
   raised: [],
   paths: { sensitive: [], high: [], uncited: [] },
   reasons: [],
+  warnings: [],
   ...overrides,
 });
 
@@ -208,6 +210,78 @@ describe('fail closed: anything unreadable or ambiguous selects full', () => {
     ]) {
       expect(selectMode(record(damage)).mode).toBe('full');
     }
+  });
+});
+
+describe('fail closed: a tier the tier module reached on partial evidence selects full', () => {
+  const calm = { secondAssessment: NO_ASSESSMENT_NEEDED };
+
+  test('the calm baseline for these fixtures is light', () => {
+    expect(selectMode(tierFor({ kind: 'docs', changedPaths: [DOC], ...calm })).mode).toBe('light');
+  });
+
+  test.each([
+    ['no kinds cited', { changedPaths: [DOC], kinds: [] }, 'no-kinds-cited'],
+    ['a kind word outside the closed set', { changedPaths: [DOC], kinds: [{ kind: 'refactor', paths: [DOC] }] }, 'unknown-kind'],
+    ['a claim that covers one of two changed files', { changedPaths: [DOC, PLAIN_SOURCE], kinds: [{ kind: 'docs', paths: [DOC] }] }, 'uncited-path'],
+    ['kind paths that are a string, not a list', { changedPaths: [DOC], kinds: [{ kind: 'docs', paths: DOC }] }, 'tier-warning:invalid-kind-paths'],
+    ['a kind record that is not an object', { changedPaths: [DOC], kinds: ['docs'] }, 'tier-warning:invalid-kind-record'],
+    ['a sensitive path passed git-quoted (non-verbatim)', { changedPaths: ['".github/workflows/\\303\\274.yml"'], kinds: [{ kind: 'docs', paths: ['".github/workflows/\\303\\274.yml"'] }] }, 'tier-warning:non-verbatim-changed-path'],
+  ])('%s selects full with ok:false', (_name, input, reason) => {
+    const tier = tierFor({ kind: 'docs', ...calm, ...input });
+    expect(['low', 'medium']).toContain(tier.effectiveTier);
+    const result = selectMode(tier);
+    expect(result).toMatchObject({ ok: false, mode: 'full', securityLane: true });
+    expect(result.reasons).toContain(reason);
+  });
+
+  test.each([
+    ['a warning', record({ warnings: ['invalid-changed-paths'] }), 'tier-warning:invalid-changed-paths'],
+    ['an uncited path with no reason', record({ paths: { sensitive: [], high: [], uncited: ['a.md'] } }), 'uncited-path'],
+    ['a flagged reason', record({ reasons: ['unknown-kind'] }), 'unknown-kind'],
+    ['a missing warnings list', record({ warnings: undefined }), 'warnings-unreadable'],
+    ['a missing reasons list', record({ reasons: undefined }), 'reasons-unreadable'],
+    ['a missing uncited list', record({ paths: { sensitive: [], high: [] } }), 'paths-unreadable'],
+  ])('a hand-built record with %s selects full', (_name, input, reason) => {
+    const result = selectMode(input);
+    expect(result).toMatchObject({ ok: false, mode: 'full' });
+    expect(result.reasons).toContain(reason);
+  });
+
+  test('the no-second-assessment and waiver-off reasons stay light', () => {
+    const tier = tierFor({ kind: 'docs', changedPaths: [DOC], secondAssessment: undefined });
+    expect(tier.reasons).toContain('second-assessment-missing');
+    expect(selectMode(tier)).toMatchObject({ ok: true, mode: 'light' });
+  });
+});
+
+describe('light requires what depth resolves for the effective tier', () => {
+  test.each([
+    ['Medium', 'medium', 'medium', 'standard', false],
+    ['Low under the waiver', 'low', 'low', 'quick', true],
+    ['Low read as Medium (waiver off)', 'low', 'medium', 'standard', false],
+  ])('%s', (_name, tier, effectiveTier, depthMode, waiver) => {
+    const result = selectMode(record({ tier, effectiveTier }));
+    const depth = resolveDepth({ tier, effectiveTier, lowWaiverEnabled: waiver });
+    expect(depth.mode).toBe(depthMode);
+    expect(result.mode).toBe('light');
+    expect(result.requires).toEqual({
+      depth: depth.mode,
+      minReviewers: depth.bounds.reviewers.min,
+      verifiersPerFinding: depth.bounds.verifiers.min,
+    });
+  });
+
+  test('a light plan at an effective Low is accepted by depth, so mode then depth converges', () => {
+    const { requires } = selectMode(record({ tier: 'low', effectiveTier: 'low' }));
+    expect(requires).toEqual({ depth: 'quick', minReviewers: 1, verifiersPerFinding: 0 });
+    const verdict = HANDLERS.depth({
+      tier: 'low',
+      effectiveTier: 'low',
+      lowWaiverEnabled: true,
+      planned: { reviewers: requires.minReviewers, verifiers: requires.verifiersPerFinding },
+    });
+    expect(verdict.violations).toEqual([]);
   });
 });
 
