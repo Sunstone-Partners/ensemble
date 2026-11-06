@@ -27,6 +27,7 @@
 const SHA_RE = /^[0-9a-fA-F]{40}$/;
 const EVENTS = ['pull_request', 'push'];
 const PER_PAGE = 100;
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -87,6 +88,7 @@ function verifyHosted({ repo, headSha, baseSha, repoRoot, approvalSet }, deps) {
   if (!reuse) return refuse('hosted_reuse is not enabled in the base-ref config', { disabled: true });
   if (typeof deps.ghApi !== 'function') return refuse('no GitHub lookup is available');
   if (!SHA_RE.test(headSha) || !SHA_RE.test(baseSha)) return refuse('head or base is not a full commit SHA');
+  if (typeof repo !== 'string' || !REPO_RE.test(repo)) return refuse('repo is not owner/name');
 
   const groups = groupByWorkflow(reuse.checks);
   if (groups.size === 0) return refuse('the base config names no hosted jobs');

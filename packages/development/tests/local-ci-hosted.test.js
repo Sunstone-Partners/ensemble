@@ -589,6 +589,18 @@ describe('the opt-in comes only from the base config, and only well-formed commi
     expect(ghApi.calls).toEqual([]);
   });
 
+  it.each([
+    ['an omitted repo', undefined],
+    ['an empty repo', ''],
+    ['a repo without an owner', 'ensemble'],
+    ['a repo with a path smuggled in', 'o/r/../../x'],
+    ['a repo with a query string', 'o/r?x=1'],
+  ])('%s never becomes a GitHub API path', (_n, repo) => {
+    const { r, ghApi } = verify(honest(HEAD), { over: { repo } });
+    refused(r, 'repo is not owner/name');
+    expect(ghApi.calls).toEqual([]);
+  });
+
   it('an approval set that names no hosted job is refused, never vacuously accepted', () => {
     const { r } = verify(honest(HEAD), { over: { approvalSet: { hostedReuse: { covers: ['x'], checks: [] } } } });
     refused(r, 'the base config names no hosted jobs');
