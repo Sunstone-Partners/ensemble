@@ -19,8 +19,9 @@
  *
  *  - a pool that cannot give some candidate K verifiers is an explicit error
  *    naming those candidates, never a candidate quietly given fewer;
- *  - a finding's own reviewer is never one of its verifiers (the same
- *    case-insensitive name comparison `votes` applies);
+ *  - nobody who raised a finding is one of its verifiers: its `reviewer`, its ledger `source` and each
+ *    `mergedFrom[].source` (`raisersOf`, the same case-insensitive comparison `votes` applies); a candidate
+ *    that names no raiser is refused, since it could not be excluded;
  *  - anything it cannot read is a refusal with a reason and an EMPTY plan.
  *
  * Independence ("no verifier sees another's vote") is a property of the
@@ -28,7 +29,7 @@
  * only, and nothing here carries a vote.
  */
 
-const { resolveExpected } = require('./pr-review-votes');
+const { resolveExpected, raisersOf } = require('./pr-review-votes');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -41,13 +42,14 @@ function refuse(reason, extra = {}) {
 }
 
 /**
- * The reviewer names a candidate must never be verified by: `reviewerOf(candidate)` when given, else the
- * candidate's own `reviewer` -- the field `votes` excludes. A name or a list of names; absent is no exclusion.
+ * Extra names to exclude for a candidate, beyond the raisers `raisersOf` reads from the candidate itself:
+ * `reviewerOf(candidate)`, a name or a list of names (programmatic callers only: JSON cannot carry a function).
  *
  * @returns {string[]|null}  lower-cased names, or null when the value cannot be read.
  */
-function reviewersOf(candidate, reviewerOf) {
-  const raw = reviewerOf === undefined ? candidate.reviewer : reviewerOf(candidate);
+function extraReviewers(candidate, reviewerOf) {
+  if (reviewerOf === undefined) return [];
+  const raw = reviewerOf(candidate);
   if (raw === undefined || raw === null) return [];
   const names = Array.isArray(raw) ? raw : [raw];
   if (!names.every(isText)) return null;
@@ -87,19 +89,27 @@ function readPool(input, k) {
  * Plans which K distinct verifiers settle each candidate.
  *
  * @param {Object} input
- * @param {Object[]} input.candidates  Candidate findings, each `{ id, reviewer? }`.
+ * @param {Object[]} input.candidates  Candidate findings, each `{ id, source | reviewer, mergedFrom? }`.
  * @param {string} input.depth         `quick` | `standard` | `deep`; sets K (0 | 3 | 5).
  * @param {number} [input.expectedVerifiers]  Overrides K, exactly as it does for `votes`.
  * @param {string[]} [input.verifierPool]     The verifier names available.
  * @param {number} [input.verifierCount]      Or just how many: they are named `verifier-1` ... `verifier-N`.
  * @param {number} [input.maxCandidatesPerVerifier]  A ceiling on any one agent's batch (keeps each agent to
  *   "one or a few" candidates); a plan over it is refused rather than overloaded.
- * @param {function(Object):(string|string[]|undefined)} [input.reviewerOf]  Who raised a candidate, when
- *   that is not its `reviewer` field.
+ * @param {function(Object):(string|string[]|undefined)} [input.reviewerOf]  Extra names to exclude for a
+ *   candidate, added to the raisers read from the candidate itself.
+ * @param {boolean} [input.allowShortPool]  Accept a pool that cannot give some candidate K verifiers: that
+ *   candidate is planned with every verifier it can have and flagged `incomplete: true` (the result reads
+ *   `complete: false` with the `shortfalls`), and `votes` records it verifier-incomplete while the rest of the
+ *   round stays structural. Off by default: a short pool is then a refusal.
  * @returns {{ok:boolean, reason?:string, k:number|null, verifiersPerCandidate:number|null,
- *   assignments:Array<{id:string, verifiers:string[]}>,
+ *   candidates?:number, complete?:boolean,
+ *   assignments:Array<{id:string, verifiers:string[], incomplete?:boolean}>,
  *   agents:Array<{verifier:string, candidates:string[]}>,
  *   load?:{min:number, max:number}, shortfalls?:Array<{id:string, eligible:number, needed:number}>}}
+ *   An ok plan carries `candidates`, the number it planned for, which can be ZERO (a round with nothing to
+ *   verify: `ok: true`, no assignments, nothing to dispatch). Pass it to `depth` beside the assignments so a
+ *   plan for zero candidates is told apart from a refused plan, whose empty list never passes a floor.
  */
 function planVerification(input) {
   if (!isObject(input)) return refuse('invalid-input');
@@ -114,6 +124,9 @@ function planVerification(input) {
   if (input.reviewerOf !== undefined && typeof input.reviewerOf !== 'function') {
     return refuse('reviewerOf must be a function when given');
   }
+  if (input.allowShortPool !== undefined && typeof input.allowShortPool !== 'boolean') {
+    return refuse('allowShortPool must be true or false when given');
+  }
   const limit = input.maxCandidatesPerVerifier;
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
     return refuse('maxCandidatesPerVerifier must be an integer >= 1 when given');
@@ -123,14 +136,26 @@ function planVerification(input) {
   if (ids.some((id) => id === null)) return refuse('every candidate needs an id');
   if (new Set(ids).size !== ids.length) return refuse('candidate ids must be unique');
 
-  const pool = readPool(input, k);
+  // Nobody to verify (Quick, or no candidates) needs no pool; for anything else a pool must be given.
+  const pool = readPool(input, k === 0 || input.candidates.length === 0 ? 0 : k);
   if (!pool.ok) return refuse(pool.reason);
 
-  // The candidates' reviewers must all be readable before anyone is assigned: a reviewer nobody can name
-  // would be a verifier nobody could exclude.
-  const reviewers = input.candidates.map((candidate) => reviewersOf(candidate, input.reviewerOf));
-  const unreadable = reviewers.findIndex((names) => names === null);
-  if (unreadable !== -1) return refuse(`candidate ${JSON.stringify(ids[unreadable])} has an unreadable reviewer`);
+  // Who raised each candidate must be readable and known before anyone is assigned: a raiser nobody can name
+  // would be a verifier nobody could exclude. The raiser is the candidate's `reviewer`, its ledger `source`
+  // and every `mergedFrom[].source` (the definition `votes` checks the plan against); `reviewerOf` can only
+  // ADD names to exclude, never replace them, so the plan can never be one `votes` would refuse.
+  const reviewers = [];
+  for (let index = 0; index < input.candidates.length; index += 1) {
+    const candidate = input.candidates[index];
+    const raisers = raisersOf(candidate);
+    if (!raisers.ok) return refuse(`candidate ${JSON.stringify(ids[index])} has an unreadable reviewer or source`);
+    if (k > 0 && raisers.names.length === 0) {
+      return refuse(`candidate ${JSON.stringify(ids[index])} names no reviewer or source, so its own raiser cannot be excluded`);
+    }
+    const extra = extraReviewers(candidate, input.reviewerOf);
+    if (extra === null) return refuse(`candidate ${JSON.stringify(ids[index])} has an unreadable reviewer`);
+    reviewers.push([...raisers.names, ...extra]);
+  }
 
   const eligible = input.candidates.map((_, index) =>
     pool.names.filter((name) => !reviewers[index].includes(name.toLowerCase()))
@@ -140,9 +165,12 @@ function planVerification(input) {
   ids.forEach((id, index) => {
     if (eligible[index].length < k) shortfalls.push({ id, eligible: eligible[index].length, needed: k });
   });
-  if (shortfalls.length > 0) {
+  // A short pool is an error unless the caller explicitly accepts it: then each short candidate is planned
+  // with every verifier it can have and flagged `incomplete`, and `votes` records it verifier-incomplete.
+  if (shortfalls.length > 0 && input.allowShortPool !== true) {
     return refuse('verifier-pool-too-small', { k, poolSize: pool.names.length, shortfalls });
   }
+  const shortIds = new Set(shortfalls.map((item) => item.id));
 
   // Spread evenly: each candidate takes its K least-loaded eligible verifiers (pool order breaks ties), so with
   // nobody excluded no verifier ever holds more than one candidate above another.
@@ -154,7 +182,9 @@ function planVerification(input) {
       .slice(0, k)
       .map((entry) => entry.name);
     for (const name of chosen) load.get(name).push(ids[index]);
-    return { id: ids[index], verifiers: chosen };
+    const entry = { id: ids[index], verifiers: chosen };
+    if (shortIds.has(ids[index])) entry.incomplete = true;
+    return entry;
   });
 
   const agents = pool.names
@@ -167,7 +197,11 @@ function planVerification(input) {
     return refuse('verifier-overloaded', { k, maxCandidatesPerVerifier: limit, heaviest });
   }
 
-  const result = { ok: true, k, verifiersPerCandidate: k, assignments, agents };
+  const result = { ok: true, k, verifiersPerCandidate: k, candidates: ids.length, assignments, agents };
+  if (shortfalls.length > 0) {
+    result.complete = false;
+    result.shortfalls = shortfalls;
+  }
   if (sizes.length > 0) result.load = { min: Math.min(...sizes), max: heaviest };
   return result;
 }
