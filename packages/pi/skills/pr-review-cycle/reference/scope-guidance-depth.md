@@ -307,13 +307,19 @@ and whether a finding survives scrutiny is for the verifiers to settle
 
 Render it once per reviewer with `node "$PR_REVIEW_CLI" brief` and
 `{ role: "reviewer", vars: { slice, timeboxMinutes, paths, diffPath, snapshotDir } }`
-(`slice` is the slice id, or `whole-pr` when the PR was not sliced; `paths` is
-that slice's path list from the `slices` call). It answers `{ ok, role, brief }`;
+(`slice` is the slice id, `(repository root)` or `whole-pr` when the PR was not
+sliced; `paths` is that slice's path list from the `slices` call; `diffPath` and
+`snapshotDir` are the prepared paths). It answers `{ ok, role, brief }`;
 pass `brief` to the reviewer unedited, with the rules and guidance listed above.
 The renderer takes exactly those inputs and refuses a missing, extra or
-malformed one with a non-zero exit, so a note about what the orchestrator
-thinks the reviewer will find has nowhere to go; never retry with a guessed
-field or paste the template by hand.
+malformed one with a non-zero exit. No input is free text: `slice` and each
+entry of `paths` are paths in a strict grammar (letters, digits and
+`. _ @ + ~ = [ ] -` in `/`-separated segments; no whitespace, parentheses or
+`..`), `diffPath` and `snapshotDir` the same but may start with `/`, and
+`timeboxMinutes` is a whole number, so a note about what the orchestrator
+thinks the reviewer will find is refused rather than rendered, and so is a
+path outside the grammar; never retry with a guessed field or paste the
+template by hand.
 
 What comes back is graded as it is. A reviewer that stopped at its cap or its
 timebox covered less than its slice, so the slice is not in `reviewed` when

@@ -103,10 +103,20 @@ Render one brief per finding with `node "$PR_REVIEW_CLI" brief` and
 `{ role: "verifier", vars: { claim, location, paths, snapshotDir } }`: `claim`
 is the finding's failure mode and evidence as the ledger entry records them,
 `location` its cited `file:line`, `paths` the files to read and `snapshotDir`
-the frozen snapshot. Those four are ALL a verifier brief accepts: another
+the frozen snapshot. Those four are ALL a verifier brief accepts, so another
 verifier's vote, a verdict, the reviewer that raised the finding and anything
-the orchestrator concluded have no field to arrive in, and a `claim` that reads
-as one is refused. A refusal exits non-zero; fix the input, never route around
+the orchestrator concluded have no field of the brief to arrive in. Every one
+of the four except `claim` is a token the renderer checks against a strict
+grammar: `location` and each entry of `paths` are repository-relative paths
+(letters, digits and `. _ @ + ~ = [ ] -` in `/`-separated segments, no
+whitespace, parentheses or `..`), `location` followed by `:line` or
+`:start-end`, and `snapshotDir` is such a path, optionally starting with `/`,
+so a note cannot ride in them: it is refused, and so is a path outside that
+grammar. `claim` is the one free-text input and is screened only by a word
+list: a `claim` containing a word such as vote, verdict, orchestrator,
+conclusion or "another verifier" is refused, and one that avoids those words
+is not checked at all, so write it as the finding's own failure mode and
+evidence. A refusal exits non-zero; fix the input, never route around
 it with a hand-written brief. A dispatch that settles several findings is given
 each finding's rendered brief in turn.
 

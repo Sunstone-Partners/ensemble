@@ -24,19 +24,26 @@
  *   - an unknown role is refused;
  *   - an input the role does not declare is refused, by name. That is the guard that
  *     keeps another verifier's vote, a verdict, the reviewer that raised a finding or
- *     the orchestrator's conclusion out of a verifier brief: there is no field they
+ *     the orchestrator's conclusion out of a brief as a field: there is no field they
  *     can arrive in;
- *   - a declared input that is absent, or of the wrong shape, is refused;
+ *   - a declared input that is absent, or of the wrong shape, is refused. Every input
+ *     but the verifier's `claim` is a token from a closed grammar (a slice id, a
+ *     `<sha>..<sha>` range, a repository-relative path or `path:line`, an absolute
+ *     path for the prepared diff and snapshot) with no room for whitespace or
+ *     parentheses, so a note cannot ride in a slice, range or path: it is refused;
  *   - a template whose placeholders are not exactly the role's declared inputs is
  *     refused (an undeclared placeholder would render as nothing, and a declared one
  *     the template forgot would silently drop an input, for a verifier the claim it
  *     was asked to settle);
  *   - a value that contains placeholder syntax is refused, and substitution is a
  *     single pass, so an input is never itself read as a template;
- *   - the verifier's free-text `claim` is refused when it reads as a vote, a verdict
- *     or the orchestrator's conclusion. That screen is a backstop for the obvious
- *     leak, not a proof: no program can prove a sentence carries no opinion. The
- *     structural guarantee above is the one that holds.
+ *   - the verifier's free-text `claim` is the ONE input that is prose, so it is the one
+ *     input a grammar cannot close. It is refused when it contains a word from
+ *     VERIFIER_LEAKS (vote, verdict, orchestrator, conclusion, another verifier, ...).
+ *     That screen is a backstop for the obvious leak, not a proof: a claim that
+ *     avoids those words is accepted, and no program can prove a sentence carries no
+ *     opinion. The claim is the finding's own failure mode and evidence, so what it
+ *     says is the finding's; the structural guarantees above are the ones that hold.
  *
  * TRD/plan reference: docs/plans/pr-review-speedup-plan.md section 3G.
  */
@@ -80,7 +87,7 @@ const VERIFIER_LEAKS = Object.freeze([
 // Input kinds
 // ---------------------------------------------------------------------------
 
-/** A single line of text: a path, an id, a range, a directory. */
+/** A single line of text. Every grammar below starts here. */
 function checkLine(value, name) {
   if (typeof value !== 'string' || value.trim() === '') return `'${name}' must be a non-empty string`;
   if (CONTROL_OR_NEWLINE.test(value)) return `'${name}' must be a single line without control characters`;
@@ -88,30 +95,89 @@ function checkLine(value, name) {
   return null;
 }
 
-const LINE = Object.freeze({
-  check: checkLine,
-  render: (value) => value,
+/**
+ * Every input except the claim is a token from a closed grammar, never a line of prose:
+ * a slice id, an object id range, a repository path, a `path:line`. A grammar that has
+ * no room for whitespace or parentheses has no room for a sentence, so a vote, a verdict
+ * or an orchestrator's note cannot ride in a path or a range. (A word list could not
+ * promise that; the grammar does.) The cost is deliberate: a path that falls outside the
+ * grammar is refused, never rendered.
+ */
+const PATH_SEGMENT = /^[\p{L}\p{N}._@+~=[\]-]+$/u;
+const OBJECT_ID = '(?:[0-9a-f]{40}|[0-9a-f]{64})';
+const RANGE = new RegExp(`^${OBJECT_ID}\\.\\.${OBJECT_ID}$`, 'i');
+const MAX_PATH = 512;
+
+const GRAMMAR_HINT = 'letters, digits and . _ @ + ~ = [ ] - in "/"-separated segments, no whitespace, parentheses, quotes or ".."';
+
+/** A repository-relative path, or (`absolute`) a path that may start with one "/". */
+function checkPathToken(value, name, { absolute }) {
+  const problem = checkLine(value, name);
+  if (problem) return problem;
+  if (value.length > MAX_PATH) return `'${name}' is longer than ${MAX_PATH} characters`;
+  const body = absolute && value.startsWith('/') ? value.slice(1) : value;
+  const segments = body.split('/');
+  const ok = segments.every((segment) => PATH_SEGMENT.test(segment) && segment !== '.' && segment !== '..');
+  if (!ok) {
+    return `'${name}' must be ${absolute ? 'a path' : 'a repository-relative path'} (${GRAMMAR_HINT}); a brief carries paths, not prose`;
+  }
+  return null;
+}
+
+const checkRepoPath = (value, name) => checkPathToken(value, name, { absolute: false });
+
+const IDENTITY = (value) => value;
+
+/** A repository-relative path: what `paths`, `ruleFiles` and `sensitivePaths` list. */
+const REPO_PATH = Object.freeze({ check: checkRepoPath, render: IDENTITY });
+
+/** A path to a prepared file or directory outside the repository: `diffPath`, `snapshotDir`. */
+const FILE_PATH = Object.freeze({
+  check: (value, name) => checkPathToken(value, name, { absolute: true }),
+  render: IDENTITY,
 });
 
-/** `path:line` or `path:start-end`. */
+/** A slice id: `whole-pr`, `(repository root)` or the area directory the `slices` call named. */
+const SLICE_ID = Object.freeze({
+  check(value, name) {
+    if (value === 'whole-pr' || value === '(repository root)') return null;
+    const problem = checkRepoPath(value, name);
+    return problem && `${problem} (or "whole-pr", or "(repository root)")`;
+  },
+  render: IDENTITY,
+});
+
+/** `<baseSha>..<headSha>`, each a full object id (what the `scope` call returns). */
+const COMMIT_RANGE = Object.freeze({
+  check(value, name) {
+    const problem = checkLine(value, name);
+    if (problem) return problem;
+    if (!RANGE.test(value)) return `'${name}' must be '<baseSha>..<headSha>', each a full 40 or 64 digit hexadecimal object id`;
+    return null;
+  },
+  render: IDENTITY,
+});
+
+/** `path:line` or `path:start-end`, the path in the repository-path grammar. */
 const LOCATION = Object.freeze({
   check(value, name) {
     const problem = checkLine(value, name);
     if (problem) return problem;
-    if (!/^\S+:\d+(?:-\d+)?$/.test(value)) return `'${name}' must be 'file:line' or 'file:start-end'`;
-    return null;
+    const match = /^(.+):(\d+)(?:-(\d+))?$/.exec(value);
+    if (!match) return `'${name}' must be 'file:line' or 'file:start-end'`;
+    return checkRepoPath(match[1], name);
   },
-  render: (value) => value,
+  render: IDENTITY,
 });
 
-/** A non-empty list of single lines, rendered as a markdown list. */
-function listKind({ allowEmpty }) {
+/** A list of tokens, rendered as a markdown list; each entry is checked by `item`. */
+function listKind(item, { allowEmpty }) {
   return Object.freeze({
     check(value, name) {
       if (!Array.isArray(value)) return `'${name}' must be an array of strings`;
       if (value.length === 0 && !allowEmpty) return `'${name}' must not be empty`;
       for (let i = 0; i < value.length; i += 1) {
-        const problem = checkLine(value[i], `${name}[${i}]`);
+        const problem = item.check(value[i], `${name}[${i}]`);
         if (problem) return problem;
       }
       return null;
@@ -148,8 +214,8 @@ function proseKind(leaks) {
   });
 }
 
-const PATHS = listKind({ allowEmpty: false });
-const MAYBE_PATHS = listKind({ allowEmpty: true });
+const PATHS = listKind(REPO_PATH, { allowEmpty: false });
+const MAYBE_PATHS = listKind(REPO_PATH, { allowEmpty: true });
 
 // ---------------------------------------------------------------------------
 // Roles
@@ -164,11 +230,11 @@ const ROLES = Object.freeze({
   reviewer: Object.freeze({
     template: 'reviewer-brief.md',
     inputs: Object.freeze({
-      slice: LINE,
+      slice: SLICE_ID,
       timeboxMinutes: MINUTES,
       paths: PATHS,
-      diffPath: LINE,
-      snapshotDir: LINE,
+      diffPath: FILE_PATH,
+      snapshotDir: FILE_PATH,
     }),
   }),
   verifier: Object.freeze({
@@ -177,21 +243,21 @@ const ROLES = Object.freeze({
       claim: proseKind(VERIFIER_LEAKS),
       location: LOCATION,
       paths: PATHS,
-      snapshotDir: LINE,
+      snapshotDir: FILE_PATH,
     }),
   }),
   classifier: Object.freeze({
     template: 'classifier-brief.md',
     inputs: Object.freeze({
-      range: LINE,
-      diffPath: LINE,
+      range: COMMIT_RANGE,
+      diffPath: FILE_PATH,
     }),
   }),
   'second-assessor': Object.freeze({
     template: 'second-assessor-brief.md',
     inputs: Object.freeze({
-      range: LINE,
-      diffPath: LINE,
+      range: COMMIT_RANGE,
+      diffPath: FILE_PATH,
       ruleFiles: MAYBE_PATHS,
       sensitivePaths: MAYBE_PATHS,
     }),
@@ -199,9 +265,9 @@ const ROLES = Object.freeze({
   'security-lane': Object.freeze({
     template: 'security-lane-brief.md',
     inputs: Object.freeze({
-      range: LINE,
-      diffPath: LINE,
-      snapshotDir: LINE,
+      range: COMMIT_RANGE,
+      diffPath: FILE_PATH,
+      snapshotDir: FILE_PATH,
       sensitivePaths: MAYBE_PATHS,
     }),
   }),

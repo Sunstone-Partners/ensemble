@@ -26,6 +26,14 @@ editable policy -- tune the wording here, never in the CLI. The prompt is
 and `{ role: "classifier", vars: { range, diffPath } }` and send the `brief` it
 returns unedited.
 
+Every gate brief takes tokens, not prose: `range` is `<baseSha>..<headSha>`,
+each a full 40 or 64 digit hexadecimal object id, `diffPath` and `snapshotDir`
+are paths, and `ruleFiles` and `sensitivePaths` are lists of repository-relative
+paths (letters, digits and `. _ @ + ~ = [ ] -` in `/`-separated segments; no
+whitespace, parentheses or `..`). A note about who wrote the change or why does
+not fit any of them: the renderer refuses it, and refuses a path outside the
+grammar.
+
 It returns exactly the contract `assignTier` expects: `kinds` is an array of
 `{ kind, paths[] }`, `kind` drawn from the closed set above and every kind
 citing the paths that justify it. **A missing, unknown or uncited kind is read
