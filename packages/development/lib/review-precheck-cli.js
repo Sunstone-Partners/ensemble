@@ -2,9 +2,9 @@
 'use strict';
 
 /**
- * pr-review-precheck-cli.js -- the entry point and the real deps for `pr-review-precheck.js` (kata 4ev6).
+ * review-precheck-cli.js -- the entry point and the real deps for `pr-review-precheck.js` (kata 4ev6).
  *
- *   node pr-review-precheck-cli.js < payload.json
+ *   node review-precheck-cli.js < payload.json
  *   payload: { repo: "owner/name", pr: 234, repoRoot: "/path/to/clone", dryRun?: true, tier?: <pr-review-cli tier record> }
  *
  * Prints ONE JSON object on stdout (the precheck result, token-shaped strings redacted) and exits 0, or 1 when the

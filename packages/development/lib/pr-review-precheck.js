@@ -11,7 +11,7 @@
  *
  * NO shell, NO network, NO file reads here. Every read and write goes through `deps` (the pattern of
  * local-ci-runner.js `deps.run`), so this module is a pure function of what the caller's deps return and is tested
- * with fakes; `pr-review-precheck-cli.js` supplies the real `gh`/`git`/filesystem deps.
+ * with fakes; `review-precheck-cli.js` supplies the real `gh`/`git`/filesystem deps.
  *
  * HONEST LIMITS, kept in the comment text itself:
  *   - The approvals count needs the tier, which needs the classifier agent. Until a tier is supplied the requirement

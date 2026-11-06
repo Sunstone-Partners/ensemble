@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
 
-const { makeDeps, validatePayload, main, STATE_SUBDIR } = require('../lib/pr-review-precheck-cli');
+const { makeDeps, validatePayload, main, STATE_SUBDIR } = require('../lib/review-precheck-cli');
 const { runPrecheck, COMMENT_MARKER } = require('../lib/pr-review-precheck');
 
 const HEAD = 'a'.repeat(40);
