@@ -3,7 +3,6 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SKILL_DIR = path.resolve(__dirname, '..');
-const SCRIPT = path.join(SKILL_DIR, 'detect-stack.js');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
 const AXES = ['framework', 'test', 'tooling', 'cloud'];
 const tempDirs = [];
@@ -37,6 +36,15 @@ function makeProject(files = {}) {
  * @param {Object} [opts]
  * @param {boolean} [opts.withGlob] - also vendor the dependency, as a published package would
  */
+/**
+ * A published package plus the dependency closure that makes it importable.
+ *
+ * `glob` is not one directory: it requires `minimatch`, `path-scurry`, `minipass`
+ * and more, and npm hoists those to the top of the repo's own node_modules.
+ * Copying only `node_modules/glob` therefore produces a package that throws
+ * MODULE_NOT_FOUND for its own dependency, which is not the state of a real
+ * install and made the "complete scan" case silently measure a degraded one.
+ */
 function publishedCopy({ withGlob = false } = {}) {
   const root = tempDir('detect-stack-published-');
   const target = path.join(root, 'skills', 'detect-stack');
@@ -45,11 +53,43 @@ function publishedCopy({ withGlob = false } = {}) {
     filter: source => !source.includes(`${path.sep}__tests__${path.sep}`)
   });
   if (withGlob) {
-    fs.cpSync(path.join(REPO_ROOT, 'node_modules', 'glob'), path.join(target, 'node_modules', 'glob'), {
-      recursive: true
-    });
+    const modules = path.join(target, 'node_modules');
+    fs.mkdirSync(modules, { recursive: true });
+    for (const name of globPackageClosure()) {
+      fs.cpSync(path.join(REPO_ROOT, 'node_modules', name), path.join(modules, name), {
+        recursive: true
+      });
+    }
   }
   return { root, dir: target, script: path.join(target, 'detect-stack.js') };
+}
+
+/**
+ * `glob` plus everything its package.json declares, transitively, as they are
+ * hoisted in the repo root. Read from the manifests rather than hardcoded, so
+ * a dependency bump cannot quietly make the fixture incomplete again.
+ */
+function globPackageClosure() {
+  const names = new Set(['glob']);
+  const queue = ['glob'];
+  while (queue.length) {
+    const name = queue.shift();
+    let manifest;
+    try {
+      manifest = JSON.parse(
+        fs.readFileSync(path.join(REPO_ROOT, 'node_modules', name, 'package.json'), 'utf8')
+      );
+    } catch {
+      continue;
+    }
+    for (const dep of Object.keys(manifest.dependencies || {})) {
+      if (names.has(dep)) continue;
+      if (!fs.existsSync(path.join(REPO_ROOT, 'node_modules', dep, 'package.json'))) continue;
+      names.add(dep);
+      queue.push(dep);
+    }
+  }
+  return [...names].sort();
 }
 
 /** Run the script as a subprocess from `cwd`, the way the skill's instructions do. */
