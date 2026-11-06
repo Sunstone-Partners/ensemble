@@ -126,14 +126,89 @@ function isNonFinding(finding) {
 }
 
 /**
+ * The verifier count a round expects per finding: the depth's own, unless the policy's bounds override it.
+ * One answer for `tallyVotes` and for `planVerification`, so what is planned and what is checked can never
+ * disagree on K.
+ *
+ * @returns {{ok:true, depth:string, expected:number}|{ok:false, reason:string}}
+ */
+function resolveExpected(input) {
+  const depth = isText(input.depth) ? input.depth.trim().toLowerCase() : null;
+  if (depth === null || !Object.prototype.hasOwnProperty.call(EXPECTED_VERIFIERS, depth)) {
+    return { ok: false, reason: `unknown depth ${JSON.stringify(input.depth)} (expected quick, standard or deep)` };
+  }
+  let expected = EXPECTED_VERIFIERS[depth];
+  if (input.expectedVerifiers !== undefined) {
+    if (!Number.isInteger(input.expectedVerifiers) || input.expectedVerifiers < 0) {
+      return { ok: false, reason: 'expectedVerifiers must be an integer >= 0 when given' };
+    }
+    expected = input.expectedVerifiers;
+  }
+  return { ok: true, depth, expected };
+}
+
+/**
+ * Reads and checks the explicit candidate-to-verifier assignment (`planVerification`'s `assignments`).
+ *
+ * This is a STRUCTURAL check, so a plan that is wrong blocks the whole tally rather than degrading one
+ * finding: every finding needs exactly one entry naming exactly `expected` DISTINCT verifiers, none of them
+ * the finding's own reviewer, and no entry may name something that is not a finding. A finding with fewer
+ * assigned verifiers than the depth expects would otherwise be read as a finding whose verifiers merely
+ * stayed quiet.
+ *
+ * @returns {{ok:true, byId:Map<string, string[]>}|{ok:false, reason:string}}
+ */
+function readAssignment(input, findings, expected) {
+  if (!Array.isArray(input.assignment)) return { ok: false, reason: 'assignment must be an array of { id, verifiers }' };
+
+  const byId = new Map();
+  for (const entry of input.assignment) {
+    const id = isObject(entry) ? identity(entry.id) : null;
+    if (id === null || !Array.isArray(entry.verifiers) || !entry.verifiers.every(isText)) {
+      return { ok: false, reason: 'every assignment entry needs an id and a verifiers array of names' };
+    }
+    if (byId.has(id)) return { ok: false, reason: `assignment names finding ${JSON.stringify(id)} more than once` };
+    byId.set(id, entry.verifiers.map((name) => name.trim()));
+  }
+
+  const known = new Set(findings.map((finding) => identity(finding.id)));
+  for (const id of byId.keys()) {
+    if (!known.has(id)) return { ok: false, reason: `assignment names ${JSON.stringify(id)}, which is not a candidate finding` };
+  }
+
+  for (const finding of findings) {
+    const id = identity(finding.id);
+    const assigned = byId.get(id);
+    if (assigned === undefined) return { ok: false, reason: `finding ${JSON.stringify(id)} has no verifier assignment` };
+    const keys = assigned.map((name) => name.toLowerCase());
+    if (new Set(keys).size !== keys.length) {
+      return { ok: false, reason: `finding ${JSON.stringify(id)} is assigned the same verifier more than once` };
+    }
+    if (keys.length !== expected) {
+      return {
+        ok: false,
+        reason: `finding ${JSON.stringify(id)} is assigned ${keys.length} distinct verifiers but the depth expects ${expected}`,
+      };
+    }
+    if (isText(finding.reviewer) && keys.includes(finding.reviewer.trim().toLowerCase())) {
+      return { ok: false, reason: `finding ${JSON.stringify(id)} is assigned its own reviewer as a verifier` };
+    }
+  }
+  return { ok: true, byId };
+}
+
+/**
  * Counts the votes that actually count for one finding.
  *
  * A vote is discarded, with its reason recorded, when the verifier is the
  * finding's own reviewer (nobody verifies themselves), when the verdict is
  * not one of real / not-real / abstain, when the verifier is unnamed, or when
- * that verifier has already voted on this finding.
+ * that verifier has already voted on this finding. When the finding has an
+ * explicit `assigned` list, a vote from anyone outside it is discarded too
+ * (`not-assigned`), and the assigned verifiers who cast no counted vote are
+ * returned as `silent`.
  */
-function countVotes(finding) {
+function countVotes(finding, assigned) {
   const votes = finding.votes === undefined || finding.votes === null ? [] : finding.votes;
   if (!Array.isArray(votes)) return { ok: false, reason: 'unreadable-votes' };
 
@@ -141,6 +216,7 @@ function countVotes(finding) {
   const counted = { real: 0, notReal: 0, abstain: 0 };
   const ignoredVotes = [];
   const seen = new Set();
+  const assignedKeys = assigned === undefined ? null : new Set(assigned.map((name) => name.toLowerCase()));
 
   for (const vote of Array.from(votes)) {
     if (!isObject(vote)) return { ok: false, reason: 'unreadable-votes' };
@@ -152,6 +228,10 @@ function countVotes(finding) {
     const key = verifier.toLowerCase();
     if (reviewer !== null && key === reviewer) {
       ignoredVotes.push({ verifier, reason: 'own-finding' });
+      continue;
+    }
+    if (assignedKeys !== null && !assignedKeys.has(key)) {
+      ignoredVotes.push({ verifier, reason: 'not-assigned' });
       continue;
     }
     const verdict = isText(vote.verdict) ? vote.verdict.trim().toLowerCase() : null;
@@ -169,7 +249,8 @@ function countVotes(finding) {
     else counted.abstain += 1;
   }
 
-  return { ok: true, counted, ignoredVotes };
+  const silent = assigned === undefined ? [] : assigned.filter((name) => !seen.has(name.toLowerCase()));
+  return { ok: true, counted, ignoredVotes, silent };
 }
 
 /**
@@ -184,6 +265,12 @@ function countVotes(finding) {
  *   reach a majority (AC-006-3).
  * @param {string} input.depth       `quick` | `standard` | `deep`.
  * @param {number} [input.expectedVerifiers]  Overrides the depth's expected count.
+ * @param {Array<{id:string, verifiers:string[]}>} [input.assignment]  The explicit candidate-to-verifier plan
+ *   (`planVerification`'s `assignments`). When given, every finding needs exactly one entry naming exactly
+ *   the expected number of DISTINCT verifiers, none of them its own reviewer (anything else blocks the
+ *   round); a vote from someone not assigned to that finding does not count (`not-assigned`); and an
+ *   assigned verifier with no counted vote is named in the finding's `incompleteVerifiers` (reason
+ *   `no-vote`), so the finding is `unverified` / `verifier-incomplete` however the other votes fell.
  * @param {boolean} [input.verificationCapability]  `false` means no subagent
  *   capability ran this round at all: every finding comes back `unverified`
  *   and nothing is dropped (AC-006-3). Anything other than an explicit
@@ -196,21 +283,18 @@ function tallyVotes(input) {
   if (!Array.isArray(input.findings)) return blocked('findings must be an array');
   if (!input.findings.every(isObject)) return blocked('findings must contain only objects');
 
-  const depth = isText(input.depth) ? input.depth.trim().toLowerCase() : null;
-  if (depth === null || !Object.prototype.hasOwnProperty.call(EXPECTED_VERIFIERS, depth)) {
-    return blocked(`unknown depth ${JSON.stringify(input.depth)} (expected quick, standard or deep)`);
-  }
-
-  let expected = EXPECTED_VERIFIERS[depth];
-  if (input.expectedVerifiers !== undefined) {
-    if (!Number.isInteger(input.expectedVerifiers) || input.expectedVerifiers < 0) {
-      return blocked('expectedVerifiers must be an integer >= 0 when given');
-    }
-    expected = input.expectedVerifiers;
-  }
+  const resolved = resolveExpected(input);
+  if (!resolved.ok) return blocked(resolved.reason);
+  const { expected } = resolved;
 
   const ids = input.findings.map((finding) => identity(finding.id));
   if (ids.some((id) => id === null)) return blocked('every finding needs an id');
+
+  let assignment = null;
+  if (input.assignment !== undefined) {
+    assignment = readAssignment(input, input.findings, expected);
+    if (!assignment.ok) return blocked(assignment.reason);
+  }
 
   const needed = majorityOf(expected);
   const quick = expected === 0;
@@ -238,7 +322,7 @@ function tallyVotes(input) {
       });
     }
 
-    const votes = countVotes(finding);
+    const votes = countVotes(finding, assignment === null ? undefined : assignment.byId.get(identity(finding.id)));
 
     if (!votes.ok) {
       // Unreadable votes: the finding stays, marked, and is presented.
@@ -254,7 +338,15 @@ function tallyVotes(input) {
 
     const tally = { ...votes.counted, expected, needed };
     const entry = { ...base, tally, ignoredVotes: votes.ignoredVotes };
-    const incompleteVerifiers = incompleteVerifiersOf(finding);
+    if (assignment !== null) entry.assigned = assignment.byId.get(identity(finding.id));
+    // Assigned verifiers who cast no counted vote are named here, so a candidate that lost one of its K
+    // verifiers is degraded rather than confirmed by the others (a silent verifier is not a "yes").
+    const named = incompleteVerifiersOf(finding);
+    const namedKeys = new Set(named.map((item) => item.verifier.trim().toLowerCase()));
+    const incompleteVerifiers = [
+      ...named,
+      ...votes.silent.filter((name) => !namedKeys.has(name.toLowerCase())).map((verifier) => ({ verifier, reason: 'no-vote' })),
+    ];
 
     if (quick) {
       // No verifier was expected, so no vote can speak for this finding.
@@ -335,4 +427,4 @@ function tallyVotes(input) {
   return result;
 }
 
-module.exports = { tallyVotes, majorityOf, EXPECTED_VERIFIERS, VERDICTS, NON_FINDING_KINDS };
+module.exports = { tallyVotes, majorityOf, resolveExpected, EXPECTED_VERIFIERS, VERDICTS, NON_FINDING_KINDS };
