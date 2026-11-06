@@ -12,7 +12,7 @@
  * direct `require(...)` call on the same input can never diverge. NO
  * business logic lives here, NO network calls, NO shell calls.
  *
- * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json
+ * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results> < payload.json
  *
  * `review-range` (TRD-013) is a thin pass-through to `chooseReviewRange`:
  * given `lastReviewedSha`, `commits` and `remediationShas` on top of what
@@ -103,6 +103,22 @@
  *           -- plans the areas and, when `reviewed` slice ids are given, names
  *           every changed path they did not cover
  *
+ * `results` (kata et2k) is the file-based half of the verification subcommands:
+ * agents write `out-<name>.json` and this reads them, instead of the orchestrator
+ * parsing what an agent yielded. One payload selects one function via `action`:
+ *   deadlines        { role, tier?, depth?, now?, policy? } -- the `deadlineAt` an agent started at `now` (default: the
+ *                    current time) must be stopped by: reviewer 15 min, verifier 5, security lane 15, per-role
+ *                    overridable by the policy's `deadlineMinutes`
+ *   collect          { expected[{ name, role, deadlineAt, sliceId?, paths?, candidateIds? }], dir, now?, scratchDir?,
+ *                    depth?, expectedVerifiers?, candidates? } -- classifies each agent arrived|missing|expired|invalid
+ *                    from `<dir>/out-<name>.json`, copies each arrival to scratch, and answers `reviewedSlices` (the
+ *                    `reviewed` of `slices`) and, when `depth` is given, `votesInput` (the payload of `votes`). An
+ *                    agent that did not arrive is never reviewed: its slice is unreviewed, its candidates unverified
+ *   failure          { status?, retryAfterSec?, message?, attempt?, failFastAfterSec? } -- retry, back off, fall back
+ *                    to the alternate model route, or fail fast to a recorded `partial` state
+ *              HONEST LIMIT: this computes deadlines and classifies; it does not stop an agent. Killing one at its
+ *              `deadlineAt` is the dispatcher's job, and nothing here may be read as enforcement.
+ *
  * The tier, approval and merge-gate subcommands (TRD-026) each take the facts
  * their module grades and answer with that module's result verbatim:
  *   tier       { kinds[{ kind, paths[] }], paths, secondAssessment?, proposedTier?,
@@ -161,6 +177,7 @@ const { loadPolicy } = require('./pr-review-policy');
 const { resolveRuleFiles } = require('./pr-review-rules');
 const { classifyPaths } = require('./pr-review-paths');
 const { checkDescription } = require('./pr-review-description');
+const { reviewDeadlines, collectResults, toVotesInput, classifyAgentFailure } = require('./pr-review-results');
 const { tallyVotes } = require('./pr-review-votes');
 const { resolveDepth, checkBounds, boundsFor, planSlices, verifyCoverage } = require('./pr-review-depth');
 const { offerExplainers } = require('./pr-review-explainer-offer');
@@ -527,6 +544,33 @@ function runReachability(payload) {
   return { ok: false, reason: `unknown reachability action ${JSON.stringify(action)} (expected trace, runtimes or secrets)` };
 }
 
+/**
+ * `results` selects one function of pr-review-results.js via `action`, mirroring the `reachability` precedent. The
+ * module owns the file reads (injectable deps, real fs here); this dispatcher only supplies the clock when the payload
+ * names none and, for `collect`, attaches the `votes` payload built from what was collected. An unknown action is
+ * refused in-band: a guessed deadline or classification would be worse than none.
+ */
+function runResults(payload) {
+  const request = isObject(payload) ? payload : {};
+  const action = typeof request.action === 'string' ? request.action.trim().toLowerCase() : null;
+  const now = request.now === undefined ? Date.now() : request.now;
+  if (action === 'deadlines') return reviewDeadlines({ ...request, now });
+  if (action === 'failure') return classifyAgentFailure(request);
+  if (action === 'collect') {
+    const collected = collectResults({ ...request, now });
+    if (request.depth === undefined) return collected;
+    return {
+      ...collected,
+      votesInput: toVotesInput(collected, {
+        depth: request.depth,
+        expectedVerifiers: request.expectedVerifiers,
+        candidates: request.candidates,
+      }),
+    };
+  }
+  return { ok: false, reason: `unknown results action ${JSON.stringify(action)} (expected deadlines, collect or failure)` };
+}
+
 const HANDLERS = Object.freeze({
   scope: runScope,
   'review-range': runReviewRange,
@@ -552,6 +596,7 @@ const HANDLERS = Object.freeze({
   'eval-compare': runEvalCompare,
   'eval-stale': runEvalStale,
   reachability: runReachability,
+  results: runResults,
 });
 
 /**
@@ -570,7 +615,7 @@ function main(argv) {
   if (handler === undefined) {
     process.stdout.write(
       JSON.stringify({
-        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json`,
+        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results> < payload.json`,
       }) + '\n'
     );
     return 1;
@@ -631,6 +676,7 @@ module.exports = {
   runEvalScore,
   runEvalCompare,
   runEvalStale,
+  runResults,
   LEDGER_ACTIONS,
   HANDLERS,
   main,
