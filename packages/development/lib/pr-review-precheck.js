@@ -36,10 +36,15 @@
  *   readGateConfig(baseRefName)     -> {ok, statusContext} | {ok:false, error}   (base-ref `.ensemble/local-ci.yaml`)
  *   readPolicy(baseRefName)         -> {ok, policy}                              (base-ref REVIEW.md; optional)
  *   prepareGate({headSha, baseRefName, dryRun}) -> {ok} | {ok:false, error}      (every network step: fetch the base and the head)
- *   claimGateStart({headSha, dryRun}) -> {claimed:true} | {claimed:false, existing:{pid?, startedAt?, alive, orphaned?, claimer?, marker?}}
+ *   claimGateStart({headSha, dryRun}) -> {claimed:true}
+ *                                      | {claimed:false, existing:{pid?, startedAt?, alive, orphaned?, claimer?, marker?}}  (already started)
+ *                                      | {claimed:false, blocked:{kind, reason}}   (another gate holds this head's one clone)
+ *                                      | {claimed:false, error}
  *                                        (`alive:null` = a young claim whose run is still going; `orphaned` = its run died first)
- *   startGate({headSha, baseRefName, dryRun}) -> {ok, pid?, logPath?, error?}
- *   releaseGateStart({headSha, dryRun})       -> void   (only after a failed `startGate`, so a retry can start)
+ *   startGate({headSha, baseRefName, dryRun}) -> {ok:true, pid, logPath, startedAt}
+ *                                              | {ok:false, error}                           (no gate process exists)
+ *                                              | {ok:false, error, mayBeRunning:true, pid}   (one may: keep the claim)
+ *   releaseGateStart({headSha, dryRun})       -> void   (only when no gate process can exist, so a retry can start one)
  *   findComment()                   -> {ok, comment: null | {id, body}}          (our one comment on this PR)
  *   postComment(body)               -> {ok, id?, url?, error?}
  *   updateComment(id, body)         -> {ok, id?, url?, error?}
@@ -332,6 +337,9 @@ async function startOnce({ deps, headSha, baseRefName, dryRun, statusContext, ol
   const prepared = await settle(() => deps.prepareGate({ headSha, baseRefName, dryRun }));
   if (!isObject(prepared) || prepared.ok !== true) return { action: 'start-failed', reason: `could not prepare the start: ${errorText(prepared)}`, statusContext };
   const claim = await settle(() => deps.claimGateStart({ headSha, dryRun }));
+  if (isObject(claim) && claim.claimed !== true && isObject(claim.blocked)) {
+    return { action: 'not-started', code: String(claim.blocked.kind), reason: String(claim.blocked.reason), statusContext };
+  }
   if (!isObject(claim) || (claim.claimed !== true && !isObject(claim.existing))) {
     return { action: 'start-failed', reason: `could not record the start: ${errorText(claim)}`, statusContext };
   }

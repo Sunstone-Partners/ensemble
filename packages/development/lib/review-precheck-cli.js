@@ -9,7 +9,9 @@
  *
  * Prints ONE JSON object on stdout (the precheck result, token-shaped strings redacted) and exits 0, or 1 when the
  * result is `ok:false`. `dryRun` posts no comment and starts the gate in ITS dry-run mode (no commit status is
- * published), under a separate start marker so a later real run is not blocked by it.
+ * published), under a separate start marker so a dry marker never makes a later real run read as "already started".
+ * A dry gate and a real gate for one head still share the runner's one clone of it (`.ensemble/local-ci-runs/<sha>`, keyed
+ * by the sha alone), so the second is refused, with a named reason, while the first is running.
  *
  * Shell-outs live here, never in the pure module: `gh` and `git` run as argv arrays (never a shell) with the
  * maintainer's own login, and every value that reaches argv was validated first. This module reads and writes only
@@ -39,6 +41,11 @@ const GH_TIMEOUT_MS = 60000;
 // A claim with no gate recorded is normal for the milliseconds between claiming and spawning. After this long the run that
 // made it died before it recorded a gate (a pid that merely looks alive may have been reused), so the claim is orphaned.
 const CLAIM_GRACE_MS = 60 * 1000;
+// The runner clones a head into `<repoRoot>/.ensemble/local-ci-runs/<sha>`, keyed by the sha ALONE, refuses a clone that already
+// exists, and sweeps one older than an hour before it clones. Both constants mirror local-ci-runner.js (RUNS_DIR,
+// DEFAULT_STALE_MS); a test holds them equal.
+const RUNS_SUBDIR = path.join('.ensemble', 'local-ci-runs');
+const STALE_CLONE_MS = 60 * 60 * 1000;
 
 /**
  * A base branch name the precheck will put on a git argv and hand to the gate as `origin/<name>`: a string that cannot be
@@ -179,6 +186,42 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
       }
     }
     return true;
+  };
+
+  /** What stops a gate from starting for this head because another gate holds the runner's one clone of it, or null. */
+  const blockedBy = (headSha, ownFile) => {
+    let names = [];
+    try {
+      names = fs.readdirSync(stateDir);
+    } catch (_e) {
+      names = [];
+    }
+    const sibling = new RegExp(`^precheck-pr-\\d+-${headSha}(?:\\.dry)?\\.gate\\.json$`);
+    const other = names
+      .filter((name) => sibling.test(name) && path.join(stateDir, name) !== ownFile)
+      .map((name) => describeMarker(path.join(stateDir, name)))
+      .find((m) => m.alive !== false || m.orphaned === true);
+    if (other !== undefined) {
+      const state = other.pid !== undefined ? `still running (pid ${other.pid}${other.startedAt ? `, started ${other.startedAt}` : ''})` : 'being started, or was interrupted while starting';
+      return {
+        kind: 'gate-running-for-head',
+        reason: `a ${other.mode} gate for this head is ${state} (marker ${other.marker}); a dry run and a real run, or two pull requests with the same head, share the runner's one clone of the head, so a second gate would be refused by the runner and post nothing. Run the precheck again once that gate has finished`,
+      };
+    }
+    const clone = path.join(root, RUNS_SUBDIR, headSha);
+    let st = null;
+    try {
+      st = fs.lstatSync(clone);
+    } catch (_e) {
+      st = null;
+    }
+    if (st !== null && now().getTime() - st.mtimeMs <= STALE_CLONE_MS) {
+      return {
+        kind: 'clone-exists',
+        reason: `the runner already holds a clone of this head (${rel(clone)}): an earlier gate run is still going, or died and left it. The runner never reuses a clone, so a gate started now would exit without posting a status. Remove the directory if no gate is running, then run the precheck again (the runner itself sweeps clones older than an hour)`,
+      };
+    }
+    return null;
   };
 
   // `origin/<base>` must be fresh before the base-ref config/policy are read and before the gate runs (it refuses a
@@ -323,8 +366,16 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
       return prepare(headSha, baseRefName);
     },
 
-    /** Atomic create-once marker: exactly one concurrent caller gets `claimed:true` for a head. Not a queue or lock. */
+    /**
+     * Atomic create-once marker: exactly one concurrent caller gets `claimed:true` for a head. Not a queue or lock.
+     *
+     * The runner's clone is keyed by the head sha alone, so only ONE gate can run per sha whatever its mode or PR: a second
+     * one finds the clone and exits without posting. So after a claim is made it is given back, with `blocked`, when another
+     * gate for this sha (the other mode, another PR) is running, being started or was interrupted while starting, or when
+     * the runner already holds a clone of it that it has not yet swept.
+     */
     claimGateStart({ headSha, dryRun }) {
+      if (!SHA_RE.test(headSha)) return { claimed: false, error: 'the head commit is not a full sha' };
       const file = markerPath(headSha, dryRun);
       let fd;
       try {
@@ -341,6 +392,11 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
         return { claimed: false, error: `could not record the claim: ${e.message}` };
       } finally {
         fs.closeSync(fd);
+      }
+      const blocked = blockedBy(headSha, file);
+      if (blocked !== null) {
+        fs.rmSync(file, { force: true });
+        return { claimed: false, blocked };
       }
       return { claimed: true };
     },

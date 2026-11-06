@@ -9,6 +9,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const cp = require('child_process');
 const { EventEmitter } = require('events');
 
 const { makeDeps, validatePayload, main, STATE_SUBDIR } = require('../lib/review-precheck-cli');
@@ -88,10 +89,15 @@ describe('claimGateStart: a create-once marker', () => {
     expect(results.filter((r) => r.claimed === false && r.existing)).toHaveLength(7);
   });
 
-  it('a different head, and the dry-run namespace, are independent claims', () => {
+  it('a different head, and the dry-run namespace, are independent markers (a dry claim waits only while a real gate for the head is LIVE: they share one clone)', () => {
     const d = deps();
     expect(d.claimGateStart({ headSha: HEAD, dryRun: false }).claimed).toBe(true);
     expect(d.claimGateStart({ headSha: 'b'.repeat(40), dryRun: false }).claimed).toBe(true);
+    // The real claim above is young and its run is alive, so it holds the head's one clone: a dry claim is refused ...
+    expect(d.claimGateStart({ headSha: HEAD, dryRun: true })).toMatchObject({ claimed: false, blocked: { kind: 'gate-running-for-head' } });
+    // ... until that gate has finished, and then the dry run has its OWN marker.
+    const real = path.join(root, STATE_SUBDIR, `precheck-pr-9-${HEAD}.gate.json`);
+    fs.writeFileSync(real, JSON.stringify({ ...JSON.parse(fs.readFileSync(real, 'utf8')), pid: DEAD_PID }));
     expect(d.claimGateStart({ headSha: HEAD, dryRun: true }).claimed).toBe(true);
     expect(d.claimGateStart({ headSha: HEAD, dryRun: false }).claimed).toBe(false);
   });
@@ -187,24 +193,25 @@ describe('startGate', () => {
   });
 });
 
-describe('start-once through the entry flow (AC1)', () => {
-  const table = (extra = {}) => ({
-    'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nx\n## Risk\nx\n## How to revert\nx\n', author: { login: 'author' }, isCrossRepository: false }),
-    'pulls/9/reviews': ok([[]]),
-    'git/commits': ok({ tree: { sha: 'c'.repeat(40) } }),
-    'branches/dev/protection': fail('gh: Branch not protected (HTTP 404)', JSON.stringify({ message: 'Branch not protected' })),
-    '/statuses': ok([[]]),
-    'fetch --quiet origin dev': ok(''),
-    [`fetch --quiet origin ${HEAD}`]: ok(''),
-    'rev-parse --verify --end-of-options refs/remotes/origin/dev^{commit}': ok(`${BASE_SHA}\n`),
-    [`show ${BASE_SHA}:.ensemble/local-ci.yaml`]: ok(CONFIG_YAML),
-    'cat-file -e': fail('missing'),
-    'api user': ok({ login: 'me' }),
-    'issues/9/comments': ok([[]]),
-    '-X POST': ok({ id: 1, html_url: 'u' }),
-    ...extra,
-  });
+/** What `gh` and `git` answer for a healthy open PR whose head is on this repository. */
+const table = (extra = {}) => ({
+  'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nx\n## Risk\nx\n## How to revert\nx\n', author: { login: 'author' }, isCrossRepository: false }),
+  'pulls/9/reviews': ok([[]]),
+  'git/commits': ok({ tree: { sha: 'c'.repeat(40) } }),
+  'branches/dev/protection': fail('gh: Branch not protected (HTTP 404)', JSON.stringify({ message: 'Branch not protected' })),
+  '/statuses': ok([[]]),
+  'fetch --quiet origin dev': ok(''),
+  [`fetch --quiet origin ${HEAD}`]: ok(''),
+  'rev-parse --verify --end-of-options refs/remotes/origin/dev^{commit}': ok(`${BASE_SHA}\n`),
+  [`show ${BASE_SHA}:.ensemble/local-ci.yaml`]: ok(CONFIG_YAML),
+  'cat-file -e': fail('missing'),
+  'api user': ok({ login: 'me' }),
+  'issues/9/comments': ok([[]]),
+  '-X POST': ok({ id: 1, html_url: 'u' }),
+  ...extra,
+});
 
+describe('start-once through the entry flow (AC1)', () => {
   it('two precheck runs on one head start the gate once and the second says it was already started', async () => {
     const { run } = fakeRun(table());
     const { spawnProcess, spawned } = fakeSpawn();
@@ -458,6 +465,133 @@ describe('claim markers: recorded gate, young claim, orphaned claim (review roun
     expect(a.error).toContain('network down');
     expect(b).toBe(a);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('one gate per head: the runner keys its clone by the sha alone (review round 1, finding 6)', () => {
+  const marker = (name) => path.join(root, STATE_SUBDIR, name);
+  const DRY = `precheck-pr-9-${HEAD}.dry.gate.json`;
+  const REAL = `precheck-pr-9-${HEAD}.gate.json`;
+  const patch = (name, fields) => fs.writeFileSync(marker(name), JSON.stringify({ ...JSON.parse(fs.readFileSync(marker(name), 'utf8')), ...fields }));
+  const claim = (d, dryRun, headSha = HEAD) => d.claimGateStart({ headSha, dryRun });
+  /** A spawn whose gates stay alive for the whole test (their pid is this process's own). */
+  const alive = () => {
+    const spawned = [];
+    const spawnProcess = () => {
+      const child = new EventEmitter();
+      child.pid = process.pid;
+      child.unref = () => {};
+      spawned.push(child);
+      return child;
+    };
+    return { spawnProcess, spawned };
+  };
+
+  it('premise: the real runner keeps ONE clone per sha and refuses a second, and this module sees the clone the runner made', () => {
+    const runner = require('../lib/local-ci-runner');
+    const run = (cwd, ...args) => cp.execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
+    const work = path.join(root, 'work');
+    fs.mkdirSync(work);
+    run(work, 'init', '--quiet');
+    fs.writeFileSync(path.join(work, 'a.txt'), 'a');
+    run(work, 'add', 'a.txt');
+    run(work, 'commit', '--quiet', '-m', 'c1');
+    const sha = run(work, 'rev-parse', 'HEAD');
+    const gitDeps = { git: (args, o = {}) => { const r = cp.spawnSync('git', args, { cwd: o.cwd, encoding: 'utf8', input: o.input }); return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' }; } };
+    expect(runner.DEFAULT_STALE_MS).toBe(60 * 60 * 1000);
+    const before = makeDeps({ repo: 'o/r', pr: 9, repoRoot: work }).claimGateStart({ headSha: sha, dryRun: false });
+    expect(before.claimed).toBe(true);
+    makeDeps({ repo: 'o/r', pr: 9, repoRoot: work }).releaseGateStart({ headSha: sha, dryRun: false });
+    const first = runner.cloneAtSha({ repoRoot: work, sha, deps: gitDeps });
+    const second = runner.cloneAtSha({ repoRoot: work, sha, deps: gitDeps });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    expect(second.error).toContain('already exists');
+    expect(makeDeps({ repo: 'o/r', pr: 9, repoRoot: work }).claimGateStart({ headSha: sha, dryRun: false })).toMatchObject({ claimed: false, blocked: { kind: 'clone-exists' } });
+  });
+
+  it('a live dry-run gate blocks a real claim for the same head, and the refused claim leaves nothing behind', () => {
+    const d = deps();
+    expect(claim(d, true).claimed).toBe(true);
+    patch(DRY, { pid: process.pid, startedAt: 't0' });
+    const r = claim(d, false);
+    expect(r).toMatchObject({ claimed: false, blocked: { kind: 'gate-running-for-head' } });
+    expect(r.blocked.reason).toContain(`a dry-run gate for this head is still running (pid ${process.pid}, started t0)`);
+    expect(r.blocked.reason).toContain(`.ensemble/pr-review/${DRY}`);
+    expect(fs.existsSync(marker(REAL))).toBe(false);
+  });
+
+  it('a live real gate blocks a dry-run claim for the same head', () => {
+    const d = deps();
+    expect(claim(d, false).claimed).toBe(true);
+    patch(REAL, { pid: process.pid, startedAt: 't0' });
+    expect(claim(d, true)).toMatchObject({ claimed: false, blocked: { kind: 'gate-running-for-head' } });
+    expect(fs.existsSync(marker(DRY))).toBe(false);
+  });
+
+  it('once the other mode\'s gate has finished (its process is gone) the claim goes through: a dry run does not block a later real run', () => {
+    const d = deps();
+    expect(claim(d, true).claimed).toBe(true);
+    patch(DRY, { pid: DEAD_PID, startedAt: 't0' });
+    expect(claim(d, false).claimed).toBe(true);
+  });
+
+  it('a young claim of the other mode (its run alive, no gate recorded yet) blocks, and so does an orphaned one: a gate may have been launched in the instant before its run died', () => {
+    const d = deps();
+    expect(claim(d, true).claimed).toBe(true);
+    expect(claim(d, false)).toMatchObject({ claimed: false, blocked: { kind: 'gate-running-for-head' } });
+    expect(claim(d, false).blocked.reason).toContain('being started, or was interrupted while starting');
+    patch(DRY, { claimer: DEAD_PID });
+    expect(claim(d, false)).toMatchObject({ claimed: false, blocked: { kind: 'gate-running-for-head' } });
+  });
+
+  it('another pull request with the same head shares the clone and blocks; a different head does not', () => {
+    const other = deps({ pr: 77 });
+    expect(claim(other, false).claimed).toBe(true);
+    patch(`precheck-pr-77-${HEAD}.gate.json`, { pid: process.pid, startedAt: 't0' });
+    expect(claim(deps(), false)).toMatchObject({ claimed: false, blocked: { kind: 'gate-running-for-head' } });
+    expect(claim(deps(), false, 'b'.repeat(40)).claimed).toBe(true);
+  });
+
+  it('a clone left in the runner\'s directory blocks the claim while the runner would still refuse it, and not once the runner would sweep it', () => {
+    const clone = path.join(root, '.ensemble', 'local-ci-runs', HEAD);
+    fs.mkdirSync(clone, { recursive: true });
+    const d = deps();
+    const r = claim(d, false);
+    expect(r).toMatchObject({ claimed: false, blocked: { kind: 'clone-exists' } });
+    expect(r.blocked.reason).toContain('.ensemble/local-ci-runs/');
+    expect(fs.existsSync(marker(REAL))).toBe(false);
+    const old = new Date(Date.now() - 61 * 60 * 1000);
+    fs.utimesSync(clone, old, old);
+    expect(claim(d, false).claimed).toBe(true);
+  });
+
+  it('refuses to claim for anything but a full sha: the head names a file', () => {
+    expect(deps().claimGateStart({ headSha: '../../x', dryRun: false })).toMatchObject({ claimed: false, error: expect.stringContaining('not a full sha') });
+    expect(fs.existsSync(path.join(root, STATE_SUBDIR))).toBe(false);
+  });
+
+  it('through the entry flow: while a dry gate runs the real run starts nothing and says why; after it has finished the real run starts its gate', async () => {
+    const { run } = fakeRun(table());
+    const a = alive();
+    const dry = await runPrecheck({ dryRun: true }, deps({ run, spawnProcess: a.spawnProcess }));
+    expect(dry.gate.action).toBe('started');
+    const blocked = await runPrecheck({}, deps({ run, spawnProcess: a.spawnProcess }));
+    expect(blocked.gate).toMatchObject({ action: 'not-started', code: 'gate-running-for-head' });
+    expect(blocked.comment.body).toContain('a dry-run gate for this head is still running');
+    expect(a.spawned).toHaveLength(1);
+    patch(DRY, { pid: DEAD_PID });
+    const real = await runPrecheck({}, deps({ run, spawnProcess: a.spawnProcess }));
+    expect(real.gate.action).toBe('started');
+    expect(a.spawned).toHaveLength(2);
+  });
+
+  it('through the entry flow: a clone the runner is holding stops the start before any process is spawned', async () => {
+    fs.mkdirSync(path.join(root, '.ensemble', 'local-ci-runs', HEAD), { recursive: true });
+    const a = alive();
+    const r = await runPrecheck({}, deps({ run: fakeRun(table()).run, spawnProcess: a.spawnProcess }));
+    expect(r.gate).toMatchObject({ action: 'not-started', code: 'clone-exists' });
+    expect(a.spawned).toHaveLength(0);
   });
 });
 

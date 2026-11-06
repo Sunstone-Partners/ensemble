@@ -256,6 +256,17 @@ describe('a gate that may be running keeps its claim (review round 1, finding 5)
   });
 });
 
+describe('one gate per head: a claim refused because another gate holds the head\'s clone (review round 1, finding 6)', () => {
+  it('reports the refusal by name, starts nothing and releases nothing (the deps already gave the claim back)', async () => {
+    const blocked = { kind: 'gate-running-for-head', reason: 'a dry-run gate for this head is still running (pid 7)' };
+    const { deps, calls } = makeDeps({ claimGateStart: async () => ({ claimed: false, blocked }) });
+    const r = await runPrecheck({}, deps);
+    expect(r.gate).toMatchObject({ action: 'not-started', code: 'gate-running-for-head' });
+    expect(calls.startGate + calls.release).toBe(0);
+    expect(r.comment.body).toContain('Local CI gate: not started. a dry-run gate for this head is still running (pid 7)');
+  });
+});
+
 describe('human blockers (AC2)', () => {
   it('lists every missing description section', async () => {
     const { deps } = makeDeps({ readPr: async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nok\n', author: 'x' }) });
