@@ -12,7 +12,7 @@
  * direct `require(...)` call on the same input can never diverge. NO
  * business logic lives here, NO network calls, NO shell calls.
  *
- * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json
+ * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|mode|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json
  *
  * `review-range` (TRD-013) is a thin pass-through to `chooseReviewRange`:
  * given `lastReviewedSha`, `commits` and `remediationShas` on top of what
@@ -175,6 +175,7 @@ const { resolveDepth, checkBounds, boundsFor, planSlices, verifyCoverage } = req
 const { offerExplainers } = require('./pr-review-explainer-offer');
 const { renderBriefFromFiles } = require('./pr-review-brief-files');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
+const { selectMode } = require('./pr-review-mode');
 const { evaluateApprovals } = require('./pr-review-approvals');
 const { evaluateGate } = require('./pr-review-gate');
 const { computeMetrics, compareCohorts } = require('./pr-review-metrics');
@@ -466,6 +467,19 @@ function runTier(payload) {
 }
 
 /**
+ * `mode` answers which of the two review-run modes this PR gets -- `light`
+ * or `full` -- from the `tier` result the payload carries as `tierResult`
+ * (the `tier` subcommand's output, verbatim). The mode comes from that tier
+ * and nothing else: never the size of the diff, never an agent's judgement.
+ * Fail closed means FULL: a missing, unreadable or ambiguous `tierResult`
+ * answers `mode:'full'` with `ok:false` and the reason named (exit 0).
+ */
+function runMode(payload) {
+  const request = isObject(payload) ? payload : {};
+  return selectMode(request.tierResult);
+}
+
+/**
  * `approvals` and `gate` are pass-throughs to the one module that owns each
  * question. Both grade their input IN BAND and fail closed: a request, a tier
  * or a review record they cannot read is `satisfied:false` / `mergeable:false`
@@ -568,6 +582,7 @@ const HANDLERS = Object.freeze({
   depth: runDepth,
   slices: runSlices,
   tier: runTier,
+  mode: runMode,
   approvals: runApprovals,
   gate: runGate,
   'explainer-offer': runExplainerOffer,
@@ -596,7 +611,7 @@ function main(argv) {
   if (handler === undefined) {
     process.stdout.write(
       JSON.stringify({
-        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json`,
+        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|mode|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json`,
       }) + '\n'
     );
     return 1;
@@ -649,6 +664,7 @@ module.exports = {
   runDepth,
   runSlices,
   runTier,
+  runMode,
   runApprovals,
   runGate,
   runExplainerOffer,
