@@ -844,6 +844,8 @@ Policy *keys* are read from the **root** file only, from a fenced ` ```ensemble-
 | `lowWaiverEnabled` | Whether a Low tier may actually mean Low | `false` |
 | `soloMaintainer` | With exactly one maintainer login: a High PR that touches no sensitive path and was directed by that maintainer needs one human instead of two. A maintainer who is not the PR's author must have approved the current head on the host; a maintainer who is the author (an agent PR committed under their own login, which the host will not let them approve) is credited on their own word as author-as-director, and the result carries the warning `solo-maintainer-self-credit` (a `Directed by:` line alone never lowers the requirement for anyone else). The security lane still blocks High; a PR touching a sensitive path or the policy itself keeps two humans | `false` |
 | `sliceThreshold` | Changed lines above which a PR is reviewed area by area | `1500` |
+| `deadlineMinutes` | Per-agent time budget in minutes, as an object with any of `reviewer`, `verifier`, `security` (each 1-60). Used to compute the `deadlineAt` that `pr-review-cli.js results deadlines` hands the dispatcher; the policy and the CLI only compute it, stopping an agent at that time is the dispatcher's job | `{"reviewer": 15, "verifier": 5, "security": 15}` |
+| `maxConcurrentAgents` | Most review agents that may run at once (1-32), kept below the account's rate limit | `8` |
 
 Two deliberate properties:
 
