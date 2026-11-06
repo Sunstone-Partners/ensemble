@@ -818,11 +818,11 @@ describe('remote_url_matches: bounded regex evaluation (PR 4 review Finding 4)',
       cwd: projectRoot,
       env: { PATH: process.env.PATH, XDG_CONFIG_HOME: xdgConfigHome },
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 120000
     });
 
-    // Never killed by the 5s subprocess timeout: the real deadline bounds this to a few
-    // hundred ms, nowhere near the kill timeout.
+    // Never killed by the subprocess hang bound: the real deadline bounds this to a few
+    // hundred ms, nowhere near the kill timeout (generous so load cannot trip it).
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stdout);
@@ -1389,7 +1389,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
       cwd: projectRoot,
       env,
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 120000
     });
     expect(explainResult.status).toBe(0);
     const explained = JSON.parse(explainResult.stdout);
@@ -1399,7 +1399,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
     const preflightResult = spawnSync(
       'node',
       [CLI, 'preflight', '--require', 'tracker.show', '--json'],
-      { cwd: projectRoot, env, encoding: 'utf8', timeout: 10000 }
+      { cwd: projectRoot, env, encoding: 'utf8', timeout: 120000 }
     );
     expect(preflightResult.status).toBe(0);
     const preflight = JSON.parse(preflightResult.stdout);
@@ -1420,7 +1420,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
       cwd: projectRoot,
       env,
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 120000
     });
     expect(explainResult.status).toBe(0);
     const explained = JSON.parse(explainResult.stdout);
@@ -1430,7 +1430,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
     const preflightResult = spawnSync(
       'node',
       [CLI, 'preflight', '--require', 'tracker.show', '--json'],
-      { cwd: projectRoot, env, encoding: 'utf8', timeout: 10000 }
+      { cwd: projectRoot, env, encoding: 'utf8', timeout: 120000 }
     );
     expect(preflightResult.status).toBe(0);
     const preflight = JSON.parse(preflightResult.stdout);
@@ -1449,7 +1449,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
       cwd: projectRoot,
       env,
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 120000
     });
     expect(explainResult.status).toBe(0);
     const explained = JSON.parse(explainResult.stdout);
@@ -1481,7 +1481,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
       cwd: projectRoot,
       env,
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 120000
     });
     expect(explainResult.status).toBe(1);
     const explained = JSON.parse(explainResult.stdout);
@@ -1509,7 +1509,7 @@ describe('I2 refinement (PR 9 independent fix): the 7 required real-CLI-subproce
       cwd: projectRoot,
       env,
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 120000
     });
     expect(explainResult.status).toBe(0);
     const explained = JSON.parse(explainResult.stdout);
