@@ -551,7 +551,7 @@ function prepare(rawOptions, deps, setStaging) {
     absent['delta.diff'] = range.reason;
   }
 
-  const numstat = gitOk(deps, ['diff', '--numstat', '-z', '--no-renames', `${baseSha}...${headSha}`], { cwd: repoRoot }, 'changed-paths-failed', 'facts', 'git diff --numstat failed');
+  const numstat = gitOk(deps, ['diff', '--numstat', '-z', '--no-renames', baseSha, headSha], { cwd: repoRoot }, 'changed-paths-failed', 'facts', 'git diff --numstat failed');
   let files;
   try {
     files = parseNumstatZ(numstat.stdout);
@@ -581,7 +581,7 @@ function prepare(rawOptions, deps, setStaging) {
     headSha,
     treeSha,
     range: { mode: range.mode, range: range.range, fullRange: range.fullRange, reason: range.reason, lastReviewedSha: range.lastReviewedSha || null, unvouched: range.unvouched },
-    diffForm: { range: `${baseSha}...${headSha}`, changedPaths: `git diff --numstat -z --no-renames ${baseSha}...${headSha}` },
+    diffForm: { range: `${baseSha}...${headSha}`, changedPaths: `git diff --numstat -z --no-renames ${baseSha} ${headSha}` },
     changedPaths,
     numstat: files,
     totals: {

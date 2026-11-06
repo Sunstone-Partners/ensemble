@@ -35,7 +35,7 @@ One JSON object on stdin.
 | `snapshot/` | The head's tree from `git archive`, checked against `git ls-tree` object for object (every file, symlink and executable bit, and nothing extra), then made read-only. Nothing is ever written inside it. |
 | `range.diff` | `BASE...HEAD`. |
 | `delta.diff` | `lastReviewedSha..HEAD`, only when `review-range` says `delta`. Otherwise absent, with the reason under `absent` in the manifest (`first-round`, `unvouched-history`, ...). |
-| `facts.json` | Policy and CODEOWNERS as the **base** commit states them, the `paths` classification (inputs and result), tier inputs, and `changedPaths` from `git diff --numstat -z --no-renames`. |
+| `facts.json` | Policy and CODEOWNERS as the **base** commit states them, the `paths` classification (inputs and result), tier inputs, and `changedPaths` from `git diff --numstat -z --no-renames BASE HEAD` (the two-argument form the skill pins; `diffForm` records both it and the `range.diff` form). |
 | `probe.js` | A runner agents `require()`: `load(rel)` a module of the head, `read`, `readAtBase`, `run(argv)` (no shell, read-only snapshot as cwd) and `chain(steps)`. |
 | `baseline.json`, `baseline.log` | The baseline test run: files and why each was picked, command, exit code, redacted output. The baseline runs on a scratch copy, never in `snapshot/`. |
 | `manifest.json` | The inputs and the sha256 of every artifact. |

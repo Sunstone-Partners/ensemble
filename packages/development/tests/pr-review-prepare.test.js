@@ -297,6 +297,24 @@ describe('changedPaths is NUL-delimited and rename-safe (AC3)', () => {
     expect(facts.totals.binary).toBe(1);
   });
 
+  it('changedPaths is the two-argument diff the skill pins (BASE HEAD), range.diff stays BASE...HEAD', () => {
+    const fx = makeFixture();
+    // A base that has moved on since the fork: not an ancestor of the head, so the two forms differ.
+    git(fx.root, ['checkout', '-q', '-b', 'moved', fx.base]);
+    write(fx.root, 'landed-on-base.txt', 'x\n');
+    git(fx.root, ['add', '-A']);
+    git(fx.root, ['commit', '-q', '-m', 'landed on base branch']);
+    const movedBase = git(fx.root, ['rev-parse', 'HEAD']);
+    const r = prepareReview(opts(fx, { baseSha: movedBase, lastReviewedSha: undefined, remediationShas: undefined }));
+    const facts = JSON.parse(fs.readFileSync(r.artifacts['facts.json'].path, 'utf8'));
+    expect(facts.changedPaths).toContain('landed-on-base.txt'); // the skill's form lists it: more review, never less
+    expect(fs.readFileSync(r.artifacts['range.diff'].path, 'utf8')).not.toContain('landed-on-base.txt');
+    expect(facts.diffForm).toEqual({
+      range: `${movedBase}...${fx.head}`,
+      changedPaths: `git diff --numstat -z --no-renames ${movedBase} ${fx.head}`,
+    });
+  });
+
   it('parseNumstatZ keeps a path with tabs and newlines whole and refuses output it cannot read', () => {
     expect(parseNumstatZ('1\t2\ta\tb\nc\0')).toEqual([{ path: 'a\tb\nc', added: 1, deleted: 2, binary: false }]);
     expect(() => parseNumstatZ('1\t2\tno-terminator')).toThrow();
