@@ -15,8 +15,8 @@
  *   review   {action: classify|decide, reviews}    classifyReviews / decideBlock
  *   sweep    {facts, trackedKeys}                  findUntracked
  *   timing   {action: ready|verdict|record|fidelity|note, input}
- *   merge    {headSha, statuses, repoRoot, baseRef, reviews?}  merge readiness for a PR
- *   gate     {repoRoot, headSha, baseRef, repo, dryRun?}  full gate run
+ *   merge    {headSha, statuses, repoRoot, baseRef, repo, pr, reviews?}  merge readiness: a verified local status, else hosted CI
+ *   gate     {repoRoot, headSha, baseRef, repo, pr, dryRun?, forceLocal?}  hosted CI if accepted, else the full local run
  *
  * TRUST: the approval set and the command list the runner executes come ONLY from
  * `.ensemble/local-ci.yaml` as committed at the PR's BASE ref (`git show <baseRef>:...`),
@@ -27,6 +27,9 @@
  *
  * TRUST (honest actor): the status is posted with the maintainer's own `gh` login. pr-merge verifies the head-SHA binding,
  * the run record and review state; it does NOT verify who posted the status. There is no GitHub App, key or token here.
+ * TRUST (hosted reuse, opt-in via the base config's `hosted_reuse`): `merge` and `gate` may instead accept the hosted
+ * jobs GitHub Actions ran on the exact head, which this CLI reads from GitHub itself (local-ci-hosted.js documents what
+ * is and is not verified); the payload never carries hosted results.
  *
  * FAIL CLOSED: malformed or oversized (> MAX_STDIN_BYTES) JSON is rejected
  * before any handler runs (exit 1, `{error}`, no side effects). Every string
@@ -43,6 +46,7 @@ const { classifyReviews, decideBlock } = require('./local-ci-review');
 const { findUntracked } = require('./local-ci-sweep');
 const timing = require('./local-ci-timing');
 const rollout = require('./local-ci-rollout');
+const { verifyHosted } = require('./local-ci-hosted');
 
 // config and runner need js-yaml. They load on first use so the CLI still starts
 // (and reports a usable error) where js-yaml is not resolvable, e.g. a bare vendor dir.
@@ -57,7 +61,7 @@ const SHA_RE = /^[0-9a-fA-F]{40}$/;
 // Payload keys each handler accepts; anything else is rejected (fail closed).
 const CONFIG_KEYS = ['source', 'repoRoot', 'baseRef'];
 const RUN_KEYS = ['repoRoot', 'headSha', 'baseRef'];
-const GATE_KEYS = ['repoRoot', 'headSha', 'baseRef', 'repo', 'pr', 'dryRun'];
+const GATE_KEYS = ['repoRoot', 'headSha', 'baseRef', 'repo', 'pr', 'dryRun', 'forceLocal'];
 const MERGE_KEYS = ['headSha', 'statuses', 'repoRoot', 'baseRef', 'repo', 'pr', 'reviews'];
 
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -135,6 +139,16 @@ function defaultDeps() {
         return { ok: true, info: JSON.parse(r.stdout) };
       } catch (_e) {
         return { ok: false, error: 'gh pr view returned output that is not JSON' };
+      }
+    },
+    // GET only, argv elements (no shell); `path` is built from validated repo, hex SHA and integer run id.
+    ghApi: (apiPath) => {
+      const r = tool('gh', ['api', apiPath]);
+      if (r.status !== 0) return { ok: false, error: `gh api failed: ${String(r.stderr).trim().slice(0, 200) || `exit ${r.status}`}` };
+      try {
+        return { ok: true, json: JSON.parse(r.stdout) };
+      } catch (_e) {
+        return { ok: false, error: 'gh api returned output that is not JSON' };
       }
     },
     env: process.env,
@@ -379,25 +393,34 @@ function runMerge(payload, deps) {
   // GitHub status contexts are case-insensitive: compare lower-cased (we post the exact configured string).
   const wantContext = cfg.approvalSet.statusContext.toLowerCase();
   const ours = statuses.filter((s) => isObject(s) && typeof s.context === 'string' && s.context.toLowerCase() === wantContext);
+
+  // A verified local status wins (no network). Otherwise `localRefusal` says why not and hosted CI gets its turn.
+  let localRefusal;
   if (ours.length === 0) {
-    return refuse(`no local CI status (${cfg.approvalSet.statusContext}) found: the local gate has not run for ${headSha}`, { missingRun: true });
+    localRefusal = refuse(`no local CI status (${cfg.approvalSet.statusContext}) found: the local gate has not run for ${headSha}`, { missingRun: true });
+  } else {
+    const problems = [];
+    for (const s of ours) {
+      if (s.state !== 'success') {
+        problems.push(`status on ${s.sha} is ${s.state}`);
+        continue;
+      }
+      const v = verifyRecord({ description: s.description, statusCommitSha: s.sha, headSha, workflowSet, runnerBlobSha: cfg.configBlobSha });
+      if (v.ok) return { ok: true, mergeReady: true, headSha, context: cfg.approvalSet.statusContext, record: v.fields, hostedCiWaitRequired: false };
+      problems.push(v.headMismatch || v.setMismatch || v.runnerMismatch || v.error || 'record did not verify');
+    }
+    const moved = ours.find((s) => s.state === 'success' && isText(s.sha) && s.sha.toLowerCase() !== headSha.toLowerCase());
+    localRefusal = refuse(problems.join('; '), {
+      missingRun: !ours.some((s) => s.state === 'success'),
+      ...(moved ? { statusSha: moved.sha, headMoved: true } : {}),
+    });
   }
 
-  const problems = [];
-  for (const s of ours) {
-    if (s.state !== 'success') {
-      problems.push(`status on ${s.sha} is ${s.state}`);
-      continue;
-    }
-    const v = verifyRecord({ description: s.description, statusCommitSha: s.sha, headSha, workflowSet, runnerBlobSha: cfg.configBlobSha });
-    if (v.ok) return { ok: true, mergeReady: true, headSha, context: cfg.approvalSet.statusContext, record: v.fields, hostedCiWaitRequired: false };
-    problems.push(v.headMismatch || v.setMismatch || v.runnerMismatch || v.error || 'record did not verify');
+  const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet }, deps);
+  if (hosted.ok) {
+    return { ok: true, mergeReady: true, headSha, source: 'hosted', hostedJobs: hosted.jobs, hostedCiWaitRequired: false };
   }
-  const moved = ours.find((s) => s.state === 'success' && isText(s.sha) && s.sha.toLowerCase() !== headSha.toLowerCase());
-  return refuse(problems.join('; '), {
-    missingRun: !ours.some((s) => s.state === 'success'),
-    ...(moved ? { statusSha: moved.sha, headMoved: true } : {}),
-  });
+  return hosted.disabled ? localRefusal : { ...localRefusal, reason: `${localRefusal.reason}; ${hosted.reason}`, hostedRefused: true };
 }
 
 /* ------------------------------------------------------------------------ gate */
@@ -466,6 +489,17 @@ async function runGateFlow(payload, deps) {
   if (prProblem) return stop('config', prProblem);
   const cfg = loadGateConfig(deps, repoRoot, baseRef, headSha);
   if (!cfg.ok) return stop('config', `local CI config invalid: ${cfg.problems.join('; ')}`);
+
+  // 2b. Hosted CI already ran these jobs on this exact head: accept them instead of repeating the work. Only when the base
+  // config opted in and everything verifies (see local-ci-hosted.js); anything else falls through to the local run below.
+  if (payload.forceLocal !== undefined && typeof payload.forceLocal !== 'boolean') throw new Error('gate: forceLocal must be a boolean');
+  if (payload.forceLocal !== true) {
+    const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet }, deps);
+    if (hosted.ok) {
+      return { ...report, stage: 'hosted', ok: true, mergeReady: true, source: 'hosted', hostedJobs: hosted.jobs, ranLocally: false };
+    }
+    if (!hosted.disabled) report.hostedRefused = hosted.reason;
+  }
 
   // 3. Run in a clean clone at the exact head (the runner owns checkout and cleanup).
   const result = deps.runGate(runnerOptions(repoRoot, headSha, cfg), deps.runnerDeps);

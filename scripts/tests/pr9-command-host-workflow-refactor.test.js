@@ -171,7 +171,7 @@ describe('TRD-039-TEST Scenario: Merge safety rules unchanged', () => {
 
   test('the NEVER-merge rule requires a verified passing local gate for the exact head', () => {
     expect(rule).toBeDefined();
-    expect(rule).toMatch(/verified passing local CI status bound to the exact head SHA/);
+    expect(rule).toMatch(/verified pass bound to the exact head SHA \(local status or verified hosted jobs\)/);
     expect(rule).toContain('local-ci-gate skill');
     expect(rule).toMatch(/no run, a failed run, or a stale run/);
   });
