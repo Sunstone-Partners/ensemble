@@ -4,9 +4,9 @@
 /**
  * Local CI gate CLI (TRD-005). Thin JSON-in/JSON-out dispatcher over the
  * local-ci-* modules: one JSON payload on stdin per subcommand, one JSON
- * object on stdout. The only logic here is ORDERING (`gate`: prerequisites ->
- * run -> record -> post) and the merge-readiness decision (`merge`), both of
- * which only combine verdicts the modules already produce.
+ * object on stdout. The only logic here is ORDERING (`gate`: prerequisites -> lock -> run -> record -> post) and the
+ * merge-readiness decision (`merge`), both of which only combine verdicts the modules already produce. `gate` runs one
+ * at a time per machine (local-ci-lock.js) and reports the wait as `queued_ms`.
  *
  *   config   {source|repoRoot, baseRef}            validateConfig (source: text check only)
  *   record   {action: build|parse|verify, input}   buildRecord / parseRecord / verifyRecord
@@ -42,6 +42,7 @@ const { postStatus, redact, MAX_DESCRIPTION, CANNOT_ATTEST } = require('./local-
 const { classifyReviews, decideBlock } = require('./local-ci-review');
 const { findUntracked } = require('./local-ci-sweep');
 const timing = require('./local-ci-timing');
+const gateLock = require('./local-ci-lock');
 const rollout = require('./local-ci-rollout');
 
 // config and runner need js-yaml. They load on first use so the CLI still starts
@@ -137,6 +138,9 @@ function defaultDeps() {
         return { ok: false, error: 'gh pr view returned output that is not JSON' };
       }
     },
+    // Serializes gate runs machine-wide (see local-ci-lock.js). Its policy knobs come from the process environment: the
+    // lock is a property of the machine, not of the step environment `env` below.
+    acquireGateLock: () => gateLock.acquireFromEnv(process.env),
     env: process.env,
   };
 }
@@ -467,8 +471,22 @@ async function runGateFlow(payload, deps) {
   const cfg = loadGateConfig(deps, repoRoot, baseRef, headSha);
   if (!cfg.ok) return stop('config', `local CI config invalid: ${cfg.problems.join('; ')}`);
 
-  // 3. Run in a clean clone at the exact head (the runner owns checkout and cleanup).
-  const result = deps.runGate(runnerOptions(repoRoot, headSha, cfg), deps.runnerDeps);
+  // 3. Run in a clean clone at the exact head (the runner owns checkout and cleanup), one gate per machine at a time:
+  // wait for the lock (recording how long), run, and always release it, whether the run returns or throws. Nothing
+  // else holds the lock: posting the status below happens after release. Config and PR checks above stay outside it so
+  // an invalid request never queues behind a long run.
+  if (typeof deps.acquireGateLock !== 'function') return stop('lock', 'gate lock is not available; refusing to run an unserialized gate');
+  const lock = await deps.acquireGateLock();
+  report.queued_ms = lock.queuedMs;
+  if (!lock.acquired) {
+    return stop('lock', `${lock.code}: ${lock.error}`, { errorCode: lock.code, ...(lock.holder ? { lockHolder: lock.holder } : {}) });
+  }
+  let result;
+  try {
+    result = deps.runGate(runnerOptions(repoRoot, headSha, cfg), deps.runnerDeps);
+  } finally {
+    lock.release();
+  }
   report.stage = 'run';
   report.nodes = (result.nodes || []).map((n) => ({ node: n.node, ok: n.ok }));
 
