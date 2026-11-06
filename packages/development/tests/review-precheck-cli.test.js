@@ -26,6 +26,7 @@ beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'precheck-cli-'));
 });
 afterEach(() => {
+  jest.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -286,6 +287,103 @@ describe('start-once through the entry flow (AC1)', () => {
       expect(r.comment.body).toContain(`\`.ensemble/pr-review/precheck-pr-9-${HEAD}.gate.json\``);
     }
     expect(spawned).toHaveLength(0);
+  });
+
+  describe('once a gate exists its claim is never released while it may still run (review round 1, finding 5)', () => {
+    /** A spawn that tracks which gate processes are alive, and a `kill` that ends them (nothing real is ever signalled). */
+    const tracked = (firstPid = 7000) => {
+      const live = new Set();
+      const pids = [];
+      const killed = [];
+      const spawnProcess = () => {
+        const child = new EventEmitter();
+        child.pid = firstPid + pids.length;
+        child.unref = () => {};
+        pids.push(child.pid);
+        live.add(child.pid);
+        return child;
+      };
+      const kill = (target, signal) => {
+        killed.push([target, signal]);
+        live.delete(Math.abs(target));
+      };
+      return { spawnProcess, kill, live, pids, killed };
+    };
+    const failRecordOnce = () => jest.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw new Error('ENOSPC: simulated'); });
+
+    it('when the gate cannot be recorded it is killed (its whole process group) and the claim is released only because it is dead: the next run starts exactly ONE live gate', async () => {
+      const t = tracked();
+      const { run } = fakeRun(table());
+      failRecordOnce();
+      const first = await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill: t.kill }));
+      expect(first.gate).toMatchObject({ action: 'start-failed' });
+      expect(first.gate.reason).toContain('could not be recorded');
+      expect(first.gate.mayBeRunning).toBeUndefined();
+      expect(t.killed).toEqual([[-7000, 'SIGKILL']]);
+      const second = await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill: t.kill }));
+      expect(second.gate.action).toBe('started');
+      expect([...t.live]).toEqual([7001]);
+    });
+
+    it('when the gate cannot be stopped either, the claim is KEPT: the next run starts no second gate', async () => {
+      const t = tracked();
+      const { run } = fakeRun(table());
+      failRecordOnce();
+      const kill = () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); };
+      const first = await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill }));
+      expect(first.gate).toMatchObject({ action: 'start-failed', mayBeRunning: true, pid: 7000 });
+      expect(first.comment.body).toContain('may still be running');
+      expect(first.gate.reason).toContain('kill -KILL -- -7000');
+      const second = await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill }));
+      expect(second.gate.action).toBe('already-started');
+      expect(t.pids).toEqual([7000]);
+    });
+
+    it('a gate that is already gone (ESRCH) counts as stopped, so the claim is released', async () => {
+      const t = tracked();
+      const { run } = fakeRun(table());
+      failRecordOnce();
+      const kill = () => { throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }); };
+      const first = await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill }));
+      expect(first.gate.mayBeRunning).toBeUndefined();
+      expect((await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill: t.kill }))).gate.action).toBe('started');
+    });
+
+    it('a start that fails before any process exists signals nothing and releases the claim', async () => {
+      const t = tracked();
+      const { run } = fakeRun(table());
+      const first = await runPrecheck({}, deps({ run, spawnProcess: () => { throw new Error('EACCES'); }, kill: t.kill }));
+      expect(first.gate).toMatchObject({ action: 'start-failed' });
+      expect(first.gate.mayBeRunning).toBeUndefined();
+      expect(t.killed).toEqual([]);
+      expect((await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill: t.kill }))).gate.action).toBe('started');
+    });
+
+    it('never signals a pid that could name every process (1, 0 or negative): the claim is kept instead', async () => {
+      for (const pid of [1, 0, -5]) {
+        const killed = [];
+        const spawnProcess = () => Object.assign(new EventEmitter(), { pid, unref: () => {} });
+        const { run } = fakeRun(table());
+        failRecordOnce();
+        const d = deps({ run, spawnProcess, kill: (...a) => killed.push(a) });
+        const first = await runPrecheck({}, d);
+        expect(killed).toEqual([]);
+        expect(first.gate).toMatchObject({ action: 'start-failed', mayBeRunning: true });
+        fs.rmSync(path.join(root, STATE_SUBDIR), { recursive: true, force: true });
+      }
+    });
+
+    it('records the gate by replacing the claim marker whole: pid, start time and log are added, the claim fields stay, no temp file is left', async () => {
+      const t = tracked();
+      const { run } = fakeRun(table());
+      await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill: t.kill }));
+      const dir = path.join(root, STATE_SUBDIR);
+      const marker = JSON.parse(fs.readFileSync(path.join(dir, `precheck-pr-9-${HEAD}.gate.json`), 'utf8'));
+      expect(marker).toMatchObject({ headSha: HEAD, pr: 9, claimer: process.pid, pid: 7000 });
+      expect(typeof marker.claimedAt).toBe('string');
+      expect(typeof marker.startedAt).toBe('string');
+      expect(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+    });
   });
 });
 

@@ -69,10 +69,10 @@ function flattenPages(stdout) {
 }
 
 /**
- * Build the real deps for one PR. `run`, `spawnProcess`, `now` and `gateScript` are injectable so the
- * claim-and-start path can be exercised against a real filesystem without a real gate or network.
+ * Build the real deps for one PR. `run`, `spawnProcess`, `kill`, `now` and `gateScript` are injectable so the
+ * claim-and-start path can be exercised against a real filesystem without a real gate, network or signal.
  */
-function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, now = () => new Date(), gateScript = path.join(__dirname, 'local-ci-cli.js') }) {
+function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, kill = (pid, signal) => process.kill(pid, signal), now = () => new Date(), gateScript = path.join(__dirname, 'local-ci-cli.js') }) {
   const root = path.resolve(repoRoot);
   const stateDir = path.join(root, STATE_SUBDIR);
   const git = (args) => run('git', args, { cwd: root });
@@ -131,6 +131,54 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
     const young = Number.isFinite(claimedMs) && now().getTime() - claimedMs <= CLAIM_GRACE_MS;
     const orphaned = !(young && probe(info.claimer) !== false);
     return { ...info, alive: orphaned ? false : null, orphaned };
+  };
+
+  const closeQuietly = (fd) => {
+    if (fd === undefined) return;
+    try {
+      fs.closeSync(fd);
+    } catch (_e) {
+      // best effort: the child holds its own copy
+    }
+  };
+  /** Merge the recorded gate into the claim and replace the marker whole, so a reader never sees a half-written file. */
+  const recordGate = (file, gate) => {
+    let claim = {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (isObject(parsed)) claim = parsed;
+    } catch (_e) {
+      claim = {};
+    }
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify({ ...claim, ...gate }));
+      fs.renameSync(tmp, file);
+    } catch (e) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch (_e) {
+        // best effort
+      }
+      throw e;
+    }
+  };
+  /**
+   * Stop a gate that was started but could not be recorded. It was spawned detached, so it leads its own process group and
+   * its steps run in it: the group is signalled (SIGKILL cannot be caught or ignored). True when nothing is left running: the
+   * signal went out, or neither the group nor the process exists any more. Never signals a pid that could name every process.
+   */
+  const stopGate = (pid) => {
+    if (!Number.isInteger(pid) || pid <= 1) return false;
+    for (const target of [-pid, pid]) {
+      try {
+        kill(target, 'SIGKILL');
+        return true;
+      } catch (e) {
+        if (!e || e.code !== 'ESRCH') return false;
+      }
+    }
+    return true;
   };
 
   // `origin/<base>` must be fresh before the base-ref config/policy are read and before the gate runs (it refuses a
@@ -301,37 +349,59 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
       fs.rmSync(markerPath(headSha, dryRun), { force: true });
     },
 
-    /** Start the existing `local-ci-cli.js gate` detached, its input from a file and its output to a log. */
+    /**
+     * Start the existing `local-ci-cli.js gate` detached, its input from a file and its output to a log.
+     *
+     * Everything that can fail without a gate existing happens BEFORE the spawn. From the spawn on a gate process exists, so
+     * its claim must never be released while it may still run (the next run would start a second gate for the head): the pid
+     * is recorded in the same turn as the spawn, and if even that fails the gate is killed and the answer says whether it may
+     * still be running (`mayBeRunning`), which is what tells the caller to keep the claim.
+     */
     async startGate({ headSha, baseRefName, dryRun }) {
       const prep = await prepare(headSha, baseRefName);
       if (!prep.ok) return prep;
+      const file = markerPath(headSha, dryRun);
       const stem = path.join(stateDir, `precheck-pr-${pr}-${headSha}${dryRun ? '.dry' : ''}.gate`);
       const input = `${stem}-input.json`;
       const logPath = `${stem}.log`;
       const payload = { repoRoot: root, headSha, baseRef: `origin/${baseRefName}`, repo, pr, ...(dryRun ? { dryRun: true } : {}) };
       let inFd;
       let outFd;
+      let child;
       try {
         fs.mkdirSync(stateDir, { recursive: true });
         fs.writeFileSync(input, JSON.stringify(payload));
         inFd = fs.openSync(input, 'r');
         outFd = fs.openSync(logPath, 'a');
-        const child = spawnProcess(process.execPath, [gateScript, 'gate'], { cwd: root, detached: true, stdio: [inFd, outFd, outFd] });
-        const spawnError = await new Promise((resolve) => {
-          child.once('error', (e) => resolve(e));
-          // `spawn` reports failure asynchronously; a child with a pid has started.
-          setImmediate(() => resolve(null));
-        });
-        if (spawnError || !Number.isInteger(child.pid)) return { ok: false, error: `could not start the gate: ${spawnError ? spawnError.message : 'no pid'}` };
-        child.unref();
-        const startedAt = now().toISOString();
-        fs.writeFileSync(markerPath(headSha, dryRun), JSON.stringify({ headSha, pid: child.pid, startedAt, logPath }));
-        return { ok: true, pid: child.pid, logPath, startedAt };
+        child = spawnProcess(process.execPath, [gateScript, 'gate'], { cwd: root, detached: true, stdio: [inFd, outFd, outFd] });
       } catch (e) {
         return { ok: false, error: `could not start the gate: ${e.message}` };
       } finally {
-        if (inFd !== undefined) fs.closeSync(inFd);
-        if (outFd !== undefined) fs.closeSync(outFd);
+        closeQuietly(inFd);
+        closeQuietly(outFd);
+      }
+      if (!Number.isInteger(child.pid)) {
+        // `spawn` reports a failure to launch asynchronously and gives no pid: nothing is running.
+        const spawnError = await new Promise((resolve) => {
+          child.once('error', (e) => resolve(e));
+          setImmediate(() => resolve(null));
+        });
+        return { ok: false, error: `could not start the gate: ${spawnError ? spawnError.message : 'no pid'}` };
+      }
+      // A gate process exists from here on.
+      try {
+        child.unref();
+        const startedAt = now().toISOString();
+        recordGate(file, { pid: child.pid, startedAt, logPath });
+        return { ok: true, pid: child.pid, logPath, startedAt };
+      } catch (e) {
+        const stopped = stopGate(child.pid);
+        return {
+          ok: false,
+          pid: child.pid,
+          mayBeRunning: !stopped,
+          error: `the gate was started (pid ${child.pid}) but could not be recorded: ${e.message}; ${stopped ? 'it was stopped' : `it could not be stopped and may still be running (stop it with: kill -KILL -- -${child.pid})`}`,
+        };
       }
     },
 

@@ -265,7 +265,7 @@ function gateLine(gate) {
     case 'status-present':
       return `Local CI gate: \`${gate.statusContext}\` is already posted on this head (${gate.state}); not started.`;
     case 'start-failed':
-      return `Local CI gate: could NOT be started (${gate.reason}).`;
+      return `Local CI gate: could NOT be started (${gate.reason}).${gate.mayBeRunning ? ' A gate process may still be running, so the start stays recorded and no second one is started.' : ''}`;
     default:
       return `Local CI gate: not started. ${gate.reason}.`;
   }
@@ -324,7 +324,9 @@ const settle = (fn) => Promise.resolve().then(fn).catch((e) => ({ ok: false, err
  *   1. `prepareGate` does every network step (fetch the base and the head) BEFORE anything is marked, so a run that
  *      dies while fetching leaves nothing behind;
  *   2. `claimGateStart` is the atomic create-once marker;
- *   3. `startGate` spawns the gate and records its process.
+ *   3. `startGate` spawns the gate and records its process. From the spawn on a gate may exist, so the claim is released
+ *      only when `startGate` says nothing is running (it failed before the spawn, or it stopped the gate it could not
+ *      record). Releasing a claim whose gate may still run would let the next run start a second gate for the head.
  */
 async function startOnce({ deps, headSha, baseRefName, dryRun, statusContext, oldHeadStatus }) {
   const prepared = await settle(() => deps.prepareGate({ headSha, baseRefName, dryRun }));
@@ -338,8 +340,9 @@ async function startOnce({ deps, headSha, baseRefName, dryRun, statusContext, ol
   if (isObject(started) && started.ok === true) {
     return { action: 'started', statusContext, dryRun, pid: started.pid, logPath: started.logPath, startedAt: started.startedAt, ...(oldHeadStatus ? { oldHeadStatus } : {}) };
   }
-  await settle(() => deps.releaseGateStart({ headSha, dryRun }));
-  return { action: 'start-failed', reason: errorText(started), statusContext };
+  const mayBeRunning = isObject(started) && started.mayBeRunning === true;
+  if (!mayBeRunning) await settle(() => deps.releaseGateStart({ headSha, dryRun }));
+  return { action: 'start-failed', reason: errorText(started), statusContext, ...(mayBeRunning ? { mayBeRunning: true, pid: started.pid } : {}) };
 }
 
 /**

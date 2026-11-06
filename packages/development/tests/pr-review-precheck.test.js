@@ -230,6 +230,32 @@ describe('a start leaves no claim behind that never started a gate (review round
   });
 });
 
+describe('a gate that may be running keeps its claim (review round 1, finding 5)', () => {
+  it('does not release the claim when startGate says a gate may still be running, and says so', async () => {
+    const { deps, calls } = makeDeps({ startGate: async () => ({ ok: false, error: 'it could not be recorded', mayBeRunning: true, pid: 9 }) });
+    const r = await runPrecheck({}, deps);
+    expect(calls.release).toBe(0);
+    expect(r.gate).toMatchObject({ action: 'start-failed', mayBeRunning: true, pid: 9 });
+    expect(r.comment.body).toContain('A gate process may still be running');
+  });
+
+  it('releases the claim when nothing can be running: the start failed before a process existed, or the gate was stopped', async () => {
+    for (const answer of [{ ok: false, error: 'spawn failed' }, { ok: false, error: 'stopped', mayBeRunning: false, pid: 9 }]) {
+      const { deps, calls } = makeDeps({ startGate: async () => answer });
+      const r = await runPrecheck({}, deps);
+      expect(calls.release).toBe(1);
+      expect(r.comment.body).not.toContain('may still be running');
+    }
+  });
+
+  it('a startGate that throws is read as a failed start with nothing running (the real deps never throw after a spawn)', async () => {
+    const { deps, calls } = makeDeps({ startGate: async () => { throw new Error('boom'); } });
+    const r = await runPrecheck({}, deps);
+    expect(r.gate).toMatchObject({ action: 'start-failed', reason: 'boom' });
+    expect(calls.release).toBe(1);
+  });
+});
+
 describe('human blockers (AC2)', () => {
   it('lists every missing description section', async () => {
     const { deps } = makeDeps({ readPr: async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body: '## Testing\nok\n', author: 'x' }) });
