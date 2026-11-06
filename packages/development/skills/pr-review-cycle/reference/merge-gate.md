@@ -202,5 +202,35 @@ could not be read. Never summarise a blocker away, never re-grade a
 `mergeable:false` into a pass, and never answer this step from anything but
 the CLI's result.
 
+**Closing an Important or security finding (provenance).** The gate honours a
+recorded `resolution` on an Important finding, an unrecognised-severity finding
+or a security-lane finding only when it carries all four of `reason`, `by` (the
+deciding login), `at` (a timestamp) and `headSha` (equal to the `headSha` the gate
+is asked about). Anything less is ignored: the finding stays open and its blocker
+carries `resolutionRejected` saying which part was missing. Record a decision
+only with `node "$PR_REVIEW_CLI" ledger` action `resolve`
+(`{ action, finding, resolution:{ reason, by, headSha, at } }`), and only from
+the operator's own answer: never type a reason, a login or a decision on the
+operator's behalf. A new push moves the head, so a decision made on an earlier
+head stops counting and is asked again. **What this proves and what it does not:**
+a reason is present, it names a login and it is bound to this head; it cannot
+prove a human typed it, and a session that writes a login into `by` defeats it.
+The control against that is this rule, not the code.
+
+**The operator's decision list.** Beside the verdict, `gate` returns
+`dispositionChoices` (one entry per undecided finding: `id`, `severity`,
+`locationOrLink`, `votes`, `beadId`, `group`, `choices[]`, `default`,
+`requiresReason`), `dispositionGroups` (what may be answered for a whole group
+at once) and `mergeConfirmation` (what the merge question must show: open beads,
+blocking findings accepted and why, blocking findings still undecided). Pass the
+Step 3b `votes` result as `votes` to include each finding's tally. The list is
+ordered blocking Important and security findings first, then Nits, then
+Pre-existing, and many Nits in one file collapse into one entry. Rules the list
+enforces and the skill must not undo: a blocking finding is offered Fix on this PR
+or Accept only and never defaults to Accept; Nits and Pre-existing default to
+Fix in a follow-on PR; accepting a security finding has no default, is never
+pre-selected or batched, and needs a reason the operator gives for that finding.
+The list never changes `mergeable`.
+
 A caller reaches all of this through this skill. `pr-merge` and every other
 command invoke `MODE=gate`; none of them runs `pr-review-cli.js` itself.
