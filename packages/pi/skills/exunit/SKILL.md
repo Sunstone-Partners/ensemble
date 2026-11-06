@@ -242,3 +242,4 @@ ExUnit is built into Elixir, no additional installation needed.
 
 - [ExUnit Documentation](https://hexdocs.pm/ex_unit/ExUnit.html)
 - [Elixir School Testing Guide](https://elixirschool.com/en/lessons/testing/basics)
+- [templates/](templates/) - Test file templates
