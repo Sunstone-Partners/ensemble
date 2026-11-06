@@ -392,6 +392,290 @@ describe('checkBounds: verifiers are graded per candidate, not by the number of 
 });
 
 // ---------------------------------------------------------------------------
+// Review round 1: who raised a finding. Step 3 candidates are LEDGER entries: they carry `source` (the raiser's
+// login) and, when merged, `mergedFrom[].source`; they never carry `reviewer`.
+// ---------------------------------------------------------------------------
+
+describe('a ledger candidate is never verified by whoever raised it (source, mergedFrom[].source)', () => {
+  const POOL = ['alice', 'bob', 'carol', 'dave', 'erin', 'frank'];
+  const ledger = (id, source, extra = {}) => ({ id, source, severity: 'major', ...extra });
+
+  test('a candidate that carries only `source` is not assigned its raiser, whatever the letter case', () => {
+    const plan = planVerification({ candidates: [ledger('F1', 'Alice')], depth: 'standard', verifierPool: POOL.slice(0, 4) });
+    expect(plan.ok).toBe(true);
+    expect(plan.assignments[0].verifiers.sort()).toEqual(['bob', 'carol', 'dave']);
+  });
+
+  test('every co-raiser of a merged candidate is excluded too', () => {
+    const merged = ledger('F1', 'alice', {
+      mergedFrom: [
+        { id: 'F1', source: 'alice', locationOrLink: 'a.js:1' },
+        { id: 'F7', source: 'Bob', locationOrLink: 'a.js:2' },
+      ],
+    });
+    const plan = planVerification({ candidates: [merged], depth: 'standard', verifierPool: POOL });
+    expect(plan.ok).toBe(true);
+    expect(plan.assignments[0].verifiers.sort()).toEqual(['carol', 'dave', 'erin']);
+    for (const name of ['alice', 'bob']) expect(plan.assignments[0].verifiers).not.toContain(name);
+  });
+
+  test('a co-raiser counts against the pool: alice + bob raised it, so a pool of four is too small', () => {
+    const merged = ledger('F1', 'alice', { mergedFrom: [{ id: 'F7', source: 'bob' }] });
+    const plan = planVerification({ candidates: [merged], depth: 'standard', verifierPool: POOL.slice(0, 4) });
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe('verifier-pool-too-small');
+    expect(plan.shortfalls).toEqual([{ id: 'F1', eligible: 2, needed: 3 }]);
+  });
+
+  test('reviewer, source and reviewerOf all add to the exclusion; none replaces another', () => {
+    const plan = planVerification({
+      candidates: [{ id: 'F1', reviewer: 'alice', source: 'bob' }],
+      depth: 'standard',
+      verifierPool: POOL,
+      reviewerOf: () => 'carol',
+    });
+    expect(plan.ok).toBe(true);
+    for (const name of ['alice', 'bob', 'carol']) expect(plan.assignments[0].verifiers).not.toContain(name);
+  });
+
+  test('a candidate that names no raiser is refused (it could not be excluded), but not at Quick', () => {
+    const plan = planVerification({ candidates: [{ id: 'F1' }], depth: 'standard', verifierPool: POOL });
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toMatch(/names no reviewer or source/);
+    expect(plan.assignments).toEqual([]);
+    expect(planVerification({ candidates: [{ id: 'F1' }], depth: 'quick' }).ok).toBe(true);
+  });
+
+  test.each([
+    ['a source that is not text', { id: 'F1', source: 42 }],
+    ['a mergedFrom that is not a list', { id: 'F1', source: 'alice', mergedFrom: 'bob' }],
+    ['a mergedFrom entry that is not an object', { id: 'F1', source: 'alice', mergedFrom: ['bob'] }],
+    ['a merged source that is not text', { id: 'F1', source: 'alice', mergedFrom: [{ source: 7 }] }],
+  ])('refuses %s', (_label, input) => {
+    const plan = planVerification({ candidates: [input], depth: 'standard', verifierPool: POOL });
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toMatch(/unreadable reviewer or source/);
+  });
+
+  describe('the vote check applies the same definition', () => {
+    const findingOf = (id, overrides, votes) => ({ id, severity: 'major', kind: 'defect', votes, ...overrides });
+
+    test('an assignment that names the finding\'s `source` as a verifier blocks the round', () => {
+      const result = tallyVotes({
+        depth: 'standard',
+        assignment: [{ id: 'F1', verifiers: ['alice', 'bob', 'carol'] }],
+        findings: [findingOf('F1', { source: 'alice' }, [vote('alice'), vote('bob'), vote('carol', 'not-real')])],
+      });
+      expect(result.ok).toBe(false);
+      expect(result.verification).toBe('blocked');
+      expect(result.reason).toMatch(/own reviewer/);
+    });
+
+    test('so does one that names a merged co-raiser', () => {
+      const result = tallyVotes({
+        depth: 'standard',
+        assignment: [{ id: 'F1', verifiers: ['bob', 'carol', 'dave'] }],
+        findings: [findingOf('F1', { source: 'alice', mergedFrom: [{ source: 'Bob' }] }, [vote('bob'), vote('carol'), vote('dave')])],
+      });
+      expect(result.verification).toBe('blocked');
+      expect(result.reason).toMatch(/own reviewer/);
+    });
+
+    test('a raiser\'s own vote is ignored as own-finding, source or merged source alike', () => {
+      const result = tallyVotes({
+        depth: 'standard',
+        findings: [
+          findingOf('F1', { source: 'alice' }, [vote('alice'), vote('bob', 'not-real'), vote('carol', 'not-real')]),
+          findingOf('F2', { source: 'x', mergedFrom: [{ source: 'dave' }] }, [vote('dave'), vote('bob', 'not-real'), vote('carol', 'not-real')]),
+        ],
+      });
+      for (const id of ['F1', 'F2']) {
+        const entry = outcomeOf(result, id);
+        expect(entry.ignoredVotes).toEqual([expect.objectContaining({ reason: 'own-finding' })]);
+        expect(entry.tally.real).toBe(0);
+      }
+    });
+
+    test('a finding that names no raiser blocks an assignment that expects verifiers, but not at Quick', () => {
+      const none = findingOf('F1', {}, [vote('a'), vote('b'), vote('c')]);
+      const result = tallyVotes({ depth: 'standard', assignment: [{ id: 'F1', verifiers: ['a', 'b', 'c'] }], findings: [none] });
+      expect(result.verification).toBe('blocked');
+      expect(result.reason).toMatch(/names no reviewer or source/);
+      expect(tallyVotes({ depth: 'quick', assignment: [{ id: 'F1', verifiers: [] }], findings: [none] }).ok).toBe(true);
+    });
+
+    test('an unreadable source blocks the round', () => {
+      const result = tallyVotes({
+        depth: 'standard',
+        assignment: [{ id: 'F1', verifiers: ['a', 'b', 'c'] }],
+        findings: [findingOf('F1', { source: { login: 'alice' } }, [])],
+      });
+      expect(result.verification).toBe('blocked');
+      expect(result.reason).toMatch(/unreadable reviewer or source/);
+    });
+
+    test('a plan made for ledger candidates is accepted by the tally it was planned for', () => {
+      const candidatesIn = [ledger('F1', 'alice'), ledger('F2', 'bob', { mergedFrom: [{ source: 'carol' }] })];
+      const plan = planVerification({ candidates: candidatesIn, depth: 'standard', verifierPool: POOL });
+      expect(plan.ok).toBe(true);
+      const findings = candidatesIn.map((item, index) =>
+        findingOf(item.id, item, plan.assignments[index].verifiers.map((name) => vote(name)))
+      );
+      const result = tallyVotes({ depth: 'standard', assignment: plan.assignments, findings });
+      expect(result.ok).toBe(true);
+      expect(findings.map((item) => outcomeOf(result, item.id).outcome)).toEqual(['present', 'present']);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review round 1: the documented short-pool fallback runs INSIDE an assignment
+// ---------------------------------------------------------------------------
+
+describe('a short pool: an explicit incomplete entry, while the rest of the round stays structural', () => {
+  const ledger = (id, source) => ({ id, source, severity: 'major', kind: 'defect' });
+  const shortInput = {
+    candidates: [ledger('F1', 'a'), ledger('F2', 'x')],
+    depth: 'standard',
+    verifierPool: ['a', 'b', 'c'],
+  };
+
+  test('without allowShortPool a short pool stays a refusal', () => {
+    const plan = planVerification(shortInput);
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe('verifier-pool-too-small');
+  });
+
+  test('allowShortPool plans the short candidate with all it can have, flagged incomplete', () => {
+    const plan = planVerification({ ...shortInput, allowShortPool: true });
+    expect(plan.ok).toBe(true);
+    expect(plan.complete).toBe(false);
+    expect(plan.shortfalls).toEqual([{ id: 'F1', eligible: 2, needed: 3 }]);
+    expect(plan.assignments).toEqual([
+      { id: 'F1', verifiers: ['b', 'c'], incomplete: true },
+      { id: 'F2', verifiers: ['a', 'b', 'c'] },
+    ]);
+  });
+
+  test('a complete plan with allowShortPool carries no incomplete flag and reads complete', () => {
+    const plan = planVerification({ ...shortInput, verifierPool: ['a', 'b', 'c', 'd'], allowShortPool: true });
+    expect(plan.ok).toBe(true);
+    expect(plan.complete).toBeUndefined();
+    expect(plan.assignments.every((entry) => entry.incomplete === undefined)).toBe(true);
+  });
+
+  test('allowShortPool must be a boolean', () => {
+    expect(planVerification({ ...shortInput, allowShortPool: 'yes' }).ok).toBe(false);
+  });
+
+  test('the tally records ONLY the short candidate verifier-incomplete; the other still counts', () => {
+    const plan = planVerification({ ...shortInput, allowShortPool: true });
+    const findings = [
+      { ...shortInput.candidates[0], votes: [vote('b'), vote('c')] },
+      { ...shortInput.candidates[1], votes: [vote('a'), vote('b'), vote('c')] },
+    ];
+    const result = tallyVotes({ depth: 'standard', assignment: plan.assignments, findings });
+    expect(result.ok).toBe(true);
+    const short = outcomeOf(result, 'F1');
+    expect(short.outcome).toBe('unverified');
+    expect(short.reason).toBe('verifier-incomplete');
+    expect(short.incompleteVerifiers).toEqual([{ verifier: '(unassigned)', reason: 'verifier-pool-too-small', missing: 1 }]);
+    expect(outcomeOf(result, 'F2').outcome).toBe('present');
+  });
+
+  test('a candidate nobody could verify (no verifier at all) is unverified, never present', () => {
+    const plan = planVerification({ candidates: [ledger('F1', 'a')], depth: 'standard', verifierPool: ['a'], allowShortPool: true });
+    expect(plan.assignments).toEqual([{ id: 'F1', verifiers: [], incomplete: true }]);
+    const result = tallyVotes({ depth: 'standard', assignment: plan.assignments, findings: [{ ...ledger('F1', 'a'), votes: [] }] });
+    expect(result.ok).toBe(true);
+    expect(outcomeOf(result, 'F1')).toEqual(
+      expect.objectContaining({ outcome: 'unverified', reason: 'verifier-incomplete' })
+    );
+  });
+
+  test('the unassigned slot is recorded however the assigned verifiers voted', () => {
+    const result = tallyVotes({
+      depth: 'standard',
+      assignment: [{ id: 'F1', verifiers: ['b', 'c'], incomplete: true }],
+      findings: [{ ...ledger('F1', 'a'), votes: [vote('b'), vote('c')] }],
+    });
+    expect(outcomeOf(result, 'F1').outcome).toBe('unverified');
+  });
+
+  test.each([
+    ['fewer than K without the incomplete flag', [{ id: 'F1', verifiers: ['b', 'c'] }], /assigned 2 distinct verifiers but the depth expects 3/],
+    ['an incomplete flag on a full set of K', [{ id: 'F1', verifiers: ['b', 'c', 'd'], incomplete: true }], /marked incomplete but is assigned all 3/],
+    ['an incomplete flag that is not a boolean', [{ id: 'F1', verifiers: ['b', 'c'], incomplete: 'yes' }], /incomplete flag must be true or false/],
+    ['an incomplete entry that names the raiser', [{ id: 'F1', verifiers: ['a', 'b'], incomplete: true }], /own reviewer/],
+    ['an incomplete entry that repeats a verifier', [{ id: 'F1', verifiers: ['b', 'B'], incomplete: true }], /more than once/],
+    ['more than K, even flagged incomplete', [{ id: 'F1', verifiers: ['b', 'c', 'd', 'e'], incomplete: true }], /assigned 4 distinct verifiers/],
+  ])('still blocks the round on %s', (_label, assignment, reason) => {
+    const result = tallyVotes({ depth: 'standard', assignment, findings: [{ ...ledger('F1', 'a'), votes: [] }] });
+    expect(result.verification).toBe('blocked');
+    expect(result.reason).toMatch(reason);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review round 1: a round with zero candidates
+// ---------------------------------------------------------------------------
+
+describe('zero candidates: an ok plan for nothing is told apart from a refused plan', () => {
+  test('verify-assign with no candidates is an ok plan that says it planned for zero, and needs no pool', () => {
+    const plan = planVerification({ candidates: [], depth: 'standard' });
+    expect(plan).toEqual({ ok: true, k: 3, verifiersPerCandidate: 3, candidates: 0, assignments: [], agents: [] });
+  });
+
+  test('an empty pool with candidates is still refused, naming the shortfalls', () => {
+    const plan = planVerification({ candidates: [{ id: 'F1', source: 'a' }], depth: 'standard', verifierPool: [] });
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe('verifier-pool-too-small');
+    expect(plan.candidates).toBeUndefined();
+  });
+
+  test('votes takes the empty assignment for the empty round', () => {
+    const result = tallyVotes({ depth: 'standard', assignment: [], findings: [] });
+    expect(result.ok).toBe(true);
+    expect(result.findings).toEqual([]);
+  });
+
+  test('depth passes the zero-candidate plan: the verifier floor is vacuous with nothing to verify', () => {
+    const plan = planVerification({ candidates: [], depth: 'standard' });
+    const graded = checkBounds({
+      mode: 'standard',
+      planned: { reviewers: 2, verifiers: plan.assignments, candidates: plan.candidates },
+    });
+    expect(graded.ok).toBe(true);
+    expect(graded.violations).toEqual([]);
+  });
+
+  test('the reviewer floor still applies to a zero-candidate round', () => {
+    const graded = checkBounds({ mode: 'standard', planned: { reviewers: 0, verifiers: [], candidates: 0 } });
+    expect(graded.violations).toEqual([expect.objectContaining({ role: 'reviewers', kind: 'below-minimum' })]);
+  });
+
+  test('an empty list WITHOUT the zero-candidate statement (a refused plan) still fails the floor', () => {
+    const refused = planVerification({ candidates: [{ id: 'F1', source: 'a' }], depth: 'standard', verifierPool: [] });
+    const graded = checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: refused.assignments, candidates: refused.candidates } });
+    expect(graded.ok).toBe(false);
+    expect(graded.violations).toEqual([{ set: 'planned', role: 'verifiers', kind: 'below-minimum', bound: 3, count: 0 }]);
+  });
+
+  test('a list naming fewer candidates than the round had grades the missing ones as zero verifiers', () => {
+    const listed = [{ id: 'F1', verifiers: ['a', 'b', 'c'] }];
+    expect(checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: listed, candidates: 1 } }).ok).toBe(true);
+    const graded = checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: listed, candidates: 2 } });
+    expect(graded.violations).toEqual([{ set: 'planned', role: 'verifiers', kind: 'below-minimum', bound: 3, count: 0 }]);
+  });
+
+  test('a candidates count that is not a whole number is refused', () => {
+    const graded = checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: [], candidates: -1 } });
+    expect(graded.ok).toBe(false);
+    expect(graded.reason).toMatch(/candidates must be a whole number/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Reachability: verify-assign is part of the verified-findings capability
 // ---------------------------------------------------------------------------
 

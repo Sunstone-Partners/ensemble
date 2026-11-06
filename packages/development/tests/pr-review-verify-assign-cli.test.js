@@ -158,3 +158,74 @@ describe('verify-assign through the CLI: refusals', () => {
     expect(result.error).toMatch(/\|votes\|verify-assign\|depth\|/);
   });
 });
+
+// Review round 1: ledger-shaped candidates, the short-pool fallback and the zero-candidate round, end to end
+// through the shipped entry point.
+describe('verify-assign through the CLI: review round 1', () => {
+  const LEDGER = [
+    { id: 'F1', source: 'alice', severity: 'major', kind: 'defect' },
+    { id: 'F2', source: 'bob', severity: 'major', kind: 'defect', mergedFrom: [{ id: 'F2', source: 'carol' }] },
+  ];
+  const POOL = ['alice', 'bob', 'carol', 'dave', 'erin', 'frank'];
+
+  test('a ledger candidate (source, no reviewer) is never assigned its raiser or a merged co-raiser; votes agrees', () => {
+    const { result: plan } = runCli('verify-assign', { candidates: LEDGER, depth: 'standard', verifierPool: POOL });
+    expect(plan.ok).toBe(true);
+    expect(plan.assignments[0].verifiers).not.toContain('alice');
+    for (const name of ['bob', 'carol']) expect(plan.assignments[1].verifiers).not.toContain(name);
+
+    const findings = LEDGER.map((item, index) => ({ ...item, votes: plan.assignments[index].verifiers.map((verifier) => ({ verifier, verdict: 'real' })) }));
+    const tally = runCli('votes', { depth: 'standard', assignment: plan.assignments, findings });
+    expect(tally.result.findings.map((entry) => entry.outcome)).toEqual(['present', 'present']);
+
+    // The hand-made plan that has alice verify her own finding is refused, not counted.
+    const own = runCli('votes', {
+      depth: 'standard',
+      assignment: [{ id: 'F1', verifiers: ['alice', 'bob', 'carol'] }, plan.assignments[1]],
+      findings,
+    });
+    expect(own.result.verification).toBe('blocked');
+    expect(own.result.reason).toMatch(/F1.*own reviewer/);
+  });
+
+  test('short pool: allowShortPool plans the short candidate incomplete and votes degrades only that one', () => {
+    const input = { candidates: LEDGER, depth: 'standard', verifierPool: ['alice', 'dave', 'erin'] };
+    expect(runCli('verify-assign', input).result.reason).toBe('verifier-pool-too-small');
+
+    const { result: plan } = runCli('verify-assign', { ...input, allowShortPool: true });
+    expect(plan.ok).toBe(true);
+    expect(plan.complete).toBe(false);
+    expect(plan.assignments.map((entry) => entry.incomplete === true)).toEqual([true, false]);
+
+    const findings = LEDGER.map((item, index) => ({ ...item, votes: plan.assignments[index].verifiers.map((verifier) => ({ verifier, verdict: 'real' })) }));
+    const tally = runCli('votes', { depth: 'standard', assignment: plan.assignments, findings });
+    expect(tally.result.findings[0].outcome).toBe('unverified');
+    expect(tally.result.findings[0].reason).toBe('verifier-incomplete');
+    expect(tally.result.findings[0].incompleteVerifiers).toEqual([
+      { verifier: '(unassigned)', reason: 'verifier-pool-too-small', missing: 1 },
+    ]);
+    expect(tally.result.findings[1].outcome).toBe('present');
+  });
+
+  test('zero candidates: verify-assign is ok, and depth passes it only with the candidates count it returned', () => {
+    const { code, result: plan } = runCli('verify-assign', { candidates: [], depth: 'standard' });
+    expect(code).toBe(0);
+    expect(plan.ok).toBe(true);
+    expect(plan.candidates).toBe(0);
+
+    const graded = runCli('depth', { tier: 'medium', planned: { reviewers: 2, verifiers: plan.assignments, candidates: plan.candidates } });
+    expect(graded.result.mode).toBe('standard');
+    expect(graded.result.ok).toBe(true);
+    expect(graded.result.violations).toEqual([]);
+
+    // The same empty list from a refused plan (no `candidates` to carry) still fails the floor.
+    const refused = runCli('verify-assign', { candidates: [{ id: 'F1', source: 'alice' }], depth: 'standard', verifierPool: [] });
+    expect(refused.result.ok).toBe(false);
+    const failed = runCli('depth', { tier: 'medium', planned: { reviewers: 2, verifiers: refused.result.assignments, candidates: refused.result.candidates } });
+    expect(failed.result.ok).toBe(false);
+    expect(failed.result.violations).toEqual([{ set: 'planned', role: 'verifiers', kind: 'below-minimum', bound: 3, count: 0 }]);
+
+    const tally = runCli('votes', { depth: 'standard', assignment: plan.assignments, findings: [] });
+    expect(tally.result.ok).toBe(true);
+  });
+});
