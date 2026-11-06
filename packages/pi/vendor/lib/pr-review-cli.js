@@ -124,7 +124,8 @@
  *                    given the agent's `deadlineAt` (and `now`, default: the current time) a wait that would end at or
  *                    after the deadline fails fast
  *              HONEST LIMIT: this computes deadlines and classifies; it does not stop an agent. Killing one at its
- *              `deadlineAt` is the dispatcher's job, and nothing here may be read as enforcement.
+ *              `deadlineAt` is the dispatcher's job, and nothing here may be read as enforcement. No skill or command
+ *              calls `results` yet.
  *
  * The tier, approval and merge-gate subcommands (TRD-026) each take the facts
  * their module grades and answer with that module's result verbatim:

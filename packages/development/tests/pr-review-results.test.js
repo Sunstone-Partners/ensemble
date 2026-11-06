@@ -20,7 +20,9 @@
  *        writer can set backwards, lies in [dispatchedAt, deadlineAt]: stale
  *        files, another round's scratch copies and backdated mtimes do not count;
  *   AC7  (review round 1) a sliced reviewer must name its paths, and a retry never
- *        waits past the agent's deadline or past the total wait cap.
+ *        waits past the agent's deadline or past the total wait cap;
+ *   AC8  (review round 1) the docs say `maxConcurrentAgents` is not enforced and
+ *        that nothing calls `results` yet.
  */
 
 const fs = require('fs');
@@ -1109,6 +1111,33 @@ describe('AC7: a reviewer given a sliceId must name its paths', () => {
     const result = collect([{ name: 'sec1', role: 'security', dispatchedAt: T0, deadlineAt: T0 + 15 * MIN, sliceId: 's1' }]);
     expect(result).toMatchObject({ ok: false, reviewedSlices: [] });
     expect(result.reason).toMatch(/paths must list/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC8: the docs say what is enforced and what is not (review round 1)
+// ---------------------------------------------------------------------------
+
+describe('AC8: the docs do not claim what nothing implements', () => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  const guide = fs.readFileSync(path.join(repoRoot, 'docs', 'guides', 'user-guide.md'), 'utf8');
+  const changelog = fs.readFileSync(path.join(repoRoot, 'CHANGELOG.md'), 'utf8');
+  const row = (key) => guide.split('\n').find((line) => line.startsWith(`| \`${key}\` |`));
+
+  test('the maxConcurrentAgents row says the key is validated only and not enforced yet', () => {
+    expect(row('maxConcurrentAgents')).toMatch(/not enforced yet/);
+    expect(row('maxConcurrentAgents')).not.toMatch(/kept below/);
+  });
+
+  test('the deadlineMinutes row says no skill or command calls the subcommand yet', () => {
+    expect(row('deadlineMinutes')).toMatch(/no skill or command calls the subcommand yet/);
+  });
+
+  test('the CHANGELOG entry does not claim a review no longer stalls: nothing calls results yet', () => {
+    const entry = changelog.split('\n').find((line) => line.includes('`pr-review-cli.js results`'));
+    expect(entry).toMatch(/no skill or command calls `results` yet/);
+    expect(entry).toMatch(/nothing reads or enforces it yet/);
+    expect(entry).not.toMatch(/no longer stalls/);
   });
 });
 

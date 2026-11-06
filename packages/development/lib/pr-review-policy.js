@@ -63,8 +63,10 @@ const QUICK_MAX_VERIFIERS = 0;
 
 /**
  * Per-agent wall-clock budgets, in minutes (plan 3C): reviewer 15, verifier 5,
- * security lane 15. A maintainer may move each between 1 and 60; the ceiling
- * is what keeps the review's critical path bounded.
+ * security lane 15. A maintainer may move each between 1 and 60. Only the
+ * dispatcher stopping an agent at its deadline bounds the review's critical
+ * path; this key just supplies the number (`pr-review-results.js`), and nothing
+ * in this repository stops an agent yet.
  */
 const DEADLINE_ROLES = Object.freeze(['reviewer', 'verifier', 'security']);
 const DEFAULT_DEADLINE_MINUTES = Object.freeze({ reviewer: 15, verifier: 5, security: 15 });
@@ -72,9 +74,11 @@ const DEADLINE_MINUTES_MIN = 1;
 const DEADLINE_MINUTES_MAX = 60;
 
 /**
- * How many agents may run at once. Kept below the account's rate limit so a
- * fan-out does not trigger the 429s it would then have to back off from;
- * 32 is the most the orchestrator ever runs concurrently.
+ * How many agents the dispatcher should run at once, kept below the account's
+ * rate limit so a fan-out does not trigger the 429s it would then have to back
+ * off from; 32 is the most the orchestrator ever runs concurrently. Parsed and
+ * validated here only: nothing reads it yet, so no code limits concurrency
+ * until the dispatcher does.
  */
 const DEFAULT_MAX_CONCURRENT_AGENTS = 8;
 const MAX_CONCURRENT_AGENTS_MIN = 1;

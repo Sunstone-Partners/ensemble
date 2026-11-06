@@ -11,9 +11,12 @@
  * agent is given, the state each expected result file is in, and what to do
  * about an API failure. It does NOT kill, stop or time out any agent, and it
  * cannot. Whatever dispatches the agents (the `runner` child owns dispatch)
- * must stop an agent at the `deadlineAt` computed here. Until it does, a
- * deadline is a number in a report, not enforcement; nothing here, and
- * nothing in a document that cites this module, may claim otherwise.
+ * must stop an agent at the `deadlineAt` computed here, and must keep the
+ * number of agents running at once below the `maxConcurrentAgents` policy key,
+ * which this module never reads. Until it does, a deadline is a number in a
+ * report and that key is a validated number in a policy file: neither is
+ * enforcement, and nothing here, or in a document that cites this module, may
+ * claim otherwise. No skill or command calls this module yet.
  *
  * What this module DOES guarantee is the other half, against a writer that
  * cannot move the system clock or act as another user: a result file counts as
