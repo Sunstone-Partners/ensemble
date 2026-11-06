@@ -1,6 +1,6 @@
 ---
 name: local-ci-gate
-description: Run or check the local CI gate for a PR head. Runs ci:local in a clean clone at the exact head SHA via the runner, posts a commit status with the maintainer's own gh login, and decides merge-readiness without waiting for hosted CI. Use before merging a PR in a repo with .ensemble/local-ci.yaml; not for hosted-CI debugging.
+description: Run or check the local CI gate for a PR head. Runs ci:local in a clean clone at the exact head SHA via the runner, posts a commit status with the maintainer's own gh login, and decides merge-readiness; verified hosted CI results for that head may stand in. Use before merging a PR in a repo with .ensemble/local-ci.yaml; not for hosted-CI debugging.
 ---
 
 # Local CI Gate
@@ -49,18 +49,20 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
    PR commits, as `[{context, state, description, sha}]` (`sha` = commit the
    status is on).
 2. `merge` with `{headSha, statuses, repoRoot, baseRef, repo, pr}` (add `reviews` when known).
-   `repo` is `owner/name` and `pr` the PR number. `baseRef` is the PR's base branch, fetched fresh first (for example
-   `git fetch origin $BASE_BRANCH`, then `origin/$BASE_BRANCH`); it is required.
-3. `mergeReady:true`: report ready to merge **without waiting for hosted CI**,
-   quoting the record. `mergeReady:false`: report the CLI `reason` verbatim and
-   refuse. Typical reasons: no local status (name the missing run and tell the
-   user to run `gate` for `HEAD_SHA`); head moved (the reason names both SHAs;
-   run `gate` again for the new head); status not success; blocking review.
+   `pr` is the PR number. `baseRef` is the PR's base branch, fetched fresh first (for example
+   `git fetch origin $BASE_BRANCH`, then `origin/$BASE_BRANCH`); required.
+3. `mergeReady:true`: report ready to merge, quoting the record (for
+   `source:"hosted"`, the `hostedJobs`). `mergeReady:false`: report the CLI
+   `reason` verbatim and refuse. Typical reasons: no local status (name the
+   missing run and tell the user to run `gate` for `HEAD_SHA`); head moved
+   (run `gate` again for the new head); status not success; blocking review;
+   `hosted CI not accepted: …`.
 
 ### `gate`
 
 1. `gate` with `{repoRoot, headSha, baseRef, repo, pr, dryRun}` (`baseRef` as for
-   `merge`: the freshly fetched `origin/<baseRefName>`; `pr` is the PR number). The CLI orders: prerequisites
+   `merge`: the freshly fetched `origin/<baseRefName>`; `pr` is the PR number); `forceLocal:true`
+   only when the user asks for a local run. The CLI orders: prerequisites
    (Node, git), config, run, record, post.
 2. Read the result and report, in this order of precedence:
    - `prerequisite` set: say which prerequisite is missing and that nothing was
@@ -75,11 +77,12 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
      malformed config): report it as a refusal.
    - `dryRun` and `mergeReady:true`: report readiness, state that nothing was
      posted.
-   - `posted:true`, `mergeReady:true`: report the record and that the PR is
-     mergeable without hosted CI.
+   - `source:"hosted"`, `mergeReady:true`: report hosted CI passed on this head;
+     nothing run or posted. `hostedRefused`: the CLI ran locally instead.
+   - `posted:true`, `mergeReady:true`: report the record; the PR is mergeable.
 3. Never retry with a different SHA, never post by hand, never edit the config
    to make a step pass. Never pass `config`, `path`, `runner` or any key other
-   than the four above: unknown keys are rejected. A step the runner cannot mirror is a gap to report to
+   than those: unknown keys are rejected. A step the runner cannot mirror is a gap to report to
    the user, who may record it in `.ensemble/local-ci.yaml` `excluded_steps`.
 
 ---
@@ -93,11 +96,9 @@ state but not who posted it. The gate stops accidents and unverified agent
 merges, not deliberate forgery.
 
 Required commands and the approval set come ONLY from `.ensemble/local-ci.yaml`
-as committed at the PR's BASE branch (`git show <baseRef>:.ensemble/local-ci.yaml`),
-the same principle as GitHub's `pull_request_target`. A PR that edits the gate
-config or its workflows is graded by the PREVIOUS config; its change applies
-after it merges. The maintainer's working tree, local edits and checked-out
-branch are irrelevant.
+as committed at the PR's BASE branch (`git show <baseRef>:.ensemble/local-ci.yaml`).
+A PR that edits the gate config or its workflows is graded by the PREVIOUS
+config; its change applies after it merges.
 
 `baseRef` is required (`config`, `run`, `merge`, `gate`) and must be a
 remote-tracking ref, fetched fresh: `origin/<branch>` or
@@ -140,8 +141,8 @@ like TOKEN, SECRET, KEY, PASSWORD, CREDENTIAL or AUTH, are redacted from all out
 a step can still emit a secret in a form redaction cannot recognise, so list only
 secrets you accept a trusted step handling.
 
-The payload cannot carry config, paths, scripts or runner options (`gate`:
-`repoRoot, headSha, baseRef, repo, pr, dryRun`; `merge`: `headSha, statuses,
+The payload cannot carry config, paths, scripts, hosted results or runner options (`gate`:
+`repoRoot, headSha, baseRef, repo, pr, dryRun, forceLocal`; `merge`: `headSha, statuses,
 repoRoot, baseRef, repo, pr, reviews`); other keys are rejected. The status
 record's first field is 12 hex of the base-ref config's git blob hash, covering the
 whole command list; `merge` requires it and refuses a different one.
@@ -154,24 +155,24 @@ whole command list; `merge` requires it and refuses a different one.
 `record` builds/parses/verifies the status
 description, `run` (`{repoRoot, headSha, baseRef}` only) runs the runner without posting, `post` posts one status,
 `review` classifies reviews (bots never block), `sweep` lists unrecorded
-findings and CI failures, `timing` checks the enablement note. Use them only
-when a command asks; they carry the same fail-closed rules.
+findings and CI failures, `timing` checks the enablement note. Use only when a
+command asks; same fail-closed rules.
 
 ---
 
 ## Rollout, rollback and the pre-PR step
 
-Enabling the gate as a required check, rolling it back, the owner approvals and
-the optional pre-PR gate step (run `gate` for the branch head, then open the PR)
-are in `RUNBOOK.md` beside this file. Enablement is refused until its
-preconditions hold; never change branch protection from this skill.
+Enabling or rolling back the required check, owner approvals, the optional
+pre-PR gate step and hosted reuse are in `RUNBOOK.md` beside this file.
+Enablement is refused until its preconditions hold; never change branch
+protection from this skill.
 
 ---
 
 ## Rules
 
-- Success exists only as a status posted by the CLI on the exact head.
+- Success exists only as a CLI-verified local status or hosted result on the exact head.
 - Report CLI output as given; do not soften, reinterpret or truncate SHAs.
 - No token or secret is ever printed; the CLI redacts. `gh` holds its own login;
   never read or pass tokens.
-- Hosted CI is not consulted for readiness; mention it only if asked.
+- Hosted results count only when the CLI verified them from GitHub Actions for that exact head (base-ref `hosted_reuse`); never supply them.

@@ -85,6 +85,39 @@ accidents and unverified agent merges. It does not stop deliberate forgery by
 someone with write access. A repository that needs forge-resistance would need
 a pinned GitHub App, which is separate future work and is not part of this gate.
 
+## Hosted reuse (skip a local run that hosted CI already did)
+
+When hosted CI has already passed on the PR's exact head, `gate` and `merge` can accept those results instead of repeating the work in a clean clone. The CLI reads them from GitHub itself (the Actions runs and jobs for that head SHA); the skill and the payload never supply them. Design and trust limits: TRD-015 in `docs/TRD/TRD-2026-4dec59b8-local-ci-pr-approval.md`.
+
+**Enable.** Add a `hosted_reuse` block to `.ensemble/local-ci.yaml` on the base branch (it is read from the base ref, so it applies once merged):
+
+```yaml
+hosted_reuse:
+  covers: [install, scripts-tests, validate, generate-validate, generated-drift, test]   # every name in `steps` (this repo lists nine)
+  extra_workflows:
+    - file: .github/workflows/generated-drift.yml
+      jobs:
+        - id: drift
+```
+
+Every step in `steps` MUST be listed in `covers`; if one is missing, reuse is off. `extra_workflows` names hosted jobs outside the default approval set. See the comment in this repository's `.ensemble/local-ci.yaml` for the exact current block.
+
+**Disable.** Remove the `hosted_reuse` block, or delete one name from `covers` (an uncovered step turns reuse off entirely). Either is a normal reviewed change to the config.
+
+**`forceLocal`.** `gate` accepts `forceLocal: true` (a boolean) in its payload to skip the hosted shortcut and run locally.
+
+**Results.** `check`/`merge` and `gate` report `source:"hosted"` and `hostedJobs` when hosted results were accepted. `gate` then runs nothing and posts no status, so no `ensemble/local-ci` status exists for that head; `merge` accepts it all the same, and a verified local status still takes precedence when both exist.
+
+**A refusal is not a failure.** A reason beginning `hosted CI not accepted:` means a hosted result could not be verified (job missing, still running, red, on another commit, a workflow file that differs from the base's, an underivable job name, GitHub unreachable). `gate` then runs locally exactly as before and reports `hostedRefused`; `merge` refuses and shows the hosted reason beside the local one. Run `gate` (or wait for hosted CI and check again).
+
+**A PR that changes a workflow file.** Hosted CI ran the PR head's own copy of the workflow, so a PR that edits one of the hosted workflow files is refused for reuse and graded by the local gate; the change takes effect after it merges.
+
+**Node 22 gap.** Hosted `validate` and `drift` run on Node 24 only, while the local gate runs 22 and 24; accepting hosted results gives up the Node 22 run of those steps, and `generate-validate` is declared covered by the generate step, which hosted `validate` and `drift` run. This is accepted in the config; delete the name from `covers` to refuse it.
+
+**Not verified.** Who triggered the hosted run, and that the workflow's steps are honest beyond the file being identical to the base's. A `pull_request` run executes on the merge commit of head and base, not the bare head.
+
+**Branch protection.** Never change branch protection from this skill, from the CLI or from any command. Since 2026-11-06 protection on `dev` requires the hosted checks `validate`, `test (22)` and `test (24)` (see Rollback), so GitHub itself waits for hosted CI. With reuse enabled, the gate verdict (`merge`) no longer needs a local gate run once those jobs are green on the head; it still refuses when they are not, and a PR whose workflow files changed is graded by the local gate. Pointing protection back at `ensemble/local-ci` stays a separate owner-approved step (see Enable).
+
 ## A PR branch that is behind its base is refused
 
 The gate reads its configuration from the PR's **base** branch and compares the PR head's workflows with it. A PR whose
