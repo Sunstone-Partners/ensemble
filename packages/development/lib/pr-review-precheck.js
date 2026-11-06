@@ -14,9 +14,12 @@
  * with fakes; `review-precheck-cli.js` supplies the real `gh`/`git`/filesystem deps.
  *
  * HONEST LIMITS, kept in the comment text itself:
- *   - The approvals count needs the tier, which needs the classifier agent. Until a tier is supplied the requirement
- *     is a LOWER BOUND ("at least N") and the count is an UPPER BOUND on what is satisfied, so the shortfall shown is a
- *     floor, never a promise. A supplied tier makes it exact.
+ *   - The approvals count needs the tier, which needs the classifier agent, and the `Directed by` credit needs to know
+ *     whether an agent wrote the PR. Neither is known at minute 1, so approvals are never reported as satisfied there:
+ *     until a tier is supplied the requirement is a LOWER BOUND ("at least N") and the count an UPPER BOUND (it
+ *     includes the director credit), so the only things that hold are a shortfall ("at least N more") or "not
+ *     established", never "met". A supplied tier makes the requirement exact, but `satisfied` still needs the count to
+ *     hold WITHOUT the director credit.
  *   - Branch protection that cannot be read is `unknown`, never `enforced`. A status or review that cannot be read is
  *     reported as unreadable, never as "nothing missing" and never as "no status" (which would start a second gate).
  *   - Nothing here is a lock: `claimGateStart` is only an atomic create-once marker; queueing belongs to `gatelock`.
@@ -69,9 +72,11 @@ function approvalsFloor(policyResult) {
 /**
  * Approvals: the requirement (a lower bound until `tier` is known), what is counted for THIS head, and the shortfall.
  *
- * `counted` is an UPPER bound on the satisfied approvals: when the PR body names who directed an agent-authored PR
- * that person is credited as `evaluateApprovals` credits them, even though at minute 1 nobody knows an agent wrote
- * the PR. An overcount can only shrink the shortfall, so the shortfall shown never exceeds the true one.
+ * Whether an agent wrote the PR -- which is what earns the `Directed by` person a slot -- is not known at minute 1 (the
+ * review cycle passes it as `agentAuthored`). So the count is worked out both ways: `generous` credits the named
+ * director, `strict` does not. A shortfall that exists even in the generous count is certain ("short"). Anything else
+ * is only `satisfied` when the tier is known AND the strict count meets it; otherwise it is `not-established`: the
+ * floor was reached by a lower bound or by a credit that may not apply, which says nothing about the real requirement.
  */
 function assessApprovals({ reviewsResult, pr, headSha, headTreeSha, tier, policyResult, directedBy }) {
   if (!isObject(reviewsResult) || reviewsResult.ok !== true || !Array.isArray(reviewsResult.reviews)) {
@@ -80,32 +85,55 @@ function assessApprovals({ reviewsResult, pr, headSha, headTreeSha, tier, policy
   const tierKnown = isObject(tier) && tier.ok !== false && typeof tier.effectiveTier === 'string' && tier.effectiveTier in HUMANS_BY_TIER;
   const floor = approvalsFloor(policyResult);
   const effective = tierKnown ? tier : { ok: true, effectiveTier: floor.humans >= 1 ? 'medium' : 'low', humansRequired: floor.humans };
-  const result = evaluateApprovals({
+  const evaluate = (credited) => evaluateApprovals({
     reviews: reviewsResult.reviews,
     headSha,
     headTreeSha,
     tier: effective,
     policy: isObject(policyResult) && policyResult.ok === true ? policyResult.policy : undefined,
     author: pr.author,
-    // Credit the named director (upper bound on what is satisfied). evaluateApprovals reads it only when agentAuthored.
-    directedBy: directedBy || undefined,
-    agentAuthored: directedBy ? true : undefined,
+    // evaluateApprovals reads `directedBy` only when `agentAuthored` is true.
+    directedBy: credited ? directedBy || undefined : undefined,
+    agentAuthored: credited && directedBy ? true : undefined,
   });
-  if (result.ok !== true) return { state: 'unknown', reason: `approvals could not be evaluated: ${result.reason}` };
-  const required = result.humansRequired;
+  const generous = evaluate(true);
+  const strict = directedBy ? evaluate(false) : generous;
+  if (generous.ok !== true || strict.ok !== true) {
+    return { state: 'unknown', reason: `approvals could not be evaluated: ${generous.ok !== true ? generous.reason : strict.reason}` };
+  }
+  const required = generous.humansRequired;
+  const counted = generous.humansCounted;
+  const credit = generous.directedBy
+    ? ` (counting the \`Directed by: @${generous.directedBy}\` credit, which the gate gives when an agent wrote this PR; if a person wrote it, that credit does not apply)`
+    : '';
+  let state = 'satisfied';
+  let reason;
+  if (counted < required) {
+    state = 'short';
+  } else if (generous.satisfied !== true) {
+    state = 'not-established';
+    reason = `The tier record refused a relaxation (${generous.reason}), so the gate will not read these approvals as enough`;
+  } else if (!tierKnown) {
+    state = 'not-established';
+    reason = `The review tier is not assigned yet, so how many human approvals this PR needs is not known: ${floor.humans} is only a lower bound (${floor.basis}) and a High PR needs ${HUMANS_BY_TIER.high}. ${counted} counted on this head${credit}`;
+  } else if (strict.satisfied !== true) {
+    state = 'not-established';
+    reason = `${required} needed at the ${tier.effectiveTier} tier and ${counted} counted on this head${credit}; without that credit the count is ${strict.humansCounted}`;
+  }
   return {
-    state: result.humansCounted >= required ? 'satisfied' : 'short',
+    state,
+    ...(reason === undefined ? {} : { reason }),
     lowerBound: !tierKnown,
     tierKnown,
     tier: tierKnown ? tier.effectiveTier : null,
     required,
-    counted: result.humansCounted,
-    approvedBy: result.approvedBy,
-    shortfall: Math.max(0, required - result.humansCounted),
-    ignored: result.ignored,
+    counted,
+    approvedBy: generous.approvedBy,
+    shortfall: Math.max(0, required - counted),
+    ignored: generous.ignored,
     basis: tierKnown ? `the tier is ${tier.effectiveTier}` : floor.basis,
     headTreeKnown: headTreeSha !== undefined,
-    directedBy: result.directedBy,
+    directedBy: generous.directedBy,
   };
 }
 
@@ -175,8 +203,11 @@ function buildReport(facts) {
   const protection = assessProtection(protectionResult, baseRefName, approvals);
 
   const blockers = [];
+  const notEstablished = [];
   if (approvals.state === 'unknown') {
     blockers.push({ code: BLOCKER_CODES.REVIEW_DATA_UNAVAILABLE, subject: 'approvals', message: `Approvals: unknown. ${approvals.reason}.` });
+  } else if (approvals.state === 'not-established') {
+    notEstablished.push({ subject: 'approvals', message: `Approvals: not established. ${approvals.reason}.` });
   } else if (approvals.state === 'short') {
     const qualifier = approvals.lowerBound ? 'at least ' : '';
     blockers.push({
@@ -196,7 +227,7 @@ function buildReport(facts) {
       message: `PR description is missing: ${description.missing.join(', ')}.`,
     });
   }
-  return { headSha, baseRefName, approvals, description, protection, blockers };
+  return { headSha, baseRefName, approvals, description, protection, blockers, notEstablished };
 }
 
 const short = (sha) => (typeof sha === 'string' ? sha.slice(0, 8) : 'unknown');
@@ -235,19 +266,26 @@ function gateLine(gate) {
  */
 function formatComment(report, gate) {
   const lines = [COMMENT_MARKER, `### PR review precheck, head \`${short(report.headSha)}\``, ''];
-  if (report.blockers.length === 0) lines.push('No human-actionable blockers found at this point.');
-  else {
+  if (report.blockers.length > 0) {
     lines.push('Things a person can act on now, while the review runs:', '');
     for (const b of report.blockers) lines.push(`- [ ] ${b.message}`);
+  } else if (report.notEstablished.length === 0) {
+    lines.push('No human-actionable blockers found at this point.');
+  } else {
+    lines.push('No blocker a person can act on is established yet.');
+  }
+  if (report.notEstablished.length > 0) {
+    lines.push('', 'Not established yet:', '');
+    for (const n of report.notEstablished) lines.push(`- ${n.message}`);
   }
   lines.push('', ...protectionLines(report.protection, report.approvals).map((l) => `- ${l}`));
   if (report.description.state === 'complete' || report.description.state === 'missing') {
     if (report.description.directedByMissing) lines.push('- If an agent wrote this PR, the description also needs a `Directed by: @login` line.');
   }
-  if (report.approvals.state !== 'unknown' && report.approvals.lowerBound) {
+  if (report.approvals.state === 'short' && report.approvals.lowerBound) {
     lines.push(`- The approvals figure is a lower bound: the review tier is assigned later and may require more (${report.approvals.basis}).`);
   }
-  if (report.approvals.state !== 'unknown' && report.approvals.directedBy) {
+  if (report.approvals.state === 'short' && report.approvals.directedBy) {
     lines.push(`- \`Directed by: @${report.approvals.directedBy}\` is counted as one approval, as the gate counts it when an agent wrote this PR; if a person wrote it, that credit does not apply and the shortfall is larger.`);
   }
   if (report.approvals.state !== 'unknown' && report.approvals.headTreeKnown === false) {
@@ -328,7 +366,7 @@ async function runPrecheck(input, deps) {
     }
   }
 
-  return { ok: comment.action !== 'failed', headSha, baseRefName, dryRun, blockers: report.blockers, approvals: report.approvals, description: report.description, protection: report.protection, gate, comment };
+  return { ok: comment.action !== 'failed', headSha, baseRefName, dryRun, blockers: report.blockers, notEstablished: report.notEstablished, approvals: report.approvals, description: report.description, protection: report.protection, gate, comment };
 }
 
 module.exports = { runPrecheck, buildReport, formatComment, decideGate, assessProtection, approvalsFloor, COMMENT_MARKER };

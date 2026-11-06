@@ -177,7 +177,7 @@ describe('human blockers (AC2)', () => {
   it('does not invent a minimum when the policy cannot say the Low waiver is off', async () => {
     const { deps } = makeDeps({ readPolicy: async () => ({ ok: false, error: 'no' }) });
     const r = await runPrecheck({}, deps);
-    expect(r.approvals).toMatchObject({ lowerBound: true, required: 0, state: 'satisfied' });
+    expect(r.approvals).toMatchObject({ lowerBound: true, required: 0, state: 'not-established' });
     expect(r.blockers.some((b) => b.code === 'approvals-unsatisfied')).toBe(false);
     expect(r.comment.body).toContain('lower bound');
   });
@@ -194,7 +194,7 @@ describe('human blockers (AC2)', () => {
     expect((await runPrecheck({}, stale.deps)).approvals).toMatchObject({ counted: 0, state: 'short' });
     const fresh = makeDeps({ readReviews: async () => ({ ok: true, reviews: [review('alice', 'APPROVED', HEAD)] }) });
     const r = await runPrecheck({}, fresh.deps);
-    expect(r.approvals).toMatchObject({ counted: 1, state: 'satisfied' });
+    expect(r.approvals).toMatchObject({ counted: 1, state: 'not-established' });
     expect(r.blockers.some((b) => b.code === 'approvals-unsatisfied')).toBe(false);
   });
 
@@ -235,6 +235,70 @@ describe('human blockers (AC2)', () => {
     expect(r.ok).toBe(true);
     expect(r.approvals.lowerBound).toBe(true);
     expect(r.comment.body).toContain('lower bound');
+  });
+});
+
+describe('approvals are never reported as met from a bound (review round 1, finding 1)', () => {
+  const HIGH = { ok: true, effectiveTier: 'high', humansRequired: 2 };
+  const prWith = (body, author = 'someone') => async () => ({ ok: true, headSha: HEAD, baseRefName: 'dev', state: 'OPEN', body, author });
+  const approvals = (...logins) => async () => ({ ok: true, reviews: logins.map((l) => review(l, 'APPROVED', HEAD)) });
+  const NO_BLOCKERS = 'No human-actionable blockers found at this point.';
+
+  it('a PR whose director is its author, with no approvals and no tier, says approvals are not established (the shape of the PR that found this)', async () => {
+    const { deps, calls } = makeDeps({ readPr: prWith(DIRECTED_BODY, 'maintainer') });
+    const r = await runPrecheck({}, deps);
+    expect(r.approvals.state).toBe('not-established');
+    expect(r.notEstablished.map((n) => n.subject)).toEqual(['approvals']);
+    expect(calls.post[0]).not.toContain(NO_BLOCKERS);
+    expect(calls.post[0]).toContain('Approvals: not established.');
+    expect(calls.post[0]).toContain('a High PR needs 2');
+  });
+
+  it('one real approval and no tier is still not established: the tier may need two', async () => {
+    const { deps } = makeDeps({ readReviews: approvals('alice') });
+    const r = await runPrecheck({ dryRun: true }, deps);
+    expect(r.approvals).toMatchObject({ state: 'not-established', counted: 1, lowerBound: true });
+    expect(r.comment.body).not.toContain(NO_BLOCKERS);
+    expect(r.comment.body).toContain('Approvals: not established.');
+  });
+
+  it('names what is not established and the blockers that are: both appear, the "no blockers" line does not', async () => {
+    const { deps } = makeDeps({ readReviews: approvals('alice'), readPr: prWith('## Testing\nok\n') });
+    const r = await runPrecheck({ dryRun: true }, deps);
+    expect(r.blockers.map((b) => b.code)).toEqual(['description-section-missing']);
+    expect(r.comment.body).toContain('Things a person can act on now');
+    expect(r.comment.body).toContain('Not established yet:');
+  });
+
+  it('a known tier is satisfied only when the count holds WITHOUT the director credit', async () => {
+    // alice + the credited director = 2 of 2, but the director earns a slot only if an agent wrote the PR.
+    const credited = await runPrecheck({ tier: HIGH, dryRun: true }, makeDeps({ readPr: prWith(DIRECTED_BODY), readReviews: approvals('alice') }).deps);
+    expect(credited.approvals).toMatchObject({ state: 'not-established', counted: 2, required: 2, lowerBound: false });
+    expect(credited.approvals.reason).toContain('without that credit the count is 1');
+    expect(credited.comment.body).toContain('if a person wrote it, that credit does not apply');
+    expect(credited.comment.body).not.toContain(NO_BLOCKERS);
+
+    // two real approvals meet it whoever wrote the PR.
+    const real = await runPrecheck({ tier: HIGH, dryRun: true }, makeDeps({ readPr: prWith(DIRECTED_BODY), readReviews: approvals('alice', 'bob') }).deps);
+    expect(real.approvals).toMatchObject({ state: 'satisfied', lowerBound: false });
+    expect(real.comment.body).toContain(NO_BLOCKERS);
+
+    const medium = await runPrecheck({ tier: { ok: true, effectiveTier: 'medium', humansRequired: 1 }, dryRun: true }, makeDeps({ readPr: prWith(DIRECTED_BODY), readReviews: approvals('alice') }).deps);
+    expect(medium.approvals.state).toBe('satisfied');
+  });
+
+  it('a shortfall that holds even with the director credited is still a blocker', async () => {
+    const r = await runPrecheck({ tier: HIGH, dryRun: true }, makeDeps({ readPr: prWith(DIRECTED_BODY) }).deps);
+    expect(r.approvals).toMatchObject({ state: 'short', counted: 1, required: 2, shortfall: 1 });
+    expect(r.blockers.map((b) => b.code)).toContain('approvals-unsatisfied');
+  });
+
+  it('a tier record that refused a relaxation is not established even when the count suffices', async () => {
+    const refused = { ...HIGH, refusals: [{ code: 'solo-maintainer-refused' }] };
+    const r = await runPrecheck({ tier: refused, dryRun: true }, makeDeps({ readReviews: approvals('alice', 'bob') }).deps);
+    expect(r.approvals.state).toBe('not-established');
+    expect(r.approvals.reason).toContain('tier-relaxation-refused');
+    expect(r.comment.body).not.toContain(NO_BLOCKERS);
   });
 });
 
@@ -355,7 +419,8 @@ describe('comment text', () => {
   it('shows no blockers honestly and still carries the marker, the head and the not-the-gate disclaimer', async () => {
     const { deps } = makeDeps({ readReviews: async () => ({ ok: true, reviews: [review('alice', 'APPROVED', HEAD)] }) });
     const r = await runPrecheck({}, deps);
-    const body = formatComment(buildReport({ headSha: HEAD, baseRefName: 'dev', pr: { ok: true, body: GOOD_BODY, author: 'x' }, reviewsResult: { ok: true, reviews: [review('alice', 'APPROVED', HEAD)] }, protectionResult: { ok: true, protection: { required_pull_request_reviews: { required_approving_review_count: 1 } } }, policyResult: { ok: true, policy: { lowWaiverEnabled: false } } }), r.gate);
+    const MEDIUM = { ok: true, effectiveTier: 'medium', humansRequired: 1 };
+    const body = formatComment(buildReport({ headSha: HEAD, baseRefName: 'dev', pr: { ok: true, body: GOOD_BODY, author: 'x' }, reviewsResult: { ok: true, reviews: [review('alice', 'APPROVED', HEAD)] }, protectionResult: { ok: true, protection: { required_pull_request_reviews: { required_approving_review_count: 1 } } }, policyResult: { ok: true, policy: { lowWaiverEnabled: false } }, tier: MEDIUM }), r.gate);
     expect(body.split('\n')[0]).toBe(COMMENT_MARKER);
     expect(body).toContain('No human-actionable blockers found at this point.');
     expect(body).toContain('aaaaaaaa');
