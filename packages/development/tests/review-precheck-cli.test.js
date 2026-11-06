@@ -595,6 +595,69 @@ describe('one gate per head: the runner keys its clone by the sha alone (review 
   });
 });
 
+describe('the comment leaves this machine redacted and path-free (review round 1, finding 8)', () => {
+  const SECRET = `ghp_${'A'.repeat(36)}`;
+  /** The `body=` field of the gh call that wrote the comment (stdout is redacted by `main`; this is what GitHub receives). */
+  const sent = (calls, method) => {
+    const call = calls.find((c) => c[0] === 'gh' && c.includes('-X') && c.includes(method));
+    return call === undefined ? undefined : call.find((a) => a.startsWith('body=')).slice('body='.length);
+  };
+  const leaky = (message) => table({ [`fetch --quiet origin ${HEAD}`]: fail(message), 'refs/pull/9/head': fail(message) });
+
+  it('a token-shaped string in a git error reaches neither a new comment nor an updated one', async () => {
+    const message = `fatal: unable to access 'https://x:${SECRET}@github.com/o/r.git/'`;
+    const created = fakeRun(leaky(message));
+    const r = await runPrecheck({}, deps({ run: created.run, spawnProcess: fakeSpawn().spawnProcess }));
+    expect(r.gate.action).toBe('start-failed');
+    const body = sent(created.calls, 'POST');
+    expect(body).toContain('could NOT be started');
+    expect(body).not.toContain(SECRET);
+    expect(body).toContain('[REDACTED]');
+    expect(body.startsWith(COMMENT_MARKER)).toBe(true);
+
+    const updated = fakeRun({ ...leaky(message), 'issues/9/comments': ok([[{ id: 5, body: `${COMMENT_MARKER}\nold`, user: { login: 'me' } }]]), '-X PATCH': ok({ id: 5, html_url: 'u' }) });
+    await runPrecheck({}, deps({ run: updated.run, spawnProcess: fakeSpawn().spawnProcess }));
+    expect(sent(updated.calls, 'PATCH')).not.toContain(SECRET);
+    expect(sent(updated.calls, 'PATCH')).toContain('[REDACTED]');
+  });
+
+  it('the GH_TOKEN / GITHUB_TOKEN values in the environment are redacted even when they match no token pattern', async () => {
+    const saved = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+    process.env.GH_TOKEN = 'plain-value-that-looks-like-nothing';
+    process.env.GITHUB_TOKEN = 'another-plain-value-123';
+    try {
+      const { run, calls } = fakeRun(leaky('fatal: auth plain-value-that-looks-like-nothing and another-plain-value-123 rejected'));
+      await runPrecheck({}, deps({ run, spawnProcess: fakeSpawn().spawnProcess }));
+      const body = sent(calls, 'POST');
+      expect(body).toContain('could NOT be started');
+      expect(body).not.toContain('plain-value-that-looks-like-nothing');
+      expect(body).not.toContain('another-plain-value-123');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it('names no absolute path of this checkout or of the user home: they are repo-relative or ~', async () => {
+    const t = (() => {
+      const live = [];
+      const spawnProcess = () => { const child = new EventEmitter(); child.pid = 7000; child.unref = () => {}; live.push(child); return child; };
+      return { spawnProcess };
+    })();
+    jest.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw new Error(`ENOSPC: rename '${root}/.ensemble/pr-review/x.tmp' to '${os.homedir()}/elsewhere/y'`); });
+    const { run, calls } = fakeRun(table());
+    const r = await runPrecheck({}, deps({ run, spawnProcess: t.spawnProcess, kill: () => {} }));
+    expect(r.gate.action).toBe('start-failed');
+    expect(r.comment.body).toContain(root); // the result carries what happened; only what is SENT is scrubbed
+    const body = sent(calls, 'POST');
+    expect(body).toContain("rename '.ensemble/pr-review/x.tmp' to '~/elsewhere/y'");
+    expect(body).not.toContain(root);
+    expect(body).not.toContain(os.homedir());
+  });
+});
+
 describe('readPr', () => {
   const prWith = (over) => fakeRun({ 'pr view': ok({ headRefOid: HEAD, baseRefName: 'dev', state: 'OPEN', body: 'b', author: { login: 'a' }, isCrossRepository: false, ...over }) }).run;
 

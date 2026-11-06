@@ -25,6 +25,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
 
@@ -95,6 +96,18 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
   };
   const markerPath = (headSha, dryRun) => path.join(stateDir, `precheck-pr-${pr}-${headSha}${dryRun ? '.dry' : ''}.gate.json`);
   const rel = (p) => path.relative(root, p);
+  /**
+   * The comment is public and carries `gh`/`git` stderr and file-system errors. Before it leaves this machine, strip anything
+   * credential-shaped (token patterns and the GH_TOKEN/GITHUB_TOKEN values) and the absolute location of this checkout and of
+   * the user's home, which would otherwise name the local user and directory layout.
+   */
+  const publishable = (text) => {
+    let out = redact(text, process.env);
+    if (root.length > 1) out = out.split(`${root}${path.sep}`).join('').split(root).join('.');
+    const home = os.homedir();
+    if (typeof home === 'string' && home.length > 1) out = out.split(home).join('~');
+    return out;
+  };
   /** Whether a process exists: true or false, or null when `pid` is not a usable pid. EPERM means it exists but is not ours. */
   const probe = (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return null;
@@ -474,13 +487,13 @@ function makeDeps({ repo, pr, repoRoot, run = defaultRun, spawnProcess = spawn, 
     },
 
     async postComment(body) {
-      const r = await ghJson(['api', '-X', 'POST', `repos/${repo}/issues/${pr}/comments`, '-f', `body=${body}`]);
+      const r = await ghJson(['api', '-X', 'POST', `repos/${repo}/issues/${pr}/comments`, '-f', `body=${publishable(body)}`]);
       return r.ok ? { ok: true, id: r.data.id, url: r.data.html_url } : r;
     },
 
     async updateComment(id, body) {
       if (!Number.isInteger(id)) return { ok: false, error: 'the existing comment has no usable id' };
-      const r = await ghJson(['api', '-X', 'PATCH', `repos/${repo}/issues/comments/${id}`, '-f', `body=${body}`]);
+      const r = await ghJson(['api', '-X', 'PATCH', `repos/${repo}/issues/comments/${id}`, '-f', `body=${publishable(body)}`]);
       return r.ok ? { ok: true, id: r.data.id, url: r.data.html_url } : r;
     },
   };
