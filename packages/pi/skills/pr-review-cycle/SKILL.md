@@ -174,7 +174,7 @@ the same dedupe and Step 3b verification, never pre-trusted or pre-dismissed.
 Detail: `reference/ledger-and-verification.md`. Every candidate is verified first
 (REQ-005) and nothing is dropped (REQ-006). Plan with `verify-assign`: exactly
 `bounds.verifiers` distinct fresh-context verifiers per candidate, never its
-reviewer, few candidates per agent, under the verifier brief; short pool errors.
+raiser, few candidates per agent, under the verifier brief; short pool errors.
 Verdicts: `real`, `not-real`, `abstain`. Run `votes` with
 `{ findings, depth, assignment, expectedVerifiers, verificationCapability }`. Present exactly
 `presented[]` (`present`, `disputed`, `unverified`) with each `authorLabel` verbatim;
