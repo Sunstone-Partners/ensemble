@@ -120,9 +120,8 @@ file you named — a mismatched hash makes every later staleness answer a lie.
 
 Write `<evalCasesDir>/<id>.json` with exactly the keys `id`, `change`, `bug`,
 `location {path,startLine,endLine}`, `confirmedBy`, `rulesFile`, `rulesHash`
-(example in the reference). `packages/development/skills/pr-review-eval/case-template.json`
-is that shape with every field empty; copy it rather than writing one from
-memory.
+(example in the reference); copy `packages/development/skills/pr-review-eval/case-template.json`
+(that shape, fields empty), do not write one from memory.
 
 - The file name is `<id>.json` directly under `evalCasesDir`. A case written
   anywhere else is not loaded (`case-outside-eval-dir`), and a file whose name
@@ -192,6 +191,10 @@ A `regression` is a result, not a crash: report it and stop. This skill
 does not re-run the eval to get a better number, does not retune a prompt to
 clear the regression, and does not edit a case to match what the reviewer
 found — each would make the eval unable to fail.
+
+### Step R3a — Guard
+
+Before a pipeline-changing PR lands, run `pr-review-eval-guard.js` (`reference/eval-details.md`); exit 1 means a lost Important finding.
 
 ### Step R4 — Recurrence belongs to the host repository
 

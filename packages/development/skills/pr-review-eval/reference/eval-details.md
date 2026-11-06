@@ -64,3 +64,19 @@ jq -n --slurpfile cases /tmp/eval-cases.json \
   --argjson hashes "$(jq -n '{}')" '{cases: $cases[0], rulesHashes: $hashes}' \
   | node "$PR_REVIEW_CLI" eval-stale
 ```
+
+## R3a -- The quality guard
+
+A change to how the review runs (the runner, verifier assignment, sharding, carried verdicts) is a regression if a real Important finding stops being reported, however much wall time it saves. Before such a change lands, run the pipeline's output for the committed cases (`docs/review-eval/cases`: the #228, #233 and #234 findings, each pinned to the commit it was found at) through the guard:
+
+```bash
+PR_REVIEW_EVAL_GUARD_CLI="$(dirname "$PR_REVIEW_CLI")/pr-review-eval-guard.js"
+node "$PR_REVIEW_EVAL_GUARD_CLI" --findings "$PIPELINE_FINDINGS" \
+  --history docs/review-eval/history.jsonl --reviewer "$REVIEWER"
+```
+
+`$PIPELINE_FINDINGS` is `{ "findingsByCase": { "<case id>": [ findings ] } }`, as collected in Step R2. Exit 0 only when every expected Important finding is present. It exits 1 (`pass:false`, with `missed` and `falseNegativeRate` on stdout) on a lost Important finding, an unloadable or unconfirmed case, a case with no pinned commit or a range the pinned commit does not contain, an unreadable history, and a regression against the previous history entry, which includes a case deleted to make the run smaller. Stale cases are listed for owner re-review and do not fail the run unless `--fail-on-stale` is given. Each run, failures included, appends its false-negative rate to the history.
+
+A new case's `change` must carry the 40-hex commit its location is pinned to (`https://.../pull/N head <sha>`); the guard refuses a case without one.
+
+Do not edit a case, delete one or trim the findings file to turn the guard green. The reconstructed baseline and its provenance are in `docs/review-eval/README.md`.
