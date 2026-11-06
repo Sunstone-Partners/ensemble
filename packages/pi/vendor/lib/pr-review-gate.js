@@ -18,6 +18,12 @@
  * section is missing (AC-008-1, AC-017-1, AC-002-3). Nit and Pre-existing
  * findings never block (AC-008-4).
  *
+ * An Important (or unrecognised-severity) or security finding is closed by a
+ * recorded resolution only when that resolution has provenance: a reason, the
+ * login that decided, a timestamp and the head commit it was decided against,
+ * equal to this gate's `headSha` (see `applyProvenance`). That is attribution
+ * and head-binding, not authentication: it cannot show a human typed it.
+ *
  * FAIL CLOSED, in both directions:
  *   - Missing, unreadable or unavailable review data is NEVER read as "nothing
  *     to answer". It is `review-data-unavailable`, `mergeable: false`, naming
@@ -32,7 +38,13 @@
  * TRD Reference: docs/TRD/TRD-2026-70e784f2-code-review-process.md#trd-025
  */
 
-const { validateLedger, partitionFindings, isActionable, normalizeSeverity } = require('./pr-review-ledger');
+const {
+  validateLedger,
+  partitionFindings,
+  isActionable,
+  normalizeSeverity,
+  resolutionProvenanceProblem,
+} = require('./pr-review-ledger');
 const { TIERS, HUMANS_REQUIRED } = require('./pr-review-tier');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -97,6 +109,43 @@ function resolutionReason(finding) {
 }
 
 /**
+ * The finding AS THE GATE READS IT. This is stricter than `isActionable` in
+ * one place: an Important or security finding closed by a recorded resolution
+ * stays blocking unless that resolution carries provenance -- a stated
+ * reason, the login that decided (`by`), a timestamp (`at`) and the head
+ * commit it was decided against, equal to the head this gate is asked about
+ * (`resolutionProvenanceProblem`).
+ *
+ * A resolution without that provenance is IGNORED, not half-honoured: the
+ * returned entry has no resolution, so the finding is graded as though none
+ * existed and every other way a finding stops blocking (cleared by a later
+ * head, the triager's deferral of a non-blocking Major) is judged as before.
+ *
+ * What this does NOT do: prove a human typed the decision. A named login on
+ * the current head is attribution, not authentication.
+ *
+ * Nits and Pre-existing findings never needed an answer, so their (optional)
+ * resolutions are not held to this. `lane: true` marks a security-lane entry,
+ * where every severity but Pre-existing blocks while open.
+ *
+ * @returns {{entry:Object, rejectedBecause:string|null}} `rejectedBecause` is
+ *   set only when a resolution WAS recorded, would have closed the finding,
+ *   and was refused.
+ */
+function applyProvenance(entry, headSha, lane) {
+  const severity = normalizeSeverity(entry.severity);
+  const needsProvenance = severity !== 'pre-existing' && (lane || severity !== 'nit');
+  if (!needsProvenance || entry.cleared === true || !isObject(entry.resolution)) return { entry, rejectedBecause: null };
+
+  const problem = resolutionProvenanceProblem(entry, headSha);
+  if (problem === null) return { entry, rejectedBecause: null };
+
+  const { resolution, ...withoutResolution } = entry;
+  const wouldHaveClosed = !isActionable(entry);
+  return { entry: withoutResolution, rejectedBecause: wouldHaveClosed && isActionable(withoutResolution) ? problem : null };
+}
+
+/**
  * The effective tier the gate grades against: the tier result's word when it
  * is readable, else the one the approvals result already resolved.
  * `null` means neither could be read.
@@ -115,7 +164,7 @@ function readTier(tierResult, approvalsResult) {
  * stops blocking (AC-017-3); one a later head fixed clears on its own
  * (AC-017-2); a lane that never ran blocks Medium and High (AC-017-1).
  */
-function gradeSecurityLane(lane, tier) {
+function gradeSecurityLane(lane, tier, headSha) {
   const record = { status: 'unavailable', open: [], cleared: [], resolved: [] };
   const blockers = [];
   const warnings = [];
@@ -158,7 +207,8 @@ function gradeSecurityLane(lane, tier) {
     return { record, blockers, warnings, missing: [`unusable security lane findings (${validation.offendingIds.join(', ') || 'unreadable'})`] };
   }
 
-  for (const entry of findings) {
+  for (const recorded of findings) {
+    const { entry, rejectedBecause } = applyProvenance(recorded, headSha, true);
     const id = String(entry.id);
     if (entry.cleared === true && !isActionable(entry)) {
       record.cleared.push(id);
@@ -173,9 +223,17 @@ function gradeSecurityLane(lane, tier) {
     blockers.push(
       blocker(
         BLOCKER_CODES.SECURITY_FINDING_OPEN,
-        `the security review found ${nameOf(entry)} and it is still open`,
-        'fix it, or close it with a stated reason recorded on the finding',
-        { findingId: id, locationOrLink: entry.locationOrLink || null }
+        rejectedBecause === null
+          ? `the security review found ${nameOf(entry)} and it is still open`
+          : `the security review found ${nameOf(entry)} and it is still open: its recorded resolution does not count (${rejectedBecause})`,
+        rejectedBecause === null
+          ? 'fix it, or close it with a stated reason recorded on the finding'
+          : 'fix it, or have the operator record the decision again on the current head with their login, a timestamp and a reason (ledger resolve)',
+        {
+          findingId: id,
+          locationOrLink: entry.locationOrLink || null,
+          ...(rejectedBecause === null ? {} : { resolutionRejected: rejectedBecause }),
+        }
       )
     );
   }
@@ -229,7 +287,8 @@ function evaluateGate(input) {
         missing.push(`unreadable ledger (${parts.reason})`);
       } else {
         const open = [];
-        for (const entry of parts.findings) {
+        for (const recorded of parts.findings) {
+          const { entry, rejectedBecause } = applyProvenance(recorded, input.headSha, false);
           if (!isActionable(entry)) continue;
           const severity = normalizeSeverity(entry.severity);
           if (severity === 'nit') continue; // AC-008-4: a Nit never blocks the merge.
@@ -239,13 +298,21 @@ function evaluateGate(input) {
           blockers.push(
             blocker(
               unrecognised ? BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING : BLOCKER_CODES.OPEN_IMPORTANT_FINDING,
-              unrecognised
+              (unrecognised
                 ? `finding ${nameOf(entry)} carries a severity this gate cannot read ('${String(entry.severity)}'), so it is treated as Important and is still open`
-                : `Important finding ${nameOf(entry)} is still open`,
-              unrecognised
-                ? 'retag it with Important, Nit or Pre-existing, then fix it or answer it with a recorded reason'
-                : 'fix it, or answer it with a recorded reason on the finding',
-              { findingId: id, locationOrLink: entry.locationOrLink || null, severity: entry.severity }
+                : `Important finding ${nameOf(entry)} is still open`) +
+                (rejectedBecause === null ? '' : `: its recorded resolution does not count (${rejectedBecause})`),
+              rejectedBecause !== null
+                ? 'fix it, or have the operator record the decision again on the current head with their login, a timestamp and a reason (ledger resolve)'
+                : unrecognised
+                  ? 'retag it with Important, Nit or Pre-existing, then fix it or answer it with a recorded reason'
+                  : 'fix it, or answer it with a recorded reason on the finding',
+              {
+                findingId: id,
+                locationOrLink: entry.locationOrLink || null,
+                severity: entry.severity,
+                ...(rejectedBecause === null ? {} : { resolutionRejected: rejectedBecause }),
+              }
             )
           );
         }
@@ -362,7 +429,7 @@ function evaluateGate(input) {
   if (!isObject(input.security)) {
     missing.push('security');
   } else {
-    const graded = gradeSecurityLane(input.security, tier);
+    const graded = gradeSecurityLane(input.security, tier, isText(input.headSha) ? input.headSha : null);
     securityLane = graded.record;
     blockers.push(...graded.blockers);
     warnings.push(...graded.warnings);
