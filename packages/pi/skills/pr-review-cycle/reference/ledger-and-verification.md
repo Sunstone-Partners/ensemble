@@ -83,9 +83,9 @@ Step 1c (`bounds.verifiers`: Quick none, Standard 3, Deep 5), each a
 **fresh-context subagent** given the diff, the candidate and the applied
 rules -- never the authoring conversation and never the reviewer's reasoning
 for raising it. **A verifier never votes on a finding it produced itself**:
-each candidate records who raised it (its `source`, or a `reviewer`; a merged
-finding's `mergedFrom[].source` too), and they are all
-excluded from that finding's verifier set. When the dispatch cannot exclude
+each candidate records the `reviewer` that raised it (a ledger candidate's
+`source`, and each `mergedFrom[].source` of a merged finding, count the same),
+and that reviewer is excluded from that finding's verifier set. When the dispatch cannot exclude
 them (a single reviewer and a single verifier are the same agent), that
 finding has no usable verifier -- record it in `incompleteVerifiers` rather
 than letting the author of the finding confirm their own finding. A verifier
