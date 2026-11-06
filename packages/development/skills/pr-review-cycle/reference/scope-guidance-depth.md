@@ -190,6 +190,14 @@ is treated as Medium, so Standard) and **a tier the CLI could not read is
 Deep**. A Medium change is never reviewed at Deep, and an unreadable tier is
 never reviewed below it.
 
+**Run mode.** Run `node "$PR_REVIEW_CLI" mode` with `{ tierResult }`, where
+`tierResult` is the whole `tier` result above, verbatim. The answer is the
+review-run mode, `light` (Low and Medium) or `full` (High, a sensitive or High
+path, a raised tier, or anything the CLI could not read), taken from that tier
+and never from the size of the diff or an agent's judgement; it is not the
+`depth` mode and does not replace it. `securityLane` and `requires` say what
+the mode still demands. Never type a mode word.
+
 **`violations` is binding, not advice.** A non-empty `violations` array
 means the planned dispatch is outside the mode: re-plan the counts and call
 `depth` again until it is empty. Never dispatch a plan the CLI refused, and
