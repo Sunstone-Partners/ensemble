@@ -15,6 +15,16 @@ absent or misspelt one is a CLI error (non-zero exit), never an empty default.
 * `merge` -- `{ action, existingLedger, incomingFindings, headSha }`
 * `scopeViolations` -- `{ action, changedFiles, scope, ledger }`
 * `recordRound` -- `{ action, ledger, incoming, round }` (TRD-013)
+* `resolve` -- `{ action, finding, resolution }` -- records the OPERATOR's decision on one finding (see below)
+
+`resolve` takes `resolution: { reason, by, headSha, at }` and refuses (CLI error)
+anything short of all four: `by` is the deciding login, `headSha` the head the
+decision was made against, `at` an ISO timestamp. Use it only with an answer the
+operator gave you for that finding; the merge gate ignores an Important or
+security resolution that lacks any of the four or names another head, and the
+CLI cannot tell whether the operator or this session wrote the words, so you
+never write them for the operator. Splice the returned `finding` back into the
+ledger before `state-write`.
 
 A finding missing a required field is rejected and must be completed, not
 dropped. Duplicates found within the same round's own findings are merged
