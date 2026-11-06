@@ -186,14 +186,40 @@ function boundsFailure(reason, warnings = []) {
 }
 
 /**
+ * The number of DISTINCT verifiers a candidate has, which is what the bounds mean by `verifiers`: the floor is
+ * "how many independent verifiers settle each candidate", never how many agents were dispatched in total.
+ * With the verification split into small per-candidate batches (`verify-assign`) 11 candidates x 3 verifiers
+ * can mean 33 agents, and counting those against a floor of 3 would pass a plan whose every candidate had only
+ * two verifiers.
+ *
+ * `value` is either that per-candidate count as a whole number, or the assignment list itself
+ * (`[{ id, verifiers: [name] }]`, what `planVerification` returns), graded as its WEAKEST candidate: the
+ * minimum distinct verifier count. A list naming no candidate has nobody to verify, so no count (`count: null`)
+ * and nothing to grade. Anything else cannot be read: `null`.
+ */
+function perCandidateVerifiers(value) {
+  if (isCount(value)) return { count: value };
+  if (!Array.isArray(value)) return null;
+  let weakest = null;
+  for (const entry of value) {
+    if (!isObject(entry) || !Array.isArray(entry.verifiers) || !entry.verifiers.every(isText)) return null;
+    const distinct = new Set(entry.verifiers.map((name) => name.trim().toLowerCase())).size;
+    weakest = weakest === null ? distinct : Math.min(weakest, distinct);
+  }
+  return { count: weakest };
+}
+
+/**
  * Grades planned and used reviewer/verifier counts against the mode's bounds
  * (AC-016-1). Each set given is graded on its own, so a plan that respected
  * the mode and a run that did not are both visible.
  *
  * @param {Object} input
  * @param {string} input.mode
- * @param {{reviewers:number, verifiers:number}} [input.planned]
- * @param {{reviewers:number, verifiers:number}} [input.used]
+ * @param {{reviewers:number, verifiers:number|Array<{id:string, verifiers:string[]}>}} [input.planned]
+ * @param {{reviewers:number, verifiers:number|Array<{id:string, verifiers:string[]}>}} [input.used]
+ *   `verifiers` is the number of distinct verifiers PER CANDIDATE (or the assignment list, graded as its
+ *   weakest candidate); see `perCandidateVerifiers`.
  * @param {Object} [input.bounds]  Policy override, by mode.
  * @returns {{ok:boolean, mode:string|null, bounds:Object|null,
  *   violations:Array<{set:string, role:string|null, kind:string, bound:number|null, count:number|null}>,
@@ -212,10 +238,10 @@ function checkBounds(input) {
   for (const name of ['planned', 'used']) {
     const counts = input[name];
     if (counts === undefined) continue;
-    if (!isObject(counts) || !isCount(counts.reviewers) || !isCount(counts.verifiers)) {
+    if (!isObject(counts) || !isCount(counts.reviewers) || perCandidateVerifiers(counts.verifiers) === null) {
       return boundsFailure(`${name} counts must be whole numbers of reviewers and verifiers`, warnings);
     }
-    sets.push([name, counts]);
+    sets.push([name, { reviewers: counts.reviewers, verifiers: perCandidateVerifiers(counts.verifiers).count }]);
   }
   if (sets.length === 0) return boundsFailure('no planned or used counts to grade', warnings);
 
@@ -224,6 +250,7 @@ function checkBounds(input) {
     for (const role of ['reviewers', 'verifiers']) {
       const bound = bounds[role];
       const count = counts[role];
+      if (count === null) continue; // an assignment naming no candidate: nobody to verify, nothing to grade
       if (bound.max !== null && count > bound.max) {
         violations.push({ set: name, role, kind: 'exceeds-maximum', bound: bound.max, count });
       } else if (count < bound.min) {

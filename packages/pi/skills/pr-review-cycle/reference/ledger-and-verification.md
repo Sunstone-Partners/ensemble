@@ -90,6 +90,22 @@ finding has no usable verifier -- record it in `incompleteVerifiers` rather
 than letting the author of the finding confirm their own finding. A verifier
 meets the same agent requirement as a reviewer (Step 1c, "Which agent").
 
+**Who verifies what.** Every candidate gets K verifiers, but no verifier is
+handed every candidate. Plan the split with
+`node "$PR_REVIEW_CLI" verify-assign` and
+`{ candidates, depth, verifierPool | verifierCount, expectedVerifiers,
+maxCandidatesPerVerifier }` (`candidates` are the Step 3 findings, each with
+its `id` and `reviewer`). It returns `assignments` -- per candidate, K
+**distinct** verifiers, spread evenly and never the candidate's own
+`reviewer` -- and `agents`, per verifier agent, the candidates it is briefed
+on (one or a few: 5 to 15 tool calls, 2 to 5 minutes). Dispatch one agent per
+`agents` entry, in parallel (at most 32 at once), each briefed on its own
+candidates only: no verifier sees another's vote. A pool that cannot give
+every candidate K verifiers comes back `ok: false`, `reason:
+verifier-pool-too-small`, naming the candidates and how many verifiers each
+could have: enlarge the pool, or fall back to the `incompleteVerifiers`
+record above. Never run a candidate with fewer than K.
+
 Each verifier returns, per candidate, exactly one verdict: `real`,
 `not-real` or `abstain`. Anything else is not a vote and is ignored as one.
 
@@ -119,16 +135,34 @@ the limits bind.
 > incomplete for that finding, which is the honest answer.
 
 **Tallying.** Run `node "$PR_REVIEW_CLI" votes` with
-`{ findings, depth, expectedVerifiers, verificationCapability }`:
+`{ findings, depth, assignment, expectedVerifiers, verificationCapability }`:
 
 * `findings` are the candidates from Step 3, each
   `{ id, severity, kind, security, reviewer, votes: [{ verifier, verdict }],
   incompleteVerifiers }`;
 * `depth` is the `mode` Step 1c resolved;
+* `assignment` is the `assignments` array `verify-assign` returned, unchanged.
+  It makes the tally structural: every finding must have exactly one entry
+  naming exactly K distinct verifiers (none its own reviewer), or the round
+  comes back `verification: blocked` with the reason (a wrong plan, not a
+  quiet verifier); a vote from someone not assigned to that finding is
+  ignored (`not-assigned`); and an assigned verifier with no counted vote --
+  none returned, or an unreadable verdict -- is named in that finding's
+  `incompleteVerifiers`
+  (reason `no-vote`) by `votes` itself, so you do not have to track who
+  stayed silent. One voter missing from a finding of K makes that finding
+  `unverified` / `verifier-incomplete`, never `present` on the strength of
+  the others;
 * `expectedVerifiers` is given only when the policy's bounds override the
   mode's count -- leave it out otherwise, so the denominator stays the count
-  the depth **expects**, never the number of votes that happened to arrive;
+  the depth **expects**, never the number of votes that happened to arrive.
+  Pass the same value to `verify-assign`;
 * `verificationCapability` is `false` only in the degraded case below.
+
+To grade the plan against the depth's bounds, send `depth` the assignment
+itself as `planned.verifiers` (or `used.verifiers`): the bounds mean K
+distinct verifiers **per candidate**, graded as the weakest candidate, not
+the count of agents dispatched (11 groups of 3 is 3 verifiers, not 33).
 
 **What the author is asked to answer.** Present exactly `presented[]` --
 the `present`, `disputed` and `unverified` findings -- and nothing else. A
