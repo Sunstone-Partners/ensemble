@@ -372,8 +372,11 @@ describe('checkBounds: verifiers are graded per candidate, not by the number of 
     expect(checkBounds({ mode: 'standard', used: { reviewers: 2, verifiers: 2 } }).ok).toBe(false);
   });
 
-  test('an assignment naming no candidate has nobody to verify and nothing to grade', () => {
-    expect(checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: [] } }).ok).toBe(true);
+  test('an empty assignment (what a refused plan carries) counts as zero verifiers and never passes a floor', () => {
+    const result = checkBounds({ mode: 'standard', planned: { reviewers: 2, verifiers: [] } });
+    expect(result.ok).toBe(false);
+    expect(result.violations).toEqual([{ set: 'planned', role: 'verifiers', kind: 'below-minimum', bound: 3, count: 0 }]);
+    expect(checkBounds({ mode: 'quick', planned: { reviewers: 1, verifiers: [] } }).ok).toBe(true);
   });
 
   test.each([

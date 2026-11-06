@@ -194,13 +194,13 @@ function boundsFailure(reason, warnings = []) {
  *
  * `value` is either that per-candidate count as a whole number, or the assignment list itself
  * (`[{ id, verifiers: [name] }]`, what `planVerification` returns), graded as its WEAKEST candidate: the
- * minimum distinct verifier count. A list naming no candidate has nobody to verify, so no count (`count: null`)
- * and nothing to grade. Anything else cannot be read: `null`.
+ * minimum distinct verifier count. A list naming no candidate counts as ZERO verifiers: an empty list is
+ * what a refused plan carries, and it must never pass a floor. Anything else cannot be read: `null`.
  */
 function perCandidateVerifiers(value) {
   if (isCount(value)) return { count: value };
   if (!Array.isArray(value)) return null;
-  let weakest = null;
+  let weakest = value.length === 0 ? 0 : null;
   for (const entry of value) {
     if (!isObject(entry) || !Array.isArray(entry.verifiers) || !entry.verifiers.every(isText)) return null;
     const distinct = new Set(entry.verifiers.map((name) => name.trim().toLowerCase())).size;
@@ -250,7 +250,6 @@ function checkBounds(input) {
     for (const role of ['reviewers', 'verifiers']) {
       const bound = bounds[role];
       const count = counts[role];
-      if (count === null) continue; // an assignment naming no candidate: nobody to verify, nothing to grade
       if (bound.max !== null && count > bound.max) {
         violations.push({ set: name, role, kind: 'exceeds-maximum', bound: bound.max, count });
       } else if (count < bound.min) {
