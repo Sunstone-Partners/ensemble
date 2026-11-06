@@ -709,8 +709,89 @@ function recordResolution(finding, resolution) {
   const record = { reason: redact(resolution.reason.trim()) };
   if (isText(resolution.by)) record.by = redact(resolution.by.trim());
   if (isText(resolution.at)) record.at = resolution.at.trim();
+  if (isText(resolution.headSha)) record.headSha = resolution.headSha.trim();
 
   return { ok: true, finding: { ...normalizeFinding(finding), disposition: 'resolved', resolution: record } };
+}
+
+/** A GitHub-style login: no spaces, no prose. `by` must name a person, not describe one. */
+const LOGIN_PATTERN = /^@?[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+/**
+ * Whether a finding's recorded resolution carries the provenance the merge
+ * gate requires of an Important or security closure: a stated reason, the
+ * login of whoever decided (`by`), a parseable timestamp (`at`) and the head
+ * commit the decision was made against (`headSha`, equal to `headSha`, the
+ * commit the gate is being asked about).
+ *
+ * HONEST LIMIT: this proves a reason is present, a named login is attached
+ * and the decision is bound to THIS head. It cannot prove a human typed it:
+ * an agent that writes a login into `by` passes this check. The binding to the
+ * head and the named login make a claim attributable and stale on the next
+ * push; they do not authenticate it.
+ *
+ * Fail closed: anything unreadable is `false`.
+ *
+ * @param {Object} finding
+ * @param {string} headSha The commit the gate is evaluating.
+ * @returns {boolean}
+ */
+function hasResolutionProvenance(finding, headSha) {
+  return resolutionProvenanceProblem(finding, headSha) === null;
+}
+
+/**
+ * Why a finding's resolution fails `hasResolutionProvenance`, as a sentence a
+ * blocker can carry, or `null` when it carries full provenance.
+ *
+ * @param {Object} finding
+ * @param {string} headSha
+ * @returns {string|null}
+ */
+function resolutionProvenanceProblem(finding, headSha) {
+  if (!isObject(finding) || !isObject(finding.resolution)) return 'it has no recorded resolution';
+  if (!isText(headSha)) return 'the gate was given no head commit to bind it to';
+  const { reason, by, at, headSha: decidedAt } = finding.resolution;
+  if (!isText(reason)) return 'the resolution states no reason';
+  if (!isText(by) || !LOGIN_PATTERN.test(by.trim())) return 'the resolution names no deciding login (by)';
+  if (!isText(at) || !Number.isFinite(Date.parse(at.trim()))) return 'the resolution has no timestamp (at)';
+  if (!isText(decidedAt)) return 'the resolution is not bound to a head commit (headSha)';
+  if (decidedAt.trim().toLowerCase() !== headSha.trim().toLowerCase()) {
+    return `the resolution was recorded against ${decidedAt.trim()}, not the current head ${headSha.trim()}`;
+  }
+  return null;
+}
+
+/**
+ * Records an OPERATOR's decision on a finding: `recordResolution` plus the
+ * provenance the gate demands. `by` (a login), `headSha` (the head the
+ * decision was made against) and `at` (an ISO timestamp) are all REQUIRED; a
+ * decision missing any of them is refused and the finding comes back
+ * unchanged and still blocking. Nothing is defaulted: this library never
+ * reads a clock, so a caller that did not state when and about which head has
+ * not recorded a decision.
+ *
+ * See `hasResolutionProvenance` for what this does and does not prove.
+ *
+ * @param {Object} finding
+ * @param {{reason:string, by:string, headSha:string, at:string}} decision
+ * @returns {{ok:true, finding:Object}|{ok:false, reason:string, finding:Object}}
+ */
+function recordOperatorResolution(finding, decision) {
+  if (!isObject(finding)) return { ok: false, reason: 'a resolution needs a finding object', finding: redact(finding) };
+  if (!isObject(decision)) return { ok: false, reason: 'a resolution needs a decision object', finding: redact(finding) };
+  for (const key of ['reason', 'by', 'headSha', 'at']) {
+    if (!isText(decision[key])) {
+      return { ok: false, reason: `an operator resolution needs '${key}' as non-empty text`, finding: redact(finding) };
+    }
+  }
+  if (!LOGIN_PATTERN.test(decision.by.trim())) {
+    return { ok: false, reason: "an operator resolution needs 'by' to be a login (no spaces)", finding: redact(finding) };
+  }
+  if (!Number.isFinite(Date.parse(decision.at.trim()))) {
+    return { ok: false, reason: "an operator resolution needs 'at' to be a timestamp", finding: redact(finding) };
+  }
+  return recordResolution(finding, decision);
 }
 
 /** One changed location: `'path'`, `'path:line'`, or `{ path, lines?: number[] }`. `lines: null` means the whole file. */
@@ -1060,6 +1141,9 @@ module.exports = {
   sortFindings,
   partitionFindings,
   recordResolution,
+  recordOperatorResolution,
+  hasResolutionProvenance,
+  resolutionProvenanceProblem,
   clearFixedFindings,
   fingerprintFinding,
   classFindings,
