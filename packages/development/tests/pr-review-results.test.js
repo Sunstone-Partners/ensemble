@@ -13,14 +13,21 @@
  *   AC3  re-running `collectResults` after a crash reproduces the classification,
  *        and a file the agent later rewrites or deletes changes nothing;
  *   AC4  every classification, the deadline policy bounds and the failure table;
+ *   AC5  (review round 1) an agent that can write into `dir` cannot make the
+ *        collector write through a symlink, read anything but the one result file,
+ *        or trust a scratch directory it could have planted;
+ *   AC6  (review round 1) a result arrives only when its CHANGE time, which no
+ *        writer can set backwards, lies in [dispatchedAt, deadlineAt]: stale
+ *        files, another round's scratch copies and backdated mtimes do not count.
  */
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const crypto = require('crypto');
 
-const { reviewDeadlines, collectResults, toVotesInput, classifyAgentFailure } = require('../lib/pr-review-results');
+const { reviewDeadlines, collectResults, toVotesInput, classifyAgentFailure, defaultDeps, defaultScratchDir } = require('../lib/pr-review-results');
 const { loadPolicy, DEFAULT_POLICY } = require('../lib/pr-review-policy');
 const { tallyVotes } = require('../lib/pr-review-votes');
 const { runSlices, runResults, HANDLERS } = require('../lib/pr-review-cli');
@@ -30,13 +37,20 @@ const BASE_SHA = 'b'.repeat(40);
 const MIN = 60 * 1000;
 const T0 = Date.UTC(2026, 10, 6, 12, 0, 0);
 
+let root;
 let dir;
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-results-'));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-results-'));
+  dir = path.join(root, 'results');
+  fs.mkdirSync(dir);
 });
 afterEach(() => {
-  fs.rmSync(dir, { recursive: true, force: true });
+  jest.restoreAllMocks();
+  fs.rmSync(root, { recursive: true, force: true });
 });
+
+/** Where the collector keeps its copies: beside `dir`, never inside it (the agents write inside `dir`). */
+const scratch = () => defaultScratchDir(dir);
 
 /** Writes an agent's result file, and stamps its modification time (when it "arrived"). */
 function write(name, body, at = T0) {
@@ -48,9 +62,25 @@ function write(name, body, at = T0) {
 
 const review = (findings = [], pathsReviewed = []) => ({ findings, pathsReviewed });
 const ballot = (...votes) => ({ votes: votes.map(([candidateId, verdict]) => ({ candidateId, verdict })) });
-const reviewer = (name, extra = {}) => ({ name, role: 'reviewer', deadlineAt: T0 + 15 * MIN, ...extra });
-const verifier = (name, extra = {}) => ({ name, role: 'verifier', deadlineAt: T0 + 5 * MIN, ...extra });
-const collect = (expected, now = T0 + MIN, extra = {}) => collectResults({ expected, dir, now, ...extra });
+const reviewer = (name, extra = {}) => ({ name, role: 'reviewer', dispatchedAt: T0, deadlineAt: T0 + 15 * MIN, ...extra });
+const verifier = (name, extra = {}) => ({ name, role: 'verifier', dispatchedAt: T0, deadlineAt: T0 + 5 * MIN, ...extra });
+
+/**
+ * A result file's arrival is its inode change time, which a test cannot move backwards, so `write` stamps the arrival
+ * the old way (the modification time) and this wrapper reports that stamp as the change time. Everything else is the
+ * real file system: the real `readFile` (without the `lstat` it would be compared with, whose time is the stamp), the
+ * real `writeFile` and the real scratch checks. Tests of the change time itself use no wrapper.
+ */
+const realIo = defaultDeps();
+const stamped = {
+  ...realIo,
+  lstat: (file) => {
+    const facts = realIo.lstat(file);
+    return facts === null ? null : { ...facts, ctimeMs: facts.mtimeMs };
+  },
+  readFile: (file) => realIo.readFile(file),
+};
+const collect = (expected, now = T0 + MIN, extra = {}) => collectResults({ expected, dir, now, ...extra }, stamped);
 const stateOf = (result, name) => result.agents.find((agent) => agent.name === name);
 
 // ---------------------------------------------------------------------------
@@ -147,8 +177,8 @@ describe('collectResults classification', () => {
     expect(result.agents.map((agent) => agent.state)).toEqual(['arrived', 'arrived']);
     expect(result.findings).toEqual([{ id: 'f1', description: 'x', reviewer: 'rev1' }]);
     expect(result.votes).toEqual([{ verifier: 'ver1', candidateId: 'f1', verdict: 'real' }]);
-    expect(fs.existsSync(path.join(dir, '.collected', 'out-rev1.json'))).toBe(true);
-    expect(fs.existsSync(path.join(dir, '.collected', 'out-ver1.json'))).toBe(true);
+    expect(fs.existsSync(path.join(scratch(), 'out-rev1.json'))).toBe(true);
+    expect(fs.existsSync(path.join(scratch(), 'out-ver1.json'))).toBe(true);
   });
 
   test('a reviewer cannot sign its findings as someone else', () => {
@@ -199,9 +229,9 @@ describe('collectResults classification', () => {
     expect(stateOf(result, 'rev1')).toMatchObject({ state: 'invalid', reason, pending: true });
     expect(result.findings).toEqual([]);
     expect(result.reviewedSlices).toEqual([]);
-    const quarantined = path.join(dir, '.collected', 'quarantine');
+    const quarantined = path.join(scratch(), 'quarantine');
     expect(JSON.parse(fs.readFileSync(path.join(quarantined, 'out-rev1.reason.json'), 'utf8'))).toEqual({ name: 'rev1', reason });
-    expect(fs.existsSync(path.join(dir, '.collected', 'out-rev1.json'))).toBe(false);
+    expect(fs.existsSync(path.join(scratch(), 'out-rev1.json'))).toBe(false);
   });
 
   test.each([
@@ -252,7 +282,7 @@ describe('collectResults classification', () => {
 
   test('a read error is invalid with the error code, never a throw', () => {
     const deps = {
-      lstat: () => ({ mtimeMs: T0, size: 10, isFile: true }),
+      lstat: () => ({ mtimeMs: T0, ctimeMs: T0, size: 10, isFile: true }),
       readFile: () => {
         const error = new Error('denied');
         error.code = 'EACCES';
@@ -269,7 +299,7 @@ describe('collectResults classification', () => {
     const deps = {
       lstat: (file) => {
         const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-        return stat ? { mtimeMs: stat.mtimeMs, size: stat.size, isFile: stat.isFile() } : null;
+        return stat ? { mtimeMs: stat.mtimeMs, ctimeMs: stat.mtimeMs, size: stat.size, isFile: stat.isFile(), isDirectory: stat.isDirectory(), uid: stat.uid, mode: stat.mode } : null;
       },
       readFile: (file) => fs.readFileSync(file, 'utf8'),
       writeFile: () => {
@@ -484,7 +514,7 @@ describe('AC3: re-collecting over the same directory reproduces the classificati
     const second = collect(expected(), T0 + 6 * MIN);
     expect(second.votes).toEqual(first.votes);
     expect(second.findings).toEqual(first.findings);
-    expect(stateOf(second, 'ver1')).toMatchObject({ state: 'arrived', scratchPath: path.join(dir, '.collected', 'out-ver1.json') });
+    expect(stateOf(second, 'ver1')).toMatchObject({ state: 'arrived', scratchPath: path.join(scratch(), 'out-ver1.json') });
     expect(second.reviewedSlices).toEqual(['s1']);
   });
 
@@ -605,6 +635,378 @@ describe('classifyAgentFailure', () => {
 });
 
 // ---------------------------------------------------------------------------
+// AC5: what an agent that can write into dir must not be able to do (review round 1)
+// ---------------------------------------------------------------------------
+
+const RESULTS_MODULE = path.join(__dirname, '..', 'lib', 'pr-review-results.js');
+const posix = process.platform === 'win32' ? test.skip : test;
+
+/** The `code` of the error `fn` throws, or `null` when it does not throw. */
+const codeOf = (fn) => {
+  try {
+    fn();
+    return null;
+  } catch (error) {
+    return error.code;
+  }
+};
+
+/** Real-clock expectations around a file that was just written: its change time is real, so the window is built from it. */
+const around = (file, extra = {}) => {
+  const changed = fs.statSync(file).ctimeMs;
+  return { dispatchedAt: changed - 5 * MIN, deadlineAt: changed + 5 * MIN, ...extra };
+};
+
+describe('AC5: an agent that can write into dir cannot make the collector write or read anywhere else', () => {
+  const victimText = 'USER FILE, MUST SURVIVE';
+  const victimFile = () => path.join(root, 'victim.txt');
+  const victim = () => fs.readFileSync(victimFile(), 'utf8');
+  beforeEach(() => fs.writeFileSync(victimFile(), victimText));
+
+  /** A valid result an agent forged where the orchestrator keeps its copies. */
+  const forgedCopy = (where) => {
+    fs.mkdirSync(where, { recursive: true });
+    const copy = path.join(where, 'out-rev1.json');
+    fs.writeFileSync(copy, JSON.stringify(review([{ id: 'FORGED' }], ['a.js'])));
+    fs.utimesSync(copy, (T0 + MIN) / 1000, (T0 + MIN) / 1000);
+    return copy;
+  };
+
+  test('scratch and quarantine live beside dir, never inside it', () => {
+    write('rev1', 'not json');
+    const result = collect([reviewer('rev1')]);
+    expect(stateOf(result, 'rev1')).toMatchObject({ state: 'invalid', quarantinePath: path.join(scratch(), 'quarantine', 'out-rev1.json') });
+    expect(scratch()).toBe(path.join(root, '.results.collected'));
+    expect(fs.readdirSync(dir)).toEqual(['out-rev1.json']);
+    expect(fs.readdirSync(path.join(scratch(), 'quarantine')).sort()).toEqual(['out-rev1.json', 'out-rev1.reason.json']);
+  });
+
+  test('a symlink planted at the orchestrator\'s temp-file name is not written through (P3)', () => {
+    write('rev1', 'AGENT WROTE THIS, NOT JSON');
+    // The agent knows the orchestrator's pid and the layout: it plants a link at every old temp name, in both places.
+    for (const base of [path.join(dir, '.collected'), scratch()]) {
+      for (const leaf of ['out-rev1.json', 'out-rev1.reason.json']) {
+        const link = path.join(base, 'quarantine', `${leaf}.${process.pid}.tmp`);
+        fs.mkdirSync(path.dirname(link), { recursive: true });
+        fs.symlinkSync(victimFile(), link);
+      }
+    }
+    const result = collect([reviewer('rev1')]);
+    expect(stateOf(result, 'rev1').state).toBe('invalid');
+    expect(victim()).toBe(victimText);
+    expect(fs.lstatSync(path.join(scratch(), 'quarantine', 'out-rev1.json')).isFile()).toBe(true);
+  });
+
+  test('writeFile creates its temp file exclusively: even a guessed name is never opened through a symlink', () => {
+    fs.mkdirSync(scratch(), { mode: 0o700 });
+    const target = path.join(scratch(), 'out-x.json');
+    jest.spyOn(crypto, 'randomBytes').mockReturnValue(Buffer.alloc(8, 1)); // the attacker guessed the "random" name
+    fs.symlinkSync(victimFile(), path.join(scratch(), '.out-x.json.0101010101010101.tmp'));
+    expect(codeOf(() => realIo.writeFile(target, 'AGENT BYTES', T0))).toBe('EEXIST');
+    expect(victim()).toBe(victimText);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  test('writeFile replaces a symlink at the target instead of following it, and leaves no temp file behind', () => {
+    fs.mkdirSync(scratch(), { mode: 0o700 });
+    const target = path.join(scratch(), 'out-x.json');
+    fs.symlinkSync(victimFile(), target);
+    realIo.writeFile(target, 'FRESH', T0);
+    expect(victim()).toBe(victimText);
+    expect(fs.lstatSync(target).isFile()).toBe(true);
+    expect(fs.readFileSync(target, 'utf8')).toBe('FRESH');
+    expect(fs.statSync(target).mtimeMs).toBe(T0);
+    expect(fs.readdirSync(scratch())).toEqual(['out-x.json']);
+  });
+
+  test('writeFile re-checks its directory: a symlink swapped in after the scratch check is not written through', () => {
+    const outside = path.join(root, 'outside');
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, scratch());
+    expect(codeOf(() => realIo.writeFile(path.join(scratch(), 'out-x.json'), 'AGENT BYTES', T0))).toBe('EUNSAFE');
+    expect(fs.readdirSync(outside)).toEqual([]);
+  });
+
+  test('a symlink where the old in-dir scratch directory was is just an unrelated entry: nothing is read through it (P3b)', () => {
+    const outside = path.join(root, 'outside');
+    forgedCopy(outside);
+    fs.symlinkSync(outside, path.join(dir, '.collected'));
+    const result = collect([reviewer('rev1')]);
+    expect(stateOf(result, 'rev1').state).toBe('missing');
+    expect(result.findings).toEqual([]);
+  });
+
+  test('a symlink where the scratch directory belongs is refused: its forged copy is no arrival and nothing is written through it', () => {
+    const outside = path.join(root, 'outside');
+    forgedCopy(outside);
+    fs.symlinkSync(outside, scratch());
+
+    const early = collect([reviewer('rev1')]);
+    expect(stateOf(early, 'rev1').state).toBe('missing');
+    expect(early.findings).toEqual([]);
+    expect(early.warnings.join(' ')).toMatch(/not a real directory/);
+
+    write('rev1', review([{ id: 'REAL' }], ['a.js']));
+    write('rev2', 'not json');
+    const later = collect([reviewer('rev1'), reviewer('rev2')]);
+    expect(stateOf(later, 'rev1')).toMatchObject({ state: 'arrived', scratchError: 'unsafe-scratch-dir' });
+    expect(later.findings.map((finding) => finding.id)).toEqual(['REAL']);
+    expect(fs.readdirSync(outside)).toEqual(['out-rev1.json']);
+  });
+
+  posix('a scratch directory that group or others can write to is not trusted', () => {
+    forgedCopy(scratch());
+    fs.chmodSync(scratch(), 0o777);
+    const result = collect([reviewer('rev1')]);
+    expect(stateOf(result, 'rev1').state).toBe('missing');
+    expect(result.warnings.join(' ')).toMatch(/writable by group or others/);
+  });
+
+  posix('a scratch directory owned by someone else is not trusted', () => {
+    forgedCopy(scratch());
+    const foreign = {
+      ...stamped,
+      lstat: (file) => {
+        const facts = stamped.lstat(file);
+        return file === scratch() ? { ...facts, uid: process.getuid() + 1 } : facts;
+      },
+    };
+    const result = collectResults({ expected: [reviewer('rev1')], dir, now: T0 + MIN }, foreign);
+    expect(stateOf(result, 'rev1').state).toBe('missing');
+    expect(result.warnings.join(' ')).toMatch(/owned by another user/);
+  });
+
+  test('a corrupted scratch copy is ignored with a warning, and the result file is read again', () => {
+    write('ver1', ballot(['f1', 'real']));
+    collect([verifier('ver1')]);
+    fs.writeFileSync(path.join(scratch(), 'out-ver1.json'), 'garbage');
+    const result = collect([verifier('ver1')]);
+    expect(stateOf(result, 'ver1').state).toBe('arrived');
+    expect(result.warnings.join(' ')).toMatch(/ignored an unusable scratch copy \(unparseable-json\)/);
+  });
+
+  test.each([
+    ['inside dir', () => path.join(dir, 'scratch')],
+    ['dir itself', () => dir],
+    ['around dir', () => root],
+  ])('a scratchDir %s is refused: the agents write there, so nothing kept in it can be trusted', (_label, where) => {
+    const result = collectResults({ expected: [verifier('ver1')], dir, now: T0, scratchDir: where() });
+    expect(result).toMatchObject({ ok: false, agents: [] });
+    expect(result.reason).toMatch(/scratchDir must be outside dir/);
+  });
+
+  test('a filesystem root is not a result directory', () => {
+    const result = collectResults({ expected: [verifier('ver1')], dir: path.parse(root).root, now: T0 });
+    expect(result).toMatchObject({ ok: false, agents: [] });
+    expect(result.reason).toMatch(/filesystem root/);
+  });
+
+  test('defaultScratchDir is the hidden sibling of dir, and a trailing slash changes nothing', () => {
+    expect(defaultScratchDir('/runs/7/results')).toBe(path.resolve('/runs/7/.results.collected'));
+    expect(defaultScratchDir('/runs/7/results/')).toBe(path.resolve('/runs/7/.results.collected'));
+  });
+
+  test('readFile never follows a symlink, whatever it points at', () => {
+    fs.writeFileSync(path.join(root, 'secret.txt'), 'TOP SECRET');
+    const link = path.join(dir, 'out-rev1.json');
+    fs.symlinkSync(path.join(root, 'secret.txt'), link);
+    expect(['ELOOP', 'EMLINK']).toContain(codeOf(() => realIo.readFile(link)));
+  });
+
+  test('a result swapped for a symlink between the type check and the read is not read (P4)', () => {
+    const secret = path.join(root, 'secret.txt');
+    fs.writeFileSync(secret, 'TOP SECRET USER DATA');
+    write('rev1', review());
+    const swapping = {
+      ...stamped,
+      readFile: (file) => {
+        fs.rmSync(file);
+        fs.symlinkSync(secret, file);
+        return realIo.readFile(file);
+      },
+    };
+    const result = collectResults({ expected: [reviewer('rev1')], dir, now: T0 + MIN }, swapping);
+    expect(stateOf(result, 'rev1')).toMatchObject({ state: 'invalid', reason: 'not-a-regular-file' });
+    const quarantine = path.join(scratch(), 'quarantine');
+    for (const name of fs.readdirSync(quarantine)) expect(fs.readFileSync(path.join(quarantine, name), 'utf8')).not.toContain('TOP SECRET');
+  });
+
+  test('a result replaced by another file between the check and the read is refused, not read as the old one', () => {
+    const file = write('rev1', review([{ id: 'EARLY' }], ['a.js']));
+    const replacing = {
+      ...realIo,
+      readFile: (target, expected) => {
+        fs.writeFileSync(`${target}.next`, JSON.stringify(review([{ id: 'SWAPPED-IN' }], ['a.js'])));
+        fs.renameSync(`${target}.next`, target);
+        return realIo.readFile(target, expected);
+      },
+    };
+    const window = around(file);
+    const result = collectResults({ expected: [reviewer('rev1', window)], dir, now: window.dispatchedAt + 6 * MIN }, replacing);
+    expect(stateOf(result, 'rev1')).toMatchObject({ state: 'invalid', reason: 'file-changed-during-read' });
+    expect(result.findings).toEqual([]);
+  });
+
+  test('a result rewritten while it is being read is refused, so the change time judged belongs to the bytes read', () => {
+    const file = write('rev1', review([{ id: 'F' }], ['a.js']));
+    const read = fs.readSync;
+    jest.spyOn(fs, 'readSync').mockImplementationOnce((...args) => {
+      const count = read(...args);
+      fs.utimesSync(file, 1, 1); // the agent touches or rewrites its file mid-read
+      return count;
+    });
+    expect(codeOf(() => realIo.readFile(file))).toBe('ECHANGED');
+  });
+
+  posix('a FIFO in place of a result is refused at once instead of blocking the collector', () => {
+    const fifo = path.join(dir, 'out-rev1.json');
+    expect(spawnSync('mkfifo', [fifo]).status).toBe(0);
+    const script = `const { defaultDeps } = require(${JSON.stringify(RESULTS_MODULE)}); try { defaultDeps().readFile(${JSON.stringify(fifo)}); console.log('read'); } catch (error) { console.log(error.code); }`;
+    const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000 });
+    expect(child.error).toBeUndefined();
+    expect(child.stdout.trim()).toBe('ENOTREG');
+  }, 20000);
+
+  test('an oversized file is refused from its descriptor without being read', () => {
+    const file = path.join(dir, 'out-big.json');
+    const fd = fs.openSync(file, 'w');
+    fs.ftruncateSync(fd, 9 * 1024 * 1024);
+    fs.closeSync(fd);
+    const reading = jest.spyOn(fs, 'readSync');
+    expect(codeOf(() => realIo.readFile(file))).toBe('EFBIG');
+    expect(reading).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC6: arrival is the change time, inside [dispatchedAt, deadlineAt] (review round 1)
+// ---------------------------------------------------------------------------
+
+describe('AC6: a result counts only when its change time lies in [dispatchedAt, deadlineAt]', () => {
+  test('a file that last changed before the dispatch is stale: nothing of this dispatch has been written (P1)', () => {
+    write('ver1', ballot(['f1', 'real']), T0 - 120 * MIN);
+    const early = collect([verifier('ver1')], T0 + MIN);
+    expect(stateOf(early, 'ver1')).toMatchObject({ state: 'missing', reason: 'stale-result-before-dispatch', pending: true });
+    expect(early.votes).toEqual([]);
+    expect(early.ok).toBe(false);
+
+    const late = collect([verifier('ver1')], T0 + 6 * MIN);
+    expect(stateOf(late, 'ver1')).toMatchObject({ state: 'expired', reason: 'stale-result-before-dispatch', pending: false });
+    expect(late.incompleteVerifiers).toEqual([{ verifier: 'ver1', reason: 'expired:stale-result-before-dispatch', candidateIds: null }]);
+  });
+
+  test('the dispatch itself is inside the window, the millisecond before it is not', () => {
+    write('ver1', ballot(['f1', 'real']), T0);
+    write('ver2', ballot(['f1', 'real']), T0 - 1);
+    const result = collect([verifier('ver1'), verifier('ver2')], T0 + MIN);
+    expect(stateOf(result, 'ver1').state).toBe('arrived');
+    expect(stateOf(result, 'ver2')).toMatchObject({ state: 'missing', reason: 'stale-result-before-dispatch' });
+  });
+
+  test('round 2 in a reused directory reports round 2, not the first round\'s scratch copy (P10)', () => {
+    const round1 = reviewer('rev1', { dispatchedAt: T0, deadlineAt: T0 + 15 * MIN });
+    const T1 = T0 + 30 * MIN;
+    const round2 = reviewer('rev1', { dispatchedAt: T1, deadlineAt: T1 + 15 * MIN });
+    const ids = (result) => result.findings.map((finding) => finding.id);
+
+    write('rev1', review([{ id: 'ROUND-1' }], ['a.js']), T0 + MIN);
+    expect(ids(collect([round1], T0 + 2 * MIN))).toEqual(['ROUND-1']);
+
+    write('rev1', review([{ id: 'ROUND-2' }], ['a.js']), T1 + MIN);
+    const second = collect([round2], T1 + 2 * MIN);
+    expect(ids(second)).toEqual(['ROUND-2']);
+    expect(second.warnings.join(' ')).toMatch(/scratch copy from before this dispatch/);
+
+    fs.rmSync(path.join(dir, 'out-rev1.json'));
+    expect(ids(collect([round2], T1 + 3 * MIN))).toEqual(['ROUND-2']); // the scratch copy now holds round 2
+  });
+
+  test('a scratch copy from an earlier round never arrives by itself, and neither does the stale file beside it', () => {
+    write('rev1', review([{ id: 'ROUND-1' }], ['a.js']), T0 + MIN);
+    collect([reviewer('rev1')], T0 + 2 * MIN);
+    const T1 = T0 + 30 * MIN;
+    const round2 = reviewer('rev1', { dispatchedAt: T1, deadlineAt: T1 + 15 * MIN });
+
+    const withStaleFile = collect([round2], T1 + MIN);
+    expect(stateOf(withStaleFile, 'rev1')).toMatchObject({ state: 'missing', reason: 'stale-result-before-dispatch' });
+    expect(withStaleFile.findings).toEqual([]);
+
+    fs.rmSync(path.join(dir, 'out-rev1.json'));
+    const withCopyOnly = collect([round2], T1 + MIN);
+    expect(stateOf(withCopyOnly, 'rev1')).toMatchObject({ state: 'missing', reason: 'not-yet-written' });
+    expect(withCopyOnly.findings).toEqual([]);
+  });
+
+  test('the modification time is not the arrival: a late file with a backdated mtime is late (touch -t, cp -p, a renamed early temp file)', () => {
+    const base = Date.now();
+    const file = write('rev1', review([{ id: 'LATE' }], ['a.js']), base - 90 * MIN); // the mtime says "90 minutes ago"
+    const window = { dispatchedAt: base - 120 * MIN, deadlineAt: base - 60 * MIN }; // the deadline passed an hour ago
+    expect(fs.statSync(file).mtimeMs).toBeLessThan(window.deadlineAt);
+    const result = collectResults({ expected: [reviewer('rev1', window)], dir, now: base });
+    expect(stateOf(result, 'rev1')).toMatchObject({ state: 'expired', reason: 'arrived-after-deadline' });
+    expect(Math.abs(stateOf(result, 'rev1').arrivedAt - base)).toBeLessThan(MIN);
+    expect(result.findings).toEqual([]);
+  });
+
+  test('with no stamping at all, a result inside its window arrives and the scratch copy keeps that arrival', () => {
+    const file = write('rev1', review([{ id: 'OK' }], ['a.js']));
+    const window = around(file);
+    const now = window.dispatchedAt + 6 * MIN;
+    const first = collectResults({ expected: [reviewer('rev1', window)], dir, now });
+    expect(stateOf(first, 'rev1')).toMatchObject({ state: 'arrived', scratchPath: path.join(scratch(), 'out-rev1.json') });
+    fs.rmSync(file);
+    const second = collectResults({ expected: [reviewer('rev1', window)], dir, now });
+    expect(stateOf(second, 'rev1').arrivedAt).toBe(stateOf(first, 'rev1').arrivedAt);
+    expect(second.findings.map((finding) => finding.id)).toEqual(['OK']);
+  });
+
+  test('the arrival is whole milliseconds, so a scratch copy and the file it came from agree on every pass', () => {
+    write('ver1', ballot(['f1', 'real']));
+    const fractional = {
+      ...stamped,
+      lstat: (file) => {
+        const facts = stamped.lstat(file);
+        return facts !== null && facts.isFile ? { ...facts, mtimeMs: T0 + 0.7, ctimeMs: T0 + 0.7 } : facts;
+      },
+    };
+    const first = collectResults({ expected: [verifier('ver1')], dir, now: T0 + MIN }, fractional);
+    const second = collectResults({ expected: [verifier('ver1')], dir, now: T0 + MIN }, fractional);
+    expect(stateOf(first, 'ver1').arrivedAt).toBe(T0 + 1);
+    expect(stateOf(second, 'ver1').arrivedAt).toBe(T0 + 1);
+  });
+
+  test.each([
+    ['no dispatchedAt', { dispatchedAt: undefined }, /dispatchedAt must be/],
+    ['a dispatchedAt that is not a time', { dispatchedAt: 'yesterday' }, /dispatchedAt must be/],
+    ['a deadline before the dispatch', { dispatchedAt: T0 + 15 * MIN }, /later than dispatchedAt/],
+    ['a deadline equal to the dispatch', { dispatchedAt: T0 + 5 * MIN }, /later than dispatchedAt/],
+  ])('refuses %s', (_label, extra, reason) => {
+    const result = collectResults({ expected: [verifier('ver1', extra)], dir, now: T0 });
+    expect(result).toMatchObject({ ok: false, agents: [] });
+    expect(result.reason).toMatch(reason);
+  });
+});
+
+describe('reviewDeadlines hands the dispatch time on and names what is not a time', () => {
+  test('the answer carries dispatchedAt, the `now` it was given, which collectResults needs', () => {
+    expect(reviewDeadlines({ role: 'reviewer', now: T0 })).toMatchObject({ dispatchedAt: T0, deadlineAt: T0 + 15 * MIN });
+    expect(reviewDeadlines({ role: 'reviewer', now: new Date(T0).toISOString() }).dispatchedAt).toBe(T0);
+  });
+
+  test.each([[1e300], [Infinity], [8.64e15 + 1]])('now = %p is refused with a named reason, not a RangeError', (now) => {
+    const result = reviewDeadlines({ role: 'reviewer', now });
+    expect(result).toMatchObject({ ok: false, deadlineAt: null });
+    expect(result.reason).toMatch(/now must be/);
+  });
+
+  test('a now so late that the deadline cannot be a date is refused too', () => {
+    const result = reviewDeadlines({ role: 'reviewer', now: 8.64e15 });
+    expect(result).toMatchObject({ ok: false, deadlineAt: null });
+    expect(result.reason).toMatch(/too late/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The real entry point
 // ---------------------------------------------------------------------------
 
@@ -615,18 +1017,20 @@ describe('pr-review-cli results (real process)', () => {
   };
 
   test('collect, then votes and slices consume what it answered', () => {
-    const now = T0 + 6 * MIN;
-    write('ver1', ballot(['f1', 'real']));
-    write('ver2', ballot(['f1', 'real']));
+    // The real process judges arrival by the real change time, so the window is built from the files themselves.
+    const files = [write('ver1', ballot(['f1', 'real'])), write('ver2', ballot(['f1', 'real']))];
+    const changed = Math.max(...files.map((file) => fs.statSync(file).ctimeMs));
+    const window = { dispatchedAt: changed - 5 * MIN, deadlineAt: changed + MIN };
     const { status, body } = run({
       action: 'collect',
       dir,
-      now,
+      now: window.deadlineAt + MIN,
       depth: 'standard',
       candidates: [{ id: 'f1', severity: 'important' }],
-      expected: [verifier('ver1'), verifier('ver2'), verifier('ver3')],
+      expected: ['ver1', 'ver2', 'ver3'].map((name) => verifier(name, window)),
     });
     expect(status).toBe(0);
+    expect(body.agents.map((agent) => agent.state)).toEqual(['arrived', 'arrived', 'expired']);
     expect(body.incompleteVerifiers.map((entry) => entry.verifier)).toEqual(['ver3']);
 
     const votes = run(body.votesInput, 'votes');
@@ -634,8 +1038,21 @@ describe('pr-review-cli results (real process)', () => {
     expect(votes.body.findings[0]).toMatchObject({ outcome: 'unverified', reason: 'verifier-incomplete' });
   });
 
+  test('through the real process a late file with a backdated mtime is late, and a request without dispatchedAt is refused', () => {
+    const base = Date.now();
+    write('rev1', review([{ id: 'LATE' }], ['a.js']), base - 90 * MIN);
+    const late = { dispatchedAt: base - 120 * MIN, deadlineAt: base - 60 * MIN };
+    const { body } = run({ action: 'collect', dir, now: base, expected: [reviewer('rev1', late)] });
+    expect(body.agents[0]).toMatchObject({ state: 'expired', reason: 'arrived-after-deadline' });
+    expect(body.findings).toEqual([]);
+
+    const refused = run({ action: 'collect', dir, now: base, expected: [reviewer('rev1', { dispatchedAt: undefined })] }).body;
+    expect(refused).toMatchObject({ ok: false, agents: [] });
+    expect(refused.reason).toMatch(/dispatchedAt must be/);
+  });
+
   test('deadlines and failure answer through the CLI, an unknown action is refused', () => {
-    expect(run({ action: 'deadlines', role: 'verifier', now: T0 }).body).toMatchObject({ ok: true, deadlineAt: T0 + 5 * MIN });
+    expect(run({ action: 'deadlines', role: 'verifier', now: T0 }).body).toMatchObject({ ok: true, dispatchedAt: T0, deadlineAt: T0 + 5 * MIN });
     expect(run({ action: 'failure', status: 429, retryAfterSec: 99999 }).body).toMatchObject({ failFast: true, state: 'partial' });
     expect(run({ action: 'kill-agent' }).body).toMatchObject({ ok: false });
     expect(run({}).body.reason).toMatch(/unknown results action/);

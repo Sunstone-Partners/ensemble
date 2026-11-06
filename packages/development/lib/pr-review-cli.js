@@ -106,12 +106,15 @@
  * `results` (kata et2k) is the file-based half of the verification subcommands:
  * agents write `out-<name>.json` and this reads them, instead of the orchestrator
  * parsing what an agent yielded. One payload selects one function via `action`:
- *   deadlines        { role, tier?, depth?, now?, policy? } -- the `deadlineAt` an agent started at `now` (default: the
- *                    current time) must be stopped by: reviewer 15 min, verifier 5, security lane 15, per-role
- *                    overridable by the policy's `deadlineMinutes`
- *   collect          { expected[{ name, role, deadlineAt, sliceId?, paths?, candidateIds? }], dir, now?, scratchDir?,
- *                    depth?, expectedVerifiers?, candidates? } -- classifies each agent arrived|missing|expired|invalid
- *                    from `<dir>/out-<name>.json`, copies each arrival to scratch, and answers `reviewedSlices` (the
+ *   deadlines        { role, tier?, depth?, now?, policy? } -- the `dispatchedAt` (= `now`, default: the current time)
+ *                    and the `deadlineAt` an agent must be stopped by: reviewer 15 min, verifier 5, security lane 15,
+ *                    per-role overridable by the policy's `deadlineMinutes`
+ *   collect          { expected[{ name, role, dispatchedAt, deadlineAt, sliceId?, paths?, candidateIds? }], dir, now?,
+ *                    scratchDir?, depth?, expectedVerifiers?, candidates? } -- classifies each agent
+ *                    arrived|missing|expired|invalid from `<dir>/out-<name>.json`. It arrived when the file's last
+ *                    change (its inode change time, never the modification time a writer can set) is within
+ *                    [dispatchedAt, deadlineAt]; an older file is stale, a later one expired. Each arrival is copied to scratch (default: the hidden sibling
+ *                    `.<dir name>.collected` beside `dir`, never inside it), and the answer holds `reviewedSlices` (the
  *                    `reviewed` of `slices`) and, when `depth` is given, `votesInput` (the payload of `votes`). An
  *                    agent that did not arrive is never reviewed: its slice is unreviewed, its candidates unverified
  *   failure          { status?, retryAfterSec?, message?, attempt?, failFastAfterSec? } -- retry, back off, fall back
