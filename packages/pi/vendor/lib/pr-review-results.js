@@ -96,7 +96,10 @@
  *         every path of its slice, leaves that slice in `unreviewedSlices`.
  *         A slice counts as reviewed only when EVERY reviewer assigned to it
  *         arrived and covered it, so one expired lens leaves the slice not
- *         reviewed (plan 3A crosses each slice with more than one lens).
+ *         reviewed (plan 3A crosses each slice with more than one lens). A
+ *         reviewer given a `sliceId` must also be given its `paths`: a slice
+ *         with no paths to check would count as reviewed by anyone, so such a
+ *         request is refused.
  *     `ok` is true only when the request was readable and every agent
  *     arrived; the lists are filled either way so a partial result is usable.
  *
@@ -526,6 +529,9 @@ function readExpected(input) {
       if (!Array.isArray(entry.paths) || !entry.paths.every(isText)) return { reason: `${label}.paths must be an array of paths` };
       agent.paths = entry.paths.map((p) => p.trim().replace(/^\.\//, ''));
     }
+    if (role !== 'verifier' && agent.sliceId !== undefined && (agent.paths === undefined || agent.paths.length === 0)) {
+      return { reason: `${label}.paths must list the paths of slice ${JSON.stringify(agent.sliceId)}: a slice with no paths to check would count as reviewed by anyone` };
+    }
     if (entry.candidateIds !== undefined) {
       const ids = Array.isArray(entry.candidateIds) ? entry.candidateIds.map(identity) : [null];
       if (ids.includes(null)) return { reason: `${label}.candidateIds must be an array of ids` };
@@ -564,8 +570,9 @@ function checkScratch(io, scratchDir, warnings) {
  * @param {Object} input
  * @param {Object[]} input.expected  `{name, role, dispatchedAt, deadlineAt, sliceId?, paths?, candidateIds?}` per
  *   agent. `role` is reviewer|verifier|security; `dispatchedAt` and `deadlineAt` come from `reviewDeadlines` (a result
- *   that last changed before `dispatchedAt` is not this dispatch's); a reviewer's `sliceId`/`paths` say which slice it
- *   owns; a verifier's `candidateIds` say which candidates it was assigned.
+ *   that last changed before `dispatchedAt` is not this dispatch's); a reviewer's `sliceId` says which slice it owns and
+ *   `paths` (required with `sliceId`) lists that slice's paths; a verifier's `candidateIds` say which candidates it was
+ *   assigned.
  * @param {string} input.dir         Where the agents write `out-<name>.json`.
  * @param {number|string} input.now  The moment of observation.
  * @param {string} [input.scratchDir]  Defaults to `defaultScratchDir(dir)`; never inside `dir`.

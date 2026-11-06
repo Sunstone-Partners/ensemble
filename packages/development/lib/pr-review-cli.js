@@ -113,7 +113,8 @@
  *                    scratchDir?, depth?, expectedVerifiers?, candidates? } -- classifies each agent
  *                    arrived|missing|expired|invalid from `<dir>/out-<name>.json`. It arrived when the file's last
  *                    change (its inode change time, never the modification time a writer can set) is within
- *                    [dispatchedAt, deadlineAt]; an older file is stale, a later one expired. Each arrival is copied to scratch (default: the hidden sibling
+ *                    [dispatchedAt, deadlineAt]; an older file is stale, a later one expired. A reviewer given a
+ *                    `sliceId` must give its `paths`. Each arrival is copied to scratch (default: the hidden sibling
  *                    `.<dir name>.collected` beside `dir`, never inside it), and the answer holds `reviewedSlices` (the
  *                    `reviewed` of `slices`) and, when `depth` is given, `votesInput` (the payload of `votes`). An
  *                    agent that did not arrive is never reviewed: its slice is unreviewed, its candidates unverified

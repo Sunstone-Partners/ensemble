@@ -18,7 +18,8 @@
  *        or trust a scratch directory it could have planted;
  *   AC6  (review round 1) a result arrives only when its CHANGE time, which no
  *        writer can set backwards, lies in [dispatchedAt, deadlineAt]: stale
- *        files, another round's scratch copies and backdated mtimes do not count.
+ *        files, another round's scratch copies and backdated mtimes do not count;
+ *   AC7  (review round 1) a sliced reviewer must name its paths.
  */
 
 const fs = require('fs');
@@ -490,7 +491,7 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
 // ---------------------------------------------------------------------------
 
 describe('AC3: re-collecting over the same directory reproduces the classification', () => {
-  const expected = () => [reviewer('rev1', { sliceId: 's1' }), verifier('ver1'), verifier('ver2'), verifier('ver3')];
+  const expected = () => [reviewer('rev1', { sliceId: 's1', paths: ['a.js'] }), verifier('ver1'), verifier('ver2'), verifier('ver3')];
   const setup = () => {
     write('rev1', review([{ id: 'f1' }], ['a.js']));
     write('ver1', ballot(['f1', 'real']));
@@ -1003,6 +1004,28 @@ describe('reviewDeadlines hands the dispatch time on and names what is not a tim
     const result = reviewDeadlines({ role: 'reviewer', now: 8.64e15 });
     expect(result).toMatchObject({ ok: false, deadlineAt: null });
     expect(result.reason).toMatch(/too late/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC7 (slices): a slice is reviewed only when its paths are checked (review round 1)
+// ---------------------------------------------------------------------------
+
+describe('AC7: a reviewer given a sliceId must name its paths', () => {
+  test.each([
+    ['no paths at all', {}],
+    ['an empty paths list', { paths: [] }],
+  ])('%s: the request is refused and no slice is reported reviewed', (_label, extra) => {
+    write('rev1', review([], []));
+    const result = collect([reviewer('rev1', { sliceId: 's1', ...extra })]);
+    expect(result).toMatchObject({ ok: false, agents: [], reviewedSlices: [] });
+    expect(result.reason).toMatch(/paths must list the paths of slice "s1"/);
+  });
+
+  test('the security lane is held to the same rule', () => {
+    const result = collect([{ name: 'sec1', role: 'security', dispatchedAt: T0, deadlineAt: T0 + 15 * MIN, sliceId: 's1' }]);
+    expect(result).toMatchObject({ ok: false, reviewedSlices: [] });
+    expect(result.reason).toMatch(/paths must list/);
   });
 });
 
