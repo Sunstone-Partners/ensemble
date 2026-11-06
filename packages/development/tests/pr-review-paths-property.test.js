@@ -28,8 +28,9 @@
  * run, and every failure prints the seed and the case index to replay it.
  *
  * NOT modelled (so not claimed): Unicode normalization (APFS is also
- * normalization-insensitive), astral code points, and bracket classes -- the
- * matcher has none and the generator never emits a backslash escape.
+ * normalization-insensitive) and bracket classes -- the matcher has none and
+ * the generator never emits a backslash escape. Astral code points ARE
+ * generated: `?` takes one code point.
  */
 
 const {
@@ -247,7 +248,7 @@ const ATOMS = [
 // literally) and no `/` or `\` (separators).
 const JUNK = [
   'a', 'b', 'k', 'K', 's', 'S', 'f', 'l', 'i', 't', 'x', 'z', '.', '-', '_', ' ', '0',
-  '\n', '\r', '\u2028', '\u2029', '\0', '\u00A0', '\u00E9', '\u00C9', '\u65E5',
+  '\n', '\r', '\u2028', '\u2029', '\0', '\u00A0', '\u00E9', '\u00C9', '\u65E5', '\u{1F600}',
 ];
 const ALIASES = [
   ['k', '\u212A'], ['s', '\u017F'], ['ss', '\u00DF'], ['ss', '\u1E9E'], ['ff', '\uFB00'], ['fi', '\uFB01'],
@@ -546,5 +547,26 @@ describe('pr-review-paths property harness: defects found by the fuzz, pinned', 
     expect(classifyPaths({ changedPaths: ['azure-pipelines.yml '], declaration: null, baseSha: BASE }).paths[0].sensitive).toBe(true);
     expect(matchesPattern('skills/', 'skills/     ')).toBe(true);
     expect(matchesPattern('/REVIEW.md', ' REVIEW.md')).toBe(true);
+  });
+});
+
+describe('pr-review-paths property harness: alias rows prove folding, not the pattern', () => {
+  // Each alias row above is only evidence about case folding if its ASCII twin is sensitive for a plain reason.
+  test.each([
+    ['.github/workflows/ci.yml'],
+    ['scripts/install-hook'],
+    ['scripts/release-notes.sh'],
+    ['scripts/generate-sub/x.js'],
+  ])('the plain twin %j is sensitive', (changedPath) => {
+    expect(classifyPaths({ changedPaths: [changedPath], declaration: null, baseSha: BASE }).paths[0].sensitive).toBe(true);
+  });
+
+  // `?` is one character to a file system, an astral one included, whether or not letter case is loosened.
+  test.each([
+    [false],
+    [true],
+  ])('`?` takes one astral code point (ignoreCase %s)', (ignoreCase) => {
+    expect(matchesPattern('scripts/install-?', 'scripts/install-\u{1F600}', { ignoreCase })).toBe(true);
+    expect(matchesPattern('scripts/install-??', 'scripts/install-\u{1F600}', { ignoreCase })).toBe(false);
   });
 });

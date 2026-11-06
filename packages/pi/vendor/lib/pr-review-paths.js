@@ -219,7 +219,9 @@ function compilePattern(pattern, ignoreCase) {
   const compiled = body === ''
     ? null
     : {
-      regex: new RegExp(`^${globToRegExpSource(fold ? foldCase(body) : body)}$`),
+      // `u`: `?` and `[^/]` take one code point, not half of a surrogate pair, so an astral name is one character
+      // here as it is to the file system. Every source is escaped literals plus the glob forms, all valid under `u`.
+      regex: new RegExp(`^${globToRegExpSource(fold ? foldCase(body) : body)}$`, 'u'),
       fold,
       basenameOnly,
       // Only a directory-shaped pattern stands in for the files beneath it.
