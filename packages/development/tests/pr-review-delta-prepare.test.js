@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
-const { prepareReview, removePrepared, defaultDeps } = require('../lib/pr-review-prepare');
+const { prepareReview, removePrepared, defaultDeps, scanReferenceLines, scanNameLines } = require('../lib/pr-review-prepare');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-prepare-cli.js');
 const NODE_TEST = [process.execPath, '--test'];
@@ -29,11 +29,12 @@ function write(root, rel, content) {
 
 /**
  * base -> reviewed (R) -> head. `change(root)` makes the head commit, a remediation commit on top of R. With `middle(root)`
- * a commit U is made between them: it is in the history and readable, but no round ever reviewed it.
+ * a commit U is made between them: it is in the history and readable, but no round ever reviewed it. `consumers` are
+ * extra files the base holds (rel path -> content) that the delta leaves alone.
  * The repository holds a module with an importer, a test that imports it, a test that only carries its name, an
  * unrelated module and a module whose name has a space in it.
  */
-function fixture(change, middle) {
+function fixture(change, middle, consumers = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'delta-prepare-'));
   roots.push(root);
   git(root, ['init', '-q', '-b', 'main']);
@@ -47,6 +48,7 @@ function fixture(change, middle) {
   write(root, 'tests/thing.test.js', "require('node:test')('thing', () => {});\n");
   write(root, 'core/engine.js', 'module.exports = 0;\n');
   write(root, 'secure/keys.js', 'module.exports = 0;\n');
+  for (const [rel, content] of Object.entries(consumers)) write(root, rel, content);
   git(root, ['add', '-A']);
   git(root, ['commit', '-q', '-m', 'base']);
   const base = git(root, ['rev-parse', 'HEAD']);
@@ -302,6 +304,92 @@ describe('a retargeted PR (AC1: the base the last round reviewed is compared)', 
   it('a reviewed base that is not a full object id is refused, never read as "unknown"', () => {
     const fx = retargetFixture();
     expect(prepareReview(retargetOptions(fx, { reviewedBaseSha: 'dev' }))).toMatchObject({ ok: false, status: 'PREPARE_FAILED', reason: 'invalid-input' });
+  });
+});
+
+describe('every reference form reaches the read set, through the real scan (AC1)', () => {
+  // Each consumer loads src/thing.js in one form the first graph read as nothing. The delta changes only src/thing.js.
+  const CONSUMERS = {
+    'src/f-actual.js': "const real = jest.requireActual('./thing');\n",
+    'src/f-resolve.js': "const p = require.resolve('./thing');\n",
+    'src/f-template.js': 'const t = require(`./thing`);\n',
+    'src/f-multiline.js': "const t = require(\n  './thing'\n);\n",
+    'src/f-interpolated.js': 'const base = __dirname;\nconst t = require(`${base}/thing.js`);\n',
+    'src/f-computed.js': "const file = require('path').join(__dirname, 'thing.js');\nconst t = require(file);\n",
+    'src/page.html': '<script src="./thing.js"></script>\n',
+    'src/page-plain.html': '<script src="thing.js"></script>\n',
+    'ui/page-root.html': '<script src="/src/thing.js"></script>\n',
+    // a computed specifier that names nothing the delta changed, and a literal one that names something else
+    'src/f-unrelated.js': 'const t = require(somethingElse);\n',
+    'src/f-other.js': "const t = require('./unrelated');\n",
+  };
+  let facts;
+
+  beforeAll(() => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"), undefined, CONSUMERS);
+    facts = factsOf(prepareReview(options(fx)));
+  });
+
+  const reasonsOf = (file) => (facts.deltaPlan.readSet.find((entry) => entry.path === file) || { reasons: null }).reasons;
+
+  it.each([
+    ['jest.requireActual', 'src/f-actual.js', ['caller-of:src/thing.js']],
+    ['require.resolve', 'src/f-resolve.js', ['caller-of:src/thing.js']],
+    ['a template literal without interpolation', 'src/f-template.js', ['caller-of:src/thing.js']],
+    ['an argument on the line after the call', 'src/f-multiline.js', ['caller-of:src/thing.js', 'names:src/thing.js']],
+    ['an interpolated template literal', 'src/f-interpolated.js', ['names:src/thing.js']],
+    ['a computed specifier whose file name is spelled in the file', 'src/f-computed.js', ['names:src/thing.js']],
+    ['an HTML script src', 'src/page.html', ['caller-of:src/thing.js']],
+    ['an HTML script src without ./', 'src/page-plain.html', ['caller-of:src/thing.js']],
+    ['an HTML root-relative script src', 'ui/page-root.html', ['caller-of:src/thing.js']],
+  ])('%s', (_form, consumer, reasons) => {
+    expect(facts.deltaPlan.mode).toBe('delta');
+    expect(reasonsOf(consumer)).toEqual(reasons);
+  });
+
+  it('and nothing else: a computed specifier that names no changed file, and a file that loads something else, are not read', () => {
+    expect(reasonsOf('src/f-unrelated.js')).toBeNull();
+    expect(reasonsOf('src/f-other.js')).toBeNull();
+    expect(facts.deltaPlan.readSet.map((e) => e.path)).toEqual([
+      'src/app.js', 'src/f-actual.js', 'src/f-computed.js', 'src/f-interpolated.js', 'src/f-multiline.js', 'src/f-resolve.js',
+      'src/f-template.js', 'src/page-plain.html', 'src/page.html', 'src/thing.js', 'tests/thing.test.js', 'ui/page-root.html',
+    ]);
+  });
+
+  it('a name scan that fails is a full re-read, not a failed preparation and not a delta that missed the computed files', () => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"), undefined, CONSUMERS);
+    const real = defaultDeps();
+    const deps = { ...real, git: (args, o) => (args[0] === 'grep' && args.includes('-F') ? { status: 2, stdout: '', stderr: 'boom' } : real.git(args, o)) };
+    const result = prepareReview(options(fx), deps);
+    expect(result.ok).toBe(true);
+    expect(factsOf(result).deltaPlan).toEqual({ mode: 'full', reasons: ['name-scan-unavailable'], readSet: [] });
+  });
+});
+
+describe('the repository scans do not depend on the directory they run in', () => {
+  // `git grep` has no --full-tree: without a top-anchored pathspec it searches only the subtree of its working directory
+  it('the reference scan from a subdirectory finds what it finds from the top', () => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"));
+    const fromTop = scanReferenceLines(defaultDeps(), fx.root, fx.head);
+    const fromSubdirectory = scanReferenceLines(defaultDeps(), path.join(fx.root, 'src'), fx.head);
+    expect(fromTop.map((line) => line.path)).toContain('tests/app-flow.test.js');
+    expect(fromSubdirectory).toEqual(fromTop);
+  });
+
+  it('the name scan from a subdirectory finds what it finds from the top', () => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"));
+    const names = (cwd) => scanNameLines(defaultDeps(), cwd, fx.head, ['tests/app-flow.test.js', 'src/app.js'], ['src/app.js']);
+    expect(names(fx.root).map((line) => line.path)).toEqual(['tests/app-flow.test.js']);
+    expect(names(path.join(fx.root, 'src'))).toEqual(names(fx.root));
+  });
+
+  it('a file whose name has a space, brackets or a leading dash is searched by its literal name', () => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"), undefined, {
+      'src/we ird[1]/a b.js': 'const t = require(`${base}/thing.js`);\n',
+      'src/-dash.js': 'const t = require(`${base}/thing.js`);\n',
+    });
+    const lines = scanNameLines(defaultDeps(), fx.root, fx.head, ['src/we ird[1]/a b.js', 'src/-dash.js'], ['src/thing.js']);
+    expect(lines.map((line) => line.path).sort()).toEqual(['src/-dash.js', 'src/we ird[1]/a b.js']);
   });
 });
 

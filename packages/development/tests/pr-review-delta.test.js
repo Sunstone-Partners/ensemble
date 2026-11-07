@@ -6,7 +6,7 @@
  */
 
 const { planDeltaReview } = require('../lib/pr-review-delta');
-const { buildImportGraph, specifiersOf } = require('../lib/pr-review-import-graph');
+const { buildImportGraph, referencesOf, namesFile, mentionNeedles } = require('../lib/pr-review-import-graph');
 const { chooseReviewRange } = require('../lib/pr-review-scope');
 const { classifyPaths } = require('../lib/pr-review-paths');
 
@@ -176,9 +176,22 @@ describe('planDeltaReview: fails closed to a full re-read (AC1, AC2)', () => {
   it('an import graph that is missing or unreadable: no blast radius, no justified read set', () => {
     expectFull(plan({ importGraph: undefined }), 'import-graph-unavailable');
     expectFull(plan({ importGraph: null }), 'import-graph-unavailable');
-    expectFull(plan({ importGraph: { schema: 1, importers: { a: 'b' }, testFiles: [] } }), 'import-graph-unreadable');
+    expectFull(plan({ importGraph: { schema: 2, importers: { a: 'b' }, testFiles: [], computed: [] } }), 'import-graph-unreadable');
+    expectFull(plan({ importGraph: { schema: 3, importers: {}, testFiles: [], computed: [] } }), 'import-graph-unreadable');
+    expectFull(plan({ importGraph: { schema: 2, importers: {}, computed: [] } }), 'import-graph-unreadable');
     expectFull(plan({ importGraph: { schema: 2, importers: {}, testFiles: [] } }), 'import-graph-unreadable');
-    expectFull(plan({ importGraph: { schema: 1, importers: {} } }), 'import-graph-unreadable');
+    expectFull(plan({ importGraph: { ...graph(), computed: 'src/a.js' } }), 'import-graph-unreadable');
+  });
+
+  it('a graph that lists files it could not read, without the name lines that place them', () => {
+    const importGraph = buildImportGraph({ filePaths: FILES, lines: [{ path: 'src/dyn.js', text: 'require(pick())' }] });
+    expect(importGraph.computed).toEqual(['src/dyn.js']);
+    expectFull(plan({ importGraph }), 'name-scan-unavailable');
+    expectFull(plan({ importGraph, nameLines: null }), 'name-scan-unavailable');
+    expectFull(plan({ importGraph, nameLines: 'src/dyn.js' }), 'name-scan-unreadable');
+    expectFull(plan({ importGraph, nameLines: [{ path: 'src/dyn.js' }] }), 'name-scan-unreadable');
+    expectFull(plan({ importGraph, nameLines: [null] }), 'name-scan-unreadable');
+    expect(plan({ importGraph, nameLines: [] }).mode).toBe('delta');
   });
 
   it('a delta that changes source in a language the graph does not read', () => {
@@ -241,18 +254,225 @@ describe('planDeltaReview composes with chooseReviewRange (AC3)', () => {
   });
 });
 
+describe('planDeltaReview: every form of reference to a changed file reaches the read set (AC1)', () => {
+  // one consumer per form, each loading src/thing.js the way its name says; none of these was seen by the old graph
+  const FORMS = [
+    ['jest.requireActual', 'src/f-actual.js', ["const real = jest.requireActual('./thing');"]],
+    ['jest.requireMock', 'src/f-mock.js', ["const m = jest.requireMock('./thing');"]],
+    ['jest.mock', 'src/f-jest-mock.js', ["jest.mock('./thing', () => ({}));"]],
+    ['require.resolve', 'src/f-resolve.js', ["const p = require.resolve('./thing');"]],
+    ['a template literal without interpolation', 'src/f-template.js', ['const t = require(`./thing`);']],
+    ['an argument on the line after the call', 'src/f-multiline.js', ['const t = require(', "  './thing'"]],
+    ['a dynamic import', 'src/f-dynamic.js', ["const t = await import('./thing.js');"]],
+    ['a path handed to a worker', 'src/f-worker.js', ["new Worker('./thing.js');"]],
+    ['an HTML script tag', 'src/page.html', ['<script src="./thing.js"></script>']],
+    ['an HTML script tag without ./', 'src/page2.html', ['<script src="thing.js"></script>']],
+    ['an HTML root-relative script tag', 'ui/page3.html', ['<script src="/src/thing.js"></script>']],
+  ];
+
+  it.each(FORMS)('%s', (_form, consumer, texts) => {
+    const importGraph = buildImportGraph({ filePaths: [...FILES, consumer], lines: texts.map((text) => ({ path: consumer, text })) });
+    const result = plan({ importGraph, nameLines: [] });
+    expect(result.mode).toBe('delta');
+    expect(readPaths(result)).toContain(consumer);
+  });
+});
+
+describe('planDeltaReview: a file whose references the graph cannot read is placed by name (AC1)', () => {
+  const place = (consumer, scanned, named, overrides = {}) => {
+    const importGraph = buildImportGraph({ filePaths: [...FILES, consumer], lines: scanned.map((text) => ({ path: consumer, text })) });
+    expect(importGraph.computed).toEqual([consumer]);
+    return plan({ importGraph, nameLines: named.map((text) => ({ path: consumer, text })), ...overrides });
+  };
+
+  it('an interpolated template literal, which names the file after the interpolation', () => {
+    const line = 'const t = require(`${base}/thing.js`);';
+    const result = place('src/f-interpolated.js', [line], [line]);
+    expect(result.mode).toBe('delta');
+    expect(result.readSet).toContainEqual({ path: 'src/f-interpolated.js', reasons: ['names:src/thing.js'] });
+  });
+
+  it('an interpolated template literal that leaves the extension out', () => {
+    const line = 'const t = require(`${base}/thing`);';
+    expect(readPaths(place('src/f-no-ext.js', [line], [line]))).toContain('src/f-no-ext.js');
+  });
+
+  it('a computed specifier whose file name is spelled elsewhere in the file', () => {
+    const result = place('src/f-computed.js', ['const mod = require(file);'], ["const file = path.join(__dirname, 'thing.js');"]);
+    expect(result.readSet).toContainEqual({ path: 'src/f-computed.js', reasons: ['names:src/thing.js'] });
+  });
+
+  it('a computed specifier built from a repository path', () => {
+    const result = place('src/f-root.js', ['const mod = require(path.join(ROOT, rel));'], ["const rel = 'src/thing.js';"]);
+    expect(readPaths(result)).toContain('src/f-root.js');
+  });
+
+  it('a computed specifier that names no changed file is not read: the over-approximation is by name, so it can be told apart', () => {
+    const result = place('src/f-other.js', ['const mod = require(file);'], ["const file = path.join(__dirname, 'other.js');"]);
+    expect(result.mode).toBe('delta');
+    expect(readPaths(result)).not.toContain('src/f-other.js');
+  });
+
+  it('each changed file is named on its own: the one that is not named adds nothing', () => {
+    const result = place('src/f-two.js', ['const mod = require(file);'], ["const file = path.join(__dirname, 'thing.js');"], {
+      changedPaths: ['src/thing.js', 'src/unnamed.js'],
+      pathsClassification: classify(['src/thing.js', 'src/unnamed.js']),
+    });
+    expect(result.readSet.find((entry) => entry.path === 'src/f-two.js').reasons).toEqual(['names:src/thing.js']);
+  });
+
+  it('a file the graph read exactly is not added for naming a changed file: only the unreadable ones are placed by name', () => {
+    const importGraph = buildImportGraph({ filePaths: [...FILES, 'src/dyn.js', 'src/labels.js'], lines: [{ path: 'src/dyn.js', text: 'require(pick())' }, { path: 'src/labels.js', text: "const label = '../thing.js';" }] });
+    expect(importGraph.computed).toEqual(['src/dyn.js']);
+    const nameLines = [{ path: 'src/labels.js', text: "const label = '../thing.js';" }, { path: 'src/dyn.js', text: "const unrelated = 'x.js';" }];
+    expect(readPaths(plan({ importGraph, nameLines }))).not.toContain('src/dyn.js');
+    // labels.js is a file the graph read exactly: its '../thing.js' is an edge (it is a caller), not a name
+    expect(plan({ importGraph, nameLines }).readSet.find((entry) => entry.path === 'src/labels.js')).toBeUndefined();
+  });
+});
+
+describe('referencesOf: every reference form is read or listed as computed, none is dropped (AC1)', () => {
+  const specifiers = (text, file = 'src/a.js') => referencesOf(file, text).specifiers;
+  const computed = (text, file = 'src/a.js') => referencesOf(file, text).computed;
+
+  it('reads require, import, dynamic import and re-export specifiers, relative only', () => {
+    expect(specifiers("const a = require('./a'); const b = require(\"../b\");")).toEqual(['./a', '../b']);
+    expect(specifiers("import x from './x';")).toEqual(['./x']);
+    expect(specifiers("} from './multi-line';")).toEqual(['./multi-line']);
+    expect(specifiers("import './side-effect';")).toEqual(['./side-effect']);
+    expect(specifiers("const m = await import('./lazy.js');")).toEqual(['./lazy.js']);
+    expect(specifiers("export * from './re';")).toEqual(['./re']);
+    expect(specifiers("const fs = require('fs'); import pkg from '@scope/pkg';")).toEqual([]);
+    expect(specifiers("const d = require('.'); const p = require('..');")).toEqual(['.', '..']);
+  });
+
+  it('reads a relative path whatever calls it', () => {
+    expect(specifiers("const real = jest.requireActual('../lib/x');")).toEqual(['../lib/x']);
+    expect(specifiers("const m = jest.requireMock('./x');")).toEqual(['./x']);
+    expect(specifiers("jest.mock('./x', () => ({ a: 1 }));")).toEqual(['./x']);
+    expect(specifiers("const p = require.resolve('./x');")).toEqual(['./x']);
+    expect(specifiers('const t = require(`./x`);')).toEqual(['./x']);
+    expect(specifiers("  './on-its-own-line'")).toEqual(['./on-its-own-line']);
+    expect(specifiers("new Worker('./w.js'); fork(\"../f.js\");")).toEqual(['./w.js', '../f.js']);
+  });
+
+  it('lists a call whose specifier is not a plain literal as computed instead of dropping it', () => {
+    for (const text of [
+      'const t = require(`./${name}`);',
+      'const t = require(`${scripts}/x.js`);',
+      'const t = require(',
+      'const t = await import(',
+      'const t = require(name);',
+      'const t = require(path.join(ROOT, rel));',
+      "const t = require('./a' + suffix);",
+      'const t = await import(name);',
+      'const t = jest.requireActual(name);',
+      'const t = jest.mock(name);',
+      'const p = require.resolve(name);',
+      "const t = import(/* webpackChunkName: 'x' */ './x');",
+    ]) {
+      expect([text, computed(text)]).toEqual([text, true]);
+    }
+  });
+
+  it('does not call a plain literal, a bare package, an empty call, prose or a comment computed', () => {
+    for (const text of [
+      "const t = require('./x');",
+      "const t = require('fs');",
+      "const t = require('./x', { paths: [] });",
+      'const t = require(`./x`);',
+      "const t = import('./x');",
+      "const real = jest.requireActual('./x');",
+      '// file is require()\'d before it, e.g. require(name)',
+      ' * require(name) loads it',
+      'the config is require()d',
+    ]) {
+      expect([text, computed(text)]).toEqual([text, false]);
+    }
+  });
+
+  it('keeps what a computed line does name: `require(\'./a\' + suffix)` still reads ./a', () => {
+    expect(referencesOf('src/a.js', "const t = require('./a' + suffix);")).toEqual({ specifiers: ['./a'], computed: true });
+  });
+
+  it('reads the src and href of an HTML file, and skips URLs and anchors', () => {
+    const html = (text) => referencesOf('ui/index.html', text).specifiers;
+    expect(html('<script src="./app.js"></script>')).toEqual(['./app.js']);
+    expect(html('<script src="app.js"></script>')).toEqual(['./app.js']);
+    expect(html('<script src="../vendor/lib.js"></script>')).toEqual(['../vendor/lib.js']);
+    expect(html('<link rel="stylesheet" href="css/site.css?v=2">')).toEqual(['./css/site.css']);
+    expect(html('<script src="/static/app.js#top"></script>')).toEqual(['/static/app.js']);
+    for (const text of ['<script src="https://cdn.example.com/x.js"></script>', '<script src="//cdn.example.com/x.js"></script>',
+      '<a href="#section">', '<a href="mailto:a@b.c">', '<img src="data:image/png;base64,AAAA">', '<a href="">']) {
+      expect([text, html(text)]).toEqual([text, []]);
+    }
+    // a src attribute in a JavaScript file is not markup
+    expect(referencesOf('src/a.js', '<script src="app.js">').specifiers).toEqual([]);
+  });
+});
+
+describe('namesFile and mentionNeedles', () => {
+  it.each([
+    ['an interpolated template with the extension', 'const t = require(`${scripts}/smoke-util.js`);', 'skills/scripts/smoke-util.js'],
+    ['an interpolated template without it', 'const t = require(`${scripts}/smoke-util`);', 'skills/scripts/smoke-util.js'],
+    ['a quoted file name', "path.join(__dirname, 'smoke-util.js')", 'skills/scripts/smoke-util.js'],
+    ['a path segment', "path.join(ROOT, 'skills', 'scripts', 'smoke-util.js')", 'skills/scripts/smoke-util.js'],
+    ['a relative path', "const x = '../lib/smoke-util';", 'lib/smoke-util.js'],
+    ['an HTML tag', '<script src="./app.js"></script>', 'ui/app.js'],
+    ['a TypeScript file named by its compiled extension', "import x from './x.js';", 'src/x.ts'],
+    ['a file with several dots', "require('./x.config.js')", 'src/x.config.js'],
+    ['a file without an extension', "readFileSync('docs/LICENSE')", 'LICENSE'],
+    ['a name followed by punctuation', 'see ./smoke-util.js, then', 'lib/smoke-util.js'],
+  ])('names the file: %s', (_form, text, file) => {
+    expect(namesFile(text, file)).toBe(true);
+  });
+
+  it.each([
+    ['a bare word', "const mode = 'smoke-util';", 'lib/smoke-util.js'],
+    ['a longer name', "require('./smoke-util-extra')", 'lib/smoke-util.js'],
+    ['a name it only starts', "require('./smoke-utils')", 'lib/smoke-util.js'],
+    ['the test of the file', "require('./smoke-util.test.js')", 'lib/smoke-util.js'],
+    ['the same name with another extension', 'fs.readFile("./index.html")', 'src/index.js'],
+    ['a name with the prefix of another word', "const x = 'a/smoke-util';", 'lib/smoke-utility.js'],
+    ['a variable that has the stem for a name', 'const index = items.length;', 'src/index.js'],
+    ['nothing', '', 'lib/smoke-util.js'],
+  ])('does not name the file: %s', (_form, text, file) => {
+    expect(namesFile(text, file)).toBe(false);
+  });
+
+  it('is never true for garbage', () => {
+    expect(namesFile(undefined, 'a.js')).toBe(false);
+    expect(namesFile('x', '')).toBe(false);
+    expect(namesFile('x', null)).toBe(false);
+  });
+
+  it('gives every distinct stem once, each in the four spellings a mention starts with', () => {
+    const needles = mentionNeedles(['src/thing.js', 'lib/thing.js', 'src/other.test.js']);
+    expect(needles).toEqual(['/other.test', "'other.test", '"other.test', '`other.test', '/thing', "'thing", '"thing', '`thing']);
+  });
+});
+
 describe('buildImportGraph', () => {
   const build = (lines, filePaths = FILES) => buildImportGraph({ filePaths, lines });
 
-  it('reads require, import, dynamic import and re-export specifiers, relative only', () => {
-    expect(specifiersOf("const a = require('./a'); const b = require(\"../b\");")).toEqual(['./a', '../b']);
-    expect(specifiersOf("import x from './x';")).toEqual(['./x']);
-    expect(specifiersOf("} from './multi-line';")).toEqual(['./multi-line']);
-    expect(specifiersOf("import './side-effect';")).toEqual(['./side-effect']);
-    expect(specifiersOf("const m = await import('./lazy.js');")).toEqual(['./lazy.js']);
-    expect(specifiersOf("export * from './re';")).toEqual(['./re']);
-    expect(specifiersOf("const fs = require('fs'); import pkg from '@scope/pkg';")).toEqual([]);
-    expect(specifiersOf('const t = require(`./${name}`);')).toEqual([]);
+  it('lists the files whose references it could not read, sorted and once each', () => {
+    const g = build([
+      { path: 'src/b.js', text: 'require(x)' },
+      { path: 'src/a.js', text: 'import(y)' },
+      { path: 'src/a.js', text: 'require(z)' },
+      { path: 'src/c.js', text: "require('./a')" },
+    ]);
+    expect(g.computed).toEqual(['src/a.js', 'src/b.js']);
+    expect(build(LINES).computed).toEqual([]);
+  });
+
+  it('reads an HTML root-relative src from the repository root and a page-relative one from the page', () => {
+    const g = build([
+      { path: 'ui/index.html', text: '<script src="/src/thing.js"></script>' },
+      { path: 'ui/page.html', text: '<script src="../src/app.js"></script>' },
+    ]);
+    expect(g.importers['src/thing.js']).toEqual(['ui/index.html']);
+    expect(g.importers['src/app.js']).toEqual(['ui/page.html']);
   });
 
   it('resolves an extensionless specifier, an explicit one and a directory to the tracked file', () => {

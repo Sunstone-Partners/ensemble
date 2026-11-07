@@ -87,7 +87,7 @@ const { chooseReviewRange, isObjectId } = require('./pr-review-scope');
 const { loadPolicy } = require('./pr-review-policy');
 const { classifyPaths } = require('./pr-review-paths');
 const { planDeltaReview } = require('./pr-review-delta');
-const { buildImportGraph, ANALYZED_EXTENSIONS } = require('./pr-review-import-graph');
+const { buildImportGraph, mentionNeedles, SCANNED_EXTENSIONS } = require('./pr-review-import-graph');
 const { redact } = require('./pr-review-state');
 const { defaultDeps, PROBE_SOURCE, DEFAULT_BASELINE_TIMEOUT_MS, buildBaselineEnv, inheritedSecretValues, scrubSecretValues } = require('./review-prepare-runtime');
 
@@ -690,12 +690,27 @@ function prepareReview(options, injected = {}) {
   return result;
 }
 
-/** The lines of the head's JS/TS sources that can name an import: one `git grep` over the head tree, no checkout. */
-const IMPORT_LINE = 'require[[:space:]]*\\(|import[[:space:]]*\\(|^[[:space:]]*(import|export)[[:space:]]|from[[:space:]]*["\']';
+/**
+ * The lines of the head's source that can reference a file, for the graph (`referencesOf` decides what each one says): a
+ * quoted relative path whatever calls it, a `require` / `import()` / jest module call (so one with a computed specifier is
+ * seen, not skipped), an HTML `src` or `href`.
+ */
+const REFERENCE_LINE = [
+  '["\'`]\\.\\.?(/|["\'`])',
+  'require[[:alnum:]_.]*[[:space:]]*\\(',
+  'import[[:space:]]*\\(',
+  '(jest|vi)\\.(mock|doMock|unmock|dontMock|setMock|requireActual|requireMock|importActual|importMock|createMockFromModule)[[:space:]]*\\(',
+  '(src|href)[[:space:]]*=[[:space:]]*["\']',
+].join('|');
 
-/** `[{ path, text }]`, or null when the scan failed (the plan then falls back to a full re-read). */
-function scanImportLines(deps, repoRoot, headSha) {
-  const r = deps.git(['grep', '-I', '-n', '-z', '--full-name', '-E', IMPORT_LINE, headSha, '--', ...ANALYZED_EXTENSIONS.map((ext) => `*${ext}`)], { cwd: repoRoot });
+/**
+ * One `git grep` over the head tree, no checkout: `[{ path, text }]`, or null when it failed (the plan then falls back to a
+ * full re-read). `matcher` is the pattern arguments; `pathspecs` are anchored at the repository top (`:(top)`), because
+ * `git grep` has no `--full-tree` and without the anchor it searches only the subtree of its working directory, which would
+ * make the answer depend on where the step runs (`ls-tree --full-tree` in the same flow does not).
+ */
+function grepHead(deps, repoRoot, headSha, matcher, pathspecs) {
+  const r = deps.git(['grep', '-I', '-n', '-z', '--full-name', ...matcher, headSha, '--', ...pathspecs], { cwd: repoRoot });
   if (r.status === 1) return [];
   if (r.status !== 0) return null;
   // Each record is `<head>:<path>\0<line number>\0<text>\n`; the path is verbatim and may hold a newline, the text cannot.
@@ -717,24 +732,44 @@ function scanImportLines(deps, repoRoot, headSha) {
   return lines;
 }
 
+/** The reference lines of every scanned file of the head, for the import graph. */
+function scanReferenceLines(deps, repoRoot, headSha) {
+  return grepHead(deps, repoRoot, headSha, ['-E', '-e', REFERENCE_LINE], SCANNED_EXTENSIONS.map((ext) => `:(top)*${ext}`));
+}
+
 /**
- * What a delta re-review reads (kata 801a). The repo scan lives here, outside the pure planner: the changed paths of the
+ * The lines of `files` (the ones whose references the graph could not read) that may name a changed path; the planner
+ * decides which do. Only those files are searched: everything else was read exactly.
+ */
+function scanNameLines(deps, repoRoot, headSha, files, changedPaths) {
+  const needles = mentionNeedles(changedPaths);
+  if (needles.length === 0 || files.length === 0) return [];
+  return grepHead(deps, repoRoot, headSha, ['-F', ...needles.flatMap((needle) => ['-e', needle])], files.map((file) => `:(top,literal)${file}`));
+}
+
+/**
+ * What a delta re-review reads (kata 801a). The repo scans live here, outside the pure planner: the changed paths of the
  * delta, their classification (same base-commit declaration as `paths`), what the review state says the last completed
- * round reviewed (the caller's record, never inferred from git) and the import graph of the head. A full range is passed
- * through unrefined.
+ * round reviewed (the caller's record, never inferred from git), the import graph of the head and, for the files the graph
+ * could not read, the lines that name a changed path. A full range is passed through unrefined.
  */
 function deriveDelta(deps, options, range, entries, declarationInput) {
   if (range.mode !== 'delta') return { delta: null, deltaPlan: planDeltaReview({ delta: range }) };
   const { repoRoot } = options;
   const deltaPaths = listChanged(deps, repoRoot, [range.lastReviewedSha, range.headSha]).map((f) => f.path);
-  const lines = scanImportLines(deps, repoRoot, range.headSha);
+  const lines = scanReferenceLines(deps, repoRoot, range.headSha);
+  const importGraph = lines === null ? undefined : buildImportGraph({ filePaths: entries.map((entry) => entry.path), lines });
+  const nameLines = importGraph !== undefined && importGraph.computed.length > 0
+    ? scanNameLines(deps, repoRoot, range.headSha, importGraph.computed, deltaPaths)
+    : undefined;
   const reviewed = reviewedRecord(options, range);
   const deltaPlan = planDeltaReview({
     delta: range,
     changedPaths: deltaPaths,
     pathsClassification: classifyPaths({ ...declarationInput, changedPaths: deltaPaths }),
     reviewed,
-    importGraph: lines === null ? undefined : buildImportGraph({ filePaths: entries.map((entry) => entry.path), lines }),
+    importGraph,
+    nameLines,
   });
   return { delta: { lastReviewedSha: range.lastReviewedSha, reviewedHeadSha: reviewed.headSha, reviewedBaseSha: reviewed.baseSha, changedPaths: deltaPaths }, deltaPlan };
 }
@@ -959,6 +994,8 @@ module.exports = {
   parseNumstatZ,
   verifySnapshot,
   parseLsTreeZ,
+  scanReferenceLines,
+  scanNameLines,
   defaultDeps,
   PROBE_SOURCE,
   SCHEMA_VERSION,

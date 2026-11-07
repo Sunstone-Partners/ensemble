@@ -9,9 +9,9 @@
  * itself plus its blast radius (the importers and tests of the files the delta changed). It never
  * widens a `full` range into a delta, and it falls back to `full` on anything it cannot vouch for.
  *
- * Pure: NO shell, NO file reads, NO network. The repo scan that produces the import graph lives in
- * pr-review-prepare.js (this module consumes its output), exactly as `paths` consumes the
- * caller-read CODEOWNERS text.
+ * Pure: NO shell, NO file reads, NO network. The repo scans that produce the import graph and the
+ * name lines live in pr-review-prepare.js (this module consumes their output), exactly as `paths`
+ * consumes the caller-read CODEOWNERS text.
  *
  * FAIL CLOSED to `{ mode:'full' }` -- every applicable reason is listed, none is dropped -- when:
  *   - the range decision is not a readable `delta` (a `full` range stays full; its reason is kept);
@@ -25,13 +25,18 @@
  *   - a changed path is classified High or sensitive, or is a review-declaration file, or the
  *     classification is unreadable or does not cover every changed path;
  *   - the import graph is missing or unreadable (no blast radius means no justified read set);
+ *   - the graph lists files with a computed require/import and the name lines needed to place them are missing or
+ *     unreadable;
  *   - the delta changes source code in a language the graph does not analyze.
- * Otherwise `{ mode:'delta', readSet }`, the read set being every changed path plus the files that
- * import one and the tests that import one or carry its name.
+ * Otherwise `{ mode:'delta', readSet }`, the read set being every changed path plus
+ *   - the files that import one (`caller-of`) and the tests that import one or carry its name (`test-of`);
+ *   - the files whose references the graph cannot resolve (a `require` of a computed or interpolated specifier, an
+ *     argument on the next line) and whose text names a changed file (`names`). That is an over-approximation by name:
+ *     a reviewer reads more, never less. A computed specifier that names nothing is the one thing this cannot see.
  */
 
 const { isObjectId } = require('./pr-review-scope');
-const { isImportGraph, targetKeys, stemOf, testStemOf, TEST_FILE } = require('./pr-review-import-graph');
+const { isImportGraph, targetKeys, stemOf, testStemOf, namesFile, TEST_FILE } = require('./pr-review-import-graph');
 
 /** Source files whose importers the graph cannot see: a delta touching one cannot be sized. */
 const OPAQUE_CODE = /\.(?:py|rb|go|rs|java|kt|cs|ex|exs|erl|php|swift|c|cc|cpp|h|hpp|sh|bash|zsh|ps1|lua)$/i;
@@ -40,6 +45,8 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 /** Two full object ids naming the same object (hex is case-insensitive); anything else is never the same. */
 const sameObjectId = (a, b) => isObjectId(a) && isObjectId(b) && a.toLowerCase() === b.toLowerCase();
+
+const isNameLine = (line) => isObject(line) && isText(line.path) && typeof line.text === 'string';
 
 function full(reasons, extra = {}) {
   return { mode: 'full', reasons, readSet: [], ...extra };
@@ -54,11 +61,13 @@ function full(reasons, extra = {}) {
  *   recorded: its `reviewedHeadSha` and `baseSha` (the resolved base it reviewed against). Absent, or a head that is not
  *   `delta.lastReviewedSha`, the head was never seen; a base that is not `delta.baseSha` is a base that moved: both `full`.
  * @param {Object} [input.importGraph]  `buildImportGraph` output for the head.
+ * @param {Array<{path:string, text:string}>} [input.nameLines]  The lines of the files `importGraph.computed` lists that
+ *   mention a changed file's name (`mentionNeedles`); required only when that list is not empty.
  * @returns {{mode:'delta'|'full', reasons:string[], readSet:Array<{path:string, reasons:string[]}>}}
  */
 function planDeltaReview(input) {
   const request = isObject(input) ? input : {};
-  const { delta, changedPaths, pathsClassification, reviewed, importGraph } = request;
+  const { delta, changedPaths, pathsClassification, reviewed, importGraph, nameLines } = request;
   const reasons = [];
 
   // ---- the range decision: only a readable delta can be refined, a full range is never overridden ----
@@ -98,11 +107,15 @@ function planDeltaReview(input) {
     if (touched.some((entry) => entry.sensitive === true || entry.declarationFile === true)) reasons.push('sensitive-path-touched');
   }
 
-  // ---- the import graph ----
+  // ---- the import graph, and the name lines that place the files it could not read ----
   let graphOk = false;
   if (importGraph === undefined || importGraph === null) reasons.push('import-graph-unavailable');
   else if (!isImportGraph(importGraph)) reasons.push('import-graph-unreadable');
   else graphOk = true;
+
+  const needsNames = graphOk && importGraph.computed.length > 0;
+  if (needsNames && (nameLines === undefined || nameLines === null)) reasons.push('name-scan-unavailable');
+  else if (needsNames && !(Array.isArray(nameLines) && nameLines.every(isNameLine))) reasons.push('name-scan-unreadable');
 
   if (pathsReadable && changedPaths.some((file) => OPAQUE_CODE.test(file))) {
     reasons.push('unanalyzed-source-changed');
@@ -122,6 +135,7 @@ function planDeltaReview(input) {
     if (!testsByStem.has(stem)) testsByStem.set(stem, []);
     testsByStem.get(stem).push(test);
   }
+  const computed = new Set(importGraph.computed);
 
   for (const file of changedPaths) {
     add(file, 'changed');
@@ -133,6 +147,12 @@ function planDeltaReview(input) {
     }
     if (!TEST_FILE.test(file)) {
       for (const test of testsByStem.get(stemOf(file)) || []) add(test, `test-of:${file}`);
+    }
+    // A file with a computed specifier is a possible caller of anything; it is read when its own text names this file.
+    if (needsNames) {
+      for (const line of nameLines) {
+        if (computed.has(line.path) && line.path !== file && namesFile(line.text, file)) add(line.path, `names:${file}`);
+      }
     }
   }
 
