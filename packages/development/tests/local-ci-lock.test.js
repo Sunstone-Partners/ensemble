@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Machine-wide gate lock (kata mjyc). Real filesystem in a temp dir; the clock, sleep, pid liveness, load average and
+ * Per-user-home gate lock (kata mjyc). Real filesystem in a temp dir; the clock, sleep, pid liveness, load average and
  * host name are injected where a test needs to control them. Every test states a guard that, if removed, makes it fail.
  */
 
@@ -155,6 +155,111 @@ describe('contention and stale detection', () => {
     const r = await lock.acquire({ lockPath, timeoutMs: 0, deps: { ...deps, fs: racing } });
     expect(r.acquired).toBe(false);
     expect(readHolder(lockPath)).toMatchObject({ pid: 222, token: 'fresh-live-token' });
+  });
+});
+
+describe('a lock path that holds no readable record (review round 1: the wait must always spend its budget)', () => {
+  /** A fs whose reads are counted and capped: a loop that stops spending its budget fails the test instead of hanging it. */
+  function cappedFs(limit = 200) {
+    const counts = { reads: 0 };
+    const capped = {
+      ...fs,
+      readFileSync: (...args) => {
+        if (++counts.reads > limit) throw new Error(`the lock was read ${counts.reads} times without the wait budget being spent`);
+        return fs.readFileSync(...args);
+      },
+    };
+    return { capped, counts };
+  }
+
+  it('a dangling symlink at the lock path ends in lock-timeout when the budget is 0, instead of spinning', async () => {
+    const { dir, lockPath, deps } = setup();
+    fs.symlinkSync(path.join(dir, 'no-such-target'), lockPath); // link() says EEXIST, every read says ENOENT
+    const { capped, counts } = cappedFs();
+    const r = await lock.acquire({ lockPath, timeoutMs: 0, deps: { ...deps, fs: capped } });
+    expect(r).toMatchObject({ acquired: false, code: 'lock-timeout', blockedBy: 'path', queuedMs: 0 });
+    expect(r.error).toContain(lockPath);
+    expect(counts.reads).toBe(1);
+    expect(fs.lstatSync(lockPath).isSymbolicLink()).toBe(true); // left for the operator: a gate never deletes what it cannot judge
+    expect(leftovers(dir)).toEqual([]);
+  });
+
+  it('a dangling symlink is waited on like any blocked lock: it polls and gives up exactly at the budget', async () => {
+    const { dir, lockPath, deps, time } = setup();
+    fs.symlinkSync(path.join(dir, 'no-such-target'), lockPath);
+    const { capped } = cappedFs();
+    const r = await lock.acquire({ lockPath, timeoutMs: 450, pollMs: 100, deps: { ...deps, fs: capped } });
+    expect(r).toMatchObject({ acquired: false, code: 'lock-timeout', blockedBy: 'path', queuedMs: 450 });
+    expect(time.sleeps).toEqual([100, 100, 100, 100, 50]); // the last sleep is clipped to the remaining budget
+  });
+
+  it('a lock released between the create attempt and the read is taken on the next round, after one poll', async () => {
+    const { lockPath, deps, time } = setup();
+    writeHolder(lockPath, { pid: 777 });
+    let released = false;
+    const racing = {
+      ...fs,
+      readFileSync: (...args) => {
+        if (!released) {
+          released = true;
+          fs.rmSync(lockPath); // the holder lets go right before we look
+        }
+        return fs.readFileSync(...args);
+      },
+    };
+    const r = await lock.acquire({ lockPath, timeoutMs: 10_000, pollMs: 100, deps: { ...deps, fs: racing } });
+    expect(r).toMatchObject({ acquired: true, queuedMs: 100 });
+    expect(time.sleeps).toEqual([100]);
+    expect(readHolder(lockPath).pid).toBe(process.pid);
+  });
+});
+
+describe('a filesystem failure is a named refusal, not an exception (review round 1: lock-io)', () => {
+  const sysError = (code, syscall, message) => Object.assign(new Error(message), { code, syscall });
+
+  it('an unusable lock directory resolves to lock-io naming the lock path and the cause', async () => {
+    const { dir, deps } = setup();
+    const aFile = path.join(dir, 'a-file');
+    fs.writeFileSync(aFile, 'not a directory');
+    const lockPath = path.join(aFile, 'locks', 'gate.lock'); // the parent is a regular file: mkdir fails with ENOTDIR
+    const r = await lock.acquire({ lockPath, timeoutMs: 0, deps });
+    expect(r).toMatchObject({ acquired: false, code: 'lock-io', queuedMs: expect.any(Number) });
+    expect(r.error).toContain(lockPath);
+    expect(r.error).toMatch(/ENOTDIR/);
+  });
+
+  it('a link that fails for a reason other than EEXIST leaves no lock and no temp file', async () => {
+    const { dir, lockPath, deps } = setup();
+    const failing = {
+      ...fs,
+      linkSync: () => {
+        throw sysError('EPERM', 'link', 'EPERM: operation not permitted, link');
+      },
+    };
+    const r = await lock.acquire({ lockPath, timeoutMs: 0, deps: { ...deps, fs: failing } });
+    expect(r).toMatchObject({ acquired: false, code: 'lock-io' });
+    expect(r.error).toContain('EPERM');
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  it('a lock file that cannot be read resolves to lock-io and is left untouched', async () => {
+    const { lockPath, deps } = setup();
+    writeHolder(lockPath, { pid: 777 });
+    const denied = {
+      ...fs,
+      readFileSync: () => {
+        throw sysError('EACCES', 'open', "EACCES: permission denied, open 'gate.lock'");
+      },
+    };
+    const r = await lock.acquire({ lockPath, timeoutMs: 0, deps: { ...deps, fs: denied } });
+    expect(r).toMatchObject({ acquired: false, code: 'lock-io' });
+    expect(r.error).toContain('EACCES');
+    expect(readHolder(lockPath).pid).toBe(777);
+  });
+
+  it('only system errors become lock-io: a bug in an injected dependency still throws', async () => {
+    const { lockPath, deps } = setup({ deps: { loadavg: () => { throw new TypeError('broken load probe'); } } });
+    await expect(lock.acquire({ lockPath, timeoutMs: 0, maxLoad: 5, deps })).rejects.toThrow('broken load probe');
   });
 });
 

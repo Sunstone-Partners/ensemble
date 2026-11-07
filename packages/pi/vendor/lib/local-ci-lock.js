@@ -1,11 +1,13 @@
 'use strict';
 
 /**
- * Machine-wide advisory lock that serializes local-CI gate runs (`local-ci-cli.js gate`).
+ * Advisory lock that serializes local-CI runs (`local-ci-cli.js gate` and `run`): one at a time per home directory.
  *
  * WHY: a gate run is a clean clone plus the repo's whole CI command list. Several reviewer swarms each starting one at
  * once is what drives the machine's load average into the tens and makes every gate (and every reviewer) flake. One
- * gate at a time per machine; the next one waits its turn and records how long it waited (`queuedMs`).
+ * run at a time; the next one waits its turn and records how long it waited (`queuedMs`). The lock lives under the
+ * user's home directory (never /tmp), so it serializes every process that shares that home: another account, or a
+ * process started with a different `$HOME`, has its own lock.
  *
  * LOCK FILE: `<dir>/local-ci-gate.lock`, default dir `~/.ensemble/locks` (persistent, outside every worktree, never
  * /tmp). It holds `{pid, host, token, acquiredAt}` as JSON. It is created atomically WITH its content (write a private
@@ -14,11 +16,17 @@
  * STALE DETECTION: a lock whose holder pid is no longer alive (`kill(pid, 0)` says ESRCH), or whose content is not a
  * valid lock record, is reclaimed. A LIVE pid's lock is always honoured. A lock written by a different host (shared
  * home directory) cannot be judged from here and is honoured too; waiting on it ends in the timeout error, which names
- * the holder so the operator can remove it. Reclaiming renames the stale file to a private tombstone and checks the
- * token it moved: if it was not the stale lock we examined (somebody replaced it in between) it is put back.
- * Residual risk, deliberately accepted: a sub-millisecond window in which a third process creates the lock between
- * that rename and the put-back; the displaced holder would then run concurrently with the new one for one gate.
- * PID reuse by an unrelated live process keeps a dead holder's lock "held" until the timeout.
+ * the holder so the operator can remove it. A path that exists but cannot be read at all (a dangling symlink) is not
+ * reclaimed either: it is waited on like any other blocked lock and ends in the same timeout error, which names the
+ * path. Reclaiming renames the stale file to a private tombstone and checks the token it moved: if it was not the stale
+ * lock we examined (somebody replaced it in between) it is put back.
+ *
+ * KNOWN GAPS, deliberately accepted:
+ *   - a sub-millisecond window in which a third process creates the lock between that rename and the put-back; the
+ *     displaced holder would then run concurrently with the new one for one gate;
+ *   - PID reuse by an unrelated live process keeps a dead holder's lock "held" until the timeout;
+ *   - a holder killed with SIGKILL leaves the CI step it was running alive (the runner starts every step in its own
+ *     process group), so the next run can start while that step is still going: the lock sees only the dead pid.
  *
  * QUEUE: waiters poll. Order among waiters is NOT FIFO; every waiter is bounded by `timeoutMs`, after which it gets a
  * named error (`lock-timeout`) and runs nothing.
@@ -26,8 +34,10 @@
  * LOAD POLICY (optional, off unless `maxLoad` is set): while the 1-minute load average is above `maxLoad` the caller
  * either WAITS (`loadPolicy: 'wait'`, the default) or is REFUSED at once (`'refuse'`, code `load-too-high`).
  *
- * Every dependency (fs, clock, sleep, liveness, load, identity) is injectable; `acquire` never throws for lock
- * contention, it resolves to `{acquired:false, code, error}`. `release()` is idempotent and never throws.
+ * Every dependency (fs, clock, sleep, liveness, load, identity) is injectable. `acquire` never throws for lock
+ * contention or for a filesystem failure (an unusable lock directory, a failed link or read): both resolve to
+ * `{acquired:false, code, error}` with code `lock-timeout`, `load-too-high` or `lock-io`. `release()` is idempotent and
+ * never throws.
  *
  * Environment knobs read by `acquireFromEnv` (a malformed value is an error, never silently ignored):
  *   ENSEMBLE_LOCAL_CI_LOCK_DIR         directory holding the lock file
@@ -113,8 +123,6 @@ async function acquire(o) {
   const mine = { pid: d.pid, host: d.host, token: myToken, acquiredAt: new Date(started).toISOString() };
   let reclaimed = null;
 
-  d.fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-
   /** Atomically create the lock with its content. true = we hold it, false = somebody else does. */
   const tryCreate = () => {
     const tmp = `${lockPath}.${d.pid}.${myToken}.tmp`;
@@ -183,47 +191,66 @@ async function acquire(o) {
 
   const fail = (code, error, extra) => ({ acquired: false, code, error, queuedMs: queued(), ...(extra || {}) });
 
-  for (;;) {
-    let blocked; // why this round could not proceed: { by, text, holder?, load? }
+  try {
+    d.fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
-    const load = maxLoad === null ? 0 : d.loadavg();
-    if (maxLoad !== null && load > maxLoad) {
-      const text = `load average ${load.toFixed(2)} is above the ${maxLoad} ceiling`;
-      if (loadPolicy === 'refuse') return fail('load-too-high', `${text}; not starting a gate now`, { load });
-      blocked = { by: 'load', text, load };
-    } else if (tryCreate()) {
-      return { acquired: true, queuedMs: queued(), reclaimed, release };
-    } else {
-      let raw = null;
-      try {
-        raw = d.fs.readFileSync(lockPath, 'utf8');
-      } catch (err) {
-        if (err.code !== 'ENOENT') throw err;
-      }
-      if (raw === null) continue; // released between our create attempt and our read: try again at once
-      const holder = parseHolder(raw);
-      const foreign = holder !== null && holder.host !== undefined && holder.host !== d.host;
-      if (!foreign && (holder === null || !d.isAlive(holder.pid))) {
-        if (reclaim(holder, raw)) continue;
-      }
-      blocked = {
-        by: 'holder',
-        holder,
-        text: holder
-          ? `held by pid ${holder.pid} on ${holder.host || 'unknown host'} since ${holder.acquiredAt || 'unknown time'}`
-          : 'held by an unreadable lock record',
-      };
-    }
+    for (;;) {
+      let blocked; // why this round could not proceed: { by, text, holder?, load? }
 
-    const waited = queued();
-    if (waited >= timeoutMs) {
-      return fail('lock-timeout', `gave up after ${waited}ms: ${blocked.text} (${lockPath})`, {
-        blockedBy: blocked.by,
-        ...(blocked.holder ? { holder: blocked.holder } : {}),
-        ...(blocked.load !== undefined ? { load: blocked.load } : {}),
-      });
+      const load = maxLoad === null ? 0 : d.loadavg();
+      if (maxLoad !== null && load > maxLoad) {
+        const text = `load average ${load.toFixed(2)} is above the ${maxLoad} ceiling`;
+        if (loadPolicy === 'refuse') return fail('load-too-high', `${text}; not starting a gate now`, { load });
+        blocked = { by: 'load', text, load };
+      } else if (tryCreate()) {
+        return { acquired: true, queuedMs: queued(), reclaimed, release };
+      } else {
+        let raw = null;
+        try {
+          raw = d.fs.readFileSync(lockPath, 'utf8');
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
+        }
+        if (raw === null) {
+          // link() just said the path exists, yet nothing can be read from it: the holder let go in between (the next
+          // round takes it), or the path is a dangling symlink, which stays that way. Either way this round is blocked
+          // like any other: it spends the wait budget and sleeps. Retrying at once instead let a dangling symlink spin
+          // the loop at full CPU, past `timeoutMs`.
+          blocked = { by: 'path', text: 'lock file unreadable: a dangling symlink, or released while it was read' };
+        } else {
+          const holder = parseHolder(raw);
+          const foreign = holder !== null && holder.host !== undefined && holder.host !== d.host;
+          if (!foreign && (holder === null || !d.isAlive(holder.pid))) {
+            if (reclaim(holder, raw)) continue;
+          }
+          blocked = {
+            by: 'holder',
+            holder,
+            text: holder
+              ? `held by pid ${holder.pid} on ${holder.host || 'unknown host'} since ${holder.acquiredAt || 'unknown time'}`
+              : 'held by an unreadable lock record',
+          };
+        }
+      }
+
+      const waited = queued();
+      if (waited >= timeoutMs) {
+        return fail('lock-timeout', `gave up after ${waited}ms: ${blocked.text} (${lockPath})`, {
+          blockedBy: blocked.by,
+          ...(blocked.holder ? { holder: blocked.holder } : {}),
+          ...(blocked.load !== undefined ? { load: blocked.load } : {}),
+        });
+      }
+      await d.sleep(Math.min(pollMs, timeoutMs - waited));
     }
-    await d.sleep(Math.min(pollMs, timeoutMs - waited));
+  } catch (err) {
+    // A filesystem failure (an unusable lock directory, a failed link, an unreadable lock file) ends the wait with a
+    // named refusal, like contention does, instead of escaping as a bare exception with no code and no wait time. Only
+    // system errors qualify; anything else is a bug and still throws.
+    if (err && typeof err.code === 'string' && typeof err.syscall === 'string') {
+      return fail('lock-io', `cannot use the lock at ${lockPath}: ${err.message}`);
+    }
+    throw err;
   }
 }
 
