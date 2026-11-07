@@ -238,13 +238,14 @@ function buildReviewAgents(run, deps, ctx) {
   const agents = [];
   const minutes = (role) => reviewDeadlines({ role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy }).minutes;
   run.slices.forEach((slice, sliceIndex) => {
-    for (let lens = 0; lens < run.depth.reviewersPerSlice; lens += 1) {
-      const name = `reviewer-s${sliceIndex + 1}-${S.LENSES[lens]}`;
-      agents.push({ name, role: 'reviewer', sliceId: slice.id, paths: slice.paths, _vars: { slice: slice.id, timeboxMinutes: minutes('reviewer'), paths: slice.paths, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir }, _role: 'reviewer' });
-    }
+    // one reviewer per (slice, lens) pass; the lenses come from the shared plan (planSlices), the names stay `reviewer-s<n>-<a|b|..>`
+    run.assignments.filter((assignment) => assignment.sliceId === slice.id).forEach((assignment, lensIndex) => {
+      const name = `reviewer-s${sliceIndex + 1}-${S.LENSES[lensIndex]}`;
+      agents.push({ name, role: 'reviewer', sliceId: slice.id, lens: assignment.lens, paths: slice.paths, _vars: { slice: slice.id, lens: assignment.lens, timeboxMinutes: minutes('reviewer'), paths: slice.paths, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir }, _role: 'reviewer' });
+    });
   });
   if (run.securityLane) {
-    agents.push({ name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, paths: run.changedPaths, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } });
+    agents.push({ name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: run.changedPaths, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } });
   }
   return agents.map((agent) => {
     const briefPath = path.join(dir, 'briefs', `${agent.name}.md`);
@@ -457,9 +458,10 @@ async function prepareRun(input, deps) {
   const planned = S.planDepth(tier);
   if (planned.ok !== true) return failure('RUN_FAILED', { reason: 'depth-refused', error: planned.reason, precheck });
   run.depth = planned.depth;
-  const sliced = planSlices({ paths: facts.numstat.map((f) => ({ path: f.path, lines: (f.added || 0) + (f.deleted || 0) })), threshold: run.policy && Number.isInteger(run.policy.sliceThreshold) ? run.policy.sliceThreshold : undefined });
+  const sliced = planSlices({ paths: facts.numstat.map((f) => ({ path: f.path, lines: (f.added || 0) + (f.deleted || 0) })), threshold: run.policy && Number.isInteger(run.policy.sliceThreshold) ? run.policy.sliceThreshold : undefined, mode: run.depth.mode, lensesPerSlice: run.depth.reviewersPerSlice });
   if (sliced.ok !== true) return failure('RUN_FAILED', { reason: 'slices-refused', error: sliced.reason, precheck });
   run.slices = sliced.slices;
+  run.assignments = sliced.reviewerAssignments;
   run.sliced = sliced.sliced;
   run.securityLane = SECURITY_REQUIRED_TIERS.includes(tier.tier) || SECURITY_REQUIRED_TIERS.includes(tier.effectiveTier) || mode.securityLane === true;
   const cap = run.policy && Number.isInteger(run.policy.maxConcurrentAgents) ? run.policy.maxConcurrentAgents : DEFAULT_MAX_CONCURRENT;
@@ -495,7 +497,7 @@ function validateCollect(input) {
 }
 
 function expectedOf(wave) {
-  return wave.agents.map((a) => ({ name: a.name, role: a.role, dispatchedAt: a.dispatchedAt, deadlineAt: a.deadlineAt, ...(a.sliceId !== undefined ? { sliceId: a.sliceId, paths: a.paths } : {}), ...(a.candidateIds !== undefined ? { candidateIds: a.candidateIds } : {}) }));
+  return wave.agents.map((a) => ({ name: a.name, role: a.role, dispatchedAt: a.dispatchedAt, deadlineAt: a.deadlineAt, ...(a.sliceId !== undefined ? { sliceId: a.sliceId, lens: a.lens, paths: a.paths } : {}), ...(a.candidateIds !== undefined ? { candidateIds: a.candidateIds } : {}) }));
 }
 
 /** Records one collected wave in the run and ends its agents' spans. */
@@ -555,8 +557,9 @@ function processReview(run, deps) {
     for (const p of detail.missingPaths) if (!known.missingPaths.includes(p)) known.missingPaths.push(p);
     unreviewed.set(detail.sliceId, known);
   }
-  const reviewed = run.slices.filter((slice) => agents.some((a) => a.sliceId === slice.id) && !unreviewed.has(slice.id)).map((slice) => slice.id);
-  const coverage = verifyCoverage({ slices: run.slices, reviewed, changedPaths: run.changedPaths });
+  // every path must be read under the plan's distinct lenses (verifyCoverage); a slice with any pass missing is already in `unreviewed`
+  const reviewedBy = agents.filter((a) => a.role === 'reviewer' && a.sliceId !== undefined && !unreviewed.has(a.sliceId)).map((a) => ({ sliceId: a.sliceId, lens: a.lens, reviewer: a.name, paths: a.paths }));
+  const coverage = verifyCoverage({ slices: run.slices, reviewedBy, mode: run.depth.mode, changedPaths: run.changedPaths });
   run.coverage = { ok: coverage.ok, complete: coverage.ok === true && coverage.covered === true, reviewedSlices: coverage.reviewedSlices || [], unreviewedSlices: coverage.unreviewedSlices || run.slices.map((s) => s.id), uncovered: coverage.uncovered || run.changedPaths.slice(), detail: [...unreviewed.values()].filter((d) => d.sliceId !== LANE_COVERAGE_SLICE) };
 
   // the security lane: only a lane that arrived AND covered every changed path is ever `clean`

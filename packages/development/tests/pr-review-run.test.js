@@ -1512,3 +1512,18 @@ describe('support helpers', () => {
     expect(S.adjudicateList([{ id: 1, uncertain: true }, { id: 2, disposition: 'adjudicate' }, { id: 3, verification: { outcome: 'disputed' } }, { id: 4 }, { id: 5, uncertain: true, adjudication: { by: 'orchestrator' } }]).map((x) => x.id)).toEqual([1, 2, 3]);
   });
 });
+
+describe('the review is sharded by slice and lens (the shared plan): each reviewer holds one lens, so a path is read under distinct lenses', () => {
+  test('the dispatched reviewers carry the plan\'s distinct lenses, the security lane its own, and every brief names its lens', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    expect(m.status).toBe('DISPATCH');
+    const agents = h.readRun().waves[0].agents;
+    const reviewers = agents.filter((agent) => agent.role === 'reviewer');
+    expect(reviewers.map((agent) => agent.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b']);
+    expect(new Set(reviewers.map((agent) => agent.lens)).size).toBe(2);
+    expect(reviewers.map((agent) => agent.lens)).toEqual(['correctness', 'security']);
+    expect(agents.find((agent) => agent.role === 'security')).toMatchObject({ lens: 'security' });
+    for (const agent of reviewers) expect(fs.readFileSync(agent.briefPath, 'utf8')).toContain(`Your lens: ${agent.lens}`);
+  });
+});
