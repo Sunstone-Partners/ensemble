@@ -119,8 +119,9 @@
  *
  * Global flag `--project-root <path>` (kata vsg4; accepted by every subcommand, at most once):
  *   run the subcommand against the repository at `<path>` instead of `process.cwd()`. It sets
- *   `ctx.projectRoot`, so adapter resolution (`.ensemble/toolchain.yaml`), the adapter's `cwd`
- *   (the tracker's `br` reads THAT tree's `.beads/`), and the preflight/confirm/ledger/failure/
+ *   `ctx.projectRoot`, so adapter resolution (`.ensemble/toolchain.yaml`), the `cwd` of every
+ *   adapter command and preflight health check (the tracker's `br` reads THAT tree's
+ *   `.beads/`), and the preflight/confirm/ledger/failure/
  *   trace state under `<path>/.ensemble/state/` all follow it. PR review runs in a sibling
  *   `../ensemble.*` worktree, so without it `run tracker.*` would hit whatever tracker the
  *   CLI's own cwd resolves to. Precedence: `--project-root` > `ctx.projectRoot` (programmatic

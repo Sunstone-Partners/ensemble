@@ -54,6 +54,10 @@ function mkRepo(dir) {
   return dir;
 }
 
+/** A health check that records the directory it really ran in. */
+const HEALTH_CWD_SCRIPT =
+  "const fs=require('fs');fs.writeFileSync('health-cwd.marker',fs.realpathSync(process.cwd()))";
+
 /**
  * Give `root` a tracker of its own: `.ensemble/toolchain.yaml` selecting the fixture adapter,
  * the adapter itself, and a `beads.txt` that stands in for that tree's tracker data.
@@ -77,7 +81,10 @@ function installTracker(root, beads) {
       binaries: [process.execPath],
       allowlist: [{ bin: process.execPath, sub: ['-e'] }],
       env: [],
-      health: [{ id: 'ok-check', run: [process.execPath, '-e', 'process.exit(0)'], timeoutMs: 5000 }],
+      health: [
+        { id: 'ok-check', run: [process.execPath, '-e', 'process.exit(0)'], timeoutMs: 5000 },
+        { id: 'cwd-check', run: [process.execPath, '-e', HEALTH_CWD_SCRIPT], timeoutMs: 5000 }
+      ],
       detect: [],
       capabilities: { 'tracker.show': { run: [process.execPath, '-e', script] } }
     })
@@ -308,6 +315,36 @@ describe('toolchain-cli --project-root (kata vsg4)', () => {
       expect(start.stderr).toContain('trace: unavailable');
       expect(start.stderr).toContain('--project-root');
       expect(fs.readdirSync(unrelated)).toEqual([]);
+    });
+  });
+
+  // kata vsg4 review round 1, finding 1: preflight health checks used to inherit the CLI
+  // process's own cwd, so the health gate of the flagged tree was certified by a command that
+  // ran in some other repository, while the passing record was still written into the tree.
+  describe('preflight health checks run in the --project-root tree', () => {
+    test('a health command writes its marker into the flagged tree, never into the cwd the CLI started in', () => {
+      const tree = mkRepo(path.join(scratch, 'repo-health'));
+      installTracker(tree, 'beads-health');
+
+      const pre = cli(unrelated, ['preflight', '--require', 'tracker.show', '--run-id', 'hc-1', '--project-root', tree, '--json']);
+      expect(pre.status).toBe(0);
+      expect(JSON.parse(pre.stdout).ok).toBe(true);
+
+      // The health command really ran with the flagged tree as its cwd ...
+      expect(fs.readFileSync(path.join(tree, 'health-cwd.marker'), 'utf8')).toBe(tree);
+      // ... nothing leaked into the directory the CLI was started in ...
+      expect(fs.readdirSync(unrelated)).toEqual([]);
+      // ... and the passing record `run` gates side effects on sits in the tree the check certified.
+      expect(fs.existsSync(path.join(tree, '.ensemble', 'state', 'toolchain', 'preflight-hc-1.json'))).toBe(true);
+    });
+
+    test('without the flag the health check still runs in the cwd (which is the project root), unchanged', () => {
+      const repo = mkRepo(path.join(scratch, 'repo-health-default'));
+      installTracker(repo, 'beads-health-default');
+
+      const pre = cli(repo, ['preflight', '--require', 'tracker.show', '--run-id', 'hc-2', '--json']);
+      expect(pre.status).toBe(0);
+      expect(fs.readFileSync(path.join(repo, 'health-cwd.marker'), 'utf8')).toBe(repo);
     });
   });
 
