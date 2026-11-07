@@ -132,10 +132,12 @@ separately), matching `validate.js`'s own documented limit.
   `AMBIGUOUS_KEY` guards data that bypassed it. A deleted (`tombstone`) bead keeps its key,
   unlisted by `br list --all`. `br update --add-label` rejects a comma list and fails the whole
   update, so `tracker.update-detailed` leaves labels to `tracker.label`.
-- **The runner drops `br`'s error detail.** `br` prints its JSON error on stdout with a
-  non-zero exit; `TOOL_FAILED` carries only `Command failed: br ...`, so
-  `lib/tracker-findings.js` decides "unavailable" before spawning (no adapter, no `.beads`
-  directory, no executable `br`), never from that text.
+- **`TOOL_FAILED` carries `br`'s own error, from stdout.** `br` prints its JSON error on stdout
+  with a non-zero exit and an empty stderr; the runner reports that envelope (code, message,
+  hint) when stderr is empty, so a `NOT_INITIALIZED` or duplicate-`external_ref`
+  `CONFIG_ERROR` is visible to the caller. `lib/tracker-findings.js` still decides
+  "unavailable" before spawning (no adapter, no `.beads` directory, no executable `br`), never
+  from that text.
 - **`toolchain.default.yaml`'s `work-graph: auto` does not yet resolve to any
   adapter.** No shipped task implements the TRD's own `auto`-sentinel selection
   algorithm (use the resolved tracker adapter's own work-graph capabilities when
