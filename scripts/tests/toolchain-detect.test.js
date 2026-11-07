@@ -1324,10 +1324,12 @@ describe('remote_url_matches pattern evaluation: not a sandbox, hostile patterns
  * once per category `detectAdapter` is asked about.
  */
 describe('remote_url_matches: per-process memoization (PR 4 review round 2, Finding 3)', () => {
-  function mkManyCategoryProject(prefix) {
+  // `url`/`pattern` default to the `^(x+x)+$` fixture the in-process tests use; the CLI test
+  // below passes the exponential fixture instead (see there).
+  function mkManyCategoryProject(prefix, { url = 'x'.repeat(40) + '!', pattern = '^(x+x)+$' } = {}) {
     const projectRoot = mkTempDir(prefix);
     initGitRepo(projectRoot);
-    setGitRemote(projectRoot, 'x'.repeat(40) + '!');
+    setGitRemote(projectRoot, url);
 
     // Neither 'tracker' nor 'host' appears here: the real, installed `adapter-tracker-
     // azure-boards` adapter (TRD-033) declares 'tracker' with its own `remote_url_matches`
@@ -1358,7 +1360,7 @@ describe('remote_url_matches: per-process memoization (PR 4 review round 2, Find
       fixtureManifest({
         adapter: 'bad-memo-tracker',
         categories,
-        detect: [{ signal: 'remote_url_matches', pattern: '^(x+x)+$' }]
+        detect: [{ signal: 'remote_url_matches', pattern }]
       })
     );
 
@@ -1389,7 +1391,11 @@ describe('remote_url_matches: per-process memoization (PR 4 review round 2, Find
     // by counting cache misses: the in-process test above and the mutation-proof test below.
     // This test covers the real CLI entry point end to end; the spawnSync timeout is only a
     // hang bound, so a hang shows up as `res.signal`, never as a speed comparison.
-    const { projectRoot } = mkManyCategoryProject('toolchain-detect-memo-cli-');
+    // The exponential fixture (`^(a+)+$` against 40 a's and a '!') can only end through the
+    // evaluation deadline, so the "excluded adapter reported exactly once" stderr check below
+    // never depends on how fast the runner (or V8's regexp tier) happens to be.
+    const catastrophic = { url: 'a'.repeat(40) + '!', pattern: '^(a+)+$' };
+    const { projectRoot } = mkManyCategoryProject('toolchain-detect-memo-cli-', catastrophic);
     writeInstalledAdapter(
       projectRoot,
       'fixture-pkg',
@@ -1407,7 +1413,7 @@ describe('remote_url_matches: per-process memoization (PR 4 review round 2, Find
       fixtureManifest({
         adapter: 'bad-memo-tracker',
         categories: allCategories,
-        detect: [{ signal: 'remote_url_matches', pattern: '^(x+x)+$' }]
+        detect: [{ signal: 'remote_url_matches', pattern: catastrophic.pattern }]
       })
     );
     const xdgConfigHome = mkTempDir('toolchain-detect-memo-cli-xdg-');
