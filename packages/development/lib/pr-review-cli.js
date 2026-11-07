@@ -12,7 +12,7 @@
  * direct `require(...)` call on the same input can never diverge. NO
  * business logic lives here, NO network calls, NO shell calls.
  *
- * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json
+ * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results> < payload.json
  *
  * `review-range` (TRD-013) is a thin pass-through to `chooseReviewRange`:
  * given `lastReviewedSha`, `commits` and `remediationShas` on top of what
@@ -20,8 +20,8 @@
  * previously reviewed head or must fall back to the `full` base-correct
  * range -- the skill calls this for every round after the first (AC-010-1).
  *
- * `ledger` exposes six independent library functions; the payload selects
- * one via `action` (validate|isActionable|dedupe|merge|scopeViolations|recordRound) and
+ * `ledger` exposes seven independent library functions; the payload selects
+ * one via `action` (validate|isActionable|dedupe|merge|scopeViolations|recordRound|resolve) and
  * carries that action's keys:
  *   validate         { findings }
  *   isActionable     { finding }
@@ -33,6 +33,16 @@
  *   recordRound      { ledger, incoming, round } -- suppresses repeats, attaches
  *                    class instances to their one class finding and reports
  *                    both (AC-010-2, AC-011-1, AC-011-2)
+ *   resolve          { finding, resolution:{ reason, by, headSha, at }, policy? } -- records a decision on a
+ *                    finding (`recordOperatorResolution`): all four resolution keys are required, `by` is a login,
+ *                    `headSha` the head the decision was made against, `at` an ISO-8601 timestamp with a zone. Given
+ *                    `policy` (the base-branch policy block) `by` must also be a login it lets decide: not one of its
+ *                    `botLogins`, and one of its `maintainerLogins` when it names any. Answers `{ finding }` on
+ *                    success; a refusal is an error (exit 1). The merge gate only honours an Important or security
+ *                    resolution that passes the same check and whose `headSha` is the gate's head. HONEST LIMIT: that
+ *                    proves a reason, a named login (a bot or a stranger is refused only when a policy says so) and a
+ *                    head binding, never that a human typed it -- the skill must put the operator's own answer here,
+ *                    never an agent's.
  * `state-read` takes { headSha } plus an optional { treeSha } (the tree of that
  * head) and `state-write` { state } (whose `reviewedTreeSha`, when present, must
  * be a full object id), each with either an explicit `targetPath` or a `prId`
@@ -77,6 +87,15 @@
  * stays empty until `requested` names one of them:
  *   explainer-offer  { tier, paths, requested? }
  *
+ * `brief` renders one agent's brief from its template file
+ * (`skills/pr-review-cycle/templates/<role>-brief.md`, found by
+ * `pr-review-brief-files.js`); it refuses -- exit 1, an `error` -- an unknown
+ * role, a missing or undeclared input and, for a verifier, anything but the
+ * claim, its cited `file:line`, the path list and the snapshot directory:
+ *   brief            { role: reviewer|verifier|classifier|second-assessor|security-lane,
+ *                      vars: { ...the inputs that role declares } }
+ *                    -> { ok: true, role, brief }
+ *
  * The metrics and eval subcommands (TRD-032) take the records a maintainer
  * fetched with `gh` (see docs/guides/pr-review-metrics.md) and answer with
  * their module's result verbatim:
@@ -95,13 +114,44 @@
  * The verification subcommands (TRD-018) each take the facts their module
  * grades and answer with that module's result verbatim:
  *   votes   { findings[{ id, severity?, kind?, security?, reviewer?, votes[{ verifier, verdict }],
- *             incompleteVerifiers? }], depth, expectedVerifiers?, verificationCapability? }
+ *             incompleteVerifiers? }], depth, expectedVerifiers?, verificationCapability?,
+ *             assignment?[{ id, verifiers[] }] }
+ *           -- with `assignment` (the `verify-assign` plan) every finding must be assigned exactly
+ *           K distinct verifiers; an assigned verifier with no vote makes the finding `unverified`
+ *   verify-assign { candidates[{ id, reviewer? }], depth, verifierPool[] | verifierCount, expectedVerifiers?,
+ *             maxCandidatesPerVerifier? }
+ *           -- plans which K distinct verifiers settle each candidate (never its own reviewer) and
+ *           which candidates each verifier agent is briefed on; a pool smaller than K is an error
  *   depth   { tier, effectiveTier?, requested?, lowWaiverEnabled?, planned?, used?, bounds? }
  *           -- resolves the mode AND, when planned or used counts are given,
  *           grades them against that mode's bounds in the same answer
  *   slices  { paths[{ path, lines }], areas?, threshold?, reviewed?, changedPaths? }
  *           -- plans the areas and, when `reviewed` slice ids are given, names
  *           every changed path they did not cover
+ *
+ * `results` (kata et2k) is the file-based half of the verification subcommands:
+ * agents write `out-<name>.json` and this reads them, instead of the orchestrator
+ * parsing what an agent yielded. One payload selects one function via `action`:
+ *   deadlines        { role, tier?, depth?, now?, policy? } -- the `dispatchedAt` (= `now`, default: the current time)
+ *                    and the `deadlineAt` an agent must be stopped by: reviewer 15 min, verifier 5, security lane 15,
+ *                    per-role overridable by the policy's `deadlineMinutes`
+ *   collect          { expected[{ name, role, dispatchedAt, deadlineAt, sliceId?, paths?, candidateIds? }], dir, now?,
+ *                    scratchDir?, depth?, expectedVerifiers?, candidates? } -- classifies each agent
+ *                    arrived|missing|expired|invalid from `<dir>/out-<name>.json`. It arrived when the file's last
+ *                    change (its inode change time, never the modification time a writer can set) is within
+ *                    [dispatchedAt, deadlineAt]; an older file is stale, a later one expired. A reviewer given a
+ *                    `sliceId` must give its `paths`. Each arrival is copied to scratch (default: the hidden sibling
+ *                    `.<dir name>.collected` beside `dir`, never inside it), and the answer holds `reviewedSlices` (the
+ *                    `reviewed` of `slices`) and, when `depth` is given, `votesInput` (the payload of `votes`). An
+ *                    agent that did not arrive is never reviewed: its slice is unreviewed, its candidates unverified
+ *   failure          { status?, retryAfterSec?, message?, attempt?, failFastAfterSec?, waitedSec?, deadlineAt?, now? }
+ *                    -- retry, back off, fall back to the alternate model route, or fail fast to a recorded `partial`
+ *                    state; `waitedSec` (the wait already spent on this agent) counts toward `failFastAfterSec`, and
+ *                    given the agent's `deadlineAt` (and `now`, default: the current time) a wait that would end at or
+ *                    after the deadline fails fast
+ *              HONEST LIMIT: this computes deadlines and classifies; it does not stop an agent. Killing one at its
+ *              `deadlineAt` is the dispatcher's job, and nothing here may be read as enforcement. No skill or command
+ *              calls `results` yet.
  *
  * The tier, approval and merge-gate subcommands (TRD-026) each take the facts
  * their module grades and answer with that module's result verbatim:
@@ -122,9 +172,21 @@
  *              the head; a director who is the author is credited on their
  *              own word (warning `solo-maintainer-self-credit`)
  *   gate       { ledger[], approvals, tier?, description, security{ status, findings?, reason? },
- *                headSha?, unavailable?[] }
+ *                headSha?, policy?, unavailable?[] }
  *              -- the one answer to "may this PR merge?", with every blocker
- *              carrying its code, message and next action
+ *              carrying its code, message and next action. An Important or
+ *              security finding is closed only by a later head that cleared it
+ *              or by a resolution WITH provenance (`by`, a login the optional
+ *              `policy` lets decide; `at`; and a `headSha` equal to this head).
+ *              A resolution without it, and the review's own deferral of a
+ *              non-blocking Major (`blocking: false`), still block.
+ *              On top of that answer the CLI adds the operator's decision
+ *              list (`dispositionChoices`, `dispositionGroups`,
+ *              `mergeConfirmation`; lib/pr-review-disposition.js), computed
+ *              from the same `ledger`, `security`, `headSha` and `policy` plus
+ *              an optional `votes` (a `votes` result) for the per-finding
+ *              tally, and asking the gate which findings block.
+ *              `evaluateGate`'s own answer is unchanged by it.
  *
  * FAIL CLOSED at the boundary. Two kinds of payload value are told apart:
  *   - the review FACTS of `scope`, `remote`, `status`, `policy`, `rules`,
@@ -153,6 +215,7 @@ const {
   mergeFindings,
   scopeViolations,
   recordRound,
+  recordOperatorResolution,
 } = require('./pr-review-ledger');
 const { evaluateRemoteReview } = require('./pr-review-remote');
 const { deriveStatus } = require('./pr-review-status');
@@ -161,12 +224,17 @@ const { loadPolicy } = require('./pr-review-policy');
 const { resolveRuleFiles } = require('./pr-review-rules');
 const { classifyPaths } = require('./pr-review-paths');
 const { checkDescription } = require('./pr-review-description');
+const { reviewDeadlines, collectResults, toVotesInput, classifyAgentFailure } = require('./pr-review-results');
 const { tallyVotes } = require('./pr-review-votes');
+const { planVerification } = require('./pr-review-verify-assign');
 const { resolveDepth, checkBounds, boundsFor, planSlices, verifyCoverage } = require('./pr-review-depth');
 const { offerExplainers } = require('./pr-review-explainer-offer');
+const { renderBriefFromFiles } = require('./pr-review-brief-files');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
+const { selectMode } = require('./pr-review-mode');
 const { evaluateApprovals } = require('./pr-review-approvals');
 const { evaluateGate } = require('./pr-review-gate');
+const { buildDispositionChoices } = require('./pr-review-disposition');
 const { computeMetrics, compareCohorts } = require('./pr-review-metrics');
 const { scoreEval, compareEval, staleCases } = require('./pr-review-eval');
 const { traceCapabilities, compareRuntimes, gradeSecretHygiene } = require('./pr-review-reachability');
@@ -255,6 +323,15 @@ const LEDGER_ACTIONS = Object.freeze({
       return result;
     },
   },
+  resolve: {
+    keys: { finding: OBJECT, resolution: OBJECT },
+    optional: { policy: OBJECT },
+    run: (p) => {
+      const result = recordOperatorResolution(p.finding, p.resolution, p.policy);
+      if (!result.ok) throw new Error(result.reason);
+      return { finding: result.finding };
+    },
+  },
 });
 
 function runLedger(payload) {
@@ -267,6 +344,7 @@ function runLedger(payload) {
     );
   }
   requireKeys(payload, action.keys, `ledger action '${name}'`);
+  if (action.optional !== undefined) optionalKeys(payload, action.optional, `ledger action '${name}'`);
   return action.run(payload);
 }
 
@@ -341,6 +419,15 @@ function runDescription(payload) {
  */
 function runVotes(payload) {
   return tallyVotes(payload);
+}
+
+/**
+ * `verify-assign` is a pass-through to `planVerification`: which K distinct verifiers settle each candidate,
+ * and which candidates each verifier agent is briefed on. Its `assignments` go back into `votes` as
+ * `assignment`, which validates the tally against the plan.
+ */
+function runVerifyAssign(payload) {
+  return planVerification(payload);
 }
 
 /**
@@ -456,6 +543,19 @@ function runTier(payload) {
 }
 
 /**
+ * `mode` answers which of the two review-run modes this PR gets -- `light`
+ * or `full` -- from the `tier` result the payload carries as `tierResult`
+ * (the `tier` subcommand's output, verbatim). The mode comes from that tier
+ * and nothing else: never the size of the diff, never an agent's judgement.
+ * Fail closed means FULL: a missing, unreadable or ambiguous `tierResult`
+ * answers `mode:'full'` with `ok:false` and the reason named (exit 0).
+ */
+function runMode(payload) {
+  const request = isObject(payload) ? payload : {};
+  return selectMode(request.tierResult);
+}
+
+/**
  * `approvals` and `gate` are pass-throughs to the one module that owns each
  * question. Both grade their input IN BAND and fail closed: a request, a tier
  * or a review record they cannot read is `satisfied:false` / `mergeable:false`
@@ -468,8 +568,35 @@ function runApprovals(payload) {
   return evaluateApprovals(payload);
 }
 
+/**
+ * `gate` answers `evaluateGate` verbatim and ADDS the operator's decision
+ * list, computed by the separate pure `buildDispositionChoices` so the gate's
+ * own input contract and answer stay exactly what they were. The list is built
+ * from what the gate was handed (`ledger`, `security`, `headSha`, the optional
+ * `policy`) plus an optional `votes` result, and it asks the gate which
+ * findings block (`findingsHeldOpen`), so it cannot disagree with the verdict
+ * about them. When it cannot be built, the gate's answer is still returned and
+ * `dispositionChoices` is empty with the refusal in `dispositionReason`. The
+ * gate never reads the list, so nothing about the list can make it more
+ * permissive.
+ */
 function runGate(payload) {
-  return evaluateGate(payload);
+  const gate = evaluateGate(payload);
+  const request = isObject(payload) ? payload : {};
+  const disposition = buildDispositionChoices({
+    ledger: request.ledger,
+    security: request.security,
+    votes: request.votes,
+    policy: request.policy,
+    headSha: request.headSha,
+  });
+  return {
+    ...gate,
+    dispositionChoices: disposition.dispositionChoices,
+    dispositionGroups: disposition.groups,
+    mergeConfirmation: disposition.mergeConfirmation,
+    ...(disposition.ok === true ? {} : { dispositionReason: disposition.reason }),
+  };
 }
 
 /**
@@ -480,6 +607,21 @@ function runGate(payload) {
  */
 function runExplainerOffer(payload) {
   return offerExplainers(payload);
+}
+
+/**
+ * `brief` renders one agent brief from its template. It does not grade, it refuses:
+ * a role or input the renderer does not accept throws (exit 1), because a brief
+ * that was rendered from guessed input is exactly the hand-written brief this
+ * subcommand exists to replace. The file reads live in `pr-review-brief-files.js`.
+ */
+function runBrief(payload) {
+  requireKeys(payload, { role: TEXT, vars: OBJECT }, 'brief');
+  const extra = Object.keys(payload).filter((key) => key !== 'role' && key !== 'vars');
+  if (extra.length > 0) {
+    throw new Error(`brief does not accept payload key(s) ${extra.map((key) => `'${key}'`).join(', ')}; inputs go under 'vars'`);
+  }
+  return { ok: true, role: payload.role, brief: renderBriefFromFiles(payload.role, payload.vars) };
 }
 
 /**
@@ -527,6 +669,34 @@ function runReachability(payload) {
   return { ok: false, reason: `unknown reachability action ${JSON.stringify(action)} (expected trace, runtimes or secrets)` };
 }
 
+/**
+ * `results` selects one function of pr-review-results.js via `action`, mirroring the `reachability` precedent. The
+ * module owns the file reads (injectable deps, real fs here); this dispatcher only supplies the clock when the payload
+ * names none (the deadline of `failure` is checked against it) and, for `collect`, attaches the `votes` payload built
+ * from what was collected. An unknown action is refused in-band: a guessed deadline or classification would be worse
+ * than none.
+ */
+function runResults(payload) {
+  const request = isObject(payload) ? payload : {};
+  const action = typeof request.action === 'string' ? request.action.trim().toLowerCase() : null;
+  const now = request.now === undefined ? Date.now() : request.now;
+  if (action === 'deadlines') return reviewDeadlines({ ...request, now });
+  if (action === 'failure') return classifyAgentFailure({ ...request, now });
+  if (action === 'collect') {
+    const collected = collectResults({ ...request, now });
+    if (request.depth === undefined) return collected;
+    return {
+      ...collected,
+      votesInput: toVotesInput(collected, {
+        depth: request.depth,
+        expectedVerifiers: request.expectedVerifiers,
+        candidates: request.candidates,
+      }),
+    };
+  }
+  return { ok: false, reason: `unknown results action ${JSON.stringify(action)} (expected deadlines, collect or failure)` };
+}
+
 const HANDLERS = Object.freeze({
   scope: runScope,
   'review-range': runReviewRange,
@@ -540,18 +710,22 @@ const HANDLERS = Object.freeze({
   paths: runPaths,
   description: runDescription,
   votes: runVotes,
+  'verify-assign': runVerifyAssign,
   depth: runDepth,
   slices: runSlices,
   tier: runTier,
+  mode: runMode,
   approvals: runApprovals,
   gate: runGate,
   'explainer-offer': runExplainerOffer,
+  brief: runBrief,
   metrics: runMetrics,
   'metrics-compare': runMetricsCompare,
   'eval-score': runEvalScore,
   'eval-compare': runEvalCompare,
   'eval-stale': runEvalStale,
   reachability: runReachability,
+  results: runResults,
 });
 
 /**
@@ -570,7 +744,7 @@ function main(argv) {
   if (handler === undefined) {
     process.stdout.write(
       JSON.stringify({
-        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|depth|slices|tier|approvals|gate|explainer-offer|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability> < payload.json`,
+        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results> < payload.json`,
       }) + '\n'
     );
     return 1;
@@ -620,17 +794,21 @@ module.exports = {
   runPaths,
   runDescription,
   runVotes,
+  runVerifyAssign,
   runDepth,
   runSlices,
   runTier,
+  runMode,
   runApprovals,
   runGate,
   runExplainerOffer,
+  runBrief,
   runMetrics,
   runMetricsCompare,
   runEvalScore,
   runEvalCompare,
   runEvalStale,
+  runResults,
   LEDGER_ACTIONS,
   HANDLERS,
   main,

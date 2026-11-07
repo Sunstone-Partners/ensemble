@@ -21,15 +21,18 @@ exists to prevent.
 
 **10a -- Classify the change (fresh-context subagent).** Dispatch one
 **fresh-context** subagent with the diff for `range` and this prompt, which is
-editable policy -- tune the wording here, never in the CLI:
+editable policy -- tune the wording here, never in the CLI. The prompt is
+`templates/classifier-brief.md`; render it with `node "$PR_REVIEW_CLI" brief`
+and `{ role: "classifier", vars: { range, diffPath } }` and send the `brief` it
+returns unedited.
 
-> You are classifying a pull request's changes for risk, not reviewing them.
-> For every changed path, name the kind of change it is, using exactly one of
-> these words: `docs`, `copy`, `additive-behind-flag`, `product`, `other`.
-> Cite the paths that put each kind in your answer. Judge only what the diff
-> does; who wrote it, why, and what it was meant to do are not inputs. If a
-> path does not clearly fit a kind, answer `other` for it. Return JSON only:
-> `{ "kinds": [{ "kind": "<one of the five>", "paths": ["<path>", ...] }] }`.
+Every gate brief takes tokens, not prose: `range` is `<baseSha>..<headSha>`,
+each a full 40 or 64 digit hexadecimal object id, `diffPath` and `snapshotDir`
+are paths, and `ruleFiles` and `sensitivePaths` are lists of repository-relative
+paths (letters, digits and `. _ @ + ~ = [ ] -` in `/`-separated segments; no
+whitespace, parentheses or `..`). A note about who wrote the change or why does
+not fit any of them: the renderer refuses it, and refuses a path outside the
+grammar.
 
 It returns exactly the contract `assignTier` expects: `kinds` is an array of
 `{ kind, paths[] }`, `kind` drawn from the closed set above and every kind
@@ -43,16 +46,10 @@ is a reading this step cannot use: carry it as `classifier` in `unavailable`
 subagent).** Dispatch a second **fresh-context** subagent -- not the
 classifier, and not a reviewer from an earlier step -- with the diff, the
 rules `applied` and the sensitivity `paths` from Step 1b, and this editable
-prompt:
-
-> You are deciding one thing about this pull request: does it need another
-> person to look at it, beyond what its size and file kinds would suggest?
-> Say yes when the change is subtle, crosses trust or ownership boundaries,
-> touches money, data loss, auth or privacy, is hard to reverse, or carries a
-> risk its diff does not show on its face. Cite the paths your reason rests
-> on. Return JSON only:
-> `{ "needsAnotherPerson": true|false, "reason": "<one sentence>",
-> "evidencePaths": ["<path>", ...] }`.
+prompt, `templates/second-assessor-brief.md`: render it with
+`node "$PR_REVIEW_CLI" brief` and
+`{ role: "second-assessor", vars: { range, diffPath, ruleFiles, sensitivePaths } }`
+and send the `brief` it returns unedited.
 
 It returns exactly `{ needsAnotherPerson, reason, evidencePaths[] }`. Pass it
 to `tier` as `secondAssessment`. Exactly `false` leaves the tier alone;
@@ -74,28 +71,27 @@ and a `false` typed in to fill the gap is what would grant the discount.
 
 **10c -- The security lane (fresh-context reviewer).** Dispatch a
 **fresh-context, read-only** security reviewer over the same `range`, with the
-sensitive `paths` Step 1b reported and this editable prompt:
-
-> Review this diff for security defects only: injection, authentication and
-> authorization gaps, secret or credential exposure, unsafe deserialization,
-> path traversal, SSRF, unsafe shell or SQL construction, missing input
-> validation at a trust boundary, and weakened cryptography. Report what the
-> diff does, not what it fails to add elsewhere. Record each finding with its
-> file and line, its failure mode and the evidence. Change nothing.
+sensitive `paths` Step 1b reported and this editable prompt,
+`templates/security-lane-brief.md`: render it with `node "$PR_REVIEW_CLI" brief`
+and `{ role: "security-lane", vars: { range, diffPath, snapshotDir, sensitivePaths } }`
+and send the `brief` it returns unedited.
 
 Shape its result as the lane record `gate` grades: `{ status, findings }`,
 where `status` is `clean` (ran, found nothing), `findings` (ran, found these),
 `not-run` or `unavailable`. Every entry in `findings` is a **full ledger
 entry** -- the same fields Step 3 requires (`id`, `source`, `locationOrLink`,
-`severity`, `failureMode`, `disposition`, `evidence`, `originalTextOrLink`),
-plus `resolution: { reason }` when it was closed with a stated reason and
-`cleared: true` when a later head fixed it. A lane finding missing one of
-those fields is unreadable, and the gate answers `review-data-unavailable`
-naming it rather than passing: an unreadable security finding is never an
-absent one. **An open security finding blocks the merge** until it is fixed or
-closed with a stated `resolution.reason` (AC-017-1), and a lane that did not
-run blocks Medium and High on its own. Never downgrade a security finding to
-make the gate pass, and never report `clean` for a lane that did not run.
+`severity`, `failureMode`, `disposition`, `evidence`, `originalTextOrLink`).
+**The lane reports and never closes.** It sets no `resolution` and no
+`cleared` flag: a closure the lane (or this session) wrote for itself is not
+the operator's decision, and the gate ignores a `resolution` without the
+provenance under *Closing an Important or security finding* below. A lane
+finding missing one of those fields is unreadable, and the gate answers
+`review-data-unavailable` naming it rather than passing: an unreadable
+security finding is never an absent one. **An open security finding blocks the
+merge** until it is fixed or the operator's own recorded decision closes it
+(`ledger` `resolve`, below), and a lane that did not run blocks Medium and
+High on its own. Never downgrade a security finding to make the gate pass, and
+never report `clean` for a lane that did not run.
 
 **10d -- Read approvals, reviews and protection from the host.** Read, in this
 run:
@@ -177,11 +173,12 @@ subcommands in this order, each one JSON payload in, one JSON object out:
    failed (`solo-maintainer-director-not-approved` or
    `solo-maintainer-author-unknown`): report it, and the PR needs two humans.
 3. `node "$PR_REVIEW_CLI" gate` with
-   `{ ledger, approvals, tier, description, security, headSha, unavailable }`
+   `{ ledger, approvals, tier, description, security, headSha, policy, unavailable }`
    -- `ledger` the findings carried in the review-state report for this head
    (Step 9), `description` the Step 1b `description` result, `security` the
-   lane from 10c, and `unavailable` the names of every read that failed twice
-   in 10d.
+   lane from 10c, `policy` the Step 1b policy block (the one `approvals` takes:
+   it names the bot and maintainer logins a decision is checked against), and
+   `unavailable` the names of every read that failed twice in 10d.
 
    **A missing ledger is unavailable, never empty.** When `state-read` finds
    no report for this head, or discards the one it found (it was written for
@@ -201,7 +198,56 @@ approvals say how many of how many are bound to the current commit, an open
 security finding is named, and `review-data-unavailable` names exactly what
 could not be read. Never summarise a blocker away, never re-grade a
 `mergeable:false` into a pass, and never answer this step from anything but
-the CLI's result.
+the CLI's result. Return the whole result object unchanged, including
+`dispositionChoices`, `dispositionGroups`, `mergeConfirmation` and
+`dispositionReason` (set only when the decision list could not be built).
+
+**Closing an Important or security finding (provenance).** The gate honours a
+recorded `resolution` on an Important finding, an unrecognised-severity finding
+or a security-lane finding of any severity (a Pre-existing lane entry too) only
+when it carries all four of `reason`, `by` (the deciding login), `at` (an
+ISO-8601 timestamp with a zone) and `headSha` (equal to the `headSha` the gate
+is asked about) and, given `policy`, `by` is not one of its `botLogins` and is
+one of its `maintainerLogins` when it names any. Anything less is ignored: the
+finding stays open and its blocker carries `resolutionRejected` saying why. The
+review's own deferral of an Important finding (`blocking: false`,
+`disposition: 'deferred'`, a `reason`: the stopping rule at the top of this
+skill) is not a decision either: the gate ignores it, and the finding stays open,
+its blocker carrying `deferralRejected`, until it is fixed or the operator
+records a decision. Record a decision only with `node "$PR_REVIEW_CLI"
+ledger` action `resolve`
+(`{ action, finding, resolution:{ reason, by, headSha, at }, policy }`, the same
+`policy`), and only from the operator's own answer: never type a reason, a
+login or a decision on the operator's behalf. A new push moves the head, so a
+decision made on an earlier head stops counting and is asked again. **What this
+proves and what it does not:** a reason is present, it names a login (a bot or a
+stranger is refused only when `policy` says so) and it is bound to this head; it
+cannot prove a human typed it, and a session that writes a permitted login into
+`by` defeats it. A `cleared: true` flag is likewise taken at its word. The
+control against that is this rule, not the code.
+
+**The operator's decision list.** Beside the verdict, `gate` returns
+`dispositionChoices` (one entry per undecided finding: `id`, `severity`,
+`locationOrLink`, `votes`, `beadId`, `group`, `choices[]`, `default`,
+`requiresReason`), `dispositionGroups` (what may be answered for a whole group
+at once) and `mergeConfirmation` (what the merge question must show: open beads,
+blocking findings accepted and why, blocking findings still undecided). Pass the
+Step 3b `votes` result as `votes` to include each finding's tally, and the same
+`policy`. The list asks the gate which findings block, so it cannot disagree
+with the verdict: a verifier-filtered Important finding is still listed while
+the gate blocks on it (its tally shows why), and a Pre-existing security-lane
+finding is a blocking entry. The list is
+ordered blocking Important and security findings first, then Nits, then
+Pre-existing, and many Nits in one file collapse into one entry (its id,
+`file:<path>`, is not a ledger id: expand it to its `members` before `ledger`
+`resolve`). Rules the list
+enforces and the skill must not undo: a blocking finding is offered Fix on this PR
+or Accept only and never defaults to Accept; Nits and Pre-existing default to
+Fix in a follow-on PR; accepting a security finding has no default, is never
+pre-selected or batched, and needs a reason the operator gives for that finding.
+`default` only pre-selects a choice in an interactive prompt: a non-interactive
+(`FOREMAN`) run never applies it and never fixes.
+The list never changes `mergeable`.
 
 A caller reaches all of this through this skill. `pr-merge` and every other
 command invoke `MODE=gate`; none of them runs `pr-review-cli.js` itself.
