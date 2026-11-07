@@ -9,7 +9,9 @@
  * maintainer or another skill reads. What the prose relies on from code (a resolution
  * closes a finding at the gate; the Fix on this PR option says the head moves) is checked
  * against the real modules, so the prose cannot drift from them unseen. The behavioural half
- * (a review run edits no file and pushes nothing) is pr-review-run-edits-nothing.test.js.
+ * (a review run edits no tracked file and pushes nothing) is pr-review-run-edits-nothing.test.js.
+ * The blocks after the original ones pin what review round 1 of PR #265 found, each against the
+ * prose, the code or the command it describes.
  */
 
 const { readSkillMain, readSkillReference } = require('./helpers/pr-review-cycle-skill');
@@ -59,7 +61,7 @@ describe('the review path has no fix or push step', () => {
     expect(algorithm).toMatch(/`MODE=local` runs Steps 1-4, the tests fact of Step 6 and Steps 8-9 \(Step 5 and Step 6's post-fix verification only for a pre-publication snapshot\)/);
     expect(algorithm).toContain('`MODE=remote` runs Steps 1, 1b and 7-9');
     expect(algorithm).toContain('`MODE=gate` runs Steps 1, 1b and 10 -- and only those');
-    expect(algorithm).toContain('A run with `FIX_SELECTION` is a fix run: Steps 1 and 5');
+    expect(algorithm).toContain('A `MODE=local` run with `FIX_SELECTION` is a fix run: Steps 1 and 5');
   });
 
   test('a remote review records its findings and edits nothing: the old "fix as one batch before any push" rule is gone', () => {
@@ -79,7 +81,7 @@ describe('the review path has no fix or push step', () => {
   test('"The review never fixes" states the rule for every review mode before the algorithm starts', () => {
     const rule = section('The review never fixes');
     expect(MAIN.indexOf('## The review never fixes')).toBeLessThan(MAIN.indexOf('## Algorithm'));
-    expect(rule).toContain('A review run (`MODE=local` of a PR, `remote`, `gate`) edits no file, commits nothing and pushes nothing');
+    expect(rule).toContain('A review run (`MODE=local` of a PR, `remote`, `gate`) edits no tracked file, commits nothing and pushes nothing');
     expect(rule).toContain('An agent never chooses for the operator');
   });
 
@@ -183,5 +185,222 @@ describe('the operator chooses, and a Fix on this PR answer is never a resolutio
     ]) {
       expect([refusal, TRIAGE.includes(refusal)]).toEqual([refusal, true]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review round 1 (PR #265)
+// ---------------------------------------------------------------------------
+
+describe("Step 5 runs on the operator's selection or on a pre-publication snapshot, and every statement of the trigger says both", () => {
+  test('the frontmatter description, the Default plan, the headline and the Safety rules each name the pre-publication case', () => {
+    const description = MAIN.match(/^description: (.*)$/m)[1];
+    const defaultPlan = flatten(MAIN.slice(MAIN.indexOf('**Default plan:**'), MAIN.indexOf('**Review-only')));
+    const safety = flatten(MAIN.slice(MAIN.indexOf('* A PR review never edits'), MAIN.indexOf('* Guidance is the base commit')));
+    expect(description).toContain('operator-selected unless pre-publication');
+    expect(defaultPlan).toContain('(pre-publication: all actionable)');
+    expect(section('The review never fixes')).toContain('or on a pre-publication snapshot');
+    expect(safety).toContain('(a pre-publication snapshot excepted)');
+  });
+
+  test("no statement that Step 5 runs only on the operator's selection leaves out the pre-publication case", () => {
+    let statements = 0;
+    for (const [name, text] of [
+      ['SKILL.md', FLAT_MAIN],
+      ['triage-fix-reverify.md', TRIAGE],
+      ['merge-gate.md', GATE_REF],
+      ['inputs.md', INPUTS],
+      ['remote-phase.md', REMOTE],
+    ]) {
+      for (const sentence of text.split(/(?<=[.!?]) /)) {
+        if (!/runs only on the operator's `FIX_SELECTION`/.test(sentence)) continue;
+        statements += 1;
+        expect([name, sentence, sentence.includes('pre-publication')]).toEqual([name, sentence, true]);
+      }
+    }
+    expect(statements).toBeGreaterThan(0);
+  });
+
+  test('the intro does not call every fix operator-selected, and the Stopping rule says what a deferral never blocks', () => {
+    expect(FLAT_MAIN).toContain('**A PR review never fixes**: fixing is Step 5, a separate step composing `pr-review-remediation`');
+    expect(FLAT_MAIN).not.toContain('a separate operator-selected step');
+    expect(FLAT_MAIN).toContain('and never block `REVIEW_COMPLETE`');
+    expect(FLAT_MAIN).not.toContain('never block the review');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The review steps instruct no push, commit or fix.
+//
+// A skill has no runtime to refuse an agent that is told to push, so this reads the prose the way
+// the agent does: every clause of every review step outside Step 5 (SKILL.md's Algorithm steps and
+// the companion text for them) is checked for an instruction to push, commit or fix. A clause that
+// negates the verb ("commits nothing", "never push", "no fix agent") is not an instruction. The
+// check knows the common shapes of one (an imperative opening a clause, a modal or an infinitive
+// before the verb, a git or workflow command); it is a tripwire for a sentence added to the wrong
+// step, not a proof that no phrasing gets past it. INSTRUCTION_CASES pins what it flags and what it
+// leaves alone, so it cannot quietly stop working.
+// ---------------------------------------------------------------------------
+
+const ACTION = '(?:push|commit|fix|patch|amend|rebase|cherry-pick)';
+const OBJECT = '(?:the|a|an|all|any|every|each|it|them|those|these|that|this|its|their|your|one|real|confirmed|actionable|important|selected|remaining|findings?|changes?|fixes|up|to|origin|directly)';
+const NEGATION = /\b(?:never|not|no|nothing|none|neither|nor|without|cannot|refuse[sd]?)\b|n't\b/;
+const INSTRUCTION_SHAPES = [
+  // An imperative opening a clause: "Push the fixes.", "then commit it", "..., fix every finding".
+  // "Fix on this PR" and "Fix in a follow-on PR" are the operator's option labels, and "fix run"
+  // and "fix agent" are nouns.
+  new RegExp(
+    `(?:^|, )(?:(?:then|also|first|next|finally|now|always|immediately|just) )*${ACTION}(?![\\w-])(?! (?:on this pr|in a follow-on|run|agent|id|selection|answer|option|step))`
+  ),
+  // A modal, an infinitive or a conjunction before the verb: "should push the fix", "to fix it".
+  new RegExp(
+    `\\b(?:must|should|shall|will|may|can|could|would|might|need to|needs to|has to|have to|ought to|is to|are to|to|then|and|or|also|first|next|finally|before|after|until|once) ${ACTION}(?![\\w-]) ${OBJECT}\\b`
+  ),
+  // A mutating command or capability.
+  /\bgit (?:push|commit|add|apply|am|rebase|reset|cherry-pick|merge|revert)\b|\bworkflow\.(?:push|commit)\b|\bgh pr (?:create|merge)\b|\bhost\.change-request-(?:create|merge)\b/,
+];
+
+/** Lower-cased clauses of a markdown text: sentences, list items, table cells, `;` `:` ` -- ` and parentheses split. */
+function clausesOf(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\n[ \t]*(?:[*-]|\d+\.)[ \t]+/g, '. ')
+    .replace(/[*`]/g, '')
+    .replace(/\|/g, ';')
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?]) |; ?|: | -- | ?[()] ?/)
+    .map((clause) => clause.trim().toLowerCase().replace(/[.!?;:,]+$/, ''))
+    .filter(Boolean);
+}
+
+/** The clauses of `text` that tell a reader to push, commit or fix (a negation earlier in the clause excuses it). */
+function instructions(text) {
+  const found = [];
+  for (const clause of clausesOf(text)) {
+    for (const shape of INSTRUCTION_SHAPES) {
+      const hit = shape.exec(clause);
+      if (hit && !NEGATION.test(clause.slice(0, hit.index))) {
+        found.push(clause);
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/** The only clauses on the review path that use these verbs without negating them, and why. */
+const ALLOWED_INSTRUCTIONS = [
+  // The publication gate addresses the caller, who publishes; this skill never does.
+  'push or create the pr only when it is exactly local_review_complete',
+  // The brief renderer's refusal of a bad input: not a finding and not the PR.
+  'fix the input, never route around it with a hand-written brief',
+];
+
+const withoutStep5 = (text) => text.slice(0, text.indexOf('### Step 5')) + text.slice(text.indexOf('### Step 6'));
+const REVIEW_PATH = [
+  ...Object.entries(STEPS)
+    .filter(([label]) => label !== '5')
+    .map(([label, text]) => [`SKILL.md Step ${label}`, text]),
+  ...['inputs.md', 'scope-guidance-depth.md', 'ledger-and-verification.md', 'remote-phase.md', 'status-and-state.md', 'merge-gate.md'].map((name) => [
+    `reference/${name}`,
+    readSkillReference(name),
+  ]),
+  ['reference/triage-fix-reverify.md outside Step 5', withoutStep5(readSkillReference('triage-fix-reverify.md'))],
+];
+
+describe('the review steps instruct no push, commit or fix', () => {
+  test.each([
+    ['Push the fixes to the PR branch before running the gate.'],
+    ['Commit the changes, then push them.'],
+    ['Then fix every confirmed finding.'],
+    ['The agent should fix the Important findings first.'],
+    ['Run `git push origin HEAD` once the tests pass.'],
+    ['After the gate passes, push a commit that addresses the finding.'],
+    ['Apply the patch and commit it.'],
+    ['Push, never force-push.'],
+    ['Fix the findings before asking the operator.'],
+    ['Before the gate, amend the commit and push.'],
+  ])('the check flags an instruction: %s', (sentence) => {
+    expect(instructions(sentence)).not.toEqual([]);
+  });
+
+  test.each([
+    ['A review run edits no tracked file, commits nothing and pushes nothing.'],
+    ['Nothing here edits a file, commits or pushes.'],
+    ['A review never edits, commits or pushes; an agent never answers the decision list for the operator.'],
+    ['Never edit, commit or push.'],
+    ['It must not push the head.'],
+    ['Never fix remote comments one at a time.'],
+    ['**Fix on this PR: never `ledger` `resolve`.**'],
+    ["**Fix in a follow-on PR** and **Accept without fixing**: `ledger` `resolve` with the operator's login."],
+    ['No fix agent runs and no blocking finding is waived.'],
+    ['The push moves the head, so approvals stop counting.'],
+    ["Each finding's **Fix on this PR** option states that the head moves."],
+    ['It reads the base commit, never the PR head.'],
+    ['One fix agent, one push for the whole selection.'],
+    ['A fix run (`FIX_SELECTION`) ends here: it re-reviews nothing.'],
+  ])('the check leaves a negation or a noun alone: %s', (sentence) => {
+    expect(instructions(sentence)).toEqual([]);
+  });
+
+  test.each(REVIEW_PATH)('%s', (label, text) => {
+    const stray = instructions(text).filter((clause) => !ALLOWED_INSTRUCTIONS.includes(clause));
+    expect(stray).toEqual([]);
+  });
+
+  test('a sentence telling the agent to push, added to a real review step, is caught', () => {
+    const step7 = STEPS['7'] + '\nPush the fixes to the PR branch before running the gate.\n';
+    expect(instructions(step7).filter((clause) => !ALLOWED_INSTRUCTIONS.includes(clause))).toEqual([
+      'push the fixes to the pr branch before running the gate',
+    ]);
+  });
+
+  test('every allowed clause is still in the review path, so an allowance for a reworded sentence is removed', () => {
+    const present = new Set(REVIEW_PATH.flatMap(([, text]) => instructions(text)));
+    for (const clause of ALLOWED_INSTRUCTIONS) expect([clause, present.has(clause)]).toEqual([clause, true]);
+  });
+});
+
+describe('a fix run names its MODE and ends after its tests', () => {
+  test('the Algorithm names the fix run, its steps, its end and the caller\'s re-run', () => {
+    const preamble = flatten(MAIN.slice(MAIN.indexOf('## Algorithm'), MAIN.indexOf('### Step 1 --')));
+    expect(preamble).toContain(
+      "A `MODE=local` run with `FIX_SELECTION` is a fix run: Steps 1 and 5 and Step 6's tests, no re-review, status or state; the caller re-runs `MODE=local` for the new head."
+    );
+  });
+
+  test('Inputs define the same fix run in the MODE and FIX_SELECTION rows', () => {
+    expect(INPUTS).toContain('With `FIX_SELECTION`, a `local` run is a fix run instead (see `FIX_SELECTION`)');
+    expect(INPUTS).toContain(
+      "Its presence makes a `MODE=local` run a **fix run** (Steps 1 and 5 and Step 6's tests; no re-review, no status, no state): the caller re-runs `MODE=local` for the new head."
+    );
+    expect(INPUTS).toContain('Refused when `MODE` is not `local`');
+  });
+
+  test('Step 6 gives status and state to a review run only: a fix run ends after the broad gate', () => {
+    const step6 = flatten(STEPS['6']);
+    expect(step6).toContain('A review run records the tests fact, runs the optional prose-only security gate');
+    expect(step6).toContain('a fix run ends there');
+    expect(step6).not.toMatch(/`MODE=local` then derives status/);
+    expect(TRIAGE).toContain('**A fix run (`FIX_SELECTION`) ends here:** it re-reviews nothing, derives no status and writes no state');
+    expect(TRIAGE).toContain('the caller re-runs `MODE=local` on that head, then `MODE=gate`');
+    expect(TRIAGE).toContain('Refuse (`REVIEW_BLOCKED`, nothing edited) when `FOREMAN` is true, `MODE` is not `local`');
+  });
+
+  test('the remote batch is verified by the fix run and re-reviewed by the caller\'s next MODE=local run', () => {
+    expect(REMOTE).toContain('then verify) before any further push. The caller then re-runs `MODE=local` on the new head, which re-reviews it.');
+  });
+});
+
+describe('a review run writes its gitignored state report, so it edits no tracked file', () => {
+  test('the headline and the references say "no tracked file"', () => {
+    expect(section('The review never fixes')).toContain('edits no tracked file, commits nothing and pushes nothing, and writes only the gitignored state report');
+    expect(TRIAGE).toContain('edits no tracked file, commits nothing and pushes nothing (it writes only the gitignored state report)');
+    expect(INPUTS).toContain('No review run edits a tracked file, commits or pushes on a PR');
+  });
+
+  test('the FOREMAN row cites the section by name, not a numbered item that is not there', () => {
+    expect(INPUTS).toContain('("The review never fixes" in `SKILL.md`)');
+    expect(INPUTS).not.toMatch(/never fixes", item \d/);
   });
 });

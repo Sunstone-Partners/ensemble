@@ -19,15 +19,16 @@ the first finding while later findings are still unclassified.
 ### Step 5 -- Batch fix (delegate to `pr-review-remediation`)
 
 **This step is not part of any review run.** A review (`MODE=local` of a PR, `MODE=remote`,
-`MODE=gate`, any `REVIEW_ONLY` run) edits nothing, commits nothing and pushes nothing: its
-findings are recorded and reported, and the operator chooses what happens to each (see
-"The review never fixes" in `SKILL.md`). The step runs in exactly two cases:
+`MODE=gate`, any `REVIEW_ONLY` run) edits no tracked file, commits nothing and pushes nothing
+(it writes only the gitignored state report): its findings are recorded and reported, and the
+operator chooses what happens to each (see "The review never fixes" in `SKILL.md`). The step
+runs in exactly two cases:
 
 1. **A fix run** -- the operator answered **Fix on this PR** for one or more findings
-   and the caller invoked the skill with `FIX_SELECTION` (`[{ id, by, at, headSha }]`
+   and the caller invoked the skill as `MODE=local` with `FIX_SELECTION` (`[{ id, by, at, headSha }]`
    from that answer). Refuse (`REVIEW_BLOCKED`, nothing edited) when `FOREMAN` is true,
-   the selection is empty, an entry lacks `by` or `at`, names an `id` not in the
-   ledger, or has a `headSha` other than `HEAD_SHA` (the head moved: ask again). The
+   `MODE` is not `local`, the selection is empty, an entry lacks `by` or `at`, names an
+   `id` not in the ledger (the one `state-read` returns for `HEAD_SHA`), or has a `headSha` other than `HEAD_SHA` (the head moved: ask again). The
    selection is never recorded with `ledger` `resolve` -- a resolution closes a
    finding at the gate, so a Fix on this PR answer written there would let the merge
    pass without the fix.
@@ -62,14 +63,18 @@ tests fact as "Review-only runs" at the end of this file describes.
 **A review run of a PR has no fix of its own to verify.** It runs `TEST_COMMAND` once in a
 throwaway worktree of the head (never the user's checkout), records the real exit code
 as `tests.exitCode`, runs the optional security gate below, derives status (Step 8),
-writes state (Step 9) and returns. When the head is one a fix run (Step 5) produced, its
-findings are re-reviewed by the delta below, then `MODE=gate` is asked again. The
-paragraphs that follow describe a pre-publication snapshot and that re-review.
+writes state (Step 9) and returns. When the head is one a fix run (Step 5) produced, the
+caller's next `MODE=local` run re-reviews it by the delta below, then `MODE=gate` is asked
+again. The paragraphs that follow describe the verification a fix run and a pre-publication
+snapshot share, and the re-review.
 
 After the batch fix returns, run the focused regression tests first, then
 run the broad test gate **once** and record its real exit code as `tests.exitCode` (`TEST_COMMAND`, unless `SKIP_TESTS`, in
 which case record `tests.skipped = true` and the command that would have
-run). Then re-review the diff against the same `range` (base-correct) to confirm the batch actually resolved what
+run). **A fix run (`FIX_SELECTION`) ends here:** it re-reviews nothing, derives no status
+and writes no state; it reports the exit code and the new head, and the caller re-runs
+`MODE=local` on that head, then `MODE=gate`. **A pre-publication snapshot** goes on:
+re-review the diff against the same `range` (base-correct) to confirm the batch actually resolved what
 it claims and introduced nothing new. This closes the local phase.
 
 **Delta re-review after the first round (CLI `review-range`, TRD-013,
@@ -97,13 +102,14 @@ post-fix head, never the pre-fix one (a review bound to it is stale and cannot
 complete). `reviewedTreeSha` goes in the state report (Step 9).
 
 **Optional security gate** (prose only: the CLI/ledger have no gate record, and
-the outcome never changes CLI status). Before `MODE=local` returns, run native
+the outcome never changes CLI status). Before a `MODE=local` review returns, run native
 `/security-review` on the post-fix diff, plus whichever are installed:
 `gitleaks`, `osv-scanner`, else a production-dependency audit. Triage hits as
-Step 2 findings (fix real ones via Step 5); report each tool as `clean`,
+Step 2 findings (a real hit is recorded like any other finding; Step 5 fixes it only on a
+pre-publication snapshot or when the operator selects it); report each tool as `clean`,
 `N findings` or `not installed`.
 
-If `MODE=local`, stop here: derive status (Step 8 below) using only the
+If `MODE=local` and there is no `FIX_SELECTION`, stop here: derive status (Step 8 below) using only the
 local facts (`remotePhase` is omitted / treated as pending), write state
 (Step 9), and return. There is no PR yet to push or evaluate remotely.
 

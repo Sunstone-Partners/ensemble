@@ -24,7 +24,8 @@ records them, and edits nothing: a review never fixes. What the operator selects
 as Fix on this PR goes to a separate fix run (Step 5), where you repeat Steps 4-6 for the remote
 batch (triage all remote findings before any edit, delegate the whole batch
 to `pr-review-remediation` in one pass -- never fix remote comments one at a
-time -- then verify and re-review) before any further push.
+time -- then verify) before any further push. The caller then re-runs `MODE=local` on the new
+head, which re-reviews it.
 
 **Round cap:** the cap is ONE number for every review procedure in this
 repository, and it comes from the policy block in the base branch's
