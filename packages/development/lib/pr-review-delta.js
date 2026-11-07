@@ -18,6 +18,9 @@
  *   - the last reviewed head is not on record as reviewed: `reviewed.headSha`, the `reviewedHeadSha` the review state
  *     recorded for a COMPLETED round, is missing or is not `delta.lastReviewedSha`. A commit the repository merely
  *     holds is not a head anyone reviewed, so the caller reads this from the state, never from git;
+ *   - the base the last round reviewed against is not on record, or is not the base this delta is planned against
+ *     (`reviewed.baseSha` is missing or is not `delta.baseSha`: a retargeted PR, a moved stacked-phase parent). The delta is
+ *     only what changed since the last reviewed head; against another base the PR changes paths no round ever read;
  *   - the delta changes no path (nothing can justify reading nothing);
  *   - a changed path is classified High or sensitive, or is a review-declaration file, or the
  *     classification is unreadable or does not cover every changed path;
@@ -47,8 +50,9 @@ function full(reasons, extra = {}) {
  * @param {Object} input.delta  The `chooseReviewRange` answer: `{ ok:true, mode, lastReviewedSha, headSha, reason }`.
  * @param {string[]} input.changedPaths  The paths changed in `lastReviewedSha..headSha` (not the whole PR).
  * @param {Object} input.pathsClassification  The `classifyPaths` answer for (at least) those paths.
- * @param {{headSha?:string}} [input.reviewed]  What the review-state report of the last COMPLETED round recorded: its
- *   `reviewedHeadSha`. Absent, or not `delta.lastReviewedSha`, the head was never seen and the plan is `full`.
+ * @param {{headSha?:string, baseSha?:string}} [input.reviewed]  What the review-state report of the last COMPLETED round
+ *   recorded: its `reviewedHeadSha` and `baseSha` (the resolved base it reviewed against). Absent, or a head that is not
+ *   `delta.lastReviewedSha`, the head was never seen; a base that is not `delta.baseSha` is a base that moved: both `full`.
  * @param {Object} [input.importGraph]  `buildImportGraph` output for the head.
  * @returns {{mode:'delta'|'full', reasons:string[], readSet:Array<{path:string, reasons:string[]}>}}
  */
@@ -67,6 +71,12 @@ function planDeltaReview(input) {
   if (!isObjectId(delta.lastReviewedSha) || !isObjectId(delta.headSha)) reasons.push('delta-unreadable');
 
   if (!isObject(reviewed) || !sameObjectId(reviewed.headSha, delta.lastReviewedSha)) reasons.push('head-never-seen');
+
+  // The delta is `lastReviewedSha..headSha`, whatever the base: against a base the last round did not review, the PR changes
+  // other paths than the ones that round read (a retarget adds the new base's own history to the PR's diff).
+  const reviewedBase = isObject(reviewed) ? reviewed.baseSha : undefined;
+  if (!isObjectId(reviewedBase)) reasons.push('reviewed-base-unknown');
+  else if (!sameObjectId(reviewedBase, delta.baseSha)) reasons.push('base-moved');
 
   // ---- the changed paths ----
   const pathsReadable = Array.isArray(changedPaths) && changedPaths.every(isText);

@@ -278,7 +278,7 @@ function readInput(options) {
   const { repoRoot, runId } = options;
   if (!isText(repoRoot) || !path.isAbsolute(repoRoot)) throw new PrepareError('invalid-input', 'input', 'repoRoot must be an absolute path');
   if (!isText(runId)) throw new PrepareError('invalid-input', 'input', 'runId is required');
-  for (const key of ['baseSha', 'headSha', 'mergeBaseSha', 'prBaseSha', 'parentPhaseTipSha', 'lastReviewedSha', 'reviewedHeadSha']) {
+  for (const key of ['baseSha', 'headSha', 'mergeBaseSha', 'prBaseSha', 'parentPhaseTipSha', 'lastReviewedSha', 'reviewedHeadSha', 'reviewedBaseSha']) {
     const value = options[key];
     if (value !== undefined && value !== null && value !== '' && !isObjectId(value)) {
       throw new PrepareError('invalid-input', 'input', `${key} is not a full object id`);
@@ -526,7 +526,7 @@ function rangeFacts(range) {
  */
 function reviewedRecord(options, range) {
   if (range.mode !== 'delta') return null;
-  return { headSha: options.reviewedHeadSha || null };
+  return { headSha: options.reviewedHeadSha || null, baseSha: options.reviewedBaseSha || null };
 }
 
 /**
@@ -646,6 +646,10 @@ function resultFrom(manifest, dir, reused) {
  *   round: a head that round reviewed. The delta plan treats `lastReviewedSha` as seen only when it is this head; without it
  *   the plan is `full` (`head-never-seen`). The caller reads it from the state: this step never infers it from git, because
  *   a commit the repository holds is not a head anyone reviewed.
+ * @param {string} [options.reviewedBaseSha] The `baseSha` the same report recorded: the resolved base that round reviewed
+ *   against. The delta plan is `full` (`base-moved`) when the base resolved now is another one (a retargeted PR, a moved
+ *   stacked-phase parent), and `full` (`reviewed-base-unknown`) without it. `chooseReviewRange` takes no reviewed base, so
+ *   `mode` and `delta.diff` still follow it: only the plan compares the two.
  * @param {string} [options.stateRoot]       Default `<repoRoot>/.ensemble/pr-review/prepare`.
  * @param {string[]} [options.testFiles]     Baseline test files; default: the test files the PR changed or whose
  *   source it changed.
@@ -732,7 +736,7 @@ function deriveDelta(deps, options, range, entries, declarationInput) {
     reviewed,
     importGraph: lines === null ? undefined : buildImportGraph({ filePaths: entries.map((entry) => entry.path), lines }),
   });
-  return { delta: { lastReviewedSha: range.lastReviewedSha, reviewedHeadSha: reviewed.headSha, changedPaths: deltaPaths }, deltaPlan };
+  return { delta: { lastReviewedSha: range.lastReviewedSha, reviewedHeadSha: reviewed.headSha, reviewedBaseSha: reviewed.baseSha, changedPaths: deltaPaths }, deltaPlan };
 }
 
 /**

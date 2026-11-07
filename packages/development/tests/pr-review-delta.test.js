@@ -49,6 +49,8 @@ const LINES = [
   { path: 'tests/app-flow.test.js', text: "const thing = require('../src/thing.js');" },
 ];
 const graph = (overrides = {}) => ({ ...buildImportGraph({ filePaths: FILES, lines: LINES }), ...overrides });
+/** What the review-state report of the completed round that reviewed REVIEWED against BASE recorded. */
+const recorded = (overrides = {}) => ({ headSha: REVIEWED, baseSha: BASE, ...overrides });
 
 function plan(overrides = {}) {
   const changedPaths = overrides.changedPaths || ['src/thing.js'];
@@ -56,7 +58,7 @@ function plan(overrides = {}) {
     delta: deltaRange(),
     changedPaths,
     pathsClassification: classify(changedPaths),
-    reviewed: { headSha: REVIEWED },
+    reviewed: recorded(),
     importGraph: graph(),
     ...overrides,
   });
@@ -112,18 +114,35 @@ describe('planDeltaReview: fails closed to a full re-read (AC1, AC2)', () => {
   };
 
   it('a last reviewed head the review state does not record as reviewed (AC1: a head never seen)', () => {
-    for (const reviewed of [undefined, null, {}, { headSha: null }, { headSha: true }, { headSha: 'main' }]) {
+    for (const reviewed of [undefined, null, {}, recorded({ headSha: null }), recorded({ headSha: true }), recorded({ headSha: 'main' })]) {
       expectFull(plan({ reviewed }), 'head-never-seen');
     }
   });
 
   it('a record for another head does not make this one seen, however readable that other commit is', () => {
-    expectFull(plan({ reviewed: { headSha: 'e'.repeat(40) } }), 'head-never-seen');
-    expectFull(plan({ reviewed: { headSha: HEAD } }), 'head-never-seen');
+    expectFull(plan({ reviewed: recorded({ headSha: 'e'.repeat(40) }) }), 'head-never-seen');
+    expectFull(plan({ reviewed: recorded({ headSha: HEAD }) }), 'head-never-seen');
   });
 
   it('the record names the delta head whatever the case of its hex', () => {
-    expect(plan({ reviewed: { headSha: REVIEWED.toUpperCase() } }).mode).toBe('delta');
+    expect(plan({ reviewed: recorded({ headSha: REVIEWED.toUpperCase() }) }).mode).toBe('delta');
+  });
+
+  it('a base other than the one the last round reviewed against, a retargeted PR, is a full re-read (AC1)', () => {
+    const moved = plan({ delta: deltaRange({ baseSha: 'f'.repeat(40) }) });
+    expectFull(moved, 'base-moved');
+    expect(moved.reasons).toEqual(['base-moved']);
+    expect(plan({ reviewed: recorded({ baseSha: 'f'.repeat(40) }) }).reasons).toEqual(['base-moved']);
+  });
+
+  it('a base nobody recorded cannot be shown to be the same one, so it is a full re-read', () => {
+    for (const reviewed of [{ headSha: REVIEWED }, recorded({ baseSha: null }), recorded({ baseSha: 'dev' }), recorded({ baseSha: true })]) {
+      expectFull(plan({ reviewed }), 'reviewed-base-unknown');
+    }
+  });
+
+  it('the base the last round reviewed against keeps the delta, whatever the case of its hex', () => {
+    expect(plan({ reviewed: recorded({ baseSha: BASE.toUpperCase() }) }).mode).toBe('delta');
   });
 
   it('a delta touching a High path', () => {
@@ -177,7 +196,7 @@ describe('planDeltaReview: fails closed to a full re-read (AC1, AC2)', () => {
 
   it('every applicable reason is reported, none is dropped', () => {
     const result = plan({ reviewed: undefined, importGraph: undefined, changedPaths: ['core/engine.js'], pathsClassification: classify(['core/engine.js']) });
-    expect(result.reasons).toEqual(expect.arrayContaining(['head-never-seen', 'high-path-touched', 'import-graph-unavailable']));
+    expect(result.reasons).toEqual(expect.arrayContaining(['head-never-seen', 'reviewed-base-unknown', 'high-path-touched', 'import-graph-unavailable']));
   });
 
   it('never throws on garbage input', () => {
@@ -211,6 +230,14 @@ describe('planDeltaReview composes with chooseReviewRange (AC3)', () => {
     expect(result.mode).toBe('delta');
     expect(result.reasons).toEqual(['delta-since-last-review']);
     expect(result.readSet.length).toBeGreaterThan(0);
+  });
+
+  it('a retargeted PR: review-range still offers the delta (it takes no reviewed base), the plan does not', () => {
+    const retargeted = chooseReviewRange({ baseSha: 'f'.repeat(40), headSha: HEAD, lastReviewedSha: REVIEWED, commits: [commit(HEAD, [REVIEWED])], remediationShas: [HEAD] });
+    expect(retargeted.mode).toBe('delta');
+    const result = plan({ delta: retargeted });
+    expect(result.mode).toBe('full');
+    expect(result.reasons).toEqual(['base-moved']);
   });
 });
 

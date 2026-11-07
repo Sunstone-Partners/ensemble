@@ -68,7 +68,7 @@ function fixture(change, middle) {
   return { root, base, reviewed, unreviewed, head };
 }
 
-/** The options a caller builds from the review-state report of a completed round that reviewed `fx.reviewed`. */
+/** The options a caller builds from the review-state report of a completed round that reviewed `fx.reviewed` against `fx.base`. */
 const options = (fx, overrides = {}) => ({
   repoRoot: fx.root,
   runId: 'run-delta',
@@ -77,6 +77,49 @@ const options = (fx, overrides = {}) => ({
   headRef: 'refs/heads/pr',
   lastReviewedSha: fx.reviewed,
   reviewedHeadSha: fx.reviewed,
+  reviewedBaseSha: fx.base,
+  remediationShas: [fx.head],
+  testCommand: NODE_TEST,
+  nodeModules: path.join(fx.root, 'no-node-modules'),
+  ...overrides,
+});
+
+/**
+ * dev holds d1 and the PR forked from it: base d1 -> reviewed R -> head H. main moved on without it (m1). The last round
+ * reviewed R against dev; the PR is then retargeted at main, so the commits are the same and the base is not.
+ */
+function retargetFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'delta-prepare-'));
+  roots.push(root);
+  const commit = (rel, content, message) => {
+    write(root, rel, content);
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', message]);
+    return git(root, ['rev-parse', 'HEAD']);
+  };
+  git(root, ['init', '-q', '-b', 'main']);
+  commit('REVIEW.md', POLICY, 'm0');
+  git(root, ['checkout', '-q', '-b', 'dev']);
+  const dev = commit('src/dev-feature.js', 'module.exports = 1;\n', 'd1');
+  git(root, ['checkout', '-q', '-b', 'pr']);
+  const reviewed = commit('src/pr-a.js', 'module.exports = 2;\n', 'reviewed');
+  const head = commit('src/pr-b.js', 'module.exports = 3;\n', 'remediation');
+  git(root, ['update-ref', 'refs/heads/pr', head]);
+  git(root, ['checkout', '-q', 'main']);
+  const main = commit('src/main-only.js', 'module.exports = 4;\n', 'm1');
+  return { root, dev, main, reviewed, head };
+}
+
+/** Reviewed against dev; `baseSha` is what the plan resolves now. */
+const retargetOptions = (fx, overrides = {}) => ({
+  repoRoot: fx.root,
+  runId: 'run-retarget',
+  baseSha: fx.dev,
+  headSha: fx.head,
+  headRef: 'refs/heads/pr',
+  lastReviewedSha: fx.reviewed,
+  reviewedHeadSha: fx.reviewed,
+  reviewedBaseSha: fx.dev,
   remediationShas: [fx.head],
   testCommand: NODE_TEST,
   nodeModules: path.join(fx.root, 'no-node-modules'),
@@ -105,7 +148,7 @@ describe('facts.json deltaPlan, from a real repository', () => {
     const result = prepareReview(options(fx));
     expect(result).toMatchObject({ ok: true, mode: 'delta' });
     const facts = factsOf(result);
-    expect(facts.delta).toEqual({ lastReviewedSha: fx.reviewed, reviewedHeadSha: fx.reviewed, changedPaths: ['src/thing.js'] });
+    expect(facts.delta).toEqual({ lastReviewedSha: fx.reviewed, reviewedHeadSha: fx.reviewed, reviewedBaseSha: fx.base, changedPaths: ['src/thing.js'] });
     expect(facts.deltaPlan.mode).toBe('delta');
     expect(facts.deltaPlan.readSet.map((e) => e.path)).toEqual(['src/app.js', 'src/thing.js', 'tests/thing.test.js']);
     // the importer of the importer is not part of the radius, and nothing unrelated is read
@@ -214,12 +257,51 @@ describe('facts.json deltaPlan, from a real repository', () => {
     expect(factsOf(unrecorded).deltaPlan.reasons).toEqual(['head-never-seen']);
   });
 
+  it('a record naming another base is a full re-read too, and has a directory of its own', () => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"));
+    const recorded = prepareReview(options(fx));
+    const otherBase = prepareReview(options(fx, { reviewedBaseSha: fx.head }));
+    expect(otherBase.dir).not.toBe(recorded.dir);
+    expect(fs.existsSync(recorded.dir)).toBe(true);
+    expect(factsOf(otherBase).deltaPlan.reasons).toEqual(['base-moved']);
+  });
+
   it('the same inputs publish the same facts: the plan is part of what a reuse re-derives', () => {
     const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"));
     const first = prepareReview(options(fx));
     const second = prepareReview(options(fx));
     expect(second.reused).toBe(true);
     expect(second.hashes['facts.json']).toBe(first.hashes['facts.json']);
+  });
+});
+
+describe('a retargeted PR (AC1: the base the last round reviewed is compared)', () => {
+  it('the unchanged base keeps the delta: the commits since the last round, and nothing else', () => {
+    const fx = retargetFixture();
+    const facts = factsOf(prepareReview(retargetOptions(fx)));
+    expect(facts.deltaPlan).toEqual({ mode: 'delta', reasons: ['delta-since-last-review'], readSet: [{ path: 'src/pr-b.js', reasons: ['changed'] }] });
+  });
+
+  it('a base other than the reviewed one is a full re-read, though review-range still offers the delta', () => {
+    const fx = retargetFixture();
+    const result = prepareReview(retargetOptions(fx, { baseSha: fx.main }));
+    expect(result).toMatchObject({ ok: true, mode: 'delta' });
+    const facts = factsOf(result);
+    // what the PR changes against the new base is not what the last round read: the delta would have hidden all of it
+    expect(facts.changedPaths).toEqual(['src/dev-feature.js', 'src/main-only.js', 'src/pr-a.js', 'src/pr-b.js']);
+    expect(facts.deltaPlan).toEqual({ mode: 'full', reasons: ['base-moved'], readSet: [] });
+  });
+
+  it('no record of the reviewed base is a full re-read, never a delta', () => {
+    const fx = retargetFixture();
+    const facts = factsOf(prepareReview(retargetOptions(fx, { reviewedBaseSha: undefined })));
+    expect(facts.delta.reviewedBaseSha).toBeNull();
+    expect(facts.deltaPlan).toEqual({ mode: 'full', reasons: ['reviewed-base-unknown'], readSet: [] });
+  });
+
+  it('a reviewed base that is not a full object id is refused, never read as "unknown"', () => {
+    const fx = retargetFixture();
+    expect(prepareReview(retargetOptions(fx, { reviewedBaseSha: 'dev' }))).toMatchObject({ ok: false, status: 'PREPARE_FAILED', reason: 'invalid-input' });
   });
 });
 
