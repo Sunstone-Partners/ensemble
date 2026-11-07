@@ -302,6 +302,48 @@ describe('span lengths come from the recorder, never from a stepped wall clock (
   });
 });
 
+describe('a span that ends before it starts is unusable, never a negative length (review round 1)', () => {
+  const verdict = (start, end) => span(STAGES.verdict, start, end);
+
+  test.each([
+    ['a duration_ms the helper computes from the timestamps (negative)', {}],
+    ['no recorded duration (a hand-written span list)', { duration_ms: undefined }],
+    ['a recorded duration that looks fine', { duration_ms: 30000 }],
+  ])('intervalOf refuses a span with %s, naming the reason', (_, patch) => {
+    expect(intervalOf({ ...agent('reviewer', 50, 20), ...patch })).toEqual({ ok: false, reason: 'ends before it starts' });
+  });
+
+  test('an agent that ends before it starts is reported unusable: no negative step, an upper bound for orchestrator-only time', () => {
+    const t = computeReviewTiming([root(0, 200), agent('reviewer', 50, 20), agent('verifier', 100, 130), verdict(130, 131)]);
+    expect(t.agents.unusable).toEqual([{ stage: STAGES.reviewer, name: expect.any(String), reason: 'ends before it starts' }]);
+    expect(t.agents.byRole.reviewer.slowest).toMatchObject({ ms: null, missing: true });
+    expect(t.stages[STAGES.reviewer]).toMatchObject({ count: 1, ms: null, missing: true });
+    expect(t.orchestratorOnly).toMatchObject({ bound: 'upper', unusableAgents: 1 });
+    expect(t.orchestratorOnly.ms).toBe(200000 - 31000); // the verifier and the verdict only
+    expect(t.criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(t.criticalPath.reason).toContain('reviewer');
+  });
+
+  test('a review window that ends before it starts is MISSING with that reason, and so is everything measured against it', () => {
+    const t = computeReviewTiming([root(50, 20), agent('reviewer', 0, 10)]);
+    expect(t.wall).toEqual({ ms: null, missing: true, reason: "the 'review' span is unusable: ends before it starts" });
+    expect(t.orchestratorOnly).toMatchObject({ ms: null, missing: true });
+    expect(t.activeMs).toMatchObject({ ms: null, missing: true });
+  });
+
+  test.each([
+    ['reviewer', [root(0, 200), agent('reviewer', 50, 20), agent('verifier', 100, 130), verdict(130, 131)]],
+    ['verifier', [root(0, 200), agent('reviewer', 0, 40), agent('verifier', 130, 100), verdict(130, 131)]],
+    ['verdict', [root(0, 200), agent('reviewer', 0, 40), agent('verifier', 50, 90), verdict(131, 130)]],
+  ])('a %s that ends before it starts: the critical path is MISSING and no figure is negative', (stage, spans) => {
+    const t = computeReviewTiming(spans);
+    expect(t.criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(t.criticalPath.reason).toContain(stage);
+    for (const step of t.criticalPath.rounds[0].steps) expect(step.ms === null || step.ms >= 0).toBe(true);
+    expect(t.orchestratorOnly.ms).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('orchestrator-only time', () => {
   test('overlapping agents are one interval, and an agent outside the window is clipped to it', () => {
     const t = computeReviewTiming([
