@@ -94,6 +94,11 @@ const REPLAY = (seed) =>
   `PR_REVIEW_FUZZ_SEED=${seed} PR_REVIEW_FUZZ_CASES=${CASES} npx jest tests/pr-review-paths-property.test.js`;
 const BASE = 'b'.repeat(40);
 
+// The generated tests run in time proportional to the case count (about 2.5 s for the default 60,000 pairs on a quiet
+// machine, the oracle reading a case-loosened name two ways), and a widened run (`PR_REVIEW_FUZZ_CASES=200000`) takes
+// several times that: jest's 5 s default would turn a slow runner into a failure that is not a finding.
+jest.setTimeout(Math.max(60000, CASES * 3));
+
 // ---------------------------------------------------------------------------
 // Seeded PRNG (mulberry32): the only source of randomness in this file.
 // ---------------------------------------------------------------------------
@@ -124,6 +129,7 @@ const ONE_TO_ONE = Object.freeze({
   '\u212A': 'k', // KELVIN SIGN
   '\u017F': 's', // LATIN SMALL LETTER LONG S
   '\u1E9E': '\u00DF', // CAPITAL SHARP S -> SHARP S
+  '\uFB05': '\uFB06', // LONG S T LIGATURE: V8 closes it over U+FB06 (both fold to `st`), which the spec's simple fold does not
   '\u2126': '\u03C9', // OHM SIGN
   '\u212B': '\u00E5', // ANGSTROM SIGN
   '\u00C5': '\u00E5',
@@ -649,12 +655,24 @@ describe('pr-review-paths property harness: the oracle itself', () => {
   });
 });
 
+// The matcher keeps one compiled pair of regexes per distinct pattern for the life of the module, and a widened run
+// generates hundreds of thousands of distinct patterns: V8's code space for compiled regexes runs out before the heap
+// does (a 200,000-case run died inside the regex compiler). Each chunk of cases therefore gets a fresh copy of the
+// module, and the previous copy and its cache are collected.
+const CHUNK = 20000;
+function freshMatchesPattern() {
+  jest.resetModules();
+  return require('../lib/pr-review-paths').matchesPattern;
+}
+
 describe('pr-review-paths property harness: matchesPattern agrees with the oracle', () => {
   test(`${CASES} generated (pattern, path) pairs`, () => {
     const mismatches = [];
+    let match = matchesPattern;
     for (const c of generateCases(SEED, CASES)) {
+      if (c.index % CHUNK === 0) match = freshMatchesPattern();
       const expected = oracleMatches(c.pattern, c.path, c.ignoreCase);
-      const actual = matchesPattern(c.pattern, c.path, { ignoreCase: c.ignoreCase });
+      const actual = match(c.pattern, c.path, { ignoreCase: c.ignoreCase });
       if (actual !== expected) mismatches.push({ ...c, lib: actual, oracle: expected });
     }
     fail('matchesPattern vs oracle', mismatches);
@@ -662,9 +680,11 @@ describe('pr-review-paths property harness: matchesPattern agrees with the oracl
 
   test('loosening letter case only ever adds matches', () => {
     const mismatches = [];
+    let match = matchesPattern;
     for (const c of generateCases(SEED ^ 0x9e3779b9, CASES / 3)) {
-      const exact = matchesPattern(c.pattern, c.path);
-      const loose = matchesPattern(c.pattern, c.path, { ignoreCase: true });
+      if (c.index % CHUNK === 0) match = freshMatchesPattern();
+      const exact = match(c.pattern, c.path);
+      const loose = match(c.pattern, c.path, { ignoreCase: true });
       if (exact && !loose) mismatches.push(c);
     }
     fail('ignoreCase dropped a match', mismatches);
