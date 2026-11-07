@@ -149,18 +149,22 @@ describe('buildDispositionChoices', () => {
     expect(build([finding({ cleared: true })]).dispositionChoices).toEqual([]);
   });
 
-  test('votes: tally attached, filtered finding not listed, absent votes null', () => {
+  test('votes: tally attached, absent votes null; a filtered finding is listed while the gate blocks on it, hidden when it never would', () => {
     const votes = {
       ok: true,
       findings: [
         { id: 'F-1', outcome: 'present', presented: true, tally: { real: 2, notReal: 1, abstain: 0, expected: 3, needed: 2 } },
         { id: 'F-2', outcome: 'filtered', presented: false, tally: { real: 0, notReal: 3, abstain: 0, expected: 3, needed: 2 } },
+        { id: 'N-1', outcome: 'filtered', presented: false, tally: { real: 0, notReal: 3, abstain: 0, expected: 3, needed: 2 } },
       ],
     };
-    const result = build([finding({ id: 'F-1' }), finding({ id: 'F-2' }), finding({ id: 'F-3' })], { votes });
-    expect(result.dispositionChoices.map((e) => e.id)).toEqual(['F-1', 'F-3']);
+    const result = build([finding({ id: 'F-1' }), finding({ id: 'F-2' }), finding({ id: 'F-3' }), finding({ id: 'N-1', severity: 'nit' })], { votes });
+    // F-2 is Important: the gate still blocks on it (it reads no vote), so the list must ask about it, showing the tally that filtered it.
+    // N-1 is a Nit: the gate never blocks on it, so a verifier-filtered Nit is not asked about.
+    expect(result.dispositionChoices.map((e) => e.id)).toEqual(['F-1', 'F-2', 'F-3']);
     expect(result.dispositionChoices[0].votes).toEqual({ real: 2, notReal: 1, abstain: 0, expected: 3 });
-    expect(result.dispositionChoices[1].votes).toBeNull();
+    expect(result.dispositionChoices[1].votes).toEqual({ real: 0, notReal: 3, abstain: 0, expected: 3 });
+    expect(result.dispositionChoices[2].votes).toBeNull();
     expect(build([finding()]).dispositionChoices[0].votes).toBeNull();
   });
 

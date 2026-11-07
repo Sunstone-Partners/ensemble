@@ -509,4 +509,38 @@ function evaluateGate(input) {
   };
 }
 
-module.exports = { evaluateGate, BLOCKER_CODES, SECURITY_STATUSES, SECURITY_REQUIRED_TIERS };
+/**
+ * Which recorded findings this gate holds open, asked of the gate itself.
+ *
+ * The operator's decision list (`pr-review-disposition.js`) must say what the
+ * verdict says about what blocks, and a second copy of that rule would drift
+ * from it. So the list keeps none: it asks here, and this runs `evaluateGate`
+ * on the findings alone. Approvals, tier and description cannot change which
+ * findings are open, so they are left out and the verdict's other blockers are
+ * never read.
+ *
+ * Fail closed on what the gate cannot read: findings that fail `validateLedger`
+ * answer `ok: false`, never an empty set.
+ *
+ * @param {{ledger:Object[], laneFindings?:Object[], headSha:string, policy?:Object}} input
+ *   `laneFindings` are the entries of the security lane, graded as a lane that
+ *   ran.
+ * @returns {{ok:true, ledgerOpen:Set<string>, laneOpen:Set<string>}|{ok:false, reason:string}}
+ *   The ids (as `String(id)`) of the ledger findings and of the lane findings
+ *   the gate holds open.
+ */
+function findingsHeldOpen({ ledger, laneFindings = [], headSha, policy }) {
+  for (const [what, list] of [['ledger findings', ledger], ['security lane findings', laneFindings]]) {
+    const validation = validateLedger(list);
+    if (validation.ok !== true) return { ok: false, reason: `unusable ${what} (${validation.offendingIds.join(', ') || 'unreadable'})` };
+  }
+  const verdict = evaluateGate({
+    headSha,
+    policy,
+    ledger,
+    security: laneFindings.length === 0 ? { status: 'clean', findings: [] } : { status: 'findings', findings: laneFindings },
+  });
+  return { ok: true, ledgerOpen: new Set(verdict.findings.open), laneOpen: new Set(verdict.securityLane.open) };
+}
+
+module.exports = { evaluateGate, findingsHeldOpen, BLOCKER_CODES, SECURITY_STATUSES, SECURITY_REQUIRED_TIERS };

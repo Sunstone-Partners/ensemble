@@ -6,22 +6,32 @@
  * merge question (docs/plans/pr-review-speedup-plan.md, section 3H).
  *
  * NO side effects, NO shell, NO network, NO file reads, NO clock. A pure
- * function over the ledger, the security lane, the vote tally and the head SHA.
+ * function over the ledger, the security lane, the vote tally, the policy and
+ * the head SHA.
  *
- * What this module guarantees, because the gate depends on it:
+ * What this module guarantees, because the operator relies on it:
  *
- *   - only UNDECIDED findings are listed. A finding is decided when it is
- *     `cleared`, when it carries a resolution with full provenance for THIS
- *     head SHA, or when the votes filtered it out. A resolution without valid
- *     provenance (stale head, no `by`, ...) decides nothing: the finding is
- *     listed again and marked `staleResolution`;
+ *   - it says what the gate says. Which findings BLOCK is not decided here, it
+ *     is asked of the gate (`findingsHeldOpen`): the "undecided blocking"
+ *     findings are exactly the ones the gate holds open, and the "accepted"
+ *     ones are exactly those the gate no longer holds open because of a
+ *     decision it takes (a resolution with provenance, from a login the
+ *     policy lets decide). A finding the verifiers filtered out is still listed
+ *     while the gate blocks on it, with the tally that filtered it;
+ *   - what the gate does not block on is the operator's own view of what the
+ *     merge accepts: a Nit or Pre-existing ledger finding is listed until a
+ *     resolution with provenance is recorded on it, unless it is `cleared` or
+ *     the verifiers filtered it out. A resolution that does not count (a stale
+ *     head, no `by`, a bot...) decides nothing: the finding is listed again and
+ *     marked `staleResolution`;
  *   - a blocking finding is never offered `follow-on` (a follow-on PR cannot
  *     unblock the gate), is never defaulted to `accept`, and its `accept` is
  *     never batchable;
  *   - a SECURITY finding's `accept` is never the default, never batchable and
  *     always needs its own reason; security findings are never collapsed;
- *   - FAIL CLOSED: input this module cannot read yields `ok: false` with empty
- *     lists, never a quietly shorter list.
+ *   - FAIL CLOSED: input this module cannot read, findings the gate cannot
+ *     read included, yields `ok: false` with empty lists, never a quietly
+ *     shorter list.
  */
 
 const {
@@ -29,6 +39,7 @@ const {
   anchorOf,
   hasResolutionProvenance,
 } = require('./pr-review-ledger');
+const { findingsHeldOpen } = require('./pr-review-gate');
 
 /** The groups, in the order they are presented. */
 const GROUPS = Object.freeze(['blocking', 'nit', 'pre-existing']);
@@ -87,7 +98,9 @@ function failClosed(reason) {
 
 /**
  * Security if it came through the security lane, is flagged, sits on the
- * security lane, or is Critical. Broader is the safe direction.
+ * security lane, or is Critical. Broader is the safe direction. This only
+ * decides how an `accept` is offered (never batched, its own reason); whether
+ * the finding BLOCKS is the gate's.
  */
 function isSecurity(finding, fromSecurityLane) {
   if (fromSecurityLane) return true;
@@ -96,15 +109,11 @@ function isSecurity(finding, fromSecurityLane) {
   return isText(finding.severity) && finding.severity.trim().toLowerCase() === 'critical';
 }
 
-/** The group a finding belongs to and the severity word shown for it. */
-function classify(finding, security) {
+/** The severity word shown for a finding: the canonical one, else the word as written. */
+function severityWord(finding) {
   const canonical = normalizeSeverity(finding.severity);
-  const severity = canonical !== null ? canonical : isText(finding.severity) ? finding.severity.trim() : 'unrecognised';
-  let group;
-  if (canonical === 'pre-existing') group = 'pre-existing';
-  else if (canonical === 'nit' && !security) group = 'nit';
-  else group = 'blocking'; // important, unrecognised, or security that is not pre-existing
-  return { group, severity };
+  if (canonical !== null) return canonical;
+  return isText(finding.severity) ? finding.severity.trim() : 'unrecognised';
 }
 
 /** The file a finding is about, or null when it has none (then it is not collapsible). */
@@ -191,7 +200,9 @@ function summarize({ openBeads, acceptedBlocking, undecidedBlocking }) {
  * Build the per-finding disposition choices and the merge-confirmation data.
  *
  * @param {{ledger: object[], security?: {status?: string, findings?: object[]},
- *   votes?: {ok?: boolean, findings?: object[]}, headSha: string}} input
+ *   votes?: {ok?: boolean, findings?: object[]}, policy?: object, headSha: string}} input
+ *   `policy` is the base-branch policy block, handed to the gate so a decision
+ *   by a login it refuses is not counted here either.
  * @returns {{ok: boolean, reason?: string, dispositionChoices: object[],
  *   groups: object[], mergeConfirmation: object|null}}
  */
@@ -200,6 +211,7 @@ function buildDispositionChoices(input) {
   if (!Array.isArray(input.ledger)) return failClosed('ledger must be an array');
   if (!isText(input.headSha)) return failClosed('headSha is required');
   const headSha = input.headSha.trim();
+  const { policy } = input;
 
   let securityFindings = [];
   if (input.security !== undefined && input.security !== null) {
@@ -209,8 +221,16 @@ function buildDispositionChoices(input) {
       securityFindings = input.security.findings;
     }
   }
+  for (const finding of [...input.ledger, ...securityFindings]) {
+    if (!isObject(finding)) return failClosed('every finding must be an object');
+    if (!hasId(finding)) return failClosed('every finding needs an id');
+  }
 
-  // Merge the lanes; the same id in both is ONE finding and security wins.
+  // What blocks is the gate's to say, and what the gate cannot read is refused here too.
+  const held = findingsHeldOpen({ ledger: input.ledger, laneFindings: securityFindings, headSha, policy });
+  if (!held.ok) return failClosed(held.reason);
+
+  // One finding per id, whichever list it came in. Each copy was graded by the gate on its own.
   const merged = new Map();
   const lanes = [
     [input.ledger, false],
@@ -218,12 +238,10 @@ function buildDispositionChoices(input) {
   ];
   for (const [list, fromSecurity] of lanes) {
     for (const finding of list) {
-      if (!isObject(finding)) return failClosed('every finding must be an object');
-      if (!hasId(finding)) return failClosed('every finding needs an id');
       const key = keyOf(finding.id);
-      const existing = merged.get(key);
-      if (existing === undefined) merged.set(key, { finding, fromSecurity });
-      else if (fromSecurity) merged.set(key, { finding, fromSecurity: true });
+      const heldOpen = (fromSecurity ? held.laneOpen : held.ledgerOpen).has(String(finding.id));
+      if (!merged.has(key)) merged.set(key, []);
+      merged.get(key).push({ finding, fromSecurity, heldOpen });
     }
   }
 
@@ -236,20 +254,33 @@ function buildDispositionChoices(input) {
 
   const undecided = [];
   const acceptedBlocking = [];
-  for (const { finding, fromSecurity } of merged.values()) {
-    if (finding.cleared === true) continue;
-    const security = isSecurity(finding, fromSecurity);
-    const { group, severity } = classify(finding, security);
-    const provenance = hasResolutionProvenance(finding, headSha);
-    if (provenance) {
-      if (group === 'blocking') {
-        const { reason, by, at } = finding.resolution;
-        acceptedBlocking.push({ id: finding.id, severity, security, reason, by, at });
+  for (const copies of merged.values()) {
+    // The copy the gate blocks on is the one asked about (the lane's first: security wins), else the lane's, else the ledger's.
+    const blocking = copies.find((c) => c.fromSecurity && c.heldOpen) || copies.find((c) => c.heldOpen) || null;
+    const { finding, fromSecurity } = blocking || copies.find((c) => c.fromSecurity) || copies[0];
+    const security = copies.some((c) => c.fromSecurity) || isSecurity(finding, false);
+    const severity = severityWord(finding);
+    const canonical = normalizeSeverity(finding.severity);
+    let group = 'blocking';
+
+    if (blocking === null) {
+      if (finding.cleared === true) continue;
+      const decided = hasResolutionProvenance(finding, headSha, policy);
+      // The gate no longer holds it open. A finding the operator had to answer was closed by a decision it takes.
+      if (fromSecurity || (canonical !== 'nit' && canonical !== 'pre-existing')) {
+        if (decided) {
+          const { reason, by, at } = finding.resolution;
+          acceptedBlocking.push({ id: finding.id, severity, security, reason, by, at });
+        }
+        continue;
       }
-      continue;
+      // A Nit or Pre-existing ledger finding never blocks: it is listed until the operator's decision is recorded on it.
+      if (decided) continue;
+      const vote = votesById.get(keyOf(finding.id));
+      if (vote !== undefined && vote.presented === false) continue;
+      group = canonical === 'pre-existing' ? 'pre-existing' : 'nit';
     }
-    const vote = votesById.get(keyOf(finding.id));
-    if (vote !== undefined && vote.presented === false) continue;
+
     undecided.push({
       finding,
       security,

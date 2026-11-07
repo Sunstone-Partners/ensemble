@@ -571,12 +571,14 @@ function runApprovals(payload) {
 /**
  * `gate` answers `evaluateGate` verbatim and ADDS the operator's decision
  * list, computed by the separate pure `buildDispositionChoices` so the gate's
- * own input contract and answer stay exactly what they were. The list can
- * only be built from what the gate was handed (`ledger`, `security`,
- * `headSha`) plus an optional `votes` result; when it cannot be built, the
- * gate's answer is still returned and `dispositionChoices` is empty with the
- * refusal in `dispositionReason`. Nothing about the list can make the gate
- * more permissive: it never reads the gate's verdict and the gate never reads it.
+ * own input contract and answer stay exactly what they were. The list is built
+ * from what the gate was handed (`ledger`, `security`, `headSha`, the optional
+ * `policy`) plus an optional `votes` result, and it asks the gate which
+ * findings block (`findingsHeldOpen`), so it cannot disagree with the verdict
+ * about them. When it cannot be built, the gate's answer is still returned and
+ * `dispositionChoices` is empty with the refusal in `dispositionReason`. The
+ * gate never reads the list, so nothing about the list can make it more
+ * permissive.
  */
 function runGate(payload) {
   const gate = evaluateGate(payload);
@@ -585,6 +587,7 @@ function runGate(payload) {
     ledger: request.ledger,
     security: request.security,
     votes: request.votes,
+    policy: request.policy,
     headSha: request.headSha,
   });
   return {
