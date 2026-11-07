@@ -39,6 +39,97 @@ describe('pr-review-state: redact', () => {
   });
 });
 
+describe('pr-review-state: redact widened credential shapes', () => {
+  const R = '[REDACTED]';
+  const alnum = (n) => 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ0'.repeat(4).slice(0, n);
+  const GITHUB_PAT = 'github_pat_' + alnum(22) + '_' + alnum(59);
+  const AWS_ID = 'AKIA' + 'IOSFODNN7EXAMPLE';
+  const BODY = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj';
+  const pemBegin = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
+  const pemEnd = '-----END ' + 'RSA PRIVATE KEY-----';
+
+  test('redacts an AKIA access key id', () => {
+    expect(redact(`key ${AWS_ID} leaked`)).toBe(`key ${R} leaked`);
+  });
+
+  test('redacts an ASIA access key id', () => {
+    expect(redact('tmp ' + 'ASIA' + 'IOSFODNN7EXAMPLE' + ' end')).toBe(`tmp ${R} end`);
+  });
+
+  test('redacts a fine-grained github_pat_ token', () => {
+    expect(GITHUB_PAT).toHaveLength(93);
+    expect(redact(`token is ${GITHUB_PAT}.`)).toBe(`token is ${R}.`);
+  });
+
+  test('redacts a complete PEM private key block and keeps surrounding prose', () => {
+    const out = redact(`before\n${pemBegin}\n${BODY}\n${BODY}\n${pemEnd}\nafter`);
+    expect(out).toBe(`before\n${R}\nafter`);
+  });
+
+  test('redacts a truncated PEM block with no END line through the end of the string', () => {
+    const out = redact(`quoted: ${pemBegin}\n${BODY}\n${BODY}`);
+    expect(out).not.toContain(BODY);
+    expect(out).toBe(`quoted: ${R}`);
+  });
+
+  test('redacts an AWS_SECRET_ACCESS_KEY assignment but keeps the name', () => {
+    const secret = alnum(40);
+    expect(redact(`AWS_SECRET_ACCESS_KEY=${secret}`)).toBe(`AWS_SECRET_ACCESS_KEY=${R}`);
+  });
+
+  test('redacts a quoted password and keeps name and separator', () => {
+    expect(redact('password: "s3cretValue!"')).toBe(`password: ${R}`);
+    expect(redact('{"api_key": "abcdef123456"}')).toBe(`{"api_key": ${R}}`);
+    expect(redact("x-api-key: 'abcdef123456'")).toBe(`x-api-key: ${R}`);
+  });
+
+  test('redacts an unquoted token assignment', () => {
+    expect(redact('token = abcdef0123456789')).toBe(`token = ${R}`);
+    expect(redact('password=hunter2hunter2')).toBe(`password=${R}`);
+    expect(redact('db.password=hunter2hunter2')).toBe(`db.password=${R}`);
+  });
+
+  test('still redacts the original shapes', () => {
+    expect(redact('a ' + 'ghp_' + alnum(30))).toBe(`a ${R}`);
+    expect(redact('a ' + 'sk-' + alnum(30))).toBe(`a ${R}`);
+    expect(redact('a ' + 'xoxb-' + '1234567890-abcdef')).toBe(`a ${R}`);
+    expect(redact('Bearer abc123.def456')).toBe(R);
+    expect(redact('Authorization: Basic dXNlcjpwYXNz')).toBe(R);
+  });
+
+  test.each([
+    ['a 40-hex commit sha', '02a7a498a3af1a5fab6692185eed26da02a7a498'],
+    ['a 64-hex object id', '02a7a498a3af1a5fab6692185eed26da02a7a498a3af1a5fab6692185eed26da'],
+    ['a bead dedupe key', 'pr-review:v1:acme/widgets:02a7a498a3af1a5fab6692185eed26da'],
+    ['a 32-hex digest', '02a7a498a3af1a5fab6692185eed26da'],
+    ['prose about passwords', 'password handling is documented here'],
+    ['prose about tokens', 'the token count is 5'],
+    ['a lowercase akia word', 'akia' + 'iosfodnn7example'],
+    ['a too-short AKIA string', 'AKIA' + 'SHORT123'],
+  ])('leaves %s untouched', (_name, text) => {
+    expect(redact(text)).toBe(text);
+  });
+
+  test('redacts deep structures, leaves non-strings alone and is idempotent', () => {
+    const input = {
+      n: 5,
+      ok: true,
+      nothing: null,
+      list: [`id ${AWS_ID}`, { inner: `password=hunter2hunter2 and ${GITHUB_PAT}` }, 7],
+      quoted: 'secret: "abcdef123456"',
+    };
+    const once = redact(input);
+    expect(once).toEqual({
+      n: 5,
+      ok: true,
+      nothing: null,
+      list: [`id ${R}`, { inner: `password=${R} and ${R}` }, 7],
+      quoted: `secret: ${R}`,
+    });
+    expect(redact(once)).toEqual(once);
+  });
+});
+
 describe('pr-review-state: writeState / readState', () => {
   test('secrets are redacted on disk -- a ledger entry containing a token leaves no token value in the file', () => {
     const cwd = tmpCwd();
