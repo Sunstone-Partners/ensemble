@@ -147,3 +147,27 @@ rule exists to prevent.
 and `reasons`, with the reviewers and verifiers actually dispatched), so a
 reader of the report sees at what depth the review ran and why: a Standard
 review is never mistaken for a Deep one.
+
+**What the report records about timing.** `state` MAY carry a `timing` key: the
+answer of `node "$PR_REVIEW_CLI" timing` with `{ runId }` (or `{ runId, cwd }`),
+computed from the run's span trace (`toolchain-cli trace`,
+`.ensemble/state/toolchain/trace-<runId>.jsonl`, `lib/run-trace.js`), never from
+agent session files. The stage spans are `review` (the orchestrator's whole
+window; attrs `turns` and `tool_calls`), `review.head-read`, `review.gate`,
+`review.classifier`, `review.second-assessor`, `review.security-lane`,
+`review.reviewer`, `review.verifier` and `review.verdict`, each optionally with a
+`round` attr (delta re-reviews are round 2 and later) and agents with an `agent`
+name; `lib/pr-review-timing.js` holds the contract. The answer is the window, the
+**orchestrator-only** time (wall time minus the union of the intervals in which at
+least one dispatched agent was active), the **critical path** (slowest reviewer,
+then slowest verifier, then verdict, per round) and a per-stage table. Two rules
+keep it honest. An agent ends at its **last message**, never at `session_exit`:
+close its span when its result arrives, or, if it can only be closed later, record
+the real end as the span attr `last_message_ts`. And a figure nobody recorded
+is `{ ms: null, missing: true, reason }`, never zero: a critical path with no
+verdict span has no total, and an unfinished agent makes the orchestrator-only time
+an upper bound (`bound: 'upper'`). Copy the answer into `state.timing` verbatim; do
+not round, fill in or drop a missing figure. HONEST LIMIT: nothing in this
+procedure records the stage spans yet (the `review-run` runner is the intended
+recorder), so until it does a run without a hand-written trace has no `timing`, and
+the report says nothing about timing rather than a made-up figure.
