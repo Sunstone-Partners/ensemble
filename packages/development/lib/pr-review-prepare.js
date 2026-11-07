@@ -18,7 +18,8 @@
  *     range.diff       BASE...HEAD
  *     delta.diff       lastReviewedSha..HEAD, only when `chooseReviewRange` says
  *                      mode=delta; otherwise ABSENT, with the reason in the manifest
- *     facts.json       policy, tier inputs, `paths` classification inputs and result,
+ *     facts.json       delta plan (`deltaPlan`: delta or full, with the read set of a delta),
+ *                      policy, tier inputs, `paths` classification inputs and result,
  *                      changedPaths: the union of `git diff --numstat -z --no-renames`
  *                      over `BASE HEAD` (the form the skill pins) and `BASE...HEAD`
  *                      (what range.diff shows), so no path the PR changes is dropped
@@ -85,14 +86,17 @@ const path = require('path');
 const { chooseReviewRange, isObjectId } = require('./pr-review-scope');
 const { loadPolicy } = require('./pr-review-policy');
 const { classifyPaths } = require('./pr-review-paths');
+const { planDeltaReview } = require('./pr-review-delta');
+const { buildImportGraph, ANALYZED_EXTENSIONS } = require('./pr-review-import-graph');
 const { redact } = require('./pr-review-state');
 const { defaultDeps, PROBE_SOURCE, DEFAULT_BASELINE_TIMEOUT_MS, buildBaselineEnv, inheritedSecretValues, scrubSecretValues } = require('./review-prepare-runtime');
 
 /**
  * 2: changedPaths is the union of the two-argument and the merge-base listing (version 1 held the two-argument one
  * only), the directory is keyed by the fingerprint, and facts carry no `guidance.warnings`.
+ * 3: facts carry `delta` (the paths changed since the last reviewed head) and `deltaPlan` (what a delta re-review reads).
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const FINGERPRINT_DIR_LENGTH = 16;
 const DEFAULT_STATE_ROOT = path.join('.ensemble', 'pr-review', 'prepare');
 /** The test files the default baseline runs: jest-style names. A caller with another runner passes `testFiles`/`testCommand`. */
@@ -666,12 +670,60 @@ function prepareReview(options, injected = {}) {
   return result;
 }
 
+/** The lines of the head's JS/TS sources that can name an import: one `git grep` over the head tree, no checkout. */
+const IMPORT_LINE = 'require[[:space:]]*\\(|import[[:space:]]*\\(|^[[:space:]]*(import|export)[[:space:]]|from[[:space:]]*["\']';
+
+/** `[{ path, text }]`, or null when the scan failed (the plan then falls back to a full re-read). */
+function scanImportLines(deps, repoRoot, headSha) {
+  const r = deps.git(['grep', '-I', '-n', '-z', '--full-name', '-E', IMPORT_LINE, headSha, '--', ...ANALYZED_EXTENSIONS.map((ext) => `*${ext}`)], { cwd: repoRoot });
+  if (r.status === 1) return [];
+  if (r.status !== 0) return null;
+  // Each record is `<head>:<path>\0<line number>\0<text>\n`; the path is verbatim and may hold a newline, the text cannot.
+  const out = String(r.stdout);
+  const prefix = `${headSha}:`;
+  const lines = [];
+  let i = 0;
+  while (i < out.length) {
+    const pathEnd = out.indexOf('\0', i);
+    const numberEnd = pathEnd === -1 ? -1 : out.indexOf('\0', pathEnd + 1);
+    if (numberEnd === -1) return null;
+    let textEnd = out.indexOf('\n', numberEnd + 1);
+    if (textEnd === -1) textEnd = out.length;
+    const named = out.slice(i, pathEnd);
+    if (!named.startsWith(prefix)) return null;
+    lines.push({ path: named.slice(prefix.length), text: out.slice(numberEnd + 1, textEnd) });
+    i = textEnd + 1;
+  }
+  return lines;
+}
+
+/**
+ * What a delta re-review reads (kata 801a). The repo scan lives here, outside the pure planner: the changed paths of the
+ * delta, their classification (same base-commit declaration as `paths`), whether the last reviewed head is a commit this
+ * repository holds, and the import graph of the head. A full range is passed through unrefined.
+ */
+function deriveDelta(deps, options, range, entries, declarationInput) {
+  if (range.mode !== 'delta') return { delta: null, deltaPlan: planDeltaReview({ delta: range }) };
+  const { repoRoot } = options;
+  const deltaPaths = listChanged(deps, repoRoot, [range.lastReviewedSha, range.headSha]).map((f) => f.path);
+  const lines = scanImportLines(deps, repoRoot, range.headSha);
+  const headSeenBefore = commitReadable(deps, repoRoot, range.lastReviewedSha);
+  const deltaPlan = planDeltaReview({
+    delta: range,
+    changedPaths: deltaPaths,
+    pathsClassification: classifyPaths({ ...declarationInput, changedPaths: deltaPaths }),
+    headSeenBefore,
+    importGraph: lines === null ? undefined : buildImportGraph({ filePaths: entries.map((entry) => entry.path), lines }),
+  });
+  return { delta: { lastReviewedSha: range.lastReviewedSha, changedPaths: deltaPaths, headSeenBefore }, deltaPlan };
+}
+
 /**
  * Everything git, and this module, can tell about the head: the diffs, facts.json, probe.js. Held in memory (nothing is
  * written here) because it is what a published directory of these inputs must contain AND what gets published.
  * Returns `{ facts, changedPaths, absent, files: Map(name -> Buffer) }`.
  */
-function deriveFromGit(deps, options, range, nodeModules, treeSha) {
+function deriveFromGit(deps, options, range, nodeModules, treeSha, entries) {
   const { repoRoot } = options;
   const { baseSha, headSha } = range;
   const diffFlags = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
@@ -702,6 +754,7 @@ function deriveFromGit(deps, options, range, nodeModules, treeSha) {
   const declaration = { sourceSha: baseSha, sensitive: policy.policy.sensitivePaths, high: policy.policy.highPaths };
   const pathsInput = { changedPaths, declaration, codeowners: codeowners === null ? undefined : codeowners, baseSha };
   const classification = classifyPaths(pathsInput);
+  const { delta, deltaPlan } = deriveDelta(deps, options, range, entries, pathsInput);
 
   const facts = {
     schema: SCHEMA_VERSION,
@@ -721,6 +774,8 @@ function deriveFromGit(deps, options, range, nodeModules, treeSha) {
       ],
     },
     changedPaths,
+    delta,
+    deltaPlan,
     numstat,
     totals: {
       files: numstat.length,
@@ -792,7 +847,7 @@ function prepare(rawOptions, deps, tracked) {
 
   // Everything git can tell, derived once and held in memory. It is derived BEFORE an existing directory is looked at:
   // hashes that agree with each other prove nothing about a directory somebody else wrote.
-  const derived = deriveFromGit(deps, options, range, nodeModules, treeSha);
+  const derived = deriveFromGit(deps, options, range, nodeModules, treeSha, entries);
   const expected = { runId: options.runId, baseSha, headSha, treeSha, range: derived.facts.range, absent: derived.absent, files: derived.files };
 
   // ---- already prepared with these inputs? what git can tell is compared, never taken on trust ---------
