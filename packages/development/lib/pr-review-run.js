@@ -24,6 +24,11 @@
  *     stripped. An adjudication (`fix` | `deferred` | `not-applicable`) is applied only to findings listed for adjudication
  *     and can never close an Important or security finding beyond what `isActionable` and the gate allow.
  *   - A head that moved is never reviewed on: RUN_INVALIDATED, nothing written to the ledger, the gate or the state report.
+ *     That holds for a FINISHED run too: its stored answer is returned only while the live head is the reviewed one on an
+ *     OPEN PR (collect re-reads the PR first), and a PR that is not OPEN gets no run and no verdict at all.
+ *   - A head from outside this repository (a fork, or a repository GitHub did not state) is refused by name before anything
+ *     is fetched, prepared, run or posted; a baseSha other than the merge base is refused (RUN_FAILED, no run).
+ *   - A reviewer's `pre-existing` severity is a claim, borne out only by the diff: on a changed line it is graded Important.
  *   - An agent that did not arrive is never read as reviewed: its slice is in `notReviewed`, a verifier's candidates are
  *     `unverified`, a missing security lane is not `clean`.
  *   - An unreadable, ambiguous, raised, High or sensitive tier is NEEDS_FULL_MODE with nothing dispatched.
@@ -31,6 +36,8 @@
  * HONEST LIMITS: the runner computes and records agent deadlines and the concurrency cap, and cannot enforce either;
  * whoever dispatches must stop an agent at `deadlineAtIso` and keep to `maxConcurrentAgents`. The tier comes from the
  * changed paths alone (no classifier or second assessor), so a path-only reading can raise a tier but never lower one.
+ * Coverage is the agents' own report (`pathsReviewed`) and their read-only access an instruction nobody here enforces. The
+ * baseline test run (head code) happens inside prepare, before the tier is known. `agentAuthored` is the caller's word.
  *
  * deps (every function may be async):
  *   now()                                    epoch ms

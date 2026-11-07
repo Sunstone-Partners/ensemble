@@ -8,9 +8,9 @@
  *   node review-run-cli.js prepare < payload.json
  *   node review-run-cli.js collect < payload.json
  *
- * prepare payload: { repo:"owner/name", pr:<int>, repoRoot:"<absolute clone>", runId?, traceRunId?, baseSha?,
- *   lastReviewedSha?, remediationShas?, dryRun?, skipPrecheck?, testFiles?, testCommand?, baselineTimeoutMs?,
- *   nodeModules?, stateRoot?, agentAuthored? }
+ * prepare payload: { repo:"owner/name", pr:<int>, repoRoot:"<absolute clone>", runId?, traceRunId?, baseSha? (must equal
+ *   the merge base), lastReviewedSha?, remediationShas?, dryRun?, skipPrecheck?, testFiles?, testCommand?,
+ *   baselineTimeoutMs?, nodeModules?, stateRoot?, agentAuthored? }
  * collect payload: { repoRoot:"<absolute clone>", runId, now?, adjudications?:[{id, disposition:"fix|deferred|not-applicable", reason}] }
  *
  * stdout: ONE JSON object, token-shaped strings redacted. `ok:true` (exit 0): DISPATCH | PENDING | DONE | ADJUDICATE.
@@ -25,8 +25,12 @@
  *   - pr-review-prepare.js: a snapshot, diffs, facts and a BASELINE TEST RUN of the head's own test code in a scratch
  *     directory under the OS temp directory. That run is NOT a sandbox (docs/guides/pr-review-prepare.md);
  *   - files it writes: only under `<repoRoot>/.ensemble/pr-review/` (`run/<runId>/`, `prepare/`, the `pr-<N>.json` state
- *     report) and the trace file under `<repoRoot>/.ensemble/state/toolchain/`.
- * It never edits the reviewed tree, never commits, checks out, resets, stashes, applies or pushes.
+ *     report) and the trace file under `<repoRoot>/.ensemble/state/toolchain/` (`trace-<traceRunId>.jsonl`; `traceRunId`
+ *     defaults to the review's own runId, so the spans join a /ensemble-pr-merge run's trace only when the caller passes
+ *     that run's id).
+ * It never edits the reviewed tree, never commits, checks out, resets, stashes, applies or pushes. It refuses, before any
+ * of the above, a head on a fork (or whose repository GitHub did not state) and a PR that is not OPEN; `baseSha` is checked
+ * against the merge base, never trusted.
  */
 
 const fs = require('fs');
