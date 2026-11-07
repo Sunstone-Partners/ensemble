@@ -67,7 +67,7 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
    `merge`: the freshly fetched `origin/<baseRefName>`; `pr` is the PR number). The CLI orders: prerequisites
    (Node, git), config, lock, run, record, post.
 
-   The run step holds a machine-wide lock: a second gate waits and reports `queued_ms`. Never start a gate during a
+   The run step (and `run`) holds a per-user lock: a second gate waits and reports `queued_ms`. Never start a gate during a
    reviewer swarm. Policy knobs: `RUNBOOK.md`.
 2. Read the result and report, in this order of precedence:
    - `prerequisite` set: say which prerequisite is missing and that nothing was
