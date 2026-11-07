@@ -294,6 +294,24 @@ describe('the real CLI process on a real git fixture', () => {
     expect(coll('moved').out.status).toBe('RUN_INVALIDATED');
   });
 
+  test('a finished run whose head moved afterwards is RUN_INVALIDATED and its stored mergeable answer is never replayed (review of PR 264, P1)', () => {
+    setGh({ reviews: [{ user: { login: 'bob', type: 'User' }, state: 'APPROVED', commit_id: fx.head, submitted_at: '2026-01-01T00:00:00Z' }] });
+    const review = prep({ runId: 'done-then-moved' }).out;
+    answerReview(review);
+    const done = coll('done-then-moved');
+    expect(done.out).toMatchObject({ status: 'DONE', gate: { mergeable: true } });
+
+    setGh({ head: 'd'.repeat(40) });
+    const moved = coll('done-then-moved');
+    expect(moved.code).toBe(1);
+    expect(moved.out).toMatchObject({ ok: false, status: 'RUN_INVALIDATED', reason: 'head-moved', expectedHead: fx.head, currentHead: 'd'.repeat(40) });
+    expect(moved.stdout).not.toContain('mergeable');
+
+    // the head back on the reviewed commit: the stored answer is the answer for that head again
+    setGh();
+    expect(coll('done-then-moved').out).toEqual(done.out);
+  });
+
   test('a reviewer that never arrives: after its deadline the run is DONE with the slice NOT reviewed', () => {
     const review = prep({ runId: 'late' }).out;
     answerReview(review, { skip: ['reviewer-s1-b'] });

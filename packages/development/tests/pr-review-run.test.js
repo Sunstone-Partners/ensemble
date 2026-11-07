@@ -948,13 +948,45 @@ describe('adjudication re-entry', () => {
     expect(out.gate.findings.open).toEqual(['f1']);
   });
 
-  test('collect on a finished run returns the stored result: idempotent, no new host reads', async () => {
+  test('collect on a finished run is idempotent: the head is re-read (one host read and nothing else) and the stored result returned while it is unchanged', async () => {
     const { h, out } = await uncertainRun();
     const reads = h.ghReads.length;
     const again = await h.collect();
     expect(again).toEqual(JSON.parse(JSON.stringify(out)));
-    expect(h.ghReads.length).toBe(reads);
+    expect(h.ghReads.slice(reads)).toEqual(['readPr']);
     expect(h.stateWrites).toHaveLength(1);
+  });
+
+  test('a finished run whose head moved is RUN_INVALIDATED and its stored mergeable answer is NOT returned; it is the answer again only for the head it reviewed (review of PR 264, P1)', async () => {
+    const h = harness();
+    h.reviews = { ok: true, reviews: [{ login: 'bob', authorType: 'User', state: 'APPROVED', commitSha: HEAD, submittedAt: '2026-01-01T00:00:00Z' }] };
+    const { next } = await reviewRound(h);
+    expect(next).toMatchObject({ status: 'DONE', gate: { mergeable: true } });
+    h.head = MOVED;
+    const out = await h.collect();
+    expect(out).toMatchObject({ ok: false, status: 'RUN_INVALIDATED', reason: 'head-moved', expectedHead: HEAD, currentHead: MOVED });
+    expect(JSON.stringify(out)).not.toContain('mergeable');
+    expect(h.stateWrites).toHaveLength(1);
+    h.head = HEAD;
+    expect(await h.collect()).toMatchObject({ status: 'DONE', gate: { mergeable: true } });
+  });
+
+  test('a finished run whose head cannot be read, or whose PR is no longer open, gets no stored answer either', async () => {
+    const h = harness();
+    h.reviews = { ok: true, reviews: [{ login: 'bob', authorType: 'User', state: 'APPROVED', commitSha: HEAD, submittedAt: '2026-01-01T00:00:00Z' }] };
+    await reviewRound(h);
+    const good = h.deps.readPr;
+    h.deps.readPr = async () => ({ ok: false, error: 'gh: rate limited' });
+    const unreadable = await h.collect();
+    expect(unreadable).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'head-unreadable' });
+    expect(JSON.stringify(unreadable)).not.toContain('mergeable');
+    h.deps.readPr = good;
+    h.pr.state = 'MERGED';
+    const merged = await h.collect();
+    expect(merged).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'pr-not-open', prState: 'MERGED' });
+    expect(JSON.stringify(merged)).not.toContain('mergeable');
+    h.pr.state = 'OPEN';
+    expect(await h.collect()).toMatchObject({ status: 'DONE', gate: { mergeable: true } });
   });
 
   test('an adjudication is applied only to findings that were listed', async () => {

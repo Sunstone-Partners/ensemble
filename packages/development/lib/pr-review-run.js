@@ -808,6 +808,15 @@ async function collectRun(input, deps) {
 
   // ---- a finished run: the stored answer, or an adjudication of what it listed
   if (run.phase === 'done') {
+    // The stored answer is for the head the run reviewed. It is returned (or adjudicated) only while the host still states
+    // that head on an OPEN PR: a head that moved invalidates it whatever it said (AC4). Nothing is recorded here, so if
+    // the head comes back to the reviewed commit the stored answer is that commit's answer again.
+    const live = await readHead(deps);
+    if (!live.ok) return failure('RUN_FAILED', { reason: 'head-unreadable', error: live.error, runId: run.runId });
+    if (live.headSha !== run.headSha) {
+      return failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: live.headSha, error: 'the head moved after this run finished: its stored answer is for the old head and is not returned' });
+    }
+    if (live.pr.state !== 'OPEN') return notOpen(live.pr.state, run.runId);
     const stored = deps.fs.readText(path.join(runDirOf(run.repoRoot, run.runId), 'final.json'));
     let final = null;
     try {
