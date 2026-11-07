@@ -42,19 +42,23 @@
  * is measured by its timestamps. Timestamps still PLACE spans against each other (who overlapped whom), but only
  * while they agree with the recorder: when a review span's wall-clock length differs from its `duration_ms` by
  * more than CLOCK_SKEW_TOLERANCE_MS, the wall clock stepped inside the window (a system sleep, a clock change),
- * and every figure that needs positions (agents active, orchestrator-only, before first dispatch) is MISSING
- * with that reason while the lengths (window, per stage) are still reported. Timestamps are ISO-8601 with a
- * zone, as the recorder writes them; anything else is unparseable.
+ * and every figure that needs positions (agents active, orchestrator-only, before first dispatch, the critical
+ * path) is MISSING with that reason while the lengths (window, per stage) are still reported. Timestamps are
+ * ISO-8601 with a zone, as the recorder writes them; anything else is unparseable.
  *
  * FAIL CLOSED (pattern: local-ci-timing.js). A figure this module cannot compute from what was
  * recorded is `{ ms: null, missing: true, reason }`, never 0 and never a guess: a stage nobody
  * recorded, an unfinished span, a trace without an orchestrator window. A figure that is
  * computable only as a bound says so (`bound: 'upper'` / `lowerBound: true`).
  *
- * Orchestrator-only time = orchestrator wall time minus the union of the intervals (clipped to
- * the orchestrator window) in which at least one dispatched agent was active.
- * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval
- * length; the total is missing when ANY step is missing.
+ * Orchestrator-only time = orchestrator wall time minus the union of the intervals (clipped to the
+ * orchestrator window) in which at least one dispatched agent was active or a verdict was being computed. The
+ * critical path counts the verdict, so orchestrator time leaves it out: no minute is in both, and critical path
+ * plus orchestrator-only never exceeds the window.
+ * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval length cut to the
+ * orchestrator window, summed over the rounds. The total is missing when ANY step is missing, and when the steps
+ * overlap or run out of order (the reviewer must end before the verifier starts, the verifier before the verdict,
+ * each round before the next): overlapping steps would count the same minutes twice, so they are never summed.
  *
  * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
  * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
@@ -145,12 +149,11 @@ function intervalOf(span) {
 /**
  * Whether the wall-clock timestamps of the review's own spans still agree with the recorder's durations, so spans can
  * be placed against each other. `{ok: false, reason}` names the first span whose wall-clock length differs from its
- * `duration_ms` by more than CLOCK_SKEW_TOLERANCE_MS; a span flagged `clock_anomaly` is unusable already and not counted.
+ * `duration_ms` by more than CLOCK_SKEW_TOLERANCE_MS.
  */
 function timelineOf(spans) {
   for (const span of spans) {
     if (span.name !== STAGES.root && !STAGE_NAMES.includes(span.name)) continue;
-    if (isObject(span.attrs) && span.attrs.clock_anomaly) continue;
     const wallMs = parseMs(span.end_ts) - parseMs(span.start_ts);
     if (!Number.isFinite(wallMs) || !Number.isFinite(span.duration_ms)) continue;
     if (Math.abs(wallMs - span.duration_ms) > CLOCK_SKEW_TOLERANCE_MS) {
@@ -211,32 +214,76 @@ function roundOf(span) {
   return round !== null && round >= 1 ? round : null;
 }
 
-/** Slowest usable span of `spans` as a step figure; missing when none was recorded or none is usable. */
-function slowestStep(stage, spans) {
-  if (spans.length === 0) return { stage, ...missing(`no ${stage} span recorded`) };
+/** `interval` cut to `window` ({start, end}); null when nothing of it lies inside (a zero-length span inside the window stays one). */
+function clipTo(interval, window) {
+  if (window === null) return interval;
+  const start = Math.max(interval.start, window.start);
+  const end = Math.min(interval.end, window.end);
+  if (end > start) return { start, end };
+  return interval.start === interval.end && end === start ? { start, end } : null;
+}
+
+/**
+ * Slowest usable span of `spans` as a step figure, with the interval it occupies (cut to `window` when one is given);
+ * a missing step when none was recorded or none is usable (a span wholly outside the window is not usable).
+ */
+function slowestStep(stage, spans, window = null) {
+  if (spans.length === 0) return { step: { stage, ...missing(`no ${stage} span recorded`) }, interval: null };
   let best = null;
   let unusable = 0;
   for (const span of spans) {
-    const interval = intervalOf(span);
-    if (!interval.ok) {
+    const found = intervalOf(span);
+    const interval = found.ok ? clipTo(found, window) : null;
+    if (interval === null) {
       unusable += 1;
       continue;
     }
     const ms = interval.end - interval.start;
-    if (best === null || ms > best.ms) best = { ms, span };
+    if (best === null || ms > best.ms) best = { ms, span, interval };
   }
-  if (best === null) return { stage, ...missing(`every ${stage} span is unusable (unfinished or inconsistent)`) };
-  return {
-    stage,
-    ...known(best.ms, { ...(best.span.name !== STAGES.verdict ? { name: agentLabel(best.span) } : {}), ...(unusable > 0 ? { lowerBound: true, unusable } : {}) }),
+  if (best === null) {
+    const reason = `every ${stage} span is unusable (unfinished, inconsistent or outside the window)`;
+    return { step: { stage, ...missing(reason) }, interval: null };
+  }
+  const extra = {
+    ...(best.span.name !== STAGES.verdict ? { name: agentLabel(best.span) } : {}),
+    ...(unusable > 0 ? { lowerBound: true, unusable } : {}),
   };
+  return { step: { stage, ...known(best.ms, extra) }, interval: best.interval };
 }
 
-function criticalPath(spans, warnings) {
-  const reviewers = spans.filter((s) => s.name === STAGES.reviewer);
-  const verifiers = spans.filter((s) => s.name === STAGES.verifier);
-  const verdicts = spans.filter((s) => s.name === STAGES.verdict);
-  const all = [...reviewers, ...verifiers, ...verdicts];
+const CHAIN = Object.freeze(['reviewer', 'verifier', 'verdict']);
+
+/** The first adjacent pair of `chain` ([{label, interval}], in the order the steps must run) that overlaps or runs backwards. */
+function firstOverlap(chain) {
+  for (let i = 1; i < chain.length; i += 1) {
+    if (chain[i].interval.start < chain[i - 1].interval.end) return [chain[i - 1], chain[i]];
+  }
+  return null;
+}
+
+function overlapReason([previous, next]) {
+  const by = fmtMs(previous.interval.end - next.interval.start);
+  return `${next.label} starts ${by} before ${previous.label} ends: the steps overlap or run out of order, so their lengths cannot be summed`;
+}
+
+/** Why a round has no total: each missing step with its own reason, and what a missing verifier usually means. */
+function gapReason(gaps) {
+  return gaps
+    .map((s) => `${s.stage}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none)' : ''}`)
+    .join('; ');
+}
+
+/**
+ * The critical path: per round the slowest reviewer, then the slowest verifier, then the verdict, summed over the rounds.
+ * Each step is cut to the orchestrator window; the steps must follow one another (a step that starts before the one
+ * before it ends, or a timeline the wall clock stepped through, has no total: summing overlapping steps would count
+ * the same minutes twice and could exceed the window); the verdict is counted here once (orchestrator-only time
+ * leaves it out).
+ */
+function criticalPath(spans, warnings, { window, timeline }) {
+  const byStage = Object.fromEntries(CHAIN.map((stage) => [stage, spans.filter((s) => s.name === STAGES[stage])]));
+  const all = CHAIN.flatMap((stage) => byStage[stage]);
   if (all.length === 0) {
     return { ...missing('no reviewer, verifier or verdict span recorded'), rounds: [] };
   }
@@ -245,24 +292,30 @@ function criticalPath(spans, warnings) {
     warnings.push('some reviewer/verifier/verdict spans carry a round and some do not; the unnumbered ones are one extra group');
   }
   const keys = [...new Set(all.map(roundOf))].sort((a, b) => (a === null ? 1 : b === null ? -1 : a - b));
+  const labelOf = (round) => (round === null ? '(unnumbered)' : round);
+  const chains = [];
+  // Cutting a step to the window presumes timestamps that agree with the recorder; on a stepped timeline the steps are only measured.
+  const cutTo = timeline.ok ? window : null;
   const rounds = keys.map((round) => {
-    const inRound = (list) => list.filter((s) => roundOf(s) === round);
-    const steps = [
-      slowestStep('reviewer', inRound(reviewers)),
-      slowestStep('verifier', inRound(verifiers)),
-      slowestStep('verdict', inRound(verdicts)),
-    ];
+    const picks = CHAIN.map((stage) => slowestStep(stage, byStage[stage].filter((s) => roundOf(s) === round), cutTo));
+    const steps = picks.map((p) => p.step);
     const gaps = steps.filter((s) => s.missing);
-    if (gaps.length > 0) {
-      return { round, steps, ...missing(`${gaps.map((s) => s.stage).join(', ')} missing`) };
-    }
+    if (gaps.length > 0) return { round, steps, ...missing(gapReason(gaps)) };
+    if (!timeline.ok) return { round, steps, ...missing(timeline.reason) };
+    const chain = picks.map((p, i) => ({ label: CHAIN[i], interval: p.interval }));
+    const overlap = firstOverlap(chain);
+    if (overlap) return { round, steps, ...missing(overlapReason(overlap)) };
+    chains.push(chain.map((step) => ({ ...step, label: `round ${labelOf(round)} ${step.label}` })));
     const lowerBound = steps.some((s) => s.lowerBound);
     return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), lowerBound ? { lowerBound: true } : {}) };
   });
   const gaps = rounds.filter((r) => r.missing);
   if (gaps.length > 0) {
-    return { ...missing(`round ${gaps.map((r) => (r.round === null ? '(unnumbered)' : r.round)).join(', ')}: ${gaps[0].reason}`), rounds };
+    return { ...missing(`round ${gaps.map((r) => labelOf(r.round)).join(', ')}: ${gaps[0].reason}`), rounds };
   }
+  // A head change restarts the whole chain, so each round must also follow the one before it.
+  const overlap = firstOverlap(chains.flat());
+  if (overlap) return { ...missing(overlapReason(overlap)), rounds };
   const lowerBound = rounds.some((r) => r.lowerBound);
   return { ...known(rounds.reduce((n, r) => n + r.ms, 0), lowerBound ? { lowerBound: true } : {}), rounds };
 }
@@ -344,7 +397,7 @@ function computeReviewTiming(input) {
   const byRole = {};
   for (const role of AGENT_ROLES) {
     const own = agentSpans.filter((s) => s.name === STAGES[role]);
-    byRole[role] = { count: own.length, slowest: slowestStep(role, own) };
+    byRole[role] = { count: own.length, slowest: slowestStep(role, own).step };
   }
   const agents = {
     count: agentSpans.length,
@@ -371,10 +424,22 @@ function computeReviewTiming(input) {
     beforeFirstDispatch = missing(timeline.reason);
   } else {
     const active = unionLength(usable, window.start, window.end);
-    const bound = unusable.length > 0 ? { bound: 'upper', unusableAgents: unusable.length } : {};
-    // An agent whose end is unknown can only have made the real active time larger.
+    // The verdict is a step of the critical path, which counts it: orchestrator time leaves it out so that no minute is
+    // counted in both (critical path + orchestrator-only never exceeds the window).
+    const verdicts = spans.filter((s) => s.name === STAGES.verdict).map(intervalOf);
+    const unusableVerdicts = verdicts.filter((v) => !v.ok).length;
+    const covered = unionLength([...usable, ...verdicts.filter((v) => v.ok)], window.start, window.end);
+    // An agent or verdict whose end is unknown can only have made the real covered time larger.
+    const bound =
+      unusable.length > 0 || unusableVerdicts > 0
+        ? {
+            bound: 'upper',
+            ...(unusable.length > 0 ? { unusableAgents: unusable.length } : {}),
+            ...(unusableVerdicts > 0 ? { unusableVerdicts } : {}),
+          }
+        : {};
     activeMs = known(active, unusable.length > 0 ? { bound: 'lower', unusableAgents: unusable.length } : {});
-    const only = wall.ms - active;
+    const only = wall.ms - covered;
     orchestratorOnly = known(only, {
       pct: wall.ms > 0 ? Math.round((only / wall.ms) * 100) : null,
       ...bound,
@@ -395,7 +460,7 @@ function computeReviewTiming(input) {
     activeMs,
     orchestratorOnly,
     beforeFirstDispatch,
-    criticalPath: criticalPath(spans, warnings),
+    criticalPath: criticalPath(spans, warnings, { window, timeline }),
     stages: stageTable(spans),
     warnings,
   };
@@ -462,7 +527,8 @@ function formatReviewTiming(timing) {
     const steps = round.steps
       .map((s) => `${s.stage} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}`}`)
       .join(' -> ');
-    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}`);
+    const why = round.missing && round.steps.every((s) => !s.missing) ? `  [MISSING: ${round.reason}]` : '';
+    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}`);
   }
   out.push(`  dispatched agents: ${timing.agents.count} (${timing.agents.unusable.length} unusable)`);
   out.push('  slowest per stage:');

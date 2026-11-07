@@ -160,18 +160,22 @@ window; attrs `turns` and `tool_calls`), `review.head-read`, `review.gate`,
 `round` attr (delta re-reviews are round 2 and later) and agents with an `agent`
 name; `lib/pr-review-timing.js` holds the contract. The answer is the window, the
 **orchestrator-only** time (wall time minus the union of the intervals in which at
-least one dispatched agent was active), the **critical path** (slowest reviewer,
-then slowest verifier, then verdict, per round) and a per-stage table. Three rules
-keep it honest. An agent ends at its **last message**, never at `session_exit`:
-close its span when its result arrives, or, if it can only be closed later, record
-the real end as the span attr `last_message_ts`. A span is as long as the recorder's
-`duration_ms` (monotonic-first), never the difference of two wall-clock timestamps,
-and one the recorder flagged `clock_anomaly` is unusable; when the wall clock
-stepped inside the window (a system sleep, a clock change), the figures that need
-positions (agents active, orchestrator-only, before the first dispatch) are missing
+least one dispatched agent was active or a verdict was being computed: the critical
+path counts the verdict, so no minute is in both), the **critical path** (slowest
+reviewer, then slowest verifier, then verdict, per round, each step cut to the
+window) and a per-stage table. Three rules keep it honest. An agent ends at its
+**last message**, never at `session_exit`: close its span when its result arrives,
+or, if it can only be closed later, record the real end as the span attr
+`last_message_ts`. A span is as long as the recorder's `duration_ms`
+(monotonic-first), never the difference of two wall-clock timestamps, and one the
+recorder flagged `clock_anomaly` is unusable; when the wall clock stepped inside the
+window (a system sleep, a clock change), the figures that need positions (agents
+active, orchestrator-only, before the first dispatch, the critical path) are missing
 with that reason. And a figure nobody recorded is `{ ms: null, missing: true,
-reason }`, never zero: a critical path with no verdict span has no total, and an
-unfinished agent makes the orchestrator-only time an upper bound (`bound: 'upper'`).
+reason }`, never zero: a critical path with no verdict span has no total, steps that
+overlap or run out of order are never summed (the total is missing and names the
+pair), and an unfinished agent makes the orchestrator-only time an upper bound
+(`bound: 'upper'`).
 Copy the answer into `state.timing` verbatim; do
 not round, fill in or drop a missing figure. HONEST LIMIT: nothing in this
 procedure records the stage spans yet (the `review-run` runner is the intended

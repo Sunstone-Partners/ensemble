@@ -280,6 +280,26 @@ describe('span lengths come from the recorder, never from a stepped wall clock (
   test('an ISO-8601 offset is the same instant as its Z form', () => {
     expect(intervalOf({ ...agent('reviewer', 0, 10), start_ts: '2026-11-05T11:00:00.000+01:00' })).toMatchObject({ ok: true, start: T0 });
   });
+
+  test('the critical path of a review the wall clock stepped through is MISSING, its steps still measured', () => {
+    const { tracer, advance, read } = recorder('sleep-chain');
+    const rootId = tracer.startSpan(STAGES.root);
+    advance(1);
+    const reviewer = tracer.startSpan(STAGES.reviewer, { kind: 'agent', parentId: rootId });
+    advance(540, 60); // a system sleep inside the reviewer
+    tracer.endSpan(reviewer);
+    const verifier = tracer.startSpan(STAGES.verifier, { kind: 'agent', parentId: rootId });
+    advance(20);
+    tracer.endSpan(verifier);
+    const verdict = tracer.startSpan(STAGES.verdict, { parentId: rootId });
+    advance(1);
+    tracer.endSpan(verdict);
+    tracer.endSpan(rootId);
+    const { criticalPath } = computeReviewTiming(read());
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.reason).toContain('wall clock stepped');
+    expect(criticalPath.rounds[0].steps.map((s) => s.ms)).toEqual([60000, 20000, 1000]);
+  });
 });
 
 describe('orchestrator-only time', () => {
@@ -415,6 +435,155 @@ describe('critical path: slowest reviewer -> slowest verifier -> verdict', () =>
   });
 });
 
+describe('the critical path never exceeds the window and counts the verdict once (review round 1)', () => {
+  const verdict = (start, end, attrs) => span(STAGES.verdict, start, end, attrs);
+
+  // Traces in which the steps follow one another inside the window.
+  const sequential = [
+    ['one round with a gap between the steps', [root(0, 160), agent('reviewer', 0, 100), agent('verifier', 110, 150), verdict(150, 160)]],
+    [
+      'the slowest of several agents per stage',
+      [root(0, 1000), agent('reviewer', 0, 100), agent('reviewer', 0, 130), agent('verifier', 140, 160), agent('verifier', 140, 200), verdict(210, 215)],
+    ],
+    [
+      'two rounds back to back',
+      [
+        root(0, 1000),
+        agent('reviewer', 0, 100, { round: 1 }),
+        agent('verifier', 100, 150, { round: 1 }),
+        verdict(150, 160, { round: 1 }),
+        agent('reviewer', 300, 330, { round: 2 }),
+        agent('verifier', 330, 400, { round: 2 }),
+        verdict(400, 410, { round: 2 }),
+      ],
+    ],
+    ['a first step that begins before the window', [root(100, 400), agent('reviewer', 50, 200), agent('verifier', 200, 300), verdict(300, 310)]],
+    ['a verdict that takes no time', [root(0, 100), agent('reviewer', 0, 40), agent('verifier', 40, 90), verdict(90, 90)]],
+    ['a verdict that ends the window', [root(0, 100), agent('reviewer', 0, 40), agent('verifier', 40, 90), verdict(90, 100)]],
+  ];
+
+  test.each(sequential)('%s: critical path plus orchestrator-only time is at most the window', (_, spans) => {
+    const t = computeReviewTiming(spans);
+    expect(t.criticalPath.missing).toBe(false);
+    expect(t.orchestratorOnly.missing).toBe(false);
+    expect(t.criticalPath.ms).toBeLessThanOrEqual(t.wall.ms);
+    expect(t.criticalPath.ms + t.orchestratorOnly.ms).toBeLessThanOrEqual(t.wall.ms);
+  });
+
+  test('the verdict is in the chain, not in orchestrator time (160 s window: 100 + 40 + 10 s of chain, 10 s of gap)', () => {
+    const t = computeReviewTiming(sequential[0][1]);
+    expect(t.wall.ms).toBe(160000);
+    expect(t.criticalPath.ms).toBe(150000);
+    expect(t.orchestratorOnly.ms).toBe(10000);
+    expect(t.activeMs.ms).toBe(140000); // agents only: the verdict is not an agent
+  });
+
+  test('orchestrator-only time leaves out a usable verdict; an unfinished one makes it an upper bound, as an unfinished agent does', () => {
+    const done = computeReviewTiming([root(0, 100), agent('reviewer', 0, 50), verdict(50, 60)]);
+    expect(done.activeMs.ms).toBe(50000);
+    expect(done.orchestratorOnly.ms).toBe(40000);
+    const open = computeReviewTiming([root(0, 100), agent('reviewer', 0, 50), verdict(60, null)]);
+    expect(open.orchestratorOnly).toMatchObject({ ms: 50000, bound: 'upper', unusableVerdicts: 1 });
+    expect(open.orchestratorOnly.unusableAgents).toBeUndefined();
+    expect(open.activeMs.bound).toBeUndefined();
+  });
+
+  test.each([
+    [
+      'the verifier starts before the reviewer ends',
+      [root(0, 160), agent('reviewer', 0, 100), agent('verifier', 50, 150), verdict(150, 160)],
+      'verifier starts 50.0s before reviewer ends',
+    ],
+    [
+      'the verdict starts before the verifier ends',
+      [root(0, 160), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(140, 160)],
+      'verdict starts 10.0s before verifier ends',
+    ],
+    [
+      'the verifier ran entirely before the reviewer',
+      [root(0, 160), agent('reviewer', 100, 130), agent('verifier', 0, 50), verdict(140, 150)],
+      'verifier starts 2m10s before reviewer ends',
+    ],
+  ])('%s: the critical path is MISSING with that reason, never a sum of overlapping steps', (_, spans, reason) => {
+    const { criticalPath } = computeReviewTiming(spans);
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.reason).toContain(reason);
+    expect(criticalPath.rounds[0]).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.rounds[0].steps.every((s) => !s.missing)).toBe(true); // each step is still reported
+  });
+
+  test('steps that touch (one ends exactly when the next starts) are a chain, not an overlap', () => {
+    const { criticalPath } = computeReviewTiming([root(0, 160), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)]);
+    expect(criticalPath).toMatchObject({ ms: 160000, missing: false });
+  });
+
+  test('rounds follow one another: an overlapping round leaves the total MISSING, each round keeps its own figure', () => {
+    const { criticalPath } = computeReviewTiming([
+      root(0, 400),
+      agent('reviewer', 0, 100, { round: 1 }),
+      agent('verifier', 100, 150, { round: 1 }),
+      verdict(150, 160, { round: 1 }),
+      agent('reviewer', 155, 200, { round: 2 }),
+      agent('verifier', 200, 250, { round: 2 }),
+      verdict(250, 260, { round: 2 }),
+    ]);
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.reason).toContain('round 2 reviewer starts 5.0s before round 1 verdict ends');
+    expect(criticalPath.rounds.map((r) => [r.round, r.ms])).toEqual([
+      [1, 160000],
+      [2, 105000],
+    ]);
+  });
+
+  test('a step that overruns the window is cut to it, so the critical path cannot exceed the window', () => {
+    const t = computeReviewTiming([root(0, 400), agent('reviewer', 0, 300), agent('verifier', 300, 390), verdict(390, 500)]);
+    expect(t.criticalPath.rounds[0].steps[2]).toMatchObject({ stage: 'verdict', ms: 10000 });
+    expect(t.criticalPath.ms).toBe(400000);
+    expect(t.criticalPath.ms).toBeLessThanOrEqual(t.wall.ms);
+  });
+
+  test('a step that begins before the window is cut to it', () => {
+    const { criticalPath } = computeReviewTiming([root(100, 400), agent('reviewer', 50, 200), agent('verifier', 200, 300), verdict(300, 310)]);
+    expect(criticalPath.rounds[0].steps[0]).toMatchObject({ stage: 'reviewer', ms: 100000 }); // 100..200, not 50..200
+    expect(criticalPath.ms).toBe(210000);
+  });
+
+  test('a step wholly outside the window is unusable: the step and the total are MISSING', () => {
+    const { criticalPath } = computeReviewTiming([root(0, 400), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(450, 460)]);
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.rounds[0].steps[2]).toMatchObject({ stage: 'verdict', missing: true });
+    expect(criticalPath.reason).toContain('outside the window');
+  });
+
+  test('a verdict that takes no time is a 0 ms step inside the window and unusable outside it', () => {
+    const inside = computeReviewTiming([root(0, 100), agent('reviewer', 0, 40), agent('verifier', 40, 90), verdict(90, 90)]);
+    expect(inside.criticalPath.rounds[0].steps[2]).toEqual({ stage: 'verdict', ms: 0, missing: false });
+    const outside = computeReviewTiming([root(0, 100), agent('reviewer', 0, 40), agent('verifier', 40, 90), verdict(150, 150)]);
+    expect(outside.criticalPath.rounds[0].steps[2]).toMatchObject({ stage: 'verdict', missing: true });
+  });
+
+  test('without an orchestrator window there is nothing to cut to: the steps are summed as recorded', () => {
+    const t = computeReviewTiming([agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)]);
+    expect(t.wall.missing).toBe(true);
+    expect(t.criticalPath).toMatchObject({ ms: 160000, missing: false });
+  });
+
+  test('a review with no verifier span says so and names the Quick tier; an unusable verifier is not blamed on it', () => {
+    const none = computeReviewTiming([root(0, 100), agent('reviewer', 0, 50), verdict(50, 51)]).criticalPath;
+    expect(none.missing).toBe(true);
+    expect(none.reason).toContain('verifier: no verifier span recorded (a Quick review dispatches none)');
+    const unfinished = computeReviewTiming([root(0, 100), agent('reviewer', 0, 50), agent('verifier', 50, null), verdict(60, 61)]).criticalPath;
+    expect(unfinished.reason).toContain('every verifier span is unusable');
+    expect(unfinished.reason).not.toContain('Quick');
+  });
+
+  test('the text report says why a round whose steps were all measured has no total', () => {
+    const text = formatReviewTiming(computeReviewTiming([root(0, 160), agent('reviewer', 0, 100), agent('verifier', 50, 150), verdict(150, 160)]));
+    expect(text).toContain('MISSING (round (unnumbered): verifier starts 50.0s before reviewer ends');
+    expect(text).toContain('[MISSING: verifier starts 50.0s before reviewer ends');
+  });
+});
+
 describe('input checking', () => {
   test.each([[undefined], [null], ['spans'], [{ spans: 'x' }], [{}]])('%j is refused, not read as an empty trace', (input) => {
     expect(computeReviewTiming(input)).toMatchObject({ ok: false });
@@ -519,7 +688,9 @@ describe('the stage contract is emitted through run-trace and read back', () => 
     expect(t.turns.ms).toBe(5);
     expect(t.stages[STAGES.headRead]).toMatchObject({ count: 1, ms: 1000, missing: false });
     expect(t.activeMs.ms).toBe(55000 + 20000); // reviewer to its last message (10..65), verifier 75..95
-    expect(t.orchestratorOnly.ms).toBe(25000);
+    // The 1 s verdict is a step of the critical path, so it is not counted again as orchestrator time (76 + 25 would be 101 s of a 100 s window).
+    expect(t.orchestratorOnly.ms).toBe(24000);
+    expect(t.criticalPath.ms + t.orchestratorOnly.ms).toBeLessThanOrEqual(t.wall.ms);
     expect(t.criticalPath).toMatchObject({ ms: 55000 + 20000 + 1000, missing: false });
     expect(t.criticalPath.rounds[0].round).toBe(1);
   });
