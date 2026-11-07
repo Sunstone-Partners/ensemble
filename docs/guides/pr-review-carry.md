@@ -147,6 +147,7 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 
 - `carry plan` never hashes: `hunkHash`, `depHashes` and `dependents` are inputs, and it trusts them; it cannot tell a wrong hash from a right one.
 - Direct dependents only: the files that use the cited file (importers, name-matched tests, computed-specifier files naming it) are listed and a changed one re-verifies; callers of callers are not covered. Anything the cited file reads at run time that no relative specifier names is not covered either.
+- A relative specifier that resolves to no tracked file (a directory, a glob, a dangling path) is recorded as absent: it invalidates a verdict only when a file at exactly that path appears. A cited file that reads a directory's contents therefore keeps its verdict when a file under that directory changes (it is not a dependent of the files under the directory).
 - Bare npm packages (`require('lodash')`) are not hashed: an upgraded third-party dependency invalidates nothing.
 - The dependency closure is capped at 200 files; a larger one is not hashed (the citation gets `hashError`, hence `hash-missing`) rather than truncated.
 - Symlinks are refused by the hash step, whether cited or in the dependency closure (the citation gets `hashError`).
