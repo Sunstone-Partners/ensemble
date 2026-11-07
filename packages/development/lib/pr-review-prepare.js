@@ -9,33 +9,67 @@
  * head, under a persistent per-run directory, and returns paths plus content
  * hashes (the verdict carry-over needs the hashes):
  *
- *   <stateRoot>/<runId>/<headSha>/
+ *   <stateRoot>/<runId>/<headSha>/<fingerprint16>/
  *     snapshot/        the tree of HEAD, exported with `git archive` (never a live
- *                      worktree), verified object-for-object against the tree, then
- *                      made read-only. NOTHING is ever written inside it: the
- *                      baseline test run works on a scratch copy of its own.
+ *                      worktree), verified object-for-object against the tree, made
+ *                      read-only BEFORE any head code runs and verified again after
+ *                      it. NOTHING is ever written inside it: the baseline test run
+ *                      works on a scratch copy of its own.
  *     range.diff       BASE...HEAD
  *     delta.diff       lastReviewedSha..HEAD, only when `chooseReviewRange` says
  *                      mode=delta; otherwise ABSENT, with the reason in the manifest
  *     facts.json       policy, tier inputs, `paths` classification inputs and result,
- *                      changedPaths from `git diff --numstat -z --no-renames`
+ *                      changedPaths: the union of `git diff --numstat -z --no-renames`
+ *                      over `BASE HEAD` (the form the skill pins) and `BASE...HEAD`
+ *                      (what range.diff shows), so no path the PR changes is dropped
  *     probe.js         a ready probe runner agents `require()` (load a snapshot
  *                      module, run a command read-only, `chain` end-to-end steps)
  *     baseline.json    the baseline run of the relevant test files: command, files,
  *     baseline.log     exit code, captured output
  *     manifest.json    inputs + the sha256 of every artifact above
  *
- * FAIL CLOSED: an unreadable base or head, a head that moved while the step ran, a
- * snapshot that is not exactly the head's tree, an unreadable guidance file or a
- * baseline that could not be started all return `{ ok:false, status:'PREPARE_FAILED',
- * reason, stage, detail }` and publish NOTHING. Artifacts are built in a staging
- * directory and renamed into place only after every check passed, so a reader never
- * sees a half-built or stale-looking directory as current.
+ * <fingerprint16> is the start of the sha256 of every input that decides what the
+ * directory holds (see fingerprintInputs), so a preparation with other inputs for
+ * the same head gets a directory of its own and never replaces one a reader holds.
  *
- * IDEMPOTENT: a second call for the same head and inputs finds the published
- * directory, re-verifies every recorded hash (and the snapshot), and returns the
- * same hashes without running anything. A directory that no longer verifies is
- * rebuilt, never trusted.
+ * FAIL CLOSED: an unreadable base or head, a head that moved while the step ran, a
+ * snapshot that is not exactly the head's tree (before or after the baseline ran), an
+ * unreadable guidance file (absent is fine; a symlink or directory at its path is not),
+ * a baseline that could not be started and one that wrote into the staging directory
+ * all return `{ ok:false, status:'PREPARE_FAILED', reason, stage, detail }` and publish
+ * NOTHING. Artifacts are built in a staging directory and renamed into place only after
+ * every check passed, so a reader never sees a half-built or stale-looking directory as
+ * current.
+ *
+ * THE BASELINE EXECUTES THE HEAD'S TEST CODE, so it is untrusted:
+ *   - it runs in a scratch directory in the OS temp directory, outside the repository,
+ *     the state root and the staging directory (so no path relative to its working
+ *     directory reaches them), with a scratch HOME, the environment allowlist of
+ *     local-ci-runner.js, a private copy of node_modules (absolute symlinks in it are
+ *     left out, `skippedLinks` in baseline.json) and a git ceiling: never the
+ *     maintainer's environment, HOME or dependency tree;
+ *   - while it runs, staging holds only the sealed snapshot. facts.json, probe.js and
+ *     the diffs are held in memory and written after it, so there is nothing to rewrite
+ *     before it is attested; afterwards the snapshot is verified again and any other
+ *     staging entry fails the step;
+ *   - its whole process group is killed when it ends.
+ * It is NOT sandboxed. It is still the invoking user's process with that user's file
+ * permissions and network: it can read or write whatever that user can (by absolute
+ * path, the repository itself, anything under the real home directory it finds through
+ * the password database), and a process that leaves the group (setsid) outlives it. Its
+ * exit code and log are what the head's own tests report. The read-only seal of the
+ * snapshot is permission bits: it stops a stray write, not the owner. Prepare only
+ * heads whose tests you are willing to run on this machine.
+ *
+ * IDEMPOTENT: a second call with the same inputs finds the published directory and
+ * trusts none of it. What git can tell (the diffs, facts.json, probe.js, the names
+ * declared absent, the range decision, the snapshot against the head's tree) is derived
+ * again and must be what the directory holds; only the baseline's own output, which
+ * nobody can derive, is taken as recorded, and only if it agrees with the manifest.
+ * The same hashes are then returned without running anything. A directory that no
+ * longer verifies is rebuilt, never trusted; different inputs never reuse it and never
+ * delete it (the fingerprint is in the path). SCHEMA_VERSION is the knob for a change
+ * in what a version of this module derives.
  *
  * This module drives git and touches the filesystem, so it lives OUTSIDE
  * pr-review-cli.js (whose lib modules are pure). Every process it starts goes through
@@ -46,14 +80,20 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { chooseReviewRange, isObjectId } = require('./pr-review-scope');
 const { loadPolicy } = require('./pr-review-policy');
 const { classifyPaths } = require('./pr-review-paths');
 const { redact } = require('./pr-review-state');
-const { defaultDeps, PROBE_SOURCE, DEFAULT_BASELINE_TIMEOUT_MS } = require('./review-prepare-runtime');
+const { defaultDeps, PROBE_SOURCE, DEFAULT_BASELINE_TIMEOUT_MS, buildBaselineEnv, inheritedSecretValues, scrubSecretValues } = require('./review-prepare-runtime');
 
-const SCHEMA_VERSION = 1;
+/**
+ * 2: changedPaths is the union of the two-argument and the merge-base listing (version 1 held the two-argument one
+ * only), the directory is keyed by the fingerprint, and facts carry no `guidance.warnings`.
+ */
+const SCHEMA_VERSION = 2;
+const FINGERPRINT_DIR_LENGTH = 16;
 const DEFAULT_STATE_ROOT = path.join('.ensemble', 'pr-review', 'prepare');
 /** The test files the default baseline runs: jest-style names. A caller with another runner passes `testFiles`/`testCommand`. */
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -146,11 +186,20 @@ function walkFiles(root) {
 
 /**
  * The snapshot must be EXACTLY the head's tree: every regular file and symlink the tree lists is there with the
- * blob id git gave it (and the owner-exec bit git recorded), and nothing else is. `git archive` can silently differ
- * (export-ignore, export-subst, eol attributes, a case-insensitive checkout folding two names into one); that is
- * a failed snapshot, never a close-enough one. Returns the digest of the tree listing.
+ * blob id git gave it (and the owner-exec bit git recorded), and no other file or symlink is (an empty directory is
+ * not a tree entry, so it is not checked). `git archive` can silently differ (export-ignore, export-subst, eol
+ * attributes, a case-insensitive checkout folding two names into one); that is a failed snapshot, never a
+ * close-enough one. Returns the digest of the tree listing.
  */
 function verifySnapshot(snapshotDir, entries, algo) {
+  let top;
+  try {
+    top = fs.lstatSync(snapshotDir);
+  } catch {
+    throw new PrepareError('snapshot-mismatch', 'snapshot', 'the snapshot directory is missing');
+  }
+  // A symlink to a look-alike directory would pass every check below and still be a directory someone else controls.
+  if (!top.isDirectory()) throw new PrepareError('snapshot-mismatch', 'snapshot', 'the snapshot is not a directory');
   const expected = new Map();
   for (const e of entries) if (e.type === 'blob') expected.set(e.path, e);
   const problems = [];
@@ -188,7 +237,15 @@ function makeReadOnly(dir) {
 }
 
 function makeWritable(dir) {
-  if (!fs.existsSync(dir)) return;
+  let top;
+  try {
+    top = fs.lstatSync(dir);
+  } catch {
+    return; // nothing there
+  }
+  // A symlink is removed as itself and never followed: a run that swapped its scratch directory for a link to
+  // somewhere else must not get that somewhere's permissions rewritten by the cleanup.
+  if (!top.isDirectory()) return;
   const visit = (current) => {
     fs.chmodSync(current, fs.statSync(current).mode | 0o700);
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -236,23 +293,24 @@ function readInput(options) {
   return options;
 }
 
-function resolveStateDir(options, headSha) {
+function resolveStateDir(options, headSha, fingerprint) {
   const stateRoot = path.resolve(options.repoRoot, options.stateRoot || DEFAULT_STATE_ROOT);
-  const dir = path.join(stateRoot, safeSegment(options.runId), headSha.toLowerCase());
+  const dir = path.join(stateRoot, safeSegment(options.runId), headSha.toLowerCase(), fingerprint.slice(0, FINGERPRINT_DIR_LENGTH));
   if (!dir.startsWith(stateRoot + path.sep)) throw new PrepareError('invalid-input', 'input', 'the run directory is outside the state root');
   return { stateRoot, dir };
 }
 
 /* --------------------------------------------------------------- the steps */
 
-function readBaseText(deps, repoRoot, baseSha, rel, warnings) {
+function readBaseText(deps, repoRoot, baseSha, rel) {
   const listing = gitOk(deps, ['ls-tree', '-z', baseSha, '--', rel], { cwd: repoRoot }, 'base-guidance-unreadable', 'facts', `cannot list ${rel} at the base`);
   const entries = parseLsTreeZ(listing.stdout).filter((e) => e.path === rel);
   if (entries.length === 0) return null;
   const [entry] = entries;
+  // Absent is the one case that means "no such guidance". A symlink, a directory or a submodule at the path is a
+  // guidance file this step cannot read: quietly using the defaults instead would be a plausible policy nobody wrote.
   if (entry.type !== 'blob' || entry.mode === '120000') {
-    warnings.push(`${rel}-not-a-regular-file`);
-    return null;
+    throw new PrepareError('base-guidance-unreadable', 'facts', `${rel} at the base is not a regular file (${entry.type} ${entry.mode})`);
   }
   const blob = gitOk(deps, ['cat-file', 'blob', entry.sha], { cwd: repoRoot, buffer: true }, 'base-guidance-unreadable', 'facts', `cannot read ${rel} at the base`);
   return blob.stdout.toString('utf8');
@@ -297,6 +355,30 @@ function relatedTests(testPaths, changedPaths) {
   return [...picked.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([file, why]) => ({ file, why }));
 }
 
+const byteOrder = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** git's name-and-count listing (`diff --numstat -z --no-renames`) of one revision argument list. */
+function listChanged(deps, repoRoot, revisions) {
+  const out = gitOk(deps, ['diff', '--numstat', '-z', '--no-renames', ...revisions], { cwd: repoRoot }, 'changed-paths-failed', 'facts', `git diff --numstat ${revisions.join(' ')} failed`);
+  try {
+    return parseNumstatZ(out.stdout);
+  } catch (err) {
+    throw new PrepareError('changed-paths-failed', 'facts', err.message);
+  }
+}
+
+/**
+ * The paths the PR changes: every path either listing names, once, in git's own (byte) order. The two-argument listing
+ * is the one the skill pins, and where both list a path its counts are kept. A path only the merge-base listing names
+ * (the base already holds an identical change, so the two tips no longer differ there) is still a path the PR changes
+ * and range.diff shows; it keeps its merge-base counts.
+ */
+function unionChanged(twoArgument, mergeBase) {
+  const byPath = new Map(mergeBase.map((f) => [f.path, f]));
+  for (const f of twoArgument) byPath.set(f.path, f);
+  return [...byPath.values()].sort((a, b) => byteOrder(a.path, b.path));
+}
+
 function resolveBaselineCommand(options, nodeModules) {
   if (options.testCommand) return options.testCommand.slice();
   const jest = nodeModules ? path.join(nodeModules, 'jest', 'bin', 'jest.js') : null;
@@ -304,8 +386,39 @@ function resolveBaselineCommand(options, nodeModules) {
   return null;
 }
 
-function linkNodeModules(workDir, nodeModules) {
-  if (nodeModules) fs.symlinkSync(nodeModules, path.join(workDir, 'node_modules'), 'dir');
+/**
+ * The node_modules the baseline run resolves from: a PRIVATE copy inside the scratch tree, never a link to the real one.
+ * The run executes head code; through a link, whatever it wrote into node_modules (a patched package, a planted module)
+ * would land in the maintainer's real dependency tree, where the next jest or npm test outside any sandbox runs it.
+ * A copy-on-write clone where the filesystem has one (APFS, btrfs, xfs), a plain copy elsewhere. Relative symlinks are
+ * copied as they are, so a workspace link (../../packages/x) points at the head's own tree inside the scratch copy, not
+ * at the live checkout. An ABSOLUTE symlink (an `npm link`) would still lead into the live tree from the copy, so it is
+ * left out and reported: the run can neither follow nor write through it, and the record names what it lacked.
+ * `.cache` is skipped: tools rebuild it. Returns the sorted `<link> -> <target>` list of the links left out.
+ */
+function copyNodeModules(nodeModules, dest) {
+  const skipped = [];
+  try {
+    fs.cpSync(nodeModules, dest, {
+      recursive: true,
+      mode: fs.constants.COPYFILE_FICLONE,
+      verbatimSymlinks: true,
+      filter: (from) => {
+        if (path.basename(from) === '.cache') return false;
+        if (fs.lstatSync(from).isSymbolicLink()) {
+          const target = fs.readlinkSync(from);
+          if (path.isAbsolute(target)) {
+            skipped.push(`${path.relative(nodeModules, from)} -> ${target}`);
+            return false;
+          }
+        }
+        return true;
+      },
+    });
+  } catch (err) {
+    throw new PrepareError('baseline-not-run', 'baseline', `cannot copy node_modules for the baseline run: ${String(err.message).slice(0, 300)}`);
+  }
+  return skipped.sort();
 }
 
 function makeArchive(deps, repoRoot, headSha, tarPath) {
@@ -318,7 +431,12 @@ function extractArchive(deps, repoRoot, tarPath, destDir) {
   if (r.status !== 0) throw new PrepareError('snapshot-failed', 'snapshot', `tar extraction failed: ${String(r.stderr || r.spawnError).trim().slice(0, 300)}`);
 }
 
-function runBaseline({ deps, options, staging, tarPath, entries, changedPaths, headSha, nodeModules }) {
+/**
+ * Runs the relevant test files of the head in `scratch` (never in the staging directory): `scratch/work` is an
+ * extraction of the head tree with a private node_modules, `scratch/home` the HOME of the run. The caller removes
+ * `scratch` afterwards. Returns the baseline record and its (credential-scrubbed) log.
+ */
+function runBaseline({ deps, options, scratch, tarPath, entries, changedPaths, headSha, nodeModules }) {
   const testPaths = entries.filter((e) => e.type === 'blob' && TEST_FILE.test(e.path)).map((e) => e.path);
   let selection;
   if (options.testFiles) {
@@ -337,54 +455,106 @@ function runBaseline({ deps, options, staging, tarPath, entries, changedPaths, h
   if (command === null) {
     throw new PrepareError('baseline-not-run', 'baseline', 'no test runner: pass testCommand, or make jest resolvable from the repository node_modules');
   }
-  const workDir = path.join(staging, '.baseline-work');
+  const workDir = path.join(scratch, 'work');
+  const homeDir = path.join(scratch, 'home');
+  extractArchive(deps, options.repoRoot, tarPath, workDir);
+  fs.mkdirSync(homeDir);
+  let modulesDir = null;
+  let skippedLinks = [];
+  if (nodeModules) {
+    modulesDir = path.join(workDir, 'node_modules');
+    if (fs.existsSync(modulesDir)) throw new PrepareError('baseline-not-run', 'baseline', 'the head tree has a node_modules of its own; it is not mixed with the one provided');
+    skippedLinks = copyNodeModules(nodeModules, modulesDir);
+  }
+  const argv = [...command, ...selection.map((s) => s.file)];
+  // An argument inside the real node_modules (the default jest, or a testCommand naming one of its binaries) runs from the copy.
+  const runArgv = modulesDir === null ? argv : argv.map((arg) => (arg.startsWith(nodeModules + path.sep) ? path.join(modulesDir, arg.slice(nodeModules.length + 1)) : arg));
+  const r = deps.run(runArgv, {
+    cwd: workDir,
+    env: buildBaselineEnv(process.env, { homeDir, nodeModules: modulesDir, gitCeiling: fs.realpathSync(scratch) }),
+    timeoutMs: options.baselineTimeoutMs || DEFAULT_BASELINE_TIMEOUT_MS,
+  });
+  if (r.spawnError) throw new PrepareError('baseline-not-run', 'baseline', `could not start ${argv[0]}: ${r.spawnError}`);
+  const log = scrubSecretValues(redact(`# stdout\n${r.stdout}\n# stderr\n${r.stderr}\n`), inheritedSecretValues(process.env));
+  return {
+    record: {
+      ...base, ran: true, command: argv.slice(0, command.length), exitCode: r.status, signal: r.signal, timedOut: r.timedOut, skippedLinks,
+    },
+    log,
+  };
+}
+
+/**
+ * After the baseline run (head code, now gone) the staging directory must hold exactly the snapshot, and the snapshot
+ * must still be exactly the head's tree. Anything else means the run wrote where it had no business writing, so what
+ * is about to be attested cannot be trusted: a named failure, nothing published.
+ */
+function assertStagingIntact(staging, snapshotDir, entries, algo) {
+  const extra = fs.readdirSync(staging).filter((name) => name !== 'snapshot').sort();
+  if (extra.length > 0) {
+    throw new PrepareError('baseline-tampered', 'baseline', `the baseline run wrote into the staging directory: ${extra.slice(0, 5).map((name) => JSON.stringify(name)).join(', ')}`);
+  }
   try {
-    extractArchive(deps, options.repoRoot, tarPath, workDir);
-    linkNodeModules(workDir, nodeModules);
-    const argv = [...command, ...selection.map((s) => s.file)];
-    const r = deps.run(argv, {
-      cwd: workDir,
-      env: { ...process.env, CI: 'true', ...(nodeModules ? { NODE_PATH: nodeModules } : {}) },
-      timeoutMs: options.baselineTimeoutMs || DEFAULT_BASELINE_TIMEOUT_MS,
-    });
-    if (r.spawnError) throw new PrepareError('baseline-not-run', 'baseline', `could not start ${argv[0]}: ${r.spawnError}`);
-    const log = redact(`# stdout\n${r.stdout}\n# stderr\n${r.stderr}\n`);
-    return {
-      record: {
-        ...base, ran: true, command: argv.slice(0, command.length), exitCode: r.status, signal: r.signal, timedOut: r.timedOut,
-      },
-      log,
-    };
-  } finally {
-    removePrepared(workDir);
+    verifySnapshot(snapshotDir, entries, algo);
+  } catch (err) {
+    throw new PrepareError('snapshot-mismatch', 'baseline', `the snapshot differs from the head tree after the baseline run: ${err instanceof PrepareError ? err.detail : err.message}`);
   }
 }
 
 /* --------------------------------------------------------------- publishing */
 
-function describeFile(root, rel) {
-  const data = fs.readFileSync(path.join(root, rel));
-  return { path: rel, sha256: sha256(data), bytes: data.length };
-}
-
-function writeArtifact(staging, rel, data) {
-  fs.writeFileSync(path.join(staging, rel), data);
-}
-
-function fingerprintOf(input, scope, range) {
-  return sha256(JSON.stringify({
-    v: SCHEMA_VERSION,
-    baseSha: scope.baseSha,
-    headSha: scope.headSha,
+/** What the recorded range decision says, as facts.json and the fingerprint both state it. */
+function rangeFacts(range) {
+  return {
     mode: range.mode,
-    lastReviewedSha: range.mode === 'delta' ? range.lastReviewedSha : null,
-    testFiles: input.testFiles ? [...input.testFiles].sort() : null,
-    testCommand: input.testCommand || null,
-  }));
+    range: range.range,
+    fullRange: range.fullRange,
+    reason: range.reason,
+    lastReviewedSha: range.lastReviewedSha || null,
+    unvouched: range.unvouched,
+  };
 }
 
-/** Re-verifies a published directory: manifest, every recorded hash, and the snapshot. Returns the manifest, or null. */
-function readPublished(deps, input, dir, fingerprint, entries, algo) {
+/**
+ * Every input that decides what a preparation holds. Its sha256 names the directory and is checked on reuse, so two
+ * preparations that differ in ANY of these never share (or replace) a directory: the resolved range decision (mode,
+ * reason, reviewed head, the commits nobody vouched for), the baseline's inputs (test files, command, timeout, the
+ * node_modules it resolves from) and the run and repository the directory belongs to.
+ */
+function fingerprintInputs(options, range, nodeModules) {
+  return {
+    v: SCHEMA_VERSION,
+    runId: options.runId,
+    repoRoot: options.repoRoot,
+    baseSha: range.baseSha,
+    headSha: range.headSha,
+    range: rangeFacts(range),
+    testFiles: options.testFiles ? [...options.testFiles].sort() : null,
+    testCommand: options.testCommand || null,
+    baselineTimeoutMs: options.baselineTimeoutMs || DEFAULT_BASELINE_TIMEOUT_MS,
+    nodeModules,
+  };
+}
+
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/** The part of a baseline record the manifest repeats. */
+function baselineSummary(record) {
+  return { ran: record.ran, exitCode: record.exitCode, timedOut: record.timedOut, reason: record.reason || null };
+}
+
+/**
+ * Re-verifies a published directory and returns its manifest, or null when it must not be trusted.
+ *
+ * Hashes that agree with each other prove nothing about a directory somebody else wrote: a baseline test can create the
+ * very directory this step is about to publish, with a manifest that matches its own files. So everything this call
+ * derived itself (the diffs, facts.json with the policy and classification read from the base commit, probe.js, the
+ * names declared absent, the range decision, the snapshot against the head's tree) must be what the directory holds.
+ * Only the baseline's own output, which no one can derive, is taken as recorded, and only if it agrees with the manifest.
+ *
+ * `expected`: `{ runId, baseSha, headSha, treeSha, range, absent, files: Map(name -> Buffer) }`.
+ */
+function readPublished(dir, fingerprint, entries, algo, expected) {
   let manifest;
   try {
     manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
@@ -392,17 +562,26 @@ function readPublished(deps, input, dir, fingerprint, entries, algo) {
     return null;
   }
   if (!isObject(manifest) || manifest.schema !== SCHEMA_VERSION || manifest.fingerprint !== fingerprint) return null;
-  for (const [name, artifact] of Object.entries(manifest.artifacts || {})) {
-    if (name === 'snapshot') continue;
-    try {
-      if (sha256(fs.readFileSync(path.join(dir, artifact.path))) !== artifact.sha256) return null;
-    } catch {
-      return null;
-    }
-  }
+  if (manifest.runId !== expected.runId || manifest.baseSha !== expected.baseSha || manifest.headSha !== expected.headSha) return null;
+  if (!sameJson(manifest.range, expected.range) || !sameJson(manifest.absent, expected.absent)) return null;
+  const artifacts = manifest.artifacts;
+  if (!isObject(artifacts)) return null;
+  const names = [...expected.files.keys(), 'baseline.json', 'baseline.log'];
+  if (!sameJson(Object.keys(artifacts).sort(), ['snapshot', ...names].sort())) return null;
   try {
-    const digest = verifySnapshot(path.join(dir, 'snapshot'), entries, algo);
-    if (!manifest.artifacts.snapshot || manifest.artifacts.snapshot.sha256 !== digest) return null;
+    for (const name of names) {
+      const artifact = artifacts[name];
+      if (!isObject(artifact) || artifact.path !== name) return null;
+      const bytes = fs.readFileSync(path.join(dir, name));
+      if (sha256(bytes) !== artifact.sha256) return null;
+      const derived = expected.files.get(name);
+      if (derived !== undefined && !bytes.equals(derived)) return null;
+    }
+    for (const name of Object.keys(expected.absent)) if (fs.existsSync(path.join(dir, name))) return null;
+    if (!sameJson(manifest.baseline, baselineSummary(JSON.parse(fs.readFileSync(path.join(dir, 'baseline.json'), 'utf8'))))) return null;
+    const snapshot = artifacts.snapshot;
+    if (!isObject(snapshot) || snapshot.path !== 'snapshot' || snapshot.treeSha !== expected.treeSha) return null;
+    if (snapshot.sha256 !== verifySnapshot(path.join(dir, 'snapshot'), entries, algo)) return null;
   } catch {
     return null;
   }
@@ -417,6 +596,7 @@ function resultFrom(manifest, dir, reused) {
     ok: true,
     status: 'PREPARED',
     reused,
+    fingerprint: manifest.fingerprint,
     dir,
     manifestPath: path.join(dir, 'manifest.json'),
     manifestSha256,
@@ -451,28 +631,119 @@ function resultFrom(manifest, dir, reused) {
  *   source it changed.
  * @param {string[]} [options.testCommand]   Baseline argv prefix (files are appended); default: the repository's jest.
  * @param {number} [options.baselineTimeoutMs]
- * @param {string} [options.nodeModules]     node_modules the baseline and the probe resolve third-party requires from;
- *   default `<repoRoot>/node_modules` when present.
+ * @param {string} [options.nodeModules]     node_modules the baseline resolves third-party requires from (it runs against a
+ *   private copy of it, never the real tree) and the probe resolves them from; default `<repoRoot>/node_modules` when present.
  * @param {Object} [injected]                `{ git, run }` replacements (see defaultDeps).
  * @returns {Object} `{ ok:true, status:'PREPARED', reused, dir, artifacts, hashes, ... }` or
  *   `{ ok:false, status:'PREPARE_FAILED', reason, stage, detail }`.
  */
 function prepareReview(options, injected = {}) {
   const deps = { ...defaultDeps(), ...injected };
-  let staging = null;
+  const tracked = { staging: null, scratch: null };
+  let result;
   try {
-    return prepare(options, deps, (dir) => { staging = dir; });
+    result = prepare(options, deps, tracked);
   } catch (err) {
-    if (err instanceof PrepareError) {
-      return { ok: false, status: 'PREPARE_FAILED', reason: err.reason, stage: err.stage, detail: redact(err.detail) };
-    }
-    return { ok: false, status: 'PREPARE_FAILED', reason: 'unexpected-error', stage: 'unknown', detail: redact(err && err.message ? err.message : String(err)) };
-  } finally {
-    if (staging !== null) removePrepared(staging);
+    result = err instanceof PrepareError
+      ? { ok: false, status: 'PREPARE_FAILED', reason: err.reason, stage: err.stage, detail: redact(err.detail) }
+      : { ok: false, status: 'PREPARE_FAILED', reason: 'unexpected-error', stage: 'unknown', detail: redact(err && err.message ? err.message : String(err)) };
   }
+  // Whatever is still tracked was never published: the scratch tree of a baseline that did not finish, the staging
+  // tree. A removal that fails (a run can leave files it made immutable, or a read-only parent) must not turn the
+  // result into a thrown error, so it is reported with the result instead.
+  const left = [];
+  for (const dir of [tracked.scratch, tracked.staging]) {
+    if (dir === null) continue;
+    try {
+      removePrepared(dir);
+    } catch (err) {
+      left.push(`${dir} (${redact(String(err.message))})`);
+    }
+  }
+  if (left.length > 0) {
+    result = result.ok === true ? { ...result, leftovers: left } : { ...result, detail: `${result.detail} (left behind, could not remove: ${left.join('; ')})` };
+  }
+  return result;
 }
 
-function prepare(rawOptions, deps, setStaging) {
+/**
+ * Everything git, and this module, can tell about the head: the diffs, facts.json, probe.js. Held in memory (nothing is
+ * written here) because it is what a published directory of these inputs must contain AND what gets published.
+ * Returns `{ facts, changedPaths, absent, files: Map(name -> Buffer) }`.
+ */
+function deriveFromGit(deps, options, range, nodeModules, treeSha) {
+  const { repoRoot } = options;
+  const { baseSha, headSha } = range;
+  const diffFlags = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
+  const rangeDiff = gitOk(deps, [...diffFlags, `${baseSha}...${headSha}`], { cwd: repoRoot, buffer: true }, 'range-diff-failed', 'diff', `git diff ${baseSha}...${headSha} failed`).stdout;
+
+  const absent = {};
+  let deltaDiff = null;
+  if (range.mode === 'delta') {
+    deltaDiff = gitOk(deps, [...diffFlags, `${range.lastReviewedSha}..${headSha}`], { cwd: repoRoot, buffer: true }, 'delta-diff-failed', 'diff', `git diff ${range.lastReviewedSha}..${headSha} failed`).stdout;
+  } else {
+    absent['delta.diff'] = range.reason;
+  }
+
+  const numstat = unionChanged(
+    listChanged(deps, repoRoot, [baseSha, headSha]),
+    listChanged(deps, repoRoot, [`${baseSha}...${headSha}`]),
+  );
+  const changedPaths = numstat.map((f) => f.path);
+
+  const reviewText = readBaseText(deps, repoRoot, baseSha, RULES_FILE);
+  let codeowners = null;
+  let codeownersPath = null;
+  for (const candidate of CODEOWNERS_LOCATIONS) {
+    codeowners = readBaseText(deps, repoRoot, baseSha, candidate);
+    if (codeowners !== null) { codeownersPath = candidate; break; }
+  }
+  const policy = loadPolicy({ text: reviewText, baseSha, sourceSha: baseSha });
+  const declaration = { sourceSha: baseSha, sensitive: policy.policy.sensitivePaths, high: policy.policy.highPaths };
+  const pathsInput = { changedPaths, declaration, codeowners: codeowners === null ? undefined : codeowners, baseSha };
+  const classification = classifyPaths(pathsInput);
+
+  const facts = {
+    schema: SCHEMA_VERSION,
+    repoRoot,
+    nodeModules,
+    baseSha,
+    headSha,
+    treeSha,
+    range: rangeFacts(range),
+    diffForm: {
+      range: `${baseSha}...${headSha}`,
+      // changedPaths is the union of these two listings: the first is the form the skill pins, the second names what the
+      // PR itself changes (what range.diff shows) even where the base already holds an identical change.
+      changedPaths: [
+        `git diff --numstat -z --no-renames ${baseSha} ${headSha}`,
+        `git diff --numstat -z --no-renames ${baseSha}...${headSha}`,
+      ],
+    },
+    changedPaths,
+    numstat,
+    totals: {
+      files: numstat.length,
+      added: numstat.reduce((n, f) => n + (f.added || 0), 0),
+      deleted: numstat.reduce((n, f) => n + (f.deleted || 0), 0),
+      binary: numstat.filter((f) => f.binary).length,
+    },
+    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath },
+    policy,
+    pathsInput,
+    paths: classification,
+    // `assignTier` takes the classifier agent's `kinds` plus this classification; the kinds are the agent's to supply.
+    tierInputs: { paths: classification, changedPaths, kinds: null },
+  };
+
+  const files = new Map([['range.diff', rangeDiff]]);
+  if (deltaDiff !== null) files.set('delta.diff', deltaDiff);
+  files.set('facts.json', Buffer.from(`${JSON.stringify(facts, null, 2)}\n`));
+  files.set('probe.js', Buffer.from(PROBE_SOURCE));
+  return { facts, changedPaths, absent, files };
+}
+
+function prepare(rawOptions, deps, tracked) {
   const options = readInput(rawOptions);
   const { repoRoot } = options;
 
@@ -500,7 +771,6 @@ function prepare(rawOptions, deps, setStaging) {
   };
   headStable('head-mismatch');
 
-  const { stateRoot, dir } = resolveStateDir(options, headSha);
   const nodeModules = (() => {
     const candidate = options.nodeModules || path.join(repoRoot, 'node_modules');
     return fs.existsSync(candidate) ? fs.realpathSync(candidate) : null;
@@ -516,125 +786,94 @@ function prepare(rawOptions, deps, setStaging) {
   }
   const treeSha = String(gitOk(deps, ['rev-parse', `${headSha}^{tree}`], { cwd: repoRoot }, 'snapshot-failed', 'snapshot', 'cannot resolve the head tree').stdout).trim();
 
-  const fingerprint = fingerprintOf(options, { baseSha, headSha }, range);
+  const inputs = fingerprintInputs(options, range, nodeModules);
+  const fingerprint = sha256(JSON.stringify(inputs));
+  const { stateRoot, dir } = resolveStateDir(options, headSha, fingerprint);
 
-  // ---- already prepared? re-verify every hash before trusting it ---------
+  // Everything git can tell, derived once and held in memory. It is derived BEFORE an existing directory is looked at:
+  // hashes that agree with each other prove nothing about a directory somebody else wrote.
+  const derived = deriveFromGit(deps, options, range, nodeModules, treeSha);
+  const expected = { runId: options.runId, baseSha, headSha, treeSha, range: derived.facts.range, absent: derived.absent, files: derived.files };
+
+  // ---- already prepared with these inputs? what git can tell is compared, never taken on trust ---------
   if (fs.existsSync(dir)) {
-    const manifest = readPublished(deps, options, dir, fingerprint, entries, algo);
+    const manifest = readPublished(dir, fingerprint, entries, algo, expected);
     if (manifest !== null) {
       headStable('head-moved');
       return resultFrom(manifest, dir, true);
     }
+    // The directory named by THESE inputs does not verify: it is damaged or forged, so it is rebuilt. A preparation with
+    // other inputs has a directory of its own and never gets here, so nothing a reader holds for other inputs is removed
+    // (two input sets sharing a 16-hex name, odds of 2^-64, would be treated as damage).
     removePrepared(dir);
   }
 
-  // ---- build in staging ---------------------------------------------------
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  // ---- build in staging ------------------------------------------------------------------
+  fs.mkdirSync(stateRoot, { recursive: true });
   const staging = fs.mkdtempSync(path.join(stateRoot, '.staging-'));
-  setStaging(staging);
+  tracked.staging = staging;
+  // The baseline (head code) works here: in the OS temp directory, outside the repository and the state root, so a path
+  // relative to its working directory reaches neither the staging directory nor the repository (its node_modules, its
+  // .git). It holds nothing worth keeping (an extraction of the head tree, a throwaway HOME, a copy of node_modules)
+  // and is removed before anything is published; the published output is what lives under the state root.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ensemble-prepare-'));
+  tracked.scratch = scratch;
 
-  const tarPath = path.join(staging, '.head.tar');
+  const tarPath = path.join(scratch, 'head.tar');
   const snapshotDir = path.join(staging, 'snapshot');
   makeArchive(deps, repoRoot, headSha, tarPath);
   extractArchive(deps, repoRoot, tarPath, snapshotDir);
   const snapshotDigest = verifySnapshot(snapshotDir, entries, algo);
+  // Sealed before any head code runs: a stray write fails loudly instead of landing in what is about to be attested.
+  makeReadOnly(snapshotDir);
 
-  const diffFlags = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
-  const rangeDiff = gitOk(deps, [...diffFlags, `${baseSha}...${headSha}`], { cwd: repoRoot, buffer: true }, 'range-diff-failed', 'diff', `git diff ${baseSha}...${headSha} failed`);
-  writeArtifact(staging, 'range.diff', rangeDiff.stdout);
+  // Nothing but the sealed snapshot is in the staging directory while the baseline (head code) runs, so there is
+  // nothing for it to rewrite before it is attested.
+  const baseline = runBaseline({ deps, options, scratch, tarPath, entries, changedPaths: derived.changedPaths, headSha, nodeModules });
 
-  const absent = {};
-  if (range.mode === 'delta') {
-    const deltaDiff = gitOk(deps, [...diffFlags, `${range.lastReviewedSha}..${headSha}`], { cwd: repoRoot, buffer: true }, 'delta-diff-failed', 'diff', `git diff ${range.lastReviewedSha}..${headSha} failed`);
-    writeArtifact(staging, 'delta.diff', deltaDiff.stdout);
-  } else {
-    absent['delta.diff'] = range.reason;
-  }
-
-  const numstat = gitOk(deps, ['diff', '--numstat', '-z', '--no-renames', baseSha, headSha], { cwd: repoRoot }, 'changed-paths-failed', 'facts', 'git diff --numstat failed');
-  let files;
-  try {
-    files = parseNumstatZ(numstat.stdout);
-  } catch (err) {
-    throw new PrepareError('changed-paths-failed', 'facts', err.message);
-  }
-  const changedPaths = files.map((f) => f.path);
-
-  const warnings = [];
-  const reviewText = readBaseText(deps, repoRoot, baseSha, RULES_FILE, warnings);
-  let codeowners = null;
-  let codeownersPath = null;
-  for (const candidate of CODEOWNERS_LOCATIONS) {
-    codeowners = readBaseText(deps, repoRoot, baseSha, candidate, warnings);
-    if (codeowners !== null) { codeownersPath = candidate; break; }
-  }
-  const policy = loadPolicy({ text: reviewText, baseSha, sourceSha: baseSha });
-  const declaration = { sourceSha: baseSha, sensitive: policy.policy.sensitivePaths, high: policy.policy.highPaths };
-  const pathsInput = { changedPaths, declaration, codeowners: codeowners === null ? undefined : codeowners, baseSha };
-  const classification = classifyPaths(pathsInput);
-
-  const facts = {
-    schema: SCHEMA_VERSION,
-    repoRoot,
-    nodeModules,
-    baseSha,
-    headSha,
-    treeSha,
-    range: { mode: range.mode, range: range.range, fullRange: range.fullRange, reason: range.reason, lastReviewedSha: range.lastReviewedSha || null, unvouched: range.unvouched },
-    diffForm: { range: `${baseSha}...${headSha}`, changedPaths: `git diff --numstat -z --no-renames ${baseSha} ${headSha}` },
-    changedPaths,
-    numstat: files,
-    totals: {
-      files: files.length,
-      added: files.reduce((n, f) => n + (f.added || 0), 0),
-      deleted: files.reduce((n, f) => n + (f.deleted || 0), 0),
-      binary: files.filter((f) => f.binary).length,
-    },
-    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath, warnings },
-    policy,
-    pathsInput,
-    paths: classification,
-    // `assignTier` takes the classifier agent's `kinds` plus this classification; the kinds are the agent's to supply.
-    tierInputs: { paths: classification, changedPaths, kinds: null },
-  };
-  writeArtifact(staging, 'facts.json', `${JSON.stringify(facts, null, 2)}\n`);
-  writeArtifact(staging, 'probe.js', PROBE_SOURCE);
-
-  const baseline = runBaseline({ deps, options, staging, tarPath, entries, changedPaths, headSha, nodeModules });
-  writeArtifact(staging, 'baseline.json', `${JSON.stringify(baseline.record, null, 2)}\n`);
-  writeArtifact(staging, 'baseline.log', baseline.log);
-
-  // ---- the head must still be the head: nothing is published for a moved one
+  // ---- head code has run and its whole process group is gone: re-establish trust before anything is attested -----
+  removePrepared(scratch);
+  tracked.scratch = null;
+  assertStagingIntact(staging, snapshotDir, entries, algo);
+  makeReadOnly(snapshotDir);
+  // the head must still be the head: nothing is published for a moved one
   headStable('head-moved');
 
+  const published = [
+    ...derived.files,
+    ['baseline.json', Buffer.from(`${JSON.stringify(baseline.record, null, 2)}\n`)],
+    ['baseline.log', Buffer.from(baseline.log)],
+  ];
   const artifacts = { snapshot: { path: 'snapshot', treeSha, sha256: snapshotDigest } };
-  for (const name of ['range.diff', 'delta.diff', 'facts.json', 'probe.js', 'baseline.json', 'baseline.log']) {
-    if (fs.existsSync(path.join(staging, name))) artifacts[name] = describeFile(staging, name);
+  for (const [name, bytes] of published) {
+    fs.writeFileSync(path.join(staging, name), bytes);
+    artifacts[name] = { path: name, sha256: sha256(bytes), bytes: bytes.length };
   }
-  fs.rmSync(tarPath, { force: true });
   const manifest = {
     schema: SCHEMA_VERSION,
     fingerprint,
+    inputs,
     runId: options.runId,
     baseSha,
     headSha,
-    range: facts.range,
+    range: expected.range,
     artifacts,
-    absent,
-    baseline: { ran: baseline.record.ran, exitCode: baseline.record.exitCode, timedOut: baseline.record.timedOut, reason: baseline.record.reason || null },
+    absent: derived.absent,
+    baseline: baselineSummary(baseline.record),
   };
-  writeArtifact(staging, 'manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  fs.writeFileSync(path.join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  makeReadOnly(snapshotDir);
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
   try {
     fs.renameSync(staging, dir);
   } catch (err) {
-    // A concurrent preparer for the same head published first: use its directory if it verifies.
-    const existing = ['ENOTEMPTY', 'EEXIST'].includes(err.code) ? readPublished(deps, options, dir, fingerprint, entries, algo) : null;
+    // The directory appeared while this step ran: another preparer with the same inputs published first, or a baseline
+    // test created it. It is used only if it holds exactly what this step derived.
+    const existing = ['ENOTEMPTY', 'EEXIST'].includes(err.code) ? readPublished(dir, fingerprint, entries, algo, expected) : null;
     if (existing === null) throw new PrepareError('publish-failed', 'publish', `cannot publish ${dir}: ${err.message}`);
     return resultFrom(existing, dir, true);
   }
-  setStaging(null);
+  tracked.staging = null;
   return resultFrom(manifest, dir, false);
 }
 
