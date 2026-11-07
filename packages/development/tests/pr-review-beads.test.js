@@ -111,6 +111,17 @@ describe('the dedupe key: repository, file and normalized claim', () => {
     expect(a).toEqual(b);
   });
 
+  test('one claim reported at different severities is one bead at the WORST severity, never split by severity', () => {
+    for (const order of [['nit', 'important'], ['important', 'nit']]) {
+      const ledger = order.map((severity, i) => finding({ id: `S-${i}`, severity, locationOrLink: `src/widget.js:${10 + i}` }));
+      const plan = planBeads(input(ledger), empty(input(ledger)));
+      expect(plan.actions).toHaveLength(1);
+      expect(plan.actions[0].findingIds).toEqual(['S-0', 'S-1']);
+      expect(plan.actions[0].create).toMatchObject({ priority: 1, type: 'bug' });
+      expect(plan.actions[0].create.title).toMatch(/^\[important\]/);
+    }
+  });
+
   test('two findings with one claim in one file share one bead', () => {
     const ledger = [finding({ id: 'A', locationOrLink: 'src/widget.js:10' }), finding({ id: 'B', locationOrLink: 'src/widget.js:40' })];
     expect(beadKeys(input(ledger)).keys).toHaveLength(1);
