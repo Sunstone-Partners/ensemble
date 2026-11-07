@@ -13,11 +13,13 @@
  *
  *   payload  { repoRoot?, headSha, citations:[{ id?, file, line?, lines?:[start,end], claim? }] }
  *            `repoRoot` defaults to the current directory; every other key is refused. Output:
- *            { ok, headSha, candidates:[{ ...citation, hunkHash?, depHashes?, hashError? }] } -- or { ok:false, error }.
- *            Contract, hunk definition and limits: pr-review-carry-hash.js (only what the cited file depends on is hashed;
- *            callers/importers and bare npm packages are not; the closure is capped at 200 files; an unresolved relative
- *            specifier is hashed as `absent`, so a path-looking string is harmless and a dangling import is invalidated
- *            when the file appears).
+ *            { ok, headSha, candidates:[{ ...citation, hunkHash?, depHashes?, dependents?, hashError? }] } -- or { ok:false, error }.
+ *            Contract, hunk definition and limits: pr-review-carry-hash.js (dependencies are hashed; dependents -- importers,
+ *            name-matched tests, computed-specifier files naming it -- are listed, not hashed, and planCarry re-verifies when
+ *            one is in the delta; direct dependents only; bare npm packages are not hashed; symlinks are refused; the closure
+ *            is capped at 200 files; an unresolved relative specifier is hashed as `absent`). Redaction: the output goes
+ *            through `redact`, which replaces the value of any key matching /token|secret|password|api[-_]?key|authorization/i,
+ *            so a depHashes entry keyed `lib/token-cache.js` comes back `[REDACTED]` (planCarry: missing hash, no carry).
  */
 
 const fs = require('fs');

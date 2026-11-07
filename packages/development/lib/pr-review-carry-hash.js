@@ -8,7 +8,8 @@
  * pr-review-prepare.js takes), so it is a module of its own and NOT part of the pure pr-review-cli.js.
  *
  *   hashCitations({ repoRoot?, headSha, citations:[{ id?, file, line?, lines?:[start,end], claim? }] }, deps?)
- *     -> { ok, headSha, candidates:[{ ...the citation verbatim, hunkHash?, depHashes?, hashError? }] }
+ *     -> { ok, headSha, candidates:[{ ...the citation verbatim, hunkHash?, depHashes?, dependents?, hashError? }] }
+ *     (a `hashError` candidate carries none of hunkHash, depHashes, dependents)
  *
  * Everything is read AT `headSha` from git objects (`git ls-tree -r` for the tracked paths, `git cat-file --batch` for blob
  * bytes), never from the working tree. Subprocess count is small: one ls-tree plus one cat-file per closure level, blobs
@@ -25,26 +26,38 @@
  *
  * FAIL CLOSED: a citation that cannot be hashed gets NO hunkHash and NO depHashes plus `hashError` (planCarry reads a missing
  * hash as 'hash-missing' => re-verify). Causes: file absent at head, no/invalid line or range (outside the file), the cited
- * file or a closure member holds a computed specifier, the tracked closure exceeds MAX_CLOSURE (200) files, the cited file is source of an unanalyzable type, a
+ * file or a closure member holds a computed specifier or is a symlink, the tracked closure exceeds MAX_CLOSURE (200) files, the cited file is source of an unanalyzable type, a
+ * git read or scan (the dependents' `git grep`) fails, a
  * path git cannot hand to `cat-file --batch` (contains a newline). Nothing is ever defaulted.
  *
- * HONEST LIMITS: only what the cited file DEPENDS ON is hashed. Its direct callers/importers are NOT (a changed caller does
- * not change the hash; the delta planner's blast radius covers that). Bare npm packages (`require('lodash')`) are out of
- * scope: not hashed, a lockfile change does not invalidate. Resolution is the graph's file-level over-approximation. A
+ * HONEST LIMITS: only what the cited file DEPENDS ON is hashed. Its DEPENDENTS are LISTED, not hashed: `dependents` holds the
+ * sorted repo-relative paths of the files that use it at the head, found exactly as planDeltaReview (pr-review-delta.js)
+ * finds the blast radius of a changed file: importers (`buildImportGraph` over the head's reference lines, `targetKeys`),
+ * name-matched tests (same stem, no import edge needed; not applied when the cited file is itself a test) and files with a
+ * computed specifier whose text names the cited file. `planCarry` re-verifies a verdict when any of them is in the delta.
+ * Direct dependents only, not transitive callers. Bare npm packages (`require('lodash')`) are not hashed: a lockfile change
+ * does not invalidate. Symlinks (git mode 120000) are refused, cited or in the closure: git stores the link text, so hashing
+ * the blob would not see the target change. Resolution is the graph's file-level over-approximation. A
  * relative specifier that resolves to no tracked file is recorded as an ABSENT dependency: key = its normalized joined path,
  * value = sha256('absent'). A string that merely looks like a path is therefore harmless, and a dangling import is
  * invalidated when the file appears (the key set and hashes change). Absent entries are never read and do not count toward
  * the 200-file cap. A specifier climbing above the repository root is ignored. Runtime-built paths are only
  * caught when the call has no plain literal (computed). Only lines are hashed, not syntax: a whitespace edit inside the
- * region changes the hash (toward re-verification).
+ * region changes the hash (toward re-verification). REDACTION: the CLI output (and the state writer) replace the VALUE of any
+ * key matching /token|secret|password|api[-_]?key|authorization/i, so a `depHashes` entry keyed `lib/token-cache.js` comes
+ * back `[REDACTED]`; `planCarry` reads that as a missing hash, so carry is disabled for that closure (fails closed).
  */
 
 const crypto = require('crypto');
 const {
   referencesOf, joinRelative, dirname, resolveTracked, SCANNED_EXTENSIONS,
+  buildImportGraph, targetKeys, testStemOf, ownerStemOf, namesFile, TEST_FILE,
 } = require('./pr-review-import-graph');
 const { isSizeable } = require('./pr-review-delta');
 const { isObjectId } = require('./pr-review-scope');
+const { parseLsTreeZ, scanReferenceLines, scanNameLines } = require('./pr-review-prepare');
+
+const SYMLINK_MODE = '120000';
 
 const CONTEXT_LINES = 3;
 const MAX_CLOSURE = 200;
@@ -76,10 +89,11 @@ function gitText(git, repoRoot, args, buffer = false, input) {
   return r.stdout;
 }
 
-/** Tracked paths at the head. */
+/** Tracked paths at the head (`tracked`) and their git modes (`modes`: path -> '100644' | '120000' | ...). */
 function listTracked(git, repoRoot, headSha) {
-  const out = gitText(git, repoRoot, ['ls-tree', '-r', '-z', '--name-only', '--full-tree', headSha]);
-  return new Set(String(out).split('\0').filter((p) => p !== ''));
+  const out = gitText(git, repoRoot, ['ls-tree', '-r', '-z', '--full-tree', headSha]);
+  const entries = parseLsTreeZ(String(out));
+  return { tracked: new Set(entries.map((e) => e.path)), modes: new Map(entries.map((e) => [e.path, e.mode])) };
 }
 
 /** Parses `git cat-file --batch` output for `paths`, in order: Map path -> Buffer | null (missing). */
@@ -178,6 +192,7 @@ function depHashesOf(ctx, file) {
         next.push(dep);
       }
     }
+    for (const dep of next) if (ctx.modes.get(dep) === SYMLINK_MODE) throw new HashError(`${dep} is a symlink`);
     loadBlobs(ctx, next);
     for (const dep of next) {
       const blob = ctx.blobs.get(dep);
@@ -191,18 +206,58 @@ function depHashesOf(ctx, file) {
   return out;
 }
 
+/** Throws on a git failure (-> `git read failed`), never returns a partial answer. Builds the graph and name lines once per call. */
+function blastRadius(ctx) {
+  if (ctx.radius === undefined) {
+    try {
+      const deps = { git: ctx.git };
+      const refLines = scanReferenceLines(deps, ctx.repoRoot, ctx.headSha);
+      if (refLines === null) throw new Error('the reference scan (git grep) failed');
+      const graph = buildImportGraph({ filePaths: [...ctx.tracked], lines: refLines });
+      const nameLines = graph.computed.length === 0 ? [] : scanNameLines(deps, ctx.repoRoot, ctx.headSha, graph.computed, ctx.citedFiles);
+      if (nameLines === null) throw new Error('the name scan (git grep) failed');
+      const testsByStem = new Map();
+      for (const test of graph.testFiles) {
+        const stem = testStemOf(test);
+        if (!testsByStem.has(stem)) testsByStem.set(stem, []);
+        testsByStem.get(stem).push(test);
+      }
+      ctx.radius = { graph, nameLines, testsByStem, computed: new Set(graph.computed) };
+    } catch (err) {
+      ctx.radius = { error: err };
+    }
+  }
+  if (ctx.radius.error) throw ctx.radius.error;
+  return ctx.radius;
+}
+
+/** The files that use `file` at the head, exactly as planDeltaReview's blast radius finds them (never `file` itself). */
+function dependentsOf(ctx, file) {
+  const { graph, nameLines, testsByStem, computed } = blastRadius(ctx);
+  const found = new Set();
+  for (const key of targetKeys(file)) {
+    if (!Object.prototype.hasOwnProperty.call(graph.importers, key)) continue;
+    for (const importer of graph.importers[key]) found.add(importer);
+  }
+  if (!TEST_FILE.test(file)) for (const test of testsByStem.get(ownerStemOf(file)) || []) found.add(test);
+  for (const line of nameLines) if (computed.has(line.path) && namesFile(line.text, file)) found.add(line.path);
+  found.delete(file);
+  return [...found].sort();
+}
+
 function hashOne(ctx, citation) {
   const { file } = citation;
   if (!isText(file) || file.startsWith('/') || file.includes('\\') || file.split('/').some((s) => s === '' || s === '.' || s === '..')) {
     throw new HashError('file is not a normalized repository-relative path');
   }
+  if (ctx.modes.get(file) === SYMLINK_MODE) throw new HashError(`${file} is a symlink`);
   loadBlobs(ctx, [file]);
   const blob = ctx.blobs.get(file);
   if (blob === null || !ctx.tracked.has(file)) throw new HashError(`${file} does not exist at the head`);
   if (!isSizeable(file) && !isScanned(file)) throw new HashError(`${file} is source of a type that cannot be analyzed`);
   const hunkHash = hunkOf(blob.toString('utf8'), citation);
   const depHashes = isScanned(file) ? depHashesOf(ctx, file) : {};
-  return { hunkHash, depHashes };
+  return { hunkHash, depHashes, dependents: dependentsOf(ctx, file) };
 }
 
 /**
@@ -223,9 +278,10 @@ function hashCitations(request, deps = {}) {
   const repoRoot = request.repoRoot === undefined ? process.cwd() : request.repoRoot;
   if (!isText(repoRoot)) return { ok: false, error: 'repoRoot must be a non-empty string' };
   const git = deps.git || defaultGit();
-  const ctx = { git, repoRoot, headSha: request.headSha, blobs: new Map(), tracked: null };
+  const citedFiles = [...new Set(request.citations.map((c) => c.file).filter(isText))];
+  const ctx = { git, repoRoot, headSha: request.headSha, blobs: new Map(), tracked: null, modes: null, citedFiles, radius: undefined };
   try {
-    ctx.tracked = listTracked(git, repoRoot, request.headSha);
+    ({ tracked: ctx.tracked, modes: ctx.modes } = listTracked(git, repoRoot, request.headSha));
   } catch (err) {
     return { ok: false, error: `cannot list the tracked files at the head: ${err.message}` };
   }

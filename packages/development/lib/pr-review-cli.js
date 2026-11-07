@@ -205,15 +205,33 @@
  *              tally, and asking the gate which findings block.
  *              `evaluateGate`'s own answer is unchanged by it.
  *
- *   carry      { headSha, lastReviewedSha, deltaPlan, deltaPaths[], highPaths[], priorVerdicts[], candidates[] }
- *              -- (lib/pr-review-carry.js) which settled verification verdicts of the prior round still stand after
- *              a fix push. Answers { ok, carried[], reverify[], unmatched[], reasons[] }: a carried record keeps its
- *              verdict and votes, is stamped `head` = this head and keeps `carriedFrom`; a `reverify` entry lists every
- *              reason (the module header has the table). `priorVerdicts` and `candidates` are REQUEST parameters
- *              (arrays, else exit 1); everything else is graded in-band and a missing fact means re-verification.
- *              HONEST LIMITS: it never hashes anything -- `hunkHash` and `depHashes` are inputs the caller computed
- *              (lib/pr-review-carry-hash-cli.js); only `present`/`filtered` verdicts carry; a High or sensitive path
- *              touched by the delta carries nothing; a `full` range carries nothing.
+ *   carry      { action, ... } -- (lib/pr-review-carry.js) settled verification verdicts across heads. One `action` per call,
+ *              every key of it required (an absent or misspelt one is exit 1), as `ledger` does:
+ *                plan       { prId, headSha, lastReviewedSha, baseSha, depth, expectedVerifiers?, deltaPlan, deltaPaths[],
+ *                             highPaths[], candidates[], cwd? } -- which settled verdicts of the prior round still stand
+ *                             after a fix push. The prior verdicts and the prior ledger are NOT payload keys (one is refused):
+ *                             the CLI reads them from the PR's own state report at `lastReviewedSha` (state-read's rule), so
+ *                             a verdict can only come from a report written for this PR at the head the delta starts from.
+ *                             Answers { ok, carried[], reverify[], unmatched[], reasons[], ledger[], priorState }: a carried
+ *                             record keeps its verdict and votes, is stamped `head` = this head and keeps `carriedFrom`;
+ *                             `ledger` is the prior ledger with exactly those findings stamped (`stampLedger`; refused,
+ *                             `ok:false`, when it already holds a finding stamped with this head); a `reverify` entry lists
+ *                             every reason (the module header has the table). A missing, discarded or corrupt report
+ *                             carries nothing (`prior-state-unavailable`).
+ *                record     { prId, baseSha, headSha, depth, expectedVerifiers?, findings[], candidates[] } -- the verdict
+ *                             records of a finished round (`recordVerdicts`): the settled findings of the `votes` result
+ *                             joined to their hashed citations and stamped with the binding `plan` checks. Answers
+ *                             { ok, verdicts[], skipped[{id, reason}] }; write the verdicts to the state report's `verdicts`.
+ *                reconcile  { ledger[], changedLocations[], headSha, observations[] } -- `clearFixedFindings` with EVERY
+ *                             observation of this round as `reReported`: a finding no reviewer reported again whose cited
+ *                             location the push changed is cleared; one that was observed again, whatever its verdict, is
+ *                             not. Answers { ok, ledger[], cleared[] }.
+ *              `deltaPlan`, `deltaPaths`, `highPaths`, heads, `baseSha`, `depth` and every hash are graded in-band and a
+ *              missing one means re-verification (exit 0). HONEST LIMITS: it never hashes anything -- `hunkHash`,
+ *              `depHashes` and `dependents` are inputs the caller computed (lib/pr-review-carry-hash-cli.js); only
+ *              `present`/`filtered` verdicts carry; a High or sensitive path touched by the delta carries nothing; a
+ *              `full` range carries nothing; the state report is untracked and writable by whoever can write the
+ *              repository, so binding stops a verdict from the wrong PR, base, depth or ledger, not a forged report.
  *
  * FAIL CLOSED at the boundary. Two kinds of payload value are told apart:
  *   - the review FACTS of `scope`, `remote`, `status`, `policy`, `rules`,
@@ -243,6 +261,7 @@ const {
   scopeViolations,
   recordRound,
   recordOperatorResolution,
+  clearFixedFindings,
 } = require('./pr-review-ledger');
 const { evaluateRemoteReview } = require('./pr-review-remote');
 const { deriveStatus } = require('./pr-review-status');
@@ -260,7 +279,7 @@ const { offerExplainers } = require('./pr-review-explainer-offer');
 const { renderBriefFromFiles } = require('./pr-review-brief-files');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
-const { planCarry } = require('./pr-review-carry');
+const { planCarry, recordVerdicts, stampLedger, REASONS: CARRY_REASONS } = require('./pr-review-carry');
 const { evaluateApprovals } = require('./pr-review-approvals');
 const { evaluateGate } = require('./pr-review-gate');
 const { buildDispositionChoices } = require('./pr-review-disposition');
@@ -593,16 +612,84 @@ function runMode(payload) {
 }
 
 /**
- * `carry` is a pass-through to `planCarry` (lib/pr-review-carry.js; kata qw98): after a fix push it says which settled
- * verification verdicts of the prior round still stand (`carried`, re-stamped with the current head and keeping
- * `carriedFrom`) and which must be verified again (`reverify`, with every reason; `unmatched` for a prior verdict no
- * candidate re-presents). The REQUEST parameters `priorVerdicts` and `candidates` must be arrays (a misspelt key is an
- * error, exit 1, never read as empty); every other fact (heads, `deltaPlan`, `deltaPaths`, `highPaths`, a hash) is graded
- * in-band by the module and a missing one means re-verification (exit 0).
+ * `carry` (lib/pr-review-carry.js; kata qw98), one `action` per call like `ledger`:
+ *   - `plan` says, after a fix push, which settled verification verdicts of the prior round still stand (`carried`,
+ *     re-stamped with the current head and keeping `carriedFrom`) and which must be verified again (`reverify`, with every
+ *     reason; `unmatched` for a prior verdict no candidate re-presents). It reads the prior verdicts and ledger from the
+ *     PR's state report itself, at `lastReviewedSha`: a payload that supplies them is refused, so a verdict can never be
+ *     injected from stdin. It answers the prior ledger with the carried findings stamped (`stampLedger`).
+ *   - `record` builds the stamped verdict records of a finished round (`recordVerdicts`).
+ *   - `reconcile` runs `clearFixedFindings` with every observation of the round as `reReported`.
+ * The REQUEST parameters of each action (`prId`, `candidates`, `findings`, `ledger`, ...) are checked here (a missing or
+ * misspelt key is an error, exit 1, never read as empty); every fact `planCarry` grades (heads, `baseSha`, `depth`,
+ * `deltaPlan`, `deltaPaths`, `highPaths`, a hash) is graded in-band and a missing one means re-verification (exit 0).
  */
+
+/** What the PR's state report said about the round the delta starts from. */
+function readPriorRound(payload) {
+  const unavailable = (priorState) => ({ priorState, verdicts: [], ledger: [] });
+  const read = readState(statePath(payload.prId, payload.cwd || process.cwd()), payload.lastReviewedSha, { cwd: payload.cwd });
+  if (!read.ok) return unavailable(read.reason === 'corrupt' ? 'corrupt' : 'unreadable');
+  if (!read.exists) return unavailable('absent');
+  if (read.discarded || !isObject(read.state)) return unavailable('discarded');
+  const { verdicts, ledger } = read.state;
+  return { priorState: 'read', verdicts: verdicts === undefined ? [] : verdicts, ledger: ledger === undefined ? [] : ledger };
+}
+
+function carryPlan(payload) {
+  for (const key of ['priorVerdicts', 'priorLedger']) {
+    if (payload[key] !== undefined) throw new Error(`carry plan reads '${key}' from the PR's state report at lastReviewedSha; it is not a payload key`);
+  }
+  const prior = readPriorRound(payload);
+  const plan = planCarry({ ...payload, priorVerdicts: prior.verdicts, priorLedger: prior.ledger });
+  const answer = { ...plan, ledger: Array.isArray(prior.ledger) ? prior.ledger : null, priorState: prior.priorState };
+  if (prior.priorState !== 'read') {
+    const unavailable = CARRY_REASONS.PRIOR_STATE_UNAVAILABLE;
+    return {
+      ...answer,
+      reasons: [...new Set([...plan.reasons, unavailable])],
+      reverify: plan.reverify.map((entry) => ({ ...entry, reasons: [...new Set([...entry.reasons, unavailable])] })),
+    };
+  }
+  if (!plan.ok || !Array.isArray(prior.ledger) || typeof payload.headSha !== 'string' || payload.headSha.trim() === '') return answer;
+  const stamped = stampLedger({ ledger: prior.ledger, carried: plan.carried, headSha: payload.headSha });
+  if (!stamped.ok) {
+    return { ok: false, carried: [], reverify: [], unmatched: [], reasons: [stamped.reason], ledger: null, priorState: prior.priorState };
+  }
+  return { ...answer, ledger: stamped.ledger };
+}
+
+/** action -> the keys its payload must carry, and the call it delegates to. Looked up by own name only. */
+const CARRY_ACTIONS = Object.freeze({
+  plan: {
+    keys: { prId: TEXT, candidates: ARRAY },
+    optional: { cwd: TEXT },
+    run: carryPlan,
+  },
+  record: {
+    keys: { findings: ARRAY, candidates: ARRAY },
+    run: (p) => recordVerdicts(p),
+  },
+  reconcile: {
+    keys: { ledger: ARRAY, changedLocations: ARRAY, headSha: TEXT, observations: ARRAY },
+    run: (p) => {
+      const result = clearFixedFindings({ ledger: p.ledger, changedLocations: p.changedLocations, headSha: p.headSha, reReported: p.observations });
+      if (!result.ok) throw new Error(result.reason);
+      return { ok: true, ledger: result.findings, cleared: result.cleared };
+    },
+  },
+});
+
 function runCarry(payload) {
-  requireKeys(payload, { priorVerdicts: ARRAY, candidates: ARRAY }, 'carry');
-  return planCarry(payload);
+  if (!isObject(payload)) throw new Error('carry payload must be a JSON object');
+  const name = payload.action;
+  const action = typeof name === 'string' && hasOwn(CARRY_ACTIONS, name) ? CARRY_ACTIONS[name] : undefined;
+  if (action === undefined) {
+    throw new Error(`Unknown carry action ${shown(name)}. Expected one of: ${Object.keys(CARRY_ACTIONS).join(', ')}`);
+  }
+  requireKeys(payload, action.keys, `carry action '${name}'`);
+  if (action.optional !== undefined) optionalKeys(payload, action.optional, `carry action '${name}'`);
+  return action.run(payload);
 }
 
 /**

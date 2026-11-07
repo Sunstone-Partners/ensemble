@@ -13,6 +13,10 @@ const { execFileSync } = require('child_process');
 const { hashCitations } = require('../lib/pr-review-carry-hash');
 const { main } = require('../lib/pr-review-carry-hash-cli');
 const { planCarry, REASONS } = require('../lib/pr-review-carry');
+const { planDeltaReview } = require('../lib/pr-review-delta');
+const { buildImportGraph } = require('../lib/pr-review-import-graph');
+const { scanReferenceLines, scanNameLines } = require('../lib/pr-review-prepare');
+const realGit = require('../lib/review-prepare-runtime').defaultDeps().git;
 
 const FIXTURE_ROOT = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'qw98', 'fixtures');
 const roots = [];
@@ -123,6 +127,7 @@ describe('hunkHash', () => {
     expect(typeof out.hashError).toBe('string');
     expect(out).not.toHaveProperty('hunkHash');
     expect(out).not.toHaveProperty('depHashes');
+    expect(out).not.toHaveProperty('dependents');
   });
 
   test('a file that exists only in the working tree, not at the head, is absent', () => {
@@ -206,6 +211,7 @@ describe('depHashes', () => {
     expect(out.hashError).toMatch(pattern);
     expect(out).not.toHaveProperty('hunkHash');
     expect(out).not.toHaveProperty('depHashes');
+    expect(out).not.toHaveProperty('dependents');
   });
 
   test('an unresolved relative specifier (cited file or closure member) is hashed as an ABSENT dependency, not a failure', () => {
@@ -248,6 +254,7 @@ describe('depHashes', () => {
     const overOut = one(over, over.head, { file: 'entry.js', line: 1 });
     expect(overOut.hashError).toMatch(/exceeds 200/);
     expect(overOut).not.toHaveProperty('depHashes');
+    expect(overOut).not.toHaveProperty('dependents');
     expect(overOut).not.toHaveProperty('hunkHash');
   });
 
@@ -267,6 +274,9 @@ describe('depHashes', () => {
     // ls-tree once; cat-file per level (cited blob(s), then b/c.json, then d): the second citation hits the cache.
     expect(calls.filter((c) => c === 'ls-tree')).toHaveLength(1);
     expect(calls.filter((c) => c === 'cat-file').length).toBeLessThanOrEqual(5);
+    // reference scan + (computed-specifier name scan): at most two greps per call, however many citations.
+    expect(calls.filter((c) => c === 'grep').length).toBeLessThanOrEqual(2);
+    expect(calls.filter((c) => c === 'grep').length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -314,6 +324,27 @@ describe('request validation and the CLI', () => {
 });
 
 describe('contract with planCarry', () => {
+  const BASE = 'e'.repeat(40);
+  /** The planCarry input of one round: prior verdicts hashed at h1, candidates hashed at h2, `deltaPaths` changed between. */
+  function round(repo, h1, h2, citations, deltaPaths, overrides = {}) {
+    const at = (sha) => hashCitations({ repoRoot: repo.root, headSha: sha, citations }).candidates;
+    const stamp = { prId: '268', baseSha: BASE, depth: 'standard', expectedVerifiers: 1 };
+    const prior = at(h1);
+    return {
+      ...stamp,
+      headSha: h2,
+      lastReviewedSha: h1,
+      deltaPlan: { mode: 'delta', readSet: deltaPaths.map((p) => ({ path: p, reasons: ['changed'] })) },
+      deltaPaths,
+      highPaths: [],
+      priorVerdicts: prior.map((c) => ({ ...c, ...stamp, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'real' }] })),
+      priorLedger: prior.map((c) => ({ id: c.id, file: c.file, failureMode: c.claim })),
+      candidates: at(h2),
+      ...overrides,
+    };
+  }
+  const changedBetween = (repo, h1, h2) => git(repo.root, ['diff', '--name-only', h1, h2]).split('\n').sort();
+
   test('untouched citation carries; a citation whose dependency changed in the delta is reverify dependency-changed', () => {
     const repo = makeRepo({
       'src/a.js': "require('./dep');\n" + lines(10),
@@ -326,14 +357,10 @@ describe('contract with planCarry', () => {
       { id: 'A', file: 'src/a.js', line: 5, claim: 'a is wrong' },
       { id: 'B', file: 'src/b.js', line: 5, claim: 'b is wrong' },
     ];
-    const at = (sha) => hashCitations({ repoRoot: repo.root, headSha: sha, citations }).candidates;
-    const priorVerdicts = at(h1).map((c) => ({ ...c, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'confirmed' }] }));
     const h2 = repo.commit({ 'src/dep.js': 'module.exports = 2;\n', 'src/unrelated.md': 'note\n' });
-    const deltaPaths = git(repo.root, ['diff', '--name-only', h1, h2]).split('\n');
-    expect(deltaPaths.sort()).toEqual(['src/dep.js', 'src/unrelated.md']);
-    const plan = planCarry({
-      headSha: h2, lastReviewedSha: h1, deltaPlan: { mode: 'delta' }, deltaPaths, highPaths: [], priorVerdicts, candidates: at(h2),
-    });
+    const deltaPaths = changedBetween(repo, h1, h2);
+    expect(deltaPaths).toEqual(['src/dep.js', 'src/unrelated.md']);
+    const plan = planCarry(round(repo, h1, h2, citations, deltaPaths));
     expect(plan.ok).toBe(true);
     expect(plan.carried.map((c) => c.id)).toEqual(['B']);
     expect(plan.carried[0]).toMatchObject({ head: h2, carriedFrom: h1 });
@@ -346,37 +373,247 @@ describe('contract with planCarry', () => {
     const repo = makeRepo({ 'src/a.js': "require('./gone');\n" + lines(10), 'src/b.js': lines(10) });
     const h1 = repo.head;
     const citations = [{ id: 'A', file: 'src/a.js', line: 5, claim: 'a is wrong' }, { id: 'B', file: 'src/b.js', line: 5, claim: 'b is wrong' }];
-    const at = (sha) => hashCitations({ repoRoot: repo.root, headSha: sha, citations }).candidates;
-    const priorVerdicts = at(h1).map((c) => ({ ...c, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'confirmed' }] }));
     const h2 = repo.commit({ 'src/gone.js': 'module.exports = 1;\n' });
-    const deltaPaths = git(repo.root, ['diff', '--name-only', h1, h2]).split('\n');
-    const plan = planCarry({
-      headSha: h2, lastReviewedSha: h1, deltaPlan: { mode: 'delta' }, deltaPaths, highPaths: [], priorVerdicts, candidates: at(h2),
-    });
+    const plan = planCarry(round(repo, h1, h2, citations, changedBetween(repo, h1, h2)));
     expect(plan.carried.map((c) => c.id)).toEqual(['B']);
     expect(plan.reverify).toHaveLength(1);
     expect(plan.reverify[0]).toMatchObject({ id: 'A' });
     expect(plan.reverify[0].reasons).toContain(REASONS.DEPENDENCY_CHANGED);
   });
 
+  test('a changed CALLER of an unchanged cited file is dependent-changed (the dependents the producer lists feed planCarry)', () => {
+    const repo = makeRepo({
+      'lib/core.js': lines(10),
+      'lib/caller.js': "require('./core');\n" + lines(5),
+      'lib/solo.js': lines(10),
+    });
+    const h1 = repo.head;
+    const citations = [
+      { id: 'A', file: 'lib/core.js', line: 5, claim: 'core is wrong' },
+      { id: 'B', file: 'lib/solo.js', line: 5, claim: 'solo is wrong' },
+    ];
+    const h2 = repo.commit({ 'lib/caller.js': "require('./core');\n// edited\n" + lines(5) });
+    const plan = planCarry(round(repo, h1, h2, citations, changedBetween(repo, h1, h2)));
+    expect(plan.carried.map((c) => c.id)).toEqual(['B']);
+    expect(plan.reverify[0]).toMatchObject({ id: 'A' });
+    expect(plan.reverify[0].reasons).toContain(REASONS.DEPENDENT_CHANGED);
+  });
+
   test('a citation that could not be hashed at the new head is re-verified (hash-missing), never carried', () => {
     const repo = makeRepo({ 'src/a.js': lines(10) });
     const h1 = repo.head;
-    const citation = { id: 'A', file: 'src/a.js', line: 5, claim: 'a is wrong' };
-    const prior = hashCitations({ repoRoot: repo.root, headSha: h1, citations: [citation] }).candidates[0];
-    const h2 = repo.commit({ 'src/a.js': "require(pick());\n" + lines(10) });
-    const candidate = hashCitations({ repoRoot: repo.root, headSha: h2, citations: [citation] }).candidates[0];
-    expect(candidate.hashError).toBeDefined();
-    const plan = planCarry({
-      headSha: h2,
-      lastReviewedSha: h1,
-      deltaPlan: { mode: 'delta' },
-      deltaPaths: ['unrelated.md'],
-      highPaths: [],
-      priorVerdicts: [{ ...prior, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'confirmed' }] }],
-      candidates: [candidate],
-    });
+    const citations = [{ id: 'A', file: 'src/a.js', line: 5, claim: 'a is wrong' }];
+    const h2 = repo.commit({ 'src/a.js': 'require(pick());\n' + lines(10) });
+    const input = round(repo, h1, h2, citations, ['unrelated.md']);
+    expect(input.candidates[0].hashError).toBeDefined();
+    const plan = planCarry(input);
     expect(plan.carried).toEqual([]);
     expect(plan.reverify[0].reasons).toContain(REASONS.HASH_MISSING);
+  });
+});
+
+const NO_FIELDS = (out) => {
+  expect(out).not.toHaveProperty('hunkHash');
+  expect(out).not.toHaveProperty('depHashes');
+  expect(out).not.toHaveProperty('dependents');
+};
+
+describe('symlinks are refused (git mode 120000)', () => {
+  const repo = makeRepo({
+    'real/target.js': lines(10),
+    'src/plain.js': 'module.exports = 1;\n',
+    'src/ok.js': "require('./plain');\n" + lines(10),
+    'src/uses-link.js': "require('./via-link');\n" + lines(10),
+  });
+  fs.mkdirSync(path.join(repo.root, 'link'), { recursive: true });
+  fs.symlinkSync('../real/target.js', path.join(repo.root, 'link/cited.js'));
+  fs.symlinkSync('../real/target.js', path.join(repo.root, 'src/via-link.js'));
+  const head = repo.commit({});
+
+  test('the ls-tree listing carries the symlink mode', () => {
+    expect(git(repo.root, ['ls-tree', head, 'link/cited.js'])).toMatch(/^120000 blob /);
+  });
+
+  test('a cited symlink => hashError "is a symlink", no hash fields (its link text must never be hashed)', () => {
+    const out = one(repo, head, { file: 'link/cited.js', line: 1 });
+    expect(out.hashError).toBe('link/cited.js is a symlink');
+    NO_FIELDS(out);
+  });
+
+  test('a dependency reached through a symlink => hashError for the whole citation', () => {
+    const out = one(repo, head, { file: 'src/uses-link.js', line: 5 });
+    expect(out.hashError).toBe('src/via-link.js is a symlink');
+    NO_FIELDS(out);
+  });
+
+  test('control: a regular file next to the symlinks still hashes, with its dependency', () => {
+    const out = one(repo, head, { file: 'src/ok.js', line: 5 });
+    expect(out.hashError).toBeUndefined();
+    expect(out.hunkHash).toMatch(SHA);
+    expect(Object.keys(out.depHashes)).toEqual(['src/plain.js']);
+  });
+
+  test('a changed symlink target can no longer leave a stale hash behind: the citation fails at both heads', () => {
+    const next = repo.commit({ 'real/target.js': lines(10, { 1: '// CHANGED' }) });
+    expect(one(repo, next, { file: 'link/cited.js', line: 1 }).hashError).toMatch(/symlink/);
+    expect(one(repo, head, { file: 'link/cited.js', line: 1 }).hashError).toMatch(/symlink/);
+  });
+
+  test('a submodule gitlink (mode 160000) stays fail-closed, cited or as a dependency', () => {
+    const r = makeRepo({ 'src/uses-gl.js': "require('./gl');\n" + lines(5), 'a.js': lines(3) });
+    git(r.root, ['update-index', '--add', '--cacheinfo', `160000,${r.head},src/gl.js`]);
+    git(r.root, ['commit', '-q', '-m', 'gitlink']);
+    const sha = git(r.root, ['rev-parse', 'HEAD']);
+    expect(git(r.root, ['ls-tree', sha, 'src/gl.js'])).toMatch(/^160000 commit /);
+    const cited = one(r, sha, { file: 'src/gl.js', line: 1 });
+    expect(cited.hashError).toBeDefined();
+    NO_FIELDS(cited);
+    const dep = one(r, sha, { file: 'src/uses-gl.js', line: 3 });
+    expect(dep.hashError).toMatch(/src\/gl\.js cannot be read/);
+    NO_FIELDS(dep);
+  });
+});
+
+describe('dependents (the blast radius of the cited file)', () => {
+  const FILES = {
+    'lib/core.js': lines(10),
+    'z/user.js': "require('../lib/core');\n",
+    'app/user2.js': "const c = require('../lib/core.js');\n",
+    // imports core AND is the name-matched test of core: listed once
+    'tests/core.test.js': "require('../lib/core');\n",
+    // a test of core by name only: no import edge
+    'a/core.spec.js': 'test(1);\n',
+    // computed specifier that names core
+    'lib/dyn.js': "const p = require(path.join(dir, 'core.js'));\n",
+    // computed specifier that does not name core
+    'lib/dyn2.js': 'require(pick(x));\n',
+    'lib/unrelated.js': 'module.exports = 0;\n',
+    // a test whose stem equals ownerStemOf of the cited test file 'tests/core.test.js'
+    'b/core.test.test.js': 'test(2);\n',
+  };
+  const repo = makeRepo(FILES);
+  const dependentsOf = (file) => one(repo, repo.head, { file, line: 1 });
+
+  test('importers: every file importing the cited one (extension and extensionless specifiers)', () => {
+    const { dependents } = dependentsOf('lib/core.js');
+    expect(dependents).toEqual(expect.arrayContaining(['z/user.js', 'app/user2.js']));
+  });
+
+  test('a name-matched test with NO import edge is a dependent', () => {
+    expect(dependentsOf('lib/core.js').dependents).toContain('a/core.spec.js');
+  });
+
+  test('a computed-specifier file whose text names the cited file is a dependent; one that does not is not', () => {
+    const { dependents } = dependentsOf('lib/core.js');
+    expect(dependents).toContain('lib/dyn.js');
+    expect(dependents).not.toContain('lib/dyn2.js');
+    expect(dependents).not.toContain('lib/unrelated.js');
+  });
+
+  test('the cited file never lists itself, even when it imports itself', () => {
+    const r = makeRepo({ 'self.js': "require('./self');\n" + lines(4), 'other.js': "require('./self');\n" });
+    const out = one(r, r.head, { file: 'self.js', line: 1 });
+    expect(out.dependents).toEqual(['other.js']);
+  });
+
+  test('dependents are sorted and de-duplicated (a file reached by several rules is listed once)', () => {
+    expect(dependentsOf('lib/core.js').dependents).toEqual([
+      'a/core.spec.js', 'app/user2.js', 'lib/dyn.js', 'tests/core.test.js', 'z/user.js',
+    ]);
+  });
+
+  test('a cited TEST file does not apply the stem rule: a test whose stem equals the cited test\'s own stem is not listed', () => {
+    // ownerStemOf('tests/core.test.js') is 'core.test'; 'b/core.test.test.js' has testStem 'core.test'.
+    const out = dependentsOf('tests/core.test.js');
+    expect(out.dependents).toEqual([]);
+    expect(out.depHashes['lib/core.js']).toMatch(SHA);
+  });
+
+  test('a file nothing uses has dependents []', () => {
+    expect(dependentsOf('lib/unrelated.js').dependents).toEqual([]);
+  });
+
+  test('a documentation citation also gets its dependents', () => {
+    const r = makeRepo({ 'docs/guide.md': '# g\nline\n', 'x.js': 'x\n' });
+    const out = one(r, r.head, { file: 'docs/guide.md', line: 2 });
+    expect(out.dependents).toEqual([]);
+    expect(out.depHashes).toEqual({});
+  });
+
+  test('the graph and name lines are built once per call: <= 2 greps and 1 ls-tree for many citations', () => {
+    const calls = [];
+    const out = hashCitations({
+      repoRoot: repo.root,
+      headSha: repo.head,
+      citations: [{ file: 'lib/core.js', line: 1 }, { file: 'z/user.js', line: 1 }, { file: 'lib/unrelated.js', line: 1 }],
+    }, { git: (args, opts) => { calls.push(args[0]); return realGit(args, opts); } });
+    expect(out.candidates.every((c) => Array.isArray(c.dependents))).toBe(true);
+    expect(calls.filter((c) => c === 'ls-tree')).toHaveLength(1);
+    expect(calls.filter((c) => c === 'grep')).toHaveLength(2);
+  });
+
+  test('no grep at all when every citation fails before the dependents step', () => {
+    const calls = [];
+    hashCitations({ repoRoot: repo.root, headSha: repo.head, citations: [{ file: 'nope.js', line: 1 }] },
+      { git: (args, opts) => { calls.push(args[0]); return realGit(args, opts); } });
+    expect(calls).not.toContain('grep');
+  });
+
+  test('a failed reference scan fails closed: hashError, no hash fields; a citation that failed earlier keeps its own error', () => {
+    const failing = (args, opts) => (args[0] === 'grep' ? { status: 2, stdout: '', stderr: 'boom' } : realGit(args, opts));
+    const out = hashCitations({
+      repoRoot: repo.root,
+      headSha: repo.head,
+      citations: [{ id: 'gone', file: 'nope.js', line: 1 }, { id: 'ok', file: 'lib/core.js', line: 1 }],
+    }, { git: failing });
+    expect(out.ok).toBe(true);
+    expect(out.candidates[0].hashError).toMatch(/does not exist/);
+    expect(out.candidates[1].hashError).toMatch(/^git read failed: .*reference scan/);
+    NO_FIELDS(out.candidates[1]);
+    expect(out.candidates[1]).toMatchObject({ id: 'ok', file: 'lib/core.js', line: 1 });
+  });
+
+  test('a failed name scan (computed-specifier files) fails closed too', () => {
+    const failing = (args, opts) => (args[0] === 'grep' && args.includes('-F') ? { status: 2, stdout: '', stderr: 'boom' } : realGit(args, opts));
+    const out = hashCitations({ repoRoot: repo.root, headSha: repo.head, citations: [{ file: 'lib/core.js', line: 1 }] }, { git: failing });
+    expect(out.candidates[0].hashError).toMatch(/^git read failed: .*name scan/);
+    NO_FIELDS(out.candidates[0]);
+  });
+
+  test('PARITY with planDeltaReview: dependents of C == the readSet of changedPaths [C] minus C', () => {
+    const C = 'lib/core.js';
+    const deps = { git: realGit };
+    const refLines = scanReferenceLines(deps, repo.root, repo.head);
+    const graph = buildImportGraph({ filePaths: git(repo.root, ['ls-tree', '-r', '--name-only', repo.head]).split('\n'), lines: refLines });
+    expect(graph.computed.length).toBeGreaterThan(0);
+    const nameLines = scanNameLines(deps, repo.root, repo.head, graph.computed, [C]);
+    const plan = planDeltaReview({
+      changedPaths: [C],
+      pathsClassification: { ok: true, paths: [{ path: C }] },
+      delta: { ok: true, mode: 'delta', baseSha: repo.head, lastReviewedSha: repo.head, headSha: repo.head, reason: 'x' },
+      reviewed: { headSha: repo.head, baseSha: repo.head },
+      importGraph: graph,
+      nameLines,
+    });
+    expect(plan.mode).toBe('delta');
+    const expected = plan.readSet.map((e) => e.path).filter((p) => p !== C).sort();
+    expect(expected.length).toBeGreaterThanOrEqual(5);
+    expect(dependentsOf(C).dependents).toEqual(expected);
+  });
+});
+
+describe('redaction limit', () => {
+  test('CLI default emit replaces a depHashes value whose KEY looks sensitive: planCarry then sees a missing hash', () => {
+    const r = makeRepo({ 'a.js': "require('./lib/token-cache');\n" + lines(5), 'lib/token-cache.js': 'module.exports = 1;\n', 'lib/plain.js': 'x\n' });
+    const writes = [];
+    const spy = jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => { writes.push(String(chunk)); return true; });
+    try {
+      expect(main({ readJson: () => ({ repoRoot: r.root, headSha: r.head, citations: [{ file: 'a.js', line: 3 }] }) })).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const printed = JSON.parse(writes.join(''));
+    expect(printed.candidates[0].depHashes['lib/token-cache.js']).toBe('[REDACTED]');
+    expect(printed.candidates[0].hunkHash).toMatch(SHA);
   });
 });

@@ -20,6 +20,8 @@ const EVAL_DIR = path.join(REPO_ROOT, 'docs', 'review-eval');
 
 const PRIOR_HEAD = '1'.repeat(40);
 const NEW_HEAD = '2'.repeat(40);
+const BASE = '3'.repeat(40);
+const PR = '268';
 
 const sha = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const fileOf = (finding) => finding.locationOrLink.split(':')[0];
@@ -46,29 +48,43 @@ const hunkHashOf = (finding, changedHunkFiles) =>
  * @returns {{plan:Object, findingsByCase:Object<string,Object[]>, dropped:string[], flat:Object[]}}
  */
 function simulateCarryRound(scenario) {
-  const { findingsByCase, deltaPaths, highPaths = [], changedHunkFiles = [], deltaPlan = { mode: 'delta' } } = scenario;
+  const { findingsByCase, deltaPaths, highPaths = [], changedHunkFiles = [] } = scenario;
+  const deltaPlan = scenario.deltaPlan || { mode: 'delta', readSet: deltaPaths.map((path) => ({ path, reasons: ['changed'] })) };
   const flat = Object.values(findingsByCase).flat();
+  const votes = [
+    { verifier: 'verifier-1', verdict: 'real' },
+    { verifier: 'verifier-2', verdict: 'real' },
+    { verifier: 'verifier-3', verdict: 'not-real' },
+  ];
+  const lineAt = (finding) => [Number(lineOf(finding)), Number(lineOf(finding))];
   const priorVerdicts = flat.map((finding) => ({
     id: finding.id,
     file: fileOf(finding),
     claim: finding.claim,
+    lines: lineAt(finding),
     hunkHash: hunkHashOf(finding, []),
     depHashes: {},
     head: PRIOR_HEAD,
     outcome: 'present',
-    votes: [
-      { verifier: 'verifier-1', verdict: 'present' },
-      { verifier: 'verifier-2', verdict: 'present' },
-    ],
+    votes,
+    prId: PR,
+    baseSha: BASE,
+    depth: 'standard',
+    expectedVerifiers: 3,
   }));
+  const priorLedger = flat.map((finding) => ({ id: finding.id, locationOrLink: finding.locationOrLink, failureMode: finding.claim }));
   const candidates = flat.map((finding) => ({
     id: finding.id,
     file: fileOf(finding),
     claim: finding.claim,
+    lines: lineAt(finding),
     hunkHash: hunkHashOf(finding, changedHunkFiles),
     depHashes: {},
+    dependents: [],
   }));
-  const plan = planCarry({ headSha: NEW_HEAD, lastReviewedSha: PRIOR_HEAD, deltaPlan, deltaPaths, highPaths, priorVerdicts, candidates });
+  const plan = planCarry({
+    prId: PR, baseSha: BASE, headSha: NEW_HEAD, lastReviewedSha: PRIOR_HEAD, depth: 'standard', deltaPlan, deltaPaths, highPaths, priorVerdicts, priorLedger, candidates,
+  });
 
   const carriedIds = new Set(plan.carried.map((record) => record.id));
   const reverifyIds = new Set(plan.reverify.map((entry) => entry.id));
