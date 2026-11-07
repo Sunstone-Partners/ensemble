@@ -27,34 +27,54 @@
  *   - the import graph is missing or unreadable (no blast radius means no justified read set);
  *   - the graph lists files with a computed require/import and the name lines needed to place them are missing or
  *     unreadable;
- *   - the delta changes source code in a language the graph does not analyze.
+ *   - the delta changes a file the planner can read neither as code the graph analyzes nor as documentation or data.
  * Otherwise `{ mode:'delta', readSet }`, the read set being every changed path plus
- *   - the files that import one (`caller-of`) and the tests that import one or carry its name (`test-of`);
+ *   - the files that reference one (`caller-of`) and the tests that reference one or carry its name (`test-of`; a
+ *     jest snapshot is matched to the test that owns it);
  *   - the files whose references the graph cannot resolve (a `require` of a computed or interpolated specifier, an
  *     argument on the next line) and whose text names a changed file (`names`). That is an over-approximation by name:
  *     a reviewer reads more, never less. A computed specifier that names nothing is the one thing this cannot see.
  */
 
 const { isObjectId } = require('./pr-review-scope');
-const { isImportGraph, targetKeys, stemOf, testStemOf, namesFile, TEST_FILE } = require('./pr-review-import-graph');
+const {
+  isImportGraph, targetKeys, ownerStemOf, testStemOf, namesFile, ANALYZED_EXTENSIONS, TEST_FILE,
+} = require('./pr-review-import-graph');
 
-/** Source files whose importers the graph cannot see: a delta touching one cannot be sized. */
-const OPAQUE_CODE = /\.(?:py|rb|go|rs|java|kt|cs|ex|exs|erl|php|swift|c|cc|cpp|h|hpp|sh|bash|zsh|ps1|lua)$/i;
+/**
+ * Files that hold no code: documentation, data and assets. A delta may change these and the code the graph analyzes
+ * (ANALYZED_EXTENSIONS) and still be sized; ANY OTHER file type is source in a language the planner cannot size, so the
+ * answer is `full`. An allowlist: a type nobody listed fails closed instead of counting as harmless.
+ */
+const INERT_EXTENSIONS = Object.freeze([
+  '.md', '.mdx', '.markdown', '.txt', '.rst', '.json', '.jsonc', '.jsonl', '.yaml', '.yml', '.toml', '.lock', '.map', '.snap',
+  '.csv', '.tsv', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.pdf',
+]);
+/** Dotfiles that hold configuration, not code (their "extension" is their whole name). */
+const INERT_NAMES = Object.freeze(['.gitignore', '.gitattributes', '.gitkeep', '.npmignore', '.npmrc', '.editorconfig']);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 /** Two full object ids naming the same object (hex is case-insensitive); anything else is never the same. */
 const sameObjectId = (a, b) => isObjectId(a) && isObjectId(b) && a.toLowerCase() === b.toLowerCase();
 
+/** True when the planner can size a change to this file: code the graph analyzes, or documentation, data and assets. */
+function isSizeable(file) {
+  const name = file.slice(file.lastIndexOf('/') + 1).toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const extension = dot > 0 ? name.slice(dot) : '';
+  return ANALYZED_EXTENSIONS.includes(extension) || INERT_EXTENSIONS.includes(extension) || INERT_NAMES.includes(name);
+}
+
 const isNameLine = (line) => isObject(line) && isText(line.path) && typeof line.text === 'string';
 
-function full(reasons, extra = {}) {
-  return { mode: 'full', reasons, readSet: [], ...extra };
+function full(reasons) {
+  return { mode: 'full', reasons, readSet: [] };
 }
 
 /**
  * @param {Object} input
- * @param {Object} input.delta  The `chooseReviewRange` answer: `{ ok:true, mode, lastReviewedSha, headSha, reason }`.
+ * @param {Object} input.delta  The `chooseReviewRange` answer: `{ ok:true, mode, baseSha, lastReviewedSha, headSha, reason }`.
  * @param {string[]} input.changedPaths  The paths changed in `lastReviewedSha..headSha` (not the whole PR).
  * @param {Object} input.pathsClassification  The `classifyPaths` answer for (at least) those paths.
  * @param {{headSha?:string, baseSha?:string}} [input.reviewed]  What the review-state report of the last COMPLETED round
@@ -117,7 +137,7 @@ function planDeltaReview(input) {
   if (needsNames && (nameLines === undefined || nameLines === null)) reasons.push('name-scan-unavailable');
   else if (needsNames && !(Array.isArray(nameLines) && nameLines.every(isNameLine))) reasons.push('name-scan-unreadable');
 
-  if (pathsReadable && changedPaths.some((file) => OPAQUE_CODE.test(file))) {
+  if (pathsReadable && !changedPaths.every(isSizeable)) {
     reasons.push('unanalyzed-source-changed');
   }
 
@@ -146,7 +166,7 @@ function planDeltaReview(input) {
       }
     }
     if (!TEST_FILE.test(file)) {
-      for (const test of testsByStem.get(stemOf(file)) || []) add(test, `test-of:${file}`);
+      for (const test of testsByStem.get(ownerStemOf(file)) || []) add(test, `test-of:${file}`);
     }
     // A file with a computed specifier is a possible caller of anything; it is read when its own text names this file.
     if (needsNames) {
@@ -163,4 +183,4 @@ function planDeltaReview(input) {
   };
 }
 
-module.exports = { planDeltaReview, OPAQUE_CODE };
+module.exports = { planDeltaReview };

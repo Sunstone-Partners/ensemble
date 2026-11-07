@@ -204,6 +204,12 @@ function testStemOf(file) {
   return basename(file).replace(/\.(?:test|spec)\.[^.]+$/, '');
 }
 
+/** The stem a changed non-test file is matched to tests by: `thing.js` -> `thing`; jest's `__snapshots__/thing.test.js.snap` -> `thing`, the test that owns it. */
+function ownerStemOf(file) {
+  const name = basename(file);
+  return /\.snap$/.test(name) ? testStemOf(name.slice(0, -'.snap'.length)) : stemOf(file);
+}
+
 /** The name a file is mentioned by: its stem, and the extensions a mention of it may carry (a TypeScript file is named `./x.js`). */
 function nameOf(file) {
   const name = basename(file);
@@ -254,6 +260,7 @@ module.exports = {
   targetKeys,
   stemOf,
   testStemOf,
+  ownerStemOf,
   ANALYZED_EXTENSIONS,
   SCANNED_EXTENSIONS,
   TEST_FILE,

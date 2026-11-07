@@ -79,7 +79,8 @@ every path the delta changed, and
 - `caller-of`: the files that reference one of them (see "How each reference form
   is handled" below);
 - `test-of`: the tests that reference one, or carry its name (`thing.js` is tested by
-  `thing.test.js`);
+  `thing.test.js`; a jest snapshot, `__snapshots__/thing.test.js.snap`, by the test
+  that owns it);
 - `names`: a file whose references the graph could not read and whose text names a
   changed file.
 
@@ -94,7 +95,7 @@ importers are still named. `mode: "full"` (with `readSet: []`): read the full ra
 | `reviewed-base-unknown`, `base-moved` | The review state does not record the base the last round reviewed against, or the base resolved now is another one. The delta is only what changed since the last reviewed head: against a base no round reviewed, the PR changes paths nobody read (a retarget adds the new base's own history), so the whole range is read. |
 | `high-path-touched`, `sensitive-path-touched` | The delta changes a High or sensitive path, or a review declaration file (`REVIEW.md`, `CODEOWNERS`), as the **base** commit's declaration classifies it. |
 | `empty-delta` | The delta changes no path: nothing justifies reading nothing. |
-| `unanalyzed-source-changed` | The delta changes source in a language the import graph does not read (`.py`, `.sh`, `.ex`, ...). |
+| `unanalyzed-source-changed` | The delta changes a file the planner can read neither as code the graph analyzes (`.js .cjs .mjs .jsx .ts .tsx`) nor as documentation, data or an asset (`.md`, `.json`, `.yaml`, `.snap`, images, `.gitignore`, ...): another language (`.py`, `.sh`, `.ex`, ...), markup or style (`.html`, `.css`), `.mts`, `.vue`, a file with no extension or with one nobody listed. An allowlist: a type nobody listed fails closed instead of counting as harmless. |
 | `import-graph-unavailable`, `import-graph-unreadable`, `name-scan-unavailable`, `name-scan-unreadable`, `classification-unreadable`, `classification-incomplete`, `changed-paths-unreadable`, `delta-unreadable` | An input the plan needs could not be read, so no blast radius can be justified. |
 
 The blast radius is computed here, in the preparation step, because it needs repo

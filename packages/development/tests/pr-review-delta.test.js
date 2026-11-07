@@ -200,6 +200,21 @@ describe('planDeltaReview: fails closed to a full re-read (AC1, AC2)', () => {
     }
   });
 
+  it('a file type nobody listed fails closed: an unlisted language or an unknown extension is not harmless by default', () => {
+    for (const file of ['src/x.mts', 'src/x.cts', 'ui/App.vue', 'ui/App.svelte', 'lib/x.coffee', 'ui/page.html', 'ui/style.css', 'Makefile', 'bin/tool', 'lib/x.unknownext']) {
+      expectFull(plan({ changedPaths: [file], pathsClassification: classify([file]) }), 'unanalyzed-source-changed');
+    }
+  });
+
+  it('code the graph reads, and documentation, data and assets, are sized, not failed closed', () => {
+    const sized = ['src/x.ts', 'src/x.tsx', 'src/x.mjs', 'src/x.cjs', 'src/x.jsx', 'docs/guide.md', 'README.MD', 'data/a.json', 'ci/b.yaml', 'ci/b.yml',
+      'tests/__snapshots__/thing.test.js.snap', 'img/a.png', 'img/a.svg', 'dir/.gitkeep', '.gitignore', 'package-lock.json', 'yarn.lock'];
+    for (const file of sized) {
+      const result = plan({ changedPaths: [file], pathsClassification: classify([file]) });
+      expect([file, result.mode, result.reasons]).toEqual([file, 'delta', ['delta-since-last-review']]);
+    }
+  });
+
   it('a range decision that is not a readable delta', () => {
     expectFull(plan({ delta: undefined }), 'delta-unreadable');
     expectFull(plan({ delta: { ok: false, status: 'REVIEW_BLOCKED' } }), 'delta-unreadable');
@@ -275,6 +290,17 @@ describe('planDeltaReview: every form of reference to a changed file reaches the
     const result = plan({ importGraph, nameLines: [] });
     expect(result.mode).toBe('delta');
     expect(readPaths(result)).toContain(consumer);
+  });
+
+  it('a changed jest snapshot reaches the test that owns it', () => {
+    const snapshot = 'tests/__snapshots__/thing.test.js.snap';
+    const result = plan({ changedPaths: [snapshot], pathsClassification: classify([snapshot]) });
+    expect(result.reasons).toEqual(['delta-since-last-review']);
+    expect(result.readSet).toEqual([
+      { path: snapshot, reasons: ['changed'] },
+      { path: 'tests/stem/thing.spec.js', reasons: [`test-of:${snapshot}`] },
+      { path: 'tests/thing.test.js', reasons: [`test-of:${snapshot}`] },
+    ]);
   });
 });
 
