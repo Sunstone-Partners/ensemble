@@ -113,8 +113,8 @@ capabilities:
     fallback: skip-finding-beads
 
   tracker.find-by-key:
-    description: List the work items carrying `label`, so the caller can select the one whose external dedupe key equals `key` (exact match; zero, one or many).
-    inputs: [key, label]
+    description: List the work items of the whole tracker, closed ones included and NOT limited to one label (an external dedupe key is unique tracker-wide), so the caller can select the one whose external dedupe key equals `key` (exact match; zero, one or many) and read its labels.
+    inputs: [key]
     outputs: [items]
     required: false
     sideEffect: false

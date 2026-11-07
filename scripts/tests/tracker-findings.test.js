@@ -8,6 +8,7 @@
  *     adapter-tracker-beads-samples/), so a wrong `root`/`map` or a wrong argv flag fails here.
  */
 
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -40,7 +41,14 @@ afterEach(() => {
   while (tempDirs.length) fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
 });
 
-/** @param {Record<string,string>} replay first-argv-word (or "dep add") -> fixture file name */
+/**
+ * @param {Record<string, string | [string, number]>} replay first-argv-word (or "dep add") ->
+ *   fixture file name, or `[file name, exit code]` for a command that fails (br prints its error
+ *   JSON on stdout and exits non-zero)
+ *
+ * `br list` honours `--label` (AND logic, repeatable) the way real br does (captured live), so a
+ * label-scoped lookup sees only the beads real br would list for it.
+ */
 function replayBr(replay) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-findings-')));
   tempDirs.push(dir);
@@ -52,10 +60,26 @@ fs.appendFileSync(path.join(__dirname, 'argv.log'), JSON.stringify(argv) + '\\n'
 const replay = JSON.parse(fs.readFileSync(path.join(__dirname, 'replay.json'), 'utf8'));
 const key = argv[0] === 'dep' ? 'dep ' + argv[1] : argv[0];
 if (!(key in replay)) { process.stderr.write('replay br: no fixture for ' + key + '\\n'); process.exit(2); }
-process.stdout.write(fs.readFileSync(replay[key], 'utf8'));
+let out = fs.readFileSync(replay[key].file, 'utf8');
+if (key === 'list') {
+  const wanted = argv.flatMap((a, i) => (a === '--label' || a === '-l' ? [argv[i + 1]] : []));
+  if (wanted.length) {
+    const listed = JSON.parse(out);
+    listed.issues = listed.issues.filter((issue) => wanted.every((label) => (issue.labels || []).includes(label)));
+    listed.total = listed.issues.length;
+    out = JSON.stringify(listed);
+  }
+}
+process.stdout.write(out);
+process.exitCode = replay[key].exit;
 `;
   fs.writeFileSync(path.join(dir, 'br'), script, { mode: 0o755 });
-  const full = Object.fromEntries(Object.entries(replay).map(([k, v]) => [k, path.join(SAMPLES, v)]));
+  const full = Object.fromEntries(
+    Object.entries(replay).map(([k, v]) => {
+      const [file, exit = 0] = [].concat(v);
+      return [k, { file: path.join(SAMPLES, file), exit }];
+    })
+  );
   fs.writeFileSync(path.join(dir, 'replay.json'), JSON.stringify(full));
   const calls = () =>
     fs.existsSync(path.join(dir, 'argv.log'))
@@ -89,6 +113,10 @@ describe('tracker category contract: findings capabilities degrade, never become
 
   test.each(FINDING_CAPABILITIES)('the beads adapter declares %s', (id) => {
     expect(BEADS.capabilities[id]).toBeDefined();
+  });
+
+  test('tracker.find-by-key takes only the key: it is not scoped to a label', () => {
+    expect(contract['tracker.find-by-key'].inputs).toEqual(['key']);
   });
 });
 
@@ -169,46 +197,86 @@ describe('beads adapter parses real captured br output', () => {
 // ---------------------------------------------------------------------------
 
 describe('findByKey (AC3)', () => {
-  const LIST = JSON.parse(sample('br-list-by-label.sample.json'));
+  // Captured live: three beads; the third holds its key under the label 'triaged' only.
+  const LIST = JSON.parse(sample('br-list-unscoped.sample.json'));
   const KEY_A = 'dk:acme/repo:src/a.js:unchecked-path';
+  const KEY_TRIAGED = 'dk:acme/repo:src/c.js:relabelled';
 
   test('exactly one bead for a key present once in the real captured list', () => {
-    const { run, br } = deps({ list: 'br-list-by-label.sample.json' });
-    const result = findings.findByKey({ run }, { key: KEY_A, label: 'pr-review' });
-    expect(result).toMatchObject({ ok: true, found: true });
+    const { run, br } = deps({ list: 'br-list-unscoped.sample.json' });
+    const result = findings.findByKey({ run }, { key: KEY_A });
+    expect(result).toMatchObject({ ok: true, found: true, labels: ['pr-review', 'sev-important'] });
     expect(result.item.external_ref).toBe(KEY_A);
-    expect(LIST.issues.length).toBeGreaterThan(1); // the other bead must NOT be returned
-    expect(br.calls()[0]).toEqual(['list', '--all', '--limit', '0', '--label', 'pr-review', '--json']);
+    expect(LIST.issues.length).toBeGreaterThan(1); // the other beads must NOT be returned
+    expect(br.calls()[0]).toEqual(['list', '--all', '--limit', '0', '--json']);
+  });
+
+  test('finds the bead that holds the key under a different label: br keys are unique workspace-wide', () => {
+    const { run, br } = deps({ list: 'br-list-unscoped.sample.json' });
+    const holder = LIST.issues.find((issue) => issue.external_ref === KEY_TRIAGED);
+
+    const result = findings.findByKey({ run }, { key: KEY_TRIAGED });
+    expect(result).toMatchObject({ ok: true, found: true, labels: ['triaged'] });
+    expect(result.item.id).toBe(holder.id);
+    expect(br.calls()).toHaveLength(1);
+
+    // Fidelity of the replay: a list scoped to 'pr-review' (the old argv) does not show this
+    // bead at all, exactly as with real br (captured live), so scoping the lookup by label
+    // would have reported "not found" for a key that br refuses to create again.
+    const scoped = JSON.parse(
+      execFileSync('br', ['list', '--all', '--limit', '0', '--label', 'pr-review', '--json'], {
+        env: br.env,
+        encoding: 'utf8'
+      })
+    );
+    expect(scoped.issues.map((issue) => issue.external_ref)).not.toContain(KEY_TRIAGED);
+  });
+
+  test('creating a key that is held under another label is refused by br, as a tool failure and not as unavailable', () => {
+    // Captured live: exit 7, CONFIG_ERROR "External reference ... already exists on issue ...".
+    const { run } = deps({ create: ['br-create-duplicate-key.error.json', 7] });
+    const result = findings.createFinding(
+      { run },
+      { title: 'Dup', description: 'd', labels: ['pr-review'], priority: 2, key: KEY_TRIAGED }
+    );
+    expect(result.ok).toBe(false);
+    expect(result.unavailable).toBeUndefined();
+    expect(result.error.code).toBe('TOOL_FAILED');
   });
 
   test('none for an absent key, and a key that is only a prefix of a real one', () => {
-    const { run } = deps({ list: 'br-list-by-label.sample.json' });
-    expect(findings.findByKey({ run }, { key: 'dk:acme/repo:src/zzz.js:nope', label: 'pr-review' })).toEqual({ ok: true, found: false });
-    expect(findings.findByKey({ run }, { key: 'dk:acme/repo:src/a.js', label: 'pr-review' })).toEqual({ ok: true, found: false });
+    const { run } = deps({ list: 'br-list-unscoped.sample.json' });
+    expect(findings.findByKey({ run }, { key: 'dk:acme/repo:src/zzz.js:nope' })).toEqual({ ok: true, found: false });
+    expect(findings.findByKey({ run }, { key: 'dk:acme/repo:src/a.js' })).toEqual({ ok: true, found: false });
+  });
+
+  test('a matched bead without a labels field reports an empty label list', () => {
+    const run = () => ({ ok: true, data: JSON.stringify({ issues: [{ id: 'b-1', external_ref: 'k' }] }) });
+    expect(findings.findByKey({ run }, { key: 'k' })).toMatchObject({ ok: true, found: true, labels: [] });
   });
 
   test('refuses (AMBIGUOUS_KEY, naming the ids) when several beads share the key', () => {
     const dup = { issues: [{ id: 'b-1', external_ref: 'k' }, { id: 'b-2', external_ref: 'k' }, { id: 'b-3', external_ref: 'other' }] };
     const run = () => ({ ok: true, data: JSON.stringify(dup) });
-    const result = findings.findByKey({ run }, { key: 'k', label: 'pr-review' });
+    const result = findings.findByKey({ run }, { key: 'k' });
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe('AMBIGUOUS_KEY');
     expect(result.error.ids).toEqual(['b-1', 'b-2']);
     expect(result.found).toBeUndefined();
   });
 
-  test('an empty key never matches beads that have no key', () => {
+  test('an empty key is refused before any tracker call, so beads without a key are never matched', () => {
     const run = jest.fn(() => ({ ok: true, data: JSON.stringify({ issues: [{ id: 'b-1' }, { id: 'b-2', external_ref: '' }] }) }));
-    const result = findings.findByKey({ run }, { key: '', label: 'pr-review' });
+    const result = findings.findByKey({ run }, { key: '' });
     expect(result.error.code).toBe('INVALID_ARG');
     expect(run).not.toHaveBeenCalled();
   });
 
   test('accepts an older br bare-array list and refuses unparseable output', () => {
-    expect(findings.findByKey({ run: () => ({ ok: true, data: '[{"id":"b-1","external_ref":"k"}]' }) }, { key: 'k', label: 'x' }))
+    expect(findings.findByKey({ run: () => ({ ok: true, data: '[{"id":"b-1","external_ref":"k"}]' }) }, { key: 'k' }))
       .toMatchObject({ ok: true, found: true });
-    expect(findings.findByKey({ run: () => ({ ok: true, data: 'not json' }) }, { key: 'k', label: 'x' }).error.code).toBe('BAD_OUTPUT');
-    expect(findings.findByKey({ run: () => ({ ok: true, data: '{"nope":1}' }) }, { key: 'k', label: 'x' }).error.code).toBe('BAD_OUTPUT');
+    expect(findings.findByKey({ run: () => ({ ok: true, data: 'not json' }) }, { key: 'k' }).error.code).toBe('BAD_OUTPUT');
+    expect(findings.findByKey({ run: () => ({ ok: true, data: '{"nope":1}' }) }, { key: 'k' }).error.code).toBe('BAD_OUTPUT');
   });
 });
 
@@ -219,7 +287,7 @@ describe('findByKey (AC3)', () => {
 describe('unavailable result (AC4)', () => {
   const ARGS = {
     createFinding: [{ title: 't', description: 'd', labels: ['pr-review'], priority: 1, key: 'k' }],
-    findByKey: [{ key: 'k', label: 'pr-review' }],
+    findByKey: [{ key: 'k' }],
     updateFinding: [{ id: 'b-1', title: 't', description: 'd', priority: 1, note: 'n' }],
     closeFinding: [{ id: 'b-1', reason: 'r', commit: 'abc1234' }]
   };
@@ -268,10 +336,10 @@ describe('unavailable result (AC4)', () => {
   test('createToolchainDeps: a repository with no initialised tracker workspace is unavailable and runs nothing', () => {
     const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-findings-repo-')));
     tempDirs.push(repo);
-    const br = replayBr({ list: 'br-list-by-label.sample.json' });
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
     const result = findings.findByKey(
       findings.createToolchainDeps({ projectRoot: repo, env: br.env }),
-      { key: 'k', label: 'pr-review' }
+      { key: 'k' }
     );
     expect(result).toEqual(UNAVAILABLE);
     expect(br.calls()).toEqual([]);
@@ -281,10 +349,10 @@ describe('unavailable result (AC4)', () => {
     const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-findings-repo-')));
     tempDirs.push(repo);
     fs.mkdirSync(path.join(repo, '.beads'));
-    const br = replayBr({ list: 'br-list-by-label.sample.json' });
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
     const result = findings.findByKey(
       findings.createToolchainDeps({ projectRoot: repo, env: br.env }),
-      { key: 'dk:acme/repo:src/a.js:unchecked-path', label: 'pr-review' }
+      { key: 'dk:acme/repo:src/a.js:unchecked-path' }
     );
     expect(result).toMatchObject({ ok: true, found: true });
     expect(br.calls()).toHaveLength(1);

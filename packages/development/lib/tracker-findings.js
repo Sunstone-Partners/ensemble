@@ -94,7 +94,9 @@ function validPriority(priority) {
 
 /**
  * Create a bead in one call. `key` is stored as the bead's external reference and is what
- * `findByKey` matches on; `labels` MUST include the scope label `findByKey` will later use.
+ * `findByKey` matches on; br refuses a second bead with the same key anywhere in the workspace,
+ * so look the key up with `findByKey` first. `labels` should include the label the caller uses
+ * to recognise its own beads (`findByKey` is not scoped by it).
  *
  * @param {{run: Function}} deps
  * @param {{title: string, description: string, type?: string, labels: string[], priority: number, key: string}} input
@@ -119,19 +121,19 @@ function createFinding(deps, { title, description, type = 'bug', labels, priorit
 }
 
 /**
- * Find the bead whose external key is exactly `key` among beads labelled `label` (closed beads
- * included).
+ * Find the bead whose external key is exactly `key` anywhere in the workspace, closed beads
+ * included. The lookup is NOT scoped to a label: br enforces external-key uniqueness across the
+ * whole workspace, so the bead holding the key may carry any labels (or none), and a label-scoped
+ * lookup would miss it while creating the same key is refused. The matched bead's `labels` are
+ * returned so the caller can judge whether it is one of its own.
  *
- * @returns {{ok:true, found:true, item:object} | {ok:true, found:false} |
+ * @returns {{ok:true, found:true, item:object, labels:string[]} | {ok:true, found:false} |
  *   {ok:false, error:{code:'AMBIGUOUS_KEY', message:string, ids:string[]}} | object}
  *   Several beads sharing one key is refused, never resolved by picking one.
  */
-function findByKey(deps, { key, label } = {}) {
+function findByKey(deps, { key } = {}) {
   if (!nonEmpty(key)) return failure('INVALID_ARG', "findByKey: 'key' must be a non-empty string");
-  if (typeof label !== 'string' || !LABEL_RE.test(label)) {
-    return failure('INVALID_ARG', "findByKey: 'label' must be a single [A-Za-z0-9_:-] label");
-  }
-  const result = call(deps, 'tracker.find-by-key', { key, label });
+  const result = call(deps, 'tracker.find-by-key', { key });
   if (!result.ok) return result;
 
   let parsed = result.data;
@@ -159,7 +161,8 @@ function findByKey(deps, { key, label } = {}) {
       }
     };
   }
-  return { ok: true, found: true, item: matches[0] };
+  const item = matches[0];
+  return { ok: true, found: true, item, labels: Array.isArray(item.labels) ? item.labels.slice() : [] };
 }
 
 /** Rewrite title/description/priority and append `note`; labels and status are untouched. */
