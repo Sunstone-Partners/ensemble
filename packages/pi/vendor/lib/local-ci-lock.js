@@ -29,7 +29,10 @@
  *     process group), so the next run can start while that step is still going: the lock sees only the dead pid.
  *
  * QUEUE: waiters poll. Order among waiters is NOT FIFO; every waiter is bounded by `timeoutMs`, after which it gets a
- * named error (`lock-timeout`) and runs nothing.
+ * named error (`lock-timeout`) and runs nothing. The default bound is 30 minutes: three runs ahead of a waiter at the 8
+ * to 9 minutes each that the plan measures under load. `acquireFromEnv` raises it to at least one holder's worst case
+ * (`worstCaseHoldMs`, from the runner), so one holder that stays inside the runner's own limits can never make a waiter
+ * give up. A deeper queue needs ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS (RUNBOOK, "Capacity").
  *
  * LOAD POLICY (optional, off unless `maxLoad` is set): while the 1-minute load average is above `maxLoad` the caller
  * either WAITS (`loadPolicy: 'wait'`, the default) or is REFUSED at once (`'refuse'`, code `load-too-high`).
@@ -41,7 +44,7 @@
  *
  * Environment knobs read by `acquireFromEnv` (a malformed value is an error, never silently ignored):
  *   ENSEMBLE_LOCAL_CI_LOCK_DIR         directory holding the lock file
- *   ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS  max wait, default 1800000 (30 min); 0 = try once
+ *   ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS  max wait, default 1800000 (30 min) or one worst-case holder if longer; 0 = try once
  *   ENSEMBLE_LOCAL_CI_MAX_LOAD         1-minute load-average ceiling; unset = no load check
  *   ENSEMBLE_LOCAL_CI_LOAD_POLICY      `wait` (default) | `refuse`
  */
@@ -254,10 +257,16 @@ async function acquire(o) {
   }
 }
 
-/** Parse the ENSEMBLE_LOCAL_CI_* knobs. Malformed values are errors: a typo must not silently disable a policy. */
-function policyFromEnv(env) {
+/**
+ * Parse the ENSEMBLE_LOCAL_CI_* knobs. Malformed values are errors: a typo must not silently disable a policy.
+ * `hold.worstCaseHoldMs` (the longest one holder can take inside the runner's own limits) raises the DEFAULT wait to at
+ * least that long; an explicit ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS, including 0, always wins.
+ */
+function policyFromEnv(env, hold) {
   const e = env || {};
-  const out = { lockPath: path.join(defaultLockDir(e), LOCK_FILE), timeoutMs: DEFAULT_TIMEOUT_MS, maxLoad: null, loadPolicy: 'wait' };
+  const worst = hold && hold.worstCaseHoldMs;
+  const defaultWait = Number.isFinite(worst) && worst > DEFAULT_TIMEOUT_MS ? worst : DEFAULT_TIMEOUT_MS;
+  const out = { lockPath: path.join(defaultLockDir(e), LOCK_FILE), timeoutMs: defaultWait, maxLoad: null, loadPolicy: 'wait' };
   const num = (name) => {
     const raw = e[name];
     if (raw === undefined || raw === '') return undefined;
@@ -278,8 +287,8 @@ function policyFromEnv(env) {
 }
 
 /** acquire() configured from the environment; a malformed knob resolves to a refusal rather than throwing. */
-async function acquireFromEnv(env, deps) {
-  const policy = policyFromEnv(env);
+async function acquireFromEnv(env, deps, hold) {
+  const policy = policyFromEnv(env, hold);
   if (!policy.ok) return { acquired: false, code: 'bad-lock-policy', error: policy.error, queuedMs: 0 };
   const { ok: _ok, ...options } = policy;
   return acquire({ ...options, deps });

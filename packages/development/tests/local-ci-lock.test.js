@@ -315,6 +315,34 @@ describe('environment policy', () => {
     const r = await lock.acquireFromEnv({ ENSEMBLE_LOCAL_CI_LOCK_DIR: tmpDir(), ...env });
     expect(r).toMatchObject({ acquired: false, code: 'bad-lock-policy' });
   });
+
+  it('the default wait is at least one worst-case holder and never under 30 minutes; an explicit value always wins (review round 1)', () => {
+    const minutes = 60 * 1000;
+    expect(lock.policyFromEnv({}, { worstCaseHoldMs: 200 * minutes }).timeoutMs).toBe(200 * minutes);
+    expect(lock.policyFromEnv({}, { worstCaseHoldMs: 10 * minutes }).timeoutMs).toBe(30 * minutes);
+    expect(lock.policyFromEnv({}, { worstCaseHoldMs: Number.NaN }).timeoutMs).toBe(30 * minutes);
+    expect(lock.policyFromEnv({}).timeoutMs).toBe(30 * minutes);
+    expect(lock.policyFromEnv({ ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS: '60000' }, { worstCaseHoldMs: 200 * minutes }).timeoutMs).toBe(60000);
+    expect(lock.policyFromEnv({ ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS: '0' }, { worstCaseHoldMs: 200 * minutes }).timeoutMs).toBe(0);
+  });
+
+  it('acquireFromEnv waits on a live holder for the worst case it was told about, and for 30 minutes when told nothing', async () => {
+    const minute = 60 * 1000;
+    const dir = tmpDir();
+    writeHolder(path.join(dir, lock.LOCK_FILE), { pid: 777 });
+    let t = 0;
+    // Every sleep advances the clock a minute, so a wait of tens of minutes is dozens of rounds, not thousands.
+    const deps = { now: () => t, sleep: async () => { t += minute; }, host: HOST, isAlive: () => true };
+    const env = { ENSEMBLE_LOCAL_CI_LOCK_DIR: dir };
+    const told = await lock.acquireFromEnv(env, deps, { worstCaseHoldMs: 90 * minute });
+    expect(told).toMatchObject({ acquired: false, code: 'lock-timeout' });
+    expect(told.queuedMs).toBeGreaterThanOrEqual(90 * minute);
+    t = 0;
+    const untold = await lock.acquireFromEnv(env, deps);
+    expect(untold).toMatchObject({ acquired: false, code: 'lock-timeout' });
+    expect(untold.queuedMs).toBeGreaterThanOrEqual(30 * minute);
+    expect(untold.queuedMs).toBeLessThan(40 * minute);
+  });
 });
 
 describe('across real processes (AC1)', () => {

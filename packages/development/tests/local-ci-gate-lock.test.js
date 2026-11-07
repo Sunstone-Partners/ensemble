@@ -242,7 +242,32 @@ describe('run takes the same lock as gate (review round 1)', () => {
   });
 });
 
-describe('a lock that cannot be used fails by name (review round 1)', () => {
+describe('the lock request carries the runner worst case, and a lock that cannot be used fails by name (review round 1)', () => {
+  it('gate and run ask for the lock with the worst case of THIS config', async () => {
+    const fx = flowFixture();
+    const { deps } = flowDeps(fx, tmpDir());
+    const asked = [];
+    const inner = deps.acquireGateLock;
+    deps.acquireGateLock = (hold) => {
+      asked.push(hold);
+      return inner(hold);
+    };
+    await cli.runGateFlow(payload(fx), deps);
+    await cli.runRun({ repoRoot: fx.dir, headSha: fx.headSha, baseRef: fx.baseRef }, deps);
+    // The fixture config requires one Node version and one trusted step: the node check and the step, 10 minutes each at most.
+    expect(asked).toEqual([{ worstCaseHoldMs: 20 * 60 * 1000 }, { worstCaseHoldMs: 20 * 60 * 1000 }]);
+  });
+
+  it('the default wiring hands it on to the lock policy', async () => {
+    const spy = jest.spyOn(lock, 'acquireFromEnv').mockResolvedValue({ acquired: false, code: 'lock-timeout', error: 'stub', queuedMs: 0 });
+    try {
+      await cli.defaultDeps().acquireGateLock({ worstCaseHoldMs: 123456 });
+      expect(spy).toHaveBeenCalledWith(process.env, undefined, { worstCaseHoldMs: 123456 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('an unusable lock directory stops gate and run at stage "lock" with errorCode lock-io: nothing runs, nothing posts', async () => {
     const fx = flowFixture();
     const aFile = path.join(tmpDir(), 'a-file');
