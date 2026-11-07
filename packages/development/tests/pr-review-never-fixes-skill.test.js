@@ -404,3 +404,87 @@ describe('a review run writes its gitignored state report, so it edits no tracke
     expect(INPUTS).not.toMatch(/never fixes", item \d/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The docs half: reference/merge-gate.md, the user guide and the two CHANGELOG entries say what
+// the code and pr-merge do today, and each premise check below names what to update when that changes.
+// ---------------------------------------------------------------------------
+
+const fs = require('fs');
+const path = require('path');
+
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+const readRepo = (...parts) => fs.readFileSync(path.join(REPO_ROOT, ...parts), 'utf8');
+const USER_GUIDE = readRepo('docs', 'guides', 'user-guide.md');
+const GUIDE_RULE = flatten(USER_GUIDE.slice(USER_GUIDE.indexOf('**A review never fixes.**'), USER_GUIDE.indexOf('### 11.5')));
+/** The changelog entry for this change: one line, found by its opening words. */
+function changelogEntry(...parts) {
+  const line = readRepo(...parts)
+    .split('\n')
+    .find((l) => /the PR review never fixes \(kata `sp4w`/i.test(l));
+  if (!line) throw new Error(`${parts.join('/')} has no "The PR review never fixes (kata \`sp4w\`" entry`);
+  return flatten(line);
+}
+const CHANGELOG_ROOT = changelogEntry('CHANGELOG.md');
+const CHANGELOG_DEV = changelogEntry('packages', 'development', 'CHANGELOG.md');
+
+describe('bead recording is stated as not implemented while nothing creates a bead', () => {
+  test('premise: no CLI subcommand and no pr-review module records a bead yet', () => {
+    const { HANDLERS } = require('../lib/pr-review-cli');
+    const libDir = path.join(__dirname, '..', 'lib');
+    const recorders = fs
+      .readdirSync(libDir)
+      .filter((file) => /^(?:pr-review-.*|review-precheck-cli)\.js$/.test(file))
+      .filter((file) => /tracker-findings|create-detailed|tracker\.create/.test(fs.readFileSync(path.join(libDir, file), 'utf8')));
+    if (Object.keys(HANDLERS).includes('beads') || fs.existsSync(path.join(libDir, 'pr-review-beads.js')) || recorders.length > 0) {
+      throw new Error(
+        'A bead recorder exists now (kata n350). Replace the "not implemented yet" notes in ' +
+          'reference/merge-gate.md, docs/guides/user-guide.md and the two CHANGELOG entries with its call and skip path, ' +
+          'then delete this premise check.'
+      );
+    }
+  });
+
+  test('merge-gate.md, the headline, the user guide and both changelogs say so instead of claiming the findings are recorded', () => {
+    expect(GATE_REF).toContain('**Recording every confirmed finding as a bead is not implemented yet.**');
+    expect(GATE_REF).toContain('The `beads` subcommand that would do it (kata `n350`) is not in `pr-review-cli.js`');
+    expect(GATE_REF).not.toContain('It records every confirmed finding as a bead');
+    expect(GATE_REF).not.toContain('Beads for the findings are recorded where the repository has a tracker');
+    expect(FLAT_MAIN).not.toMatch(/records findings as beads/);
+    expect(GUIDE_RULE).toContain('Recording each confirmed finding as a bead is not implemented yet');
+    expect(GUIDE_RULE).not.toContain('It records each confirmed finding as a bead');
+    expect(CHANGELOG_ROOT).toContain('Recording findings as beads awaits kata `n350`');
+    expect(CHANGELOG_DEV).toContain('Recording findings as beads is not implemented yet');
+  });
+});
+
+describe('the docs do not claim more than /ensemble:pr-merge does', () => {
+  test('premise: pr-merge still dispatches remediation subagents that commit and push to the PR branch', () => {
+    const prMerge = readRepo('packages', 'git', 'commands', 'pr-merge.yaml');
+    if (!/name: Parallel Remediation Dispatch/.test(prMerge) || !/commit and git push to HEAD_REF/.test(prMerge)) {
+      throw new Error(
+        'pr-merge no longer pushes remediation fixes (kata 6k8d landed?). Remove the "Not yet true of /ensemble:pr-merge" ' +
+          'notes from docs/guides/user-guide.md and the two CHANGELOG entries, then delete this premise check.'
+      );
+    }
+  });
+
+  test('the user guide and both changelogs say the no-fix rule does not bind pr-merge until kata 6k8d lands', () => {
+    expect(GUIDE_RULE).toContain('> **Not yet true of `/ensemble:pr-merge`.**');
+    expect(GUIDE_RULE).toContain('Until kata `6k8d` lands, `pr-merge` shows no decision list and still runs its own remediation stage');
+    expect(GUIDE_RULE).toContain('subagents commit and push fixes for findings to the PR branch before it asks the gate');
+    for (const entry of [CHANGELOG_ROOT, CHANGELOG_DEV]) {
+      expect(entry).toContain('Not yet true of `/ensemble:pr-merge`: until kata `6k8d` lands it still runs its own remediation stage');
+      expect(entry).toContain('commit and push fixes for findings to the PR branch before the gate');
+    }
+  });
+});
+
+describe('the merge gate reference, the user guide and both changelogs say a review edits no tracked file', () => {
+  test('each says "no tracked file" and names the gitignored state report', () => {
+    expect(GATE_REF).toContain('A review run edits no tracked file, commits nothing and pushes nothing (it writes only the gitignored state report)');
+    expect(GUIDE_RULE).toContain('edits no tracked file, commits nothing and pushes nothing, and writes only its gitignored state report');
+    expect(CHANGELOG_ROOT).toContain('edit no tracked file (they write only the gitignored state report)');
+    expect(CHANGELOG_DEV).toContain('edit no tracked file (they write only the gitignored state report)');
+  });
+});

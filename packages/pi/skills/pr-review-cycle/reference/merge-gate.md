@@ -250,9 +250,14 @@ pre-selected or batched, and needs a reason the operator gives for that finding.
 The list never changes `mergeable`.
 
 **The review never fixes -- record, ask, then record who decided.** A review run edits no
-file, commits nothing and pushes nothing. It records every confirmed finding as a bead
-through the tracker adapter (one per finding, labelled `pr-review`; a repository with no
-tracker skips the beads, says so, and still shows the list). The caller shows the list,
+tracked file, commits nothing and pushes nothing (it writes only the gitignored state
+report). **Recording every confirmed finding as a bead is not implemented yet.** The `beads`
+subcommand that would do it (kata `n350`) is not in `pr-review-cli.js`, and no
+`lib/pr-review-*.js` module creates a bead (the decision list only reads a finding's
+`beadId`), so a run does not record findings as beads: it says so, and shows the list with
+the `beadId` a ledger entry already carries, if any. When it lands, each finding becomes one
+bead through the tracker adapter (labelled `pr-review`; a repository with no tracker skips
+the beads, says so, and still shows the list). The caller shows the list,
 asks about it, and only then asks the merge question (`mergeConfirmation` is what that
 question displays). Each finding's **Fix on this PR** option states that the head moves
 and any approvals reset. It is the operator's own answer that gets recorded; an agent never
@@ -271,7 +276,7 @@ chooses for the operator, applies a `default`, or types a login or reason.
   finding closes when that review no longer raises it, never because it was selected.
 * **`--foreman`**: the list is logged and nothing is recorded as decided: no `resolve`,
   no fix run, no waiver. A blocking finding keeps `mergeable:false` until a person
-  answers. Beads for the findings are recorded where the repository has a tracker.
+  answers. No bead is recorded for the findings yet (see above).
 * **Nothing here edits a file, commits or pushes.** `MODE=gate` and the review runs that
   feed it only read, grade and report.
 * **Pre-publication is not a PR review.** A `MODE=local` run with no `PR_URL`, no
