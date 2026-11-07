@@ -65,6 +65,9 @@
  * agreement shows the code follows them, not that they are the right ones.
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const {
   matchesPattern,
   classifyPaths,
@@ -940,5 +943,37 @@ describe('pr-review-paths property harness: alias rows prove folding, not the pa
   ])('`?` takes one astral code point (ignoreCase %s)', (ignoreCase) => {
     expect(matchesPattern('scripts/install-?', 'scripts/install-\u{1F600}', { ignoreCase })).toBe(true);
     expect(matchesPattern('scripts/install-??', 'scripts/install-\u{1F600}', { ignoreCase })).toBe(false);
+  });
+});
+
+// The reviewer brief (templates/reviewer-brief.md) tells every reviewer to read this file's header and the chains
+// before spending calls on matcher edge cases or gate sequences. It may claim only what this file proves, so it
+// names this header, which lists what is and is not generated, and tells reviewers to report the rest.
+describe('pr-review-paths property harness: the reviewer brief claims no more than this file proves', () => {
+  const PROPERTY = 'packages/development/tests/pr-review-paths-property.test.js';
+  const CHAIN = 'pr-review-gate-chain.test.js';
+  const brief = fs
+    .readFileSync(path.join(__dirname, '..', 'skills', 'pr-review-cycle', 'templates', 'reviewer-brief.md'), 'utf8')
+    .replace(/\s+/g, ' ');
+  const header = fs.readFileSync(__filename, 'utf8').split('*/')[0];
+
+  test('the brief names both test files, and both exist', () => {
+    expect(brief).toContain(PROPERTY);
+    expect(brief).toContain(CHAIN);
+    expect(fs.existsSync(path.join(__dirname, '..', '..', '..', PROPERTY))).toBe(true);
+    expect(fs.existsSync(path.join(__dirname, CHAIN))).toBe(true);
+  });
+
+  test('the header it points at lists what is generated and what is not, and says what the oracle cannot show', () => {
+    expect(brief).toContain(`read the header of \`${PROPERTY}\` (it lists the name forms it generates and the ones it does not)`);
+    expect(header).toContain('What a run generates');
+    expect(header).toContain('NOT generated, or not modelled');
+    expect(header).toContain('agreement shows the code follows them, not that they are the right ones');
+  });
+
+  test('the brief tells reviewers to report what is not covered and any rule they think is wrong, and claims no blanket coverage', () => {
+    expect(brief).toContain('Report what they do not cover, and any rule you think is wrong');
+    expect(brief).toContain('the oracle is written from the same rules as the matcher, so the test cannot show that a rule is the right one');
+    expect(brief).not.toMatch(/(?:property test|tests?) covers? (?:this|it|them|all)\b/i);
   });
 });
