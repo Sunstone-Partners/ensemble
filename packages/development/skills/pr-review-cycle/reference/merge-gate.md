@@ -265,7 +265,7 @@ an OPEN bead, so a live finding whose bead is closed carries `closedBeadId` and 
 it as its own state, never counted among the open beads.
 
 **What the head under review cannot control.** Before it reads or writes the tracker the
-recorder asks the HOST (`gh pr view`) about the pull request and refuses, by name, a head on a
+recorder asks the HOST (its pull-request view) about the pull request and refuses, by name, a head on a
 fork (`cross-repository-head`), a head whose repository the host did not state
 (`head-repository-unknown`) and a pull request it could not read (`pr-unreadable`), as the
 precheck and the review runner do. It runs the tracker in the repository's PRIMARY checkout,
@@ -312,8 +312,8 @@ exist); an agent never fills it.
 
 `status: UNAVAILABLE` (the repository has no tracker, or its adapter lacks a capability) and
 `REFUSED` mean no bead was recorded: say so and still show the list. `PARTIAL` or `FAILED`
-(exit 1) means some findings have no bead: name them and still show the list. A bead deleted with
-`br delete` leaves a tombstone that still holds its key but is not listed, so recording that
+(exit 1) means some findings have no bead: name them and still show the list. A bead the tracker
+deleted (rather than closed) leaves a tombstone that still holds its key but is not listed, so recording that
 finding is `PARTIAL` on every later head until the tombstone is purged. A bead failure never
 changes the gate. The recorder only records: it never writes a `resolution` or a `cleared` mark
 and never fixes, so it runs the same way under `--foreman`. The caller shows the list,
