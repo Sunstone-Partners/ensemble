@@ -60,8 +60,9 @@ light-mode verdict off for a full-mode one.
 * The baseline test run executes the head's own test code in a scratch directory; it is not a sandbox
   (`docs/guides/pr-review-prepare.md`).
 * The runner never edits the reviewed tree and never pushes.
-* A head from outside this repository is never reviewed (`cross-repository-head`, `head-repository-unknown`): the
-  baseline would run the fork's test code on this machine and the agents would be handed its snapshot. Read the diff
+* A head from outside this repository is never reviewed (`cross-repository-head`, `head-repository-unknown`), whatever
+  the options: `skipPrecheck` and `dryRun` do not skip the check. The baseline would run the fork's test code on this
+  machine and the agents would be handed its snapshot. Read the diff
   by hand. A same-repository head's code does run (in the baseline and, unless `skipPrecheck` is set, in the precheck's
   gate): this guards against code from outside the repository, not against a hostile branch inside it. The baseline
   also runs before the tier and mode are known, so a same-repository PR that answers `NEEDS_FULL_MODE` has already had
@@ -70,7 +71,8 @@ light-mode verdict off for a full-mode one.
   runner cannot tell a read from a claim. Read-only access for agents is an instruction in the prompt that the runner
   cannot enforce: the dispatcher must.
 * A reviewer's `pre-existing` severity is checked against the diff, not taken on its word: it stands only when the
-  cited `file:line` is outside every hunk of the PR's diff; otherwise the finding is graded Important and the
+  cited `file:line` names a file that exists at the head and is outside every hunk of the PR's diff; otherwise (a
+  changed line, a path that names no file at the head, an unreadable diff) the finding is graded Important and the
   reviewer's word is kept as `claimedSeverity`. That checks lines, not cause: a defect this change causes in an
   untouched caller is outside the diff. Important versus Nit is the reviewer's classification and is not verified.
 * `agentAuthored` is the caller's statement and cannot be checked (an agent PR is committed under the maintainer's own
@@ -83,5 +85,8 @@ light-mode verdict off for a full-mode one.
   rounds): a lower bound, not a transcript count. No before/after comparison against the narrated flow has been run
   on a live PR, so no speedup and no turn target is claimed.
 * Call `collect` one at a time per run: the run file has no lock, and two overlapping calls can each emit the next wave.
+* A finished run's stored answer is as of its finalise: a repeat `collect` re-reads only the head and the PR's open
+  state, so the approvals, branch protection and `mergeable` it holds can be out of date. Start a new run for a
+  current verdict.
 
 Guide with a worked example: `docs/guides/pr-review-run.md`.
