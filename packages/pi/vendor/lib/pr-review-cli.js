@@ -12,7 +12,7 @@
  * direct `require(...)` call on the same input can never diverge. NO
  * business logic lives here, NO network calls, NO shell calls.
  *
- * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing> < payload.json
+ * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|carry|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing> < payload.json
  *
  * `review-range` (TRD-013) is a thin pass-through to `chooseReviewRange`:
  * given `lastReviewedSha`, `commits` and `remediationShas` on top of what
@@ -205,6 +205,16 @@
  *              tally, and asking the gate which findings block.
  *              `evaluateGate`'s own answer is unchanged by it.
  *
+ *   carry      { headSha, lastReviewedSha, deltaPlan, deltaPaths[], highPaths[], priorVerdicts[], candidates[] }
+ *              -- (lib/pr-review-carry.js) which settled verification verdicts of the prior round still stand after
+ *              a fix push. Answers { ok, carried[], reverify[], unmatched[], reasons[] }: a carried record keeps its
+ *              verdict and votes, is stamped `head` = this head and keeps `carriedFrom`; a `reverify` entry lists every
+ *              reason (the module header has the table). `priorVerdicts` and `candidates` are REQUEST parameters
+ *              (arrays, else exit 1); everything else is graded in-band and a missing fact means re-verification.
+ *              HONEST LIMITS: it never hashes anything -- `hunkHash` and `depHashes` are inputs the caller computed
+ *              (lib/pr-review-carry-hash-cli.js); only `present`/`filtered` verdicts carry; a High or sensitive path
+ *              touched by the delta carries nothing; a `full` range carries nothing.
+ *
  * FAIL CLOSED at the boundary. Two kinds of payload value are told apart:
  *   - the review FACTS of `scope`, `remote`, `status`, `policy`, `rules`,
  *     `paths` and `description` are graded in-band by their modules, so a
@@ -250,6 +260,7 @@ const { offerExplainers } = require('./pr-review-explainer-offer');
 const { renderBriefFromFiles } = require('./pr-review-brief-files');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
+const { planCarry } = require('./pr-review-carry');
 const { evaluateApprovals } = require('./pr-review-approvals');
 const { evaluateGate } = require('./pr-review-gate');
 const { buildDispositionChoices } = require('./pr-review-disposition');
@@ -582,6 +593,19 @@ function runMode(payload) {
 }
 
 /**
+ * `carry` is a pass-through to `planCarry` (lib/pr-review-carry.js; kata qw98): after a fix push it says which settled
+ * verification verdicts of the prior round still stand (`carried`, re-stamped with the current head and keeping
+ * `carriedFrom`) and which must be verified again (`reverify`, with every reason; `unmatched` for a prior verdict no
+ * candidate re-presents). The REQUEST parameters `priorVerdicts` and `candidates` must be arrays (a misspelt key is an
+ * error, exit 1, never read as empty); every other fact (heads, `deltaPlan`, `deltaPaths`, `highPaths`, a hash) is graded
+ * in-band by the module and a missing one means re-verification (exit 0).
+ */
+function runCarry(payload) {
+  requireKeys(payload, { priorVerdicts: ARRAY, candidates: ARRAY }, 'carry');
+  return planCarry(payload);
+}
+
+/**
  * `approvals` and `gate` are pass-throughs to the one module that owns each
  * question. Both grade their input IN BAND and fail closed: a request, a tier
  * or a review record they cannot read is `satisfied:false` / `mergeable:false`
@@ -756,6 +780,7 @@ const HANDLERS = Object.freeze({
   slices: runSlices,
   tier: runTier,
   mode: runMode,
+  carry: runCarry,
   approvals: runApprovals,
   gate: runGate,
   'explainer-offer': runExplainerOffer,
@@ -786,7 +811,7 @@ function main(argv) {
   if (handler === undefined) {
     process.stdout.write(
       JSON.stringify({
-        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing> < payload.json`,
+        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|carry|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing> < payload.json`,
       }) + '\n'
     );
     return 1;
@@ -841,6 +866,7 @@ module.exports = {
   runSlices,
   runTier,
   runMode,
+  runCarry,
   runApprovals,
   runGate,
   runExplainerOffer,

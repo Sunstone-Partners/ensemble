@@ -149,6 +149,11 @@ and `reasons`, with the reviewers and verifiers actually dispatched), so a
 reader of the report sees at what depth the review ran and why: a Standard
 review is never mistaken for a Deep one.
 
+**What the report records about settled verdicts.** `state` MAY carry `verdicts` (`state-write` stores it verbatim): the
+settled verification verdict records `{ id?, file, claim, hunkHash, depHashes, head, carriedFrom?, outcome, votes }`
+that the NEXT round's `carry` reads as `priorVerdicts`. Record only `present` and `filtered` verdicts (never `disputed`
+or `unverified`); a carried record is re-stamped with the new `head` and keeps its `carriedFrom`. No `verdicts`, no carry.
+
 **What the report records about timing.** `state` MAY carry a `timing` key: the
 answer of `node "$PR_REVIEW_CLI" timing` with `{ runId }` (or `{ runId, cwd }`),
 computed from the run's span trace (`toolchain-cli trace`,

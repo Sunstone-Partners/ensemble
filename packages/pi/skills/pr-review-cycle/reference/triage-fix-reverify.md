@@ -96,6 +96,17 @@ cannot vouch for), fall back to the full base-correct range and report
 `reason` and `unvouched` verbatim: a push that cannot be vouched for is
 never trusted as "nothing else changed."
 
+**Carry settled verdicts (CLI `carry`).** Only when `review-range` answered `delta` AND the prepare facts'
+`deltaPlan.mode` is `delta`: hash each citation with `node "$PR_REVIEW_CARRY_HASH_CLI"` (`pr-review-carry-hash-cli.js`,
+in the same directory as the `$PR_REVIEW_CLI` you resolved; `{ repoRoot?, headSha, citations }`), then run
+`node "$PR_REVIEW_CLI" carry` with `{ headSha, lastReviewedSha, deltaPlan, deltaPaths` (facts
+`delta.changedPaths`)`, highPaths` (the High and sensitive paths of `paths`)`, priorVerdicts` (the `verdicts` of the
+prior state report)`, candidates` (the hashed citations)` }`. Verify only the `reverify` candidates plus any new ones,
+with independent fresh verifiers under the unchanged verification contract and `expectedVerifiers`; append their
+verdicts. Stamp each `carried` finding `headSha = carried.head` and `carriedFrom = carried.carriedFrom`, and run
+`clearFixedFindings` explicitly for `unmatched` and reverify findings. A `full` range, an unreadable or `ok:false`
+result, a failed hash, or any doubt: verify everything, carry nothing.
+
 The batch fix changes the tree, so re-resolve after it lands: the re-review
 diff (same base), `headSha`, `reviewedHeadSha` (Step 8) and `reviewedTreeSha`
 (its tree id, `REVIEWED_TREE_SHA`) all come from the
