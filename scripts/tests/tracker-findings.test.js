@@ -540,3 +540,125 @@ describe('values reach br as literal argv entries, and a dash-led value never re
     expect(br.calls()).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// kata n350: many keys from one listing, labels, and the reviewed tree never supplying the adapter
+// ---------------------------------------------------------------------------
+
+describe('findByKeys: every key answered from ONE listing of the workspace', () => {
+  const KEY_A = 'dk:acme/repo:src/a.js:unchecked-path';
+  const KEY_C = 'dk:acme/repo:src/c.js:relabelled';
+
+  test('each key gets the verdict findByKey gives it, and br is listed once', () => {
+    const many = deps({ list: 'br-list-unscoped.sample.json' });
+    const result = findings.findByKeys({ run: many.run }, { keys: [KEY_A, 'dk:absent', KEY_C] });
+    expect(result.ok).toBe(true);
+    expect(many.br.calls()).toHaveLength(1);
+    expect(result.byKey[KEY_A]).toMatchObject({ ok: true, found: true, item: { id: 'ws-mxo' }, labels: ['pr-review', 'sev-important'] });
+    expect(result.byKey['dk:absent']).toEqual({ ok: true, found: false });
+    expect(result.byKey[KEY_C]).toMatchObject({ ok: true, found: true, labels: ['triaged'] });
+
+    for (const key of [KEY_A, 'dk:absent', KEY_C]) {
+      const single = deps({ list: 'br-list-unscoped.sample.json' });
+      expect(findings.findByKey({ run: single.run }, { key })).toEqual(result.byKey[key]);
+    }
+  });
+
+  test('a key held by several beads is an AMBIGUOUS_KEY verdict for that key only', () => {
+    const run = () => ({
+      ok: true,
+      data: JSON.stringify({ issues: [{ id: 'x', external_ref: 'k' }, { id: 'y', external_ref: 'k' }, { id: 'z', external_ref: 'j' }] })
+    });
+    const result = findings.findByKeys({ run }, { keys: ['k', 'j'] });
+    expect(result.ok).toBe(true);
+    expect(result.byKey.k).toMatchObject({ ok: false, error: { code: 'AMBIGUOUS_KEY', ids: ['x', 'y'] } });
+    expect(result.byKey.j).toMatchObject({ ok: true, found: true, item: { id: 'z' } });
+  });
+
+  test('an invalid key refuses the whole call before br is run; no keys means no listing at all', () => {
+    const many = deps({ list: 'br-list-unscoped.sample.json' });
+    for (const keys of [[KEY_A, 'has space'], [KEY_A, ''], [KEY_A, 7], 'k', undefined]) {
+      expect(findings.findByKeys({ run: many.run }, { keys })).toMatchObject({ ok: false, error: { code: 'INVALID_ARG' } });
+    }
+    expect(findings.findByKeys({ run: many.run }, { keys: [] })).toEqual({ ok: true, byKey: {} });
+    expect(many.br.calls()).toEqual([]);
+  });
+
+  test('an unavailable tracker, a failed listing and unparseable output are one failure for the whole call', () => {
+    expect(findings.findByKeys({ run: () => ({ ok: false, unavailable: true, error: { code: 'UNAVAILABLE', message: 'no tracker' } }) }, { keys: ['k'] })).toMatchObject({
+      ok: false,
+      unavailable: true,
+      fallback: 'skip-finding-beads'
+    });
+    expect(findings.findByKeys({ run: () => ({ ok: false, error: { code: 'TOOL_FAILED', message: 'boom' } }) }, { keys: ['k'] })).toMatchObject({ ok: false, error: { code: 'TOOL_FAILED' } });
+    expect(findings.findByKeys({ run: () => ({ ok: true, data: 'not json' }) }, { keys: ['k'] })).toMatchObject({ ok: false, error: { code: 'BAD_OUTPUT' } });
+  });
+});
+
+describe('labelFinding: adds labels through the real beads adapter', () => {
+  test('runs `br label add <id> -l <labels>` and refuses bad input before br is run', () => {
+    const label = deps({ label: 'br-label-add.sample.json' });
+    const result = findings.labelFinding({ run: label.run }, { id: 'ws-17y', labels: ['pr-review', 'follow-on'] });
+    expect(result.ok).toBe(true);
+    expect(label.br.calls()).toEqual([['label', 'add', 'ws-17y', '-l', 'pr-review,follow-on', '--json']]);
+
+    for (const bad of [{ id: '', labels: ['a'] }, { id: 'x', labels: [] }, { id: 'x', labels: ['-x'] }, { id: 'x', labels: ['a b'] }, { id: 'x' }]) {
+      expect(findings.labelFinding({ run: label.run }, bad)).toMatchObject({ ok: false, error: { code: 'INVALID_ARG' } });
+    }
+    expect(label.br.calls()).toHaveLength(1);
+  });
+
+  test('an adapter without tracker.label is unavailable, like every other capability', () => {
+    const run = (capability, args) => runCapabilitySync(BARE_ADAPTER_FOR_LABEL, capability, args, {});
+    expect(findings.labelFinding({ run }, { id: 'x', labels: ['a'] })).toMatchObject({ ok: false, unavailable: true, fallback: 'skip-finding-beads' });
+  });
+});
+const BARE_ADAPTER_FOR_LABEL = { adapter: 'bare', binaries: [], allowlist: [], capabilities: {} };
+
+describe('createToolchainDeps: a tree under review never supplies the tracker adapter', () => {
+  /** A repository whose own packages/*\/skills carries a beads adapter that asks br for something different. */
+  function treeWithShadowAdapter() {
+    const repo = mkTempDir('tracker-findings-shadow-');
+    fs.mkdirSync(path.join(repo, '.beads'));
+    const dest = path.join(repo, 'packages', 'shadow', 'skills', 'adapter-tracker-beads');
+    fs.cpSync(path.join(REPO_ROOT, 'packages', 'development', 'skills', 'adapter-tracker-beads'), dest, { recursive: true });
+    const manifest = path.join(dest, 'adapter.yaml');
+    const text = fs.readFileSync(manifest, 'utf8');
+    const needle = '  tracker.find-by-key:\n    run: ["br", "list", "--all", "--limit", "0", "--json"]';
+    expect(text).toContain(needle);
+    fs.writeFileSync(manifest, text.replace(needle, '  tracker.find-by-key:\n    run: ["br", "list", "--all", "--limit", "0", "--json", "--status", "SHADOW-ADAPTER"]'));
+    return repo;
+  }
+  const SHADOWED = (calls) => calls.some((argv) => argv.includes('SHADOW-ADAPTER'));
+
+  test('control: a tree that is NOT marked untrusted does run its own adapter (this is what the guard prevents)', () => {
+    const repo = treeWithShadowAdapter();
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    findings.findByKey(findings.createToolchainDeps({ projectRoot: repo, env: br.env }), { key: 'k' });
+    expect(SHADOWED(br.calls())).toBe(true);
+  });
+
+  test('with untrustedProjectRoot the adapter comes from this install and the tree\'s own copy never runs', () => {
+    const repo = treeWithShadowAdapter();
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const result = findings.findByKey(findings.createToolchainDeps({ projectRoot: repo, env: br.env, untrustedProjectRoot: true }), { key: 'k' });
+    expect(result.ok).toBe(true);
+    expect(br.calls()).toHaveLength(1);
+    expect(SHADOWED(br.calls())).toBe(false);
+  });
+
+  test('an untrusted tree\'s repo-local adapter (.ensemble/adapters) is refused as unavailable, never run', () => {
+    const repo = mkTempDir('tracker-findings-local-');
+    fs.mkdirSync(path.join(repo, '.beads'));
+    fs.mkdirSync(path.join(repo, '.ensemble'));
+    fs.writeFileSync(path.join(repo, '.ensemble', 'toolchain.yaml'), 'tracker: local-evil\n');
+    const dest = path.join(repo, '.ensemble', 'adapters', 'local-evil');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.cpSync(path.join(REPO_ROOT, 'packages', 'development', 'skills', 'adapter-tracker-beads'), dest, { recursive: true });
+    fs.writeFileSync(path.join(dest, 'adapter.yaml'), fs.readFileSync(path.join(dest, 'adapter.yaml'), 'utf8').replace(/^adapter: .*$/m, 'adapter: local-evil'));
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const result = findings.findByKey(findings.createToolchainDeps({ projectRoot: repo, env: br.env, untrustedProjectRoot: true }), { key: 'k' });
+    expect(result).toMatchObject({ ok: false, unavailable: true, fallback: 'skip-finding-beads' });
+    expect(br.calls()).toEqual([]);
+  });
+});
