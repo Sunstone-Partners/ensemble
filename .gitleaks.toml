@@ -20,4 +20,6 @@ paths = [
   '''^packages/development/tests/pr-review-reachability\.test\.js$''',
   # Fake AWS_SECRET_ACCESS_KEY / API-token canary values that prove the pr-review-prepare baseline run drops credentials from its environment.
   '''^packages/development/tests/pr-review-prepare\.test\.js$''',
+  # Fake AWS key ids / github_pat_ tokens / `name = value` strings that exercise the shared redact() (it must remove them).
+  '''^packages/development/tests/pr-review-state\.test\.js$''',
 ]
