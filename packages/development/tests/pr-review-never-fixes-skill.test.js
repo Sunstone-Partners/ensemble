@@ -238,24 +238,26 @@ describe("Step 5 runs on the operator's selection or on a pre-publication snapsh
 // negates the verb ("commits nothing", "never push", "no fix agent") is not an instruction. The
 // check knows the common shapes of one (an imperative opening a clause, a modal or an infinitive
 // before the verb, a git or workflow command); it is a tripwire for a sentence added to the wrong
-// step, not a proof that no phrasing gets past it. INSTRUCTION_CASES pins what it flags and what it
-// leaves alone, so it cannot quietly stop working.
+// step, not a proof that no phrasing gets past it. The two tables of cases below pin what it flags
+// and what it leaves alone, so it cannot quietly stop working.
 // ---------------------------------------------------------------------------
 
 const ACTION = '(?:push|commit|fix|patch|amend|rebase|cherry-pick)';
 const OBJECT = '(?:the|a|an|all|any|every|each|it|them|those|these|that|this|its|their|your|one|real|confirmed|actionable|important|selected|remaining|findings?|changes?|fixes|up|to|origin|directly)';
 const NEGATION = /\b(?:never|not|no|nothing|none|neither|nor|without|cannot|refuse[sd]?)\b|n't\b/;
+// "Fix on this PR" and "Fix in a follow-on PR" are the operator's option labels, and "fix run",
+// "fix agent" and "fix id" are nouns, so a verb followed by one of those is not an instruction.
+const LABEL = '(?! (?:on this pr|in a follow-on|run|agent|id|selection|answer|option|step))';
+const ADVERB = '(?:(?:also|then|first|now|always|immediately|just|next|finally) )';
 const INSTRUCTION_SHAPES = [
   // An imperative opening a clause: "Push the fixes.", "then commit it", "..., fix every finding".
-  // "Fix on this PR" and "Fix in a follow-on PR" are the operator's option labels, and "fix run"
-  // and "fix agent" are nouns.
+  new RegExp(`(?:^|, )${ADVERB}*${ACTION}(?![\\w-])${LABEL}`),
+  // A modal or an infinitive before the verb: "must push before the gate", "to fix it".
   new RegExp(
-    `(?:^|, )(?:(?:then|also|first|next|finally|now|always|immediately|just) )*${ACTION}(?![\\w-])(?! (?:on this pr|in a follow-on|run|agent|id|selection|answer|option|step))`
+    `\\b(?:must|should|shall|will|may|can|could|would|might|need to|needs to|has to|have to|ought to|is to|are to|to) ${ADVERB}?${ACTION}(?![\\w-])${LABEL}`
   ),
-  // A modal, an infinitive or a conjunction before the verb: "should push the fix", "to fix it".
-  new RegExp(
-    `\\b(?:must|should|shall|will|may|can|could|would|might|need to|needs to|has to|have to|ought to|is to|are to|to|then|and|or|also|first|next|finally|before|after|until|once) ${ACTION}(?![\\w-]) ${OBJECT}\\b`
-  ),
+  // A conjunction or a preposition before the verb, with an object after it: "and push the branch".
+  new RegExp(`\\b(?:then|and|or|also|first|next|finally|before|after|until|once) ${ACTION}(?![\\w-]) ${OBJECT}\\b`),
   // A mutating command or capability.
   /\bgit (?:push|commit|add|apply|am|rebase|reset|cherry-pick|merge|revert)\b|\bworkflow\.(?:push|commit)\b|\bgh pr (?:create|merge)\b|\bhost\.change-request-(?:create|merge)\b/,
 ];
@@ -320,6 +322,11 @@ describe('the review steps instruct no push, commit or fix', () => {
     ['Push, never force-push.'],
     ['Fix the findings before asking the operator.'],
     ['Before the gate, amend the commit and push.'],
+    ['The agent must push before the gate.'],
+    ['Agents should commit and push first.'],
+    ['It needs to fix the finding.'],
+    ['You can then push the branch.'],
+    ['The skill may also commit.'],
   ])('the check flags an instruction: %s', (sentence) => {
     expect(instructions(sentence)).not.toEqual([]);
   });
@@ -339,6 +346,11 @@ describe('the review steps instruct no push, commit or fix', () => {
     ['It reads the base commit, never the PR head.'],
     ['One fix agent, one push for the whole selection.'],
     ['A fix run (`FIX_SELECTION`) ends here: it re-reviews nothing.'],
+    ['It must not push before the gate.'],
+    ['It must never fix a finding.'],
+    ['A review never needs to commit.'],
+    ['Nothing here has to push.'],
+    ['Nits and Pre-existing default to Fix in a follow-on PR.'],
   ])('the check leaves a negation or a noun alone: %s', (sentence) => {
     expect(instructions(sentence)).toEqual([]);
   });
