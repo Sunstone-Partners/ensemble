@@ -808,6 +808,61 @@ describe('pr-review-paths property harness: defects found by the fuzz, pinned', 
   });
 });
 
+// `classifyPaths` hands the declared-sensitive, declared-High and CODEOWNERS checks the name AS GIT PRINTED IT: each
+// matcher tries it as printed and with its whitespace dropped, and a name already trimmed would lose the first
+// spelling, so a name that is only whitespace under a directory would collapse onto the directory itself. The patterns
+// here lie outside DEFAULT_SENSITIVE_PATHS, so the default floor cannot answer for the declared checks.
+describe('pr-review-paths property harness: the declared, High and owner checks read the name as git printed it', () => {
+  const NAMES = ['docs/private/ ', 'docs/private/\r', 'docs/private/\u2028', 'docs/private/\n\n', 'docs/private/\u00A0'];
+
+  test.each(NAMES.map((name) => [name]))('a declared SENSITIVE pattern selects the whitespace-only name %j', (name) => {
+    const declaration = { sourceSha: BASE, sensitive: ['docs/private/**'] };
+    const result = classifyPaths({ changedPaths: [name], declaration, baseSha: BASE });
+    expect(result.ok).toBe(true);
+    expect(result.paths[0]).toMatchObject({ sensitive: true, matchedBy: 'docs/private/**', source: 'declaration' });
+    expect(result.sensitive).toEqual([name]);
+    expect(result.prSensitive).toBe(true);
+  });
+
+  test.each(NAMES.map((name) => [name]))('a declared HIGH pattern selects the whitespace-only name %j', (name) => {
+    const declaration = { sourceSha: BASE, high: ['docs/private/**'] };
+    const result = classifyPaths({ changedPaths: [name], declaration, baseSha: BASE });
+    expect(result.ok).toBe(true);
+    expect(result.paths[0]).toMatchObject({ high: true, highMatchedBy: 'docs/private/**', sensitive: false });
+    expect(result.high).toEqual([name]);
+  });
+
+  test.each(NAMES.map((name) => [name]))('a CODEOWNERS rule selects the whitespace-only name %j and names its owners', (name) => {
+    const result = classifyPaths({
+      changedPaths: [name],
+      declaration: null,
+      codeowners: 'docs/private/** @org/team bob@example.com\n',
+      baseSha: BASE,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.paths[0].owners).toEqual(['@org/team', 'bob@example.com']);
+  });
+
+  test('the same patterns still answer for a name with no whitespace in it, and not for a lookalike', () => {
+    const declaration = { sourceSha: BASE, sensitive: ['docs/private/**'], high: ['docs/private/**'] };
+    const codeowners = 'docs/private/** @org/team\n';
+    const inside = classifyPaths({ changedPaths: ['docs/private/a.md'], declaration, codeowners, baseSha: BASE }).paths[0];
+    expect(inside).toMatchObject({ sensitive: true, high: true, owners: ['@org/team'] });
+    const outside = classifyPaths({ changedPaths: ['docs/private'], declaration, codeowners, baseSha: BASE }).paths[0];
+    expect(outside).toMatchObject({ sensitive: false, high: false, owners: [] });
+  });
+
+  test('declared sensitive and High patterns that name a path ignore letter case; a bare name and an owner rule stay exact', () => {
+    const declaration = { sourceSha: BASE, sensitive: ['Docs/Private/**', 'NOTES.md'], high: ['DOCS/Secret/**'] };
+    const codeowners = 'Docs/Owned/** @org/team\n';
+    const changedPaths = ['docs/private/a.md', 'docs/secret/a.md', 'docs/owned/a.md', 'sub/notes.md'];
+    const result = classifyPaths({ changedPaths, declaration, codeowners, baseSha: BASE });
+    expect(result.paths.map((p) => p.sensitive)).toEqual([true, false, false, false]);
+    expect(result.paths.map((p) => p.high)).toEqual([false, true, false, false]);
+    expect(result.paths.map((p) => p.owners)).toEqual([[], [], [], []]);
+  });
+});
+
 // `?` is one character as the name is written: `a/?/b` selected `a/\u00DF/b` before the full fold existed, and the
 // full fold must not take that away, although it reads \u00DF as the two letters `ss` and a `?` takes one letter.
 describe('pr-review-paths property harness: `?` takes a character whose full fold is several letters', () => {
