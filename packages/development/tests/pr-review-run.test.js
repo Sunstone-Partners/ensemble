@@ -238,14 +238,33 @@ describe('prepare: the dispatch manifest', () => {
     expect(dry.precheckCalls).toEqual([{ dryRun: true }]);
   });
 
-  test('prepare is handed the merge base, the head and the passthrough options; the base override wins', async () => {
+  test('prepare is handed the merge base, the head and the passthrough options', async () => {
     const h = harness();
     await h.prepare({ lastReviewedSha: 'e'.repeat(40), remediationShas: ['f'.repeat(40)], testFiles: ['t/x.test.js'] });
     expect(h.prepareCalls[0]).toMatchObject({ repoRoot: h.repoRoot, runId: 'run1', baseSha: BASE, headSha: HEAD, lastReviewedSha: 'e'.repeat(40), remediationShas: ['f'.repeat(40)], testFiles: ['t/x.test.js'] });
-    const o = harness();
-    await o.prepare({ baseSha: '9'.repeat(40) });
-    expect(o.prepareCalls[0].baseSha).toBe('9'.repeat(40));
-    expect(o.gitCalls.some((a) => a[0] === 'merge-base')).toBe(false);
+    expect(h.gitCalls.some((a) => a[0] === 'merge-base')).toBe(true);
+  });
+
+  test('a stated baseSha is a check, not an override: it is accepted only when it IS the merge base (a base inside the PR would leave its earlier commits unreviewed and unreported)', async () => {
+    const same = harness();
+    await same.prepare({ baseSha: BASE });
+    expect(same.prepareCalls[0].baseSha).toBe(BASE);
+    expect(same.gitCalls.some((a) => a[0] === 'merge-base')).toBe(true);
+
+    const inside = harness();
+    const out = await inside.prepare({ baseSha: '9'.repeat(40) });
+    expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'base-not-merge-base' });
+    expect(out.error).toContain('9'.repeat(40));
+    expect(out.error).toContain(BASE);
+    expect(inside.prepareCalls).toEqual([]);
+    expect(fs.existsSync(path.join(inside.runDir(), 'run.json'))).toBe(false);
+  });
+
+  test('the base and the head are fetched even when the caller states the base', async () => {
+    const h = harness();
+    h.deps.fetchRefs = async () => ({ ok: false, error: 'network' });
+    expect(await h.prepare({ baseSha: BASE })).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'refs-unavailable' });
+    expect(h.prepareCalls).toEqual([]);
   });
 
   test.each(['MERGED', 'CLOSED', 'open', undefined])('a PR whose state is %p is refused before anything runs (it was reviewed and answered mergeable before; review of PR 264, P2)', async (state) => {

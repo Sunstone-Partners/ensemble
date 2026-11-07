@@ -369,6 +369,25 @@ describe('the PR and its base are read from the host, not taken from the caller 
     expect(fs.existsSync(runDir(`not-open-${prState}`))).toBe(false);
     expect(ghLog().filter((a) => a.includes('-X'))).toEqual([]);
   });
+
+  test('a baseSha inside the PR would grade only its suffix: refused, naming the real merge base; the merge base itself is accepted and the whole range is reviewed', () => {
+    setGh({ head: fx.exec });
+    const inside = git(fx.work, 'rev-parse', 'feature'); // exec = feature + one commit, so `feature` is a commit inside the PR
+    const mergeBase = git(fx.work, 'rev-parse', 'main');
+    const refused = prep({ runId: 'base-inside', baseSha: inside, testFiles: [] });
+    expect(refused.code).toBe(1);
+    expect(refused.out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'base-not-merge-base' });
+    expect(refused.out.error).toContain(inside);
+    expect(refused.out.error).toContain(mergeBase);
+    expect(fs.existsSync(runDir('base-inside'))).toBe(false);
+
+    const accepted = prep({ runId: 'base-merge-base', baseSha: mergeBase, testFiles: [] });
+    expect(accepted.code).toBe(0);
+    expect(accepted.out).toMatchObject({ ok: true, status: 'DISPATCH' });
+    const run = JSON.parse(fs.readFileSync(path.join(runDir('base-merge-base'), 'run.json'), 'utf8'));
+    expect(run.baseSha).toBe(mergeBase);
+    expect(run.changedPaths).toEqual(['src/a.js', 'src/b.js', 'src/b.test.js']); // not just the last commit's file
+  });
 });
 
 describe('in-process: every process the runner starts is recorded', () => {

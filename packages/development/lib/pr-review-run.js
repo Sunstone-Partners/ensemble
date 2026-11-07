@@ -336,14 +336,16 @@ async function prepareRun(input, deps) {
     tracer.end(span, precheck.ok ? 'ok' : 'error', { ok: precheck.ok });
   }
 
-  // base: the caller's, or the merge base with the freshly fetched base branch
+  // base: always the merge base of the freshly fetched base branch and the head. A caller-stated baseSha is checked
+  // against it, never trusted: a commit inside the PR would narrow the changed paths, tier, slices and coverage to the
+  // suffix, and the gate would grade only that suffix with no sign that the earlier commits went unreviewed.
   const refs = await settle(() => deps.fetchRefs({ headSha, baseRefName }));
-  let baseSha = input.baseSha;
-  if (baseSha === undefined) {
-    if (!isObject(refs) || refs.ok !== true) return failure('RUN_FAILED', { reason: 'refs-unavailable', error: isObject(refs) && refs.error ? refs.error : 'the base and head could not be fetched', precheck });
-    const mb = await settle(() => deps.git(['merge-base', `refs/remotes/origin/${baseRefName}`, headSha]));
-    baseSha = isObject(mb) && mb.status === 0 ? String(mb.stdout).trim().toLowerCase() : '';
-    if (!SHA.test(baseSha)) return failure('RUN_FAILED', { reason: 'base-unresolved', error: `no merge base of origin/${baseRefName} and ${headSha}`, precheck });
+  if (!isObject(refs) || refs.ok !== true) return failure('RUN_FAILED', { reason: 'refs-unavailable', error: isObject(refs) && refs.error ? refs.error : 'the base and head could not be fetched', precheck });
+  const mb = await settle(() => deps.git(['merge-base', `refs/remotes/origin/${baseRefName}`, headSha]));
+  const baseSha = isObject(mb) && mb.status === 0 ? String(mb.stdout).trim().toLowerCase() : '';
+  if (!SHA.test(baseSha)) return failure('RUN_FAILED', { reason: 'base-unresolved', error: `no merge base of origin/${baseRefName} and ${headSha}`, precheck });
+  if (input.baseSha !== undefined && input.baseSha !== baseSha) {
+    return failure('RUN_FAILED', { reason: 'base-not-merge-base', error: `baseSha ${input.baseSha} is not the merge base of origin/${baseRefName} and ${headSha} (${baseSha}); any other base reviews a different range than this pull request's own changes (a later one leaves earlier commits unreviewed and unreported), so the runner takes the merge base itself and accepts a stated baseSha only when it is that commit`, precheck });
   }
 
   // 3. prepare (snapshot, diffs, facts, baseline)
