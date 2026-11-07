@@ -369,4 +369,25 @@ describe('across real processes (AC1)', () => {
     expect(second.queuedMs).toBeGreaterThanOrEqual(300); // it waited for most of the first holder's 500ms
     expect(fs.existsSync(lockPath)).toBe(false);
   });
+
+  it('four processes contending for one lock (three queued behind the holder) run one at a time; none is lost', async () => {
+    const dir = tmpDir();
+    const lockPath = path.join(dir, 'gate.lock');
+    const logFile = path.join(dir, 'log.jsonl');
+    const run = (label) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [HOLDER, lockPath, logFile, '200', label], { stdio: ['ignore', 'pipe', 'inherit'] });
+        let out = '';
+        child.stdout.on('data', (c) => (out += c));
+        child.on('close', (code) => resolve({ code, result: JSON.parse(out) }));
+      });
+    const done = await Promise.all(['a', 'b', 'c', 'd'].map(run));
+    expect(done.map((r) => r.code)).toEqual([0, 0, 0, 0]);
+
+    const events = fs.readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(events.map((e) => e.event)).toEqual(['start', 'end', 'start', 'end', 'start', 'end', 'start', 'end']); // never start, start
+    for (let i = 0; i < events.length; i += 2) expect(events[i].label).toBe(events[i + 1].label); // each holder ends before the next begins
+    expect(events.filter((e) => e.event === 'start').map((e) => e.label).sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
 });
