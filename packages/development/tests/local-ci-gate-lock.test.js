@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * `gate` is serialized per machine (kata mjyc). Two layers:
- *  - runGateFlow in-process: the lock brackets the run (and only the run), is released when the run throws, and a lock
- *    that cannot be had stops the gate before anything runs or posts.
- *  - the real CLI entry point, twice at once, against a real fixture repo: the CI step itself records when it started
- *    and finished, and the two intervals must not overlap. Fake: only `gh` and `npx` (no network, no Node download).
+ * `gate` and `run` are serialized per user home (kata mjyc). Layers:
+ *  - runGateFlow and runRun in-process: the lock brackets the run (and only the run), is released when the run throws,
+ *    and a lock that cannot be had stops it before anything runs or posts.
+ *  - the real CLI entry point against a real fixture repo: the CI step itself records when it started and finished, and
+ *    the intervals must not overlap, for two gates and for a run started during a gate. Fake: only `gh` and `npx` (no
+ *    network, no Node download).
  */
 
 const fs = require('fs');
@@ -175,6 +176,88 @@ describe('runGateFlow and the gate lock', () => {
   });
 });
 
+describe('run takes the same lock as gate (review round 1)', () => {
+  const runPayload = (fx, extra = {}) => ({ repoRoot: fx.dir, headSha: fx.headSha, baseRef: fx.baseRef, ...extra });
+
+  it('holds the lock for the runner and for nothing else, and reports queued_ms', async () => {
+    const fx = flowFixture();
+    const { deps, lockPath } = flowDeps(fx, tmpDir());
+    let held = null;
+    deps.runGate = jest.fn((o) => {
+      held = fs.existsSync(lockPath);
+      return passingRun(o.headSha);
+    });
+    const r = await cli.runRun(runPayload(fx), deps);
+    expect(r).toMatchObject({ ok: true, sha: fx.headSha, queued_ms: expect.any(Number) });
+    expect(held).toBe(true);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('a runner that throws still releases the lock', async () => {
+    const fx = flowFixture();
+    const lockDir = tmpDir();
+    const { deps, lockPath } = flowDeps(fx, lockDir);
+    let held = null;
+    deps.runGate = jest.fn(() => {
+      held = fs.existsSync(lockPath);
+      throw new Error('runner exploded');
+    });
+    await expect(cli.runRun(runPayload(fx), deps)).rejects.toThrow('runner exploded');
+    expect(held).toBe(true);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('while another run holds the lock it is refused at stage "lock": nothing runs and the holder is untouched', async () => {
+    const fx = flowFixture();
+    const lockDir = tmpDir();
+    const lockPath = path.join(lockDir, lock.LOCK_FILE);
+    const holder = { pid: process.pid, host: os.hostname(), token: 'busy-run', acquiredAt: '2026-01-01T00:00:00.000Z' };
+    fs.writeFileSync(lockPath, JSON.stringify(holder)); // this very process is alive, so its lock is honoured
+    const { deps } = flowDeps(fx, lockDir);
+    const r = await cli.runRun(runPayload(fx), deps);
+    expect(r).toMatchObject({ ok: false, stage: 'lock', errorCode: 'lock-timeout', lockHolder: { token: 'busy-run' }, queued_ms: expect.any(Number) });
+    expect(r.error).toContain('lock-timeout');
+    expect(deps.runGate).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8'))).toEqual(holder);
+  });
+
+  it('a run with no lock available at all is refused, never run unserialized', async () => {
+    const fx = flowFixture();
+    const { deps } = flowDeps(fx, tmpDir());
+    delete deps.acquireGateLock;
+    const r = await cli.runRun(runPayload(fx), deps);
+    expect(r).toMatchObject({ ok: false, stage: 'lock' });
+    expect(deps.runGate).not.toHaveBeenCalled();
+  });
+
+  it('an invalid request never queues: the lock is not even asked for', async () => {
+    const fx = flowFixture();
+    const { deps } = flowDeps(fx, tmpDir());
+    deps.acquireGateLock = jest.fn(deps.acquireGateLock);
+    const r = await cli.runRun(runPayload(fx, { baseRef: 'origin/no-such-branch' }), deps);
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBeUndefined();
+    expect(deps.acquireGateLock).not.toHaveBeenCalled();
+    expect(deps.runGate).not.toHaveBeenCalled();
+  });
+});
+
+describe('a lock that cannot be used fails by name (review round 1)', () => {
+  it('an unusable lock directory stops gate and run at stage "lock" with errorCode lock-io: nothing runs, nothing posts', async () => {
+    const fx = flowFixture();
+    const aFile = path.join(tmpDir(), 'a-file');
+    fs.writeFileSync(aFile, 'not a directory');
+    const { deps, post } = flowDeps(fx, path.join(aFile, 'locks')); // the lock directory's parent is a regular file: ENOTDIR
+    const g = await cli.runGateFlow(payload(fx), deps);
+    expect(g).toMatchObject({ ok: false, stage: 'lock', errorCode: 'lock-io', posted: false, mergeReady: false, queued_ms: expect.any(Number) });
+    expect(g.error).toMatch(/^lock-io: cannot use the lock at .*ENOTDIR/);
+    const r = await cli.runRun({ repoRoot: fx.dir, headSha: fx.headSha, baseRef: fx.baseRef }, deps);
+    expect(r).toMatchObject({ ok: false, stage: 'lock', errorCode: 'lock-io', queued_ms: expect.any(Number) });
+    expect(deps.runGate).not.toHaveBeenCalled();
+    expect(post.calls).toHaveLength(0);
+  });
+});
+
 describe('the real CLI entry point, two gates at once (AC5)', () => {
   it('serializes them: the CI steps never overlap and the second reports queued_ms', async () => {
     const stepLog = path.join(tmpDir(), 'steps.jsonl');
@@ -225,6 +308,83 @@ setTimeout(() => {
 
     const queued = reports.map((r) => r.queued_ms).sort((x, y) => x - y);
     expect(queued[1]).toBeGreaterThanOrEqual(HOLD_MS * 0.6); // the later one waited for most of the first one's step
+    expect(fs.existsSync(path.join(lockDir, lock.LOCK_FILE))).toBe(false);
+  }, 120000);
+});
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Poll until `predicate()` is truthy; reject after `ms` so a broken run fails the test instead of hanging it. */
+async function until(predicate, ms, what) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = predicate();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(25);
+  }
+}
+
+/** A fixture repo whose one CI step logs `start`, waits for the release file, then logs `end`; `npx` and `gh` are fakes. */
+function holdableFixture() {
+  const dir = tmpDir();
+  const stepLog = path.join(dir, 'steps.jsonl');
+  const releaseFile = path.join(dir, 'release');
+  const unitCheck = `'use strict';
+const fs = require('fs');
+fs.appendFileSync(${JSON.stringify(stepLog)}, JSON.stringify({ event: 'start', at: Date.now() }) + '\\n');
+const cap = setTimeout(() => process.exit(3), 60000);
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(releaseFile)})) return;
+  clearInterval(timer);
+  clearTimeout(cap);
+  fs.appendFileSync(${JSON.stringify(stepLog)}, JSON.stringify({ event: 'end', at: Date.now() }) + '\\n');
+}, 20);
+`;
+  const fx = makeBaseRepo({
+    config: CONFIG_YAML,
+    files: { 'scripts/unit-check.js': unitCheck, [WORKFLOW]: WORKFLOW_YAML, '.gitignore': '.ensemble/local-ci-runs/\n' },
+  });
+  const fakeDir = fakeGhDir({ baseRefName: 'trusted-base', headRefOid: fx.headSha, state: 'OPEN' });
+  fs.writeFileSync(path.join(fakeDir, 'npx'), `#!/bin/sh\nprintf '%s\\n' '${process.execPath}'\n`, { mode: 0o755 });
+  const steps = () => (fs.existsSync(stepLog) ? fs.readFileSync(stepLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  return { fx, fakeDir, steps, releaseStep: () => fs.writeFileSync(releaseFile, 'go') };
+}
+
+describe('run and gate share one lock across real processes (review round 1)', () => {
+  it('a run started while a gate is running its CI waits for it: the steps never overlap', async () => {
+    const { fx, fakeDir, steps, releaseStep } = holdableFixture();
+    const lockDir = tmpDir();
+    const env = { ...process.env, PATH: fakeDir + path.delimiter + process.env.PATH, ENSEMBLE_LOCAL_CI_LOCK_DIR: lockDir, ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS: '60000' };
+    const subcommand = (name, input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [CLI_PATH, name], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+        let out = '';
+        let err = '';
+        child.stdout.on('data', (c) => (out += c));
+        child.stderr.on('data', (c) => (err += c));
+        child.on('close', (code) => resolve({ code, out, err }));
+        child.stdin.end(JSON.stringify(input));
+      });
+
+    try {
+      const gate = subcommand('gate', { repoRoot: fx.dir, headSha: fx.headSha, baseRef: fx.baseRef, repo: 'o/r', pr: PR, dryRun: true });
+      await until(() => steps().length >= 1, 60000, 'the gate to start its CI step'); // the gate now holds the lock
+      const run = subcommand('run', { repoRoot: fx.dir, headSha: fx.headSha, baseRef: fx.baseRef });
+      await sleep(2000); // ample time for an unserialized run to start its own step
+      expect(steps().map((e) => e.event)).toEqual(['start']); // still only the gate's step: the run is queued
+      releaseStep();
+      const [g, r] = await Promise.all([gate, run]);
+      expect({ code: g.code, err: g.err }).toEqual({ code: 0, err: '' });
+      expect({ code: r.code, err: r.err }).toEqual({ code: 0, err: '' });
+      expect(JSON.parse(g.out)).toMatchObject({ ok: true, dryRun: true, mergeReady: true });
+      const ran = JSON.parse(r.out);
+      expect(ran).toMatchObject({ ok: true, sha: fx.headSha });
+      expect(ran.queued_ms).toBeGreaterThanOrEqual(1000); // it waited out the gate's step
+      expect(steps().map((e) => e.event)).toEqual(['start', 'end', 'start', 'end']); // never start, start
+    } finally {
+      releaseStep();
+    }
     expect(fs.existsSync(path.join(lockDir, lock.LOCK_FILE))).toBe(false);
   }, 120000);
 });
