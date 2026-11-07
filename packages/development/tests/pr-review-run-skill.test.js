@@ -39,6 +39,21 @@ describe('pr-review-cycle light-mode runner prose', () => {
     expect(main).toContain('### Step 10');
   });
 
+  // Review of PR 264, round 3, findings 3 and 4. The skill is held to a word baseline (scripts/prompt-budget-baseline.json), and the
+  // runner's pointer was first made to fit by dropping dev's owner paragraph and a clause; the pointer is the part that gives way.
+  test('SKILL.md keeps the owner paragraph and the "before running it" clause the runner branch had dropped to fit the word baseline', () => {
+    const flat = main.replace(/\s+/g, ' ');
+    expect(flat).toContain('This skill owns the *editable* parts (Constitution Rule 8): review criteria, loop order, the 10-minute interactive wait, and Foreman-mode rules. It **composes** `packages/quality/skills/pr-review-remediation/SKILL.md` for every triage, regression-test and minimal-fix decision.');
+    expect(flat).toContain('read the one a step names before running it. Their rules are normative.');
+  });
+
+  test('the light-mode pointer reads as a sentence: prepare then collect, the Steps below, the narrated Steps', () => {
+    const flat = main.replace(/\s+/g, ' ');
+    expect(flat).toContain('run `prepare` then `collect` of `lib/review-run-cli.js`');
+    expect(flat).toContain('not the Steps below.');
+    expect(flat).toContain('`NEEDS_FULL_MODE`: the narrated Steps 1-10, unchanged.');
+  });
+
   test('the reference handles every status and the fallback', () => {
     const ref = readSkillReference('review-run.md');
     for (const s of STATUSES) expect(ref).toContain('`' + s + '`');

@@ -12,7 +12,12 @@ separate step composing `pr-review-remediation`. Every grading
 decision (scope, ledger validity, remote-review binding, terminal status) is
 computed by `pr-review-cli.js`, never guessed in prose.
 
-Companion files hold each step's full detail; read the one a step names. Their rules are normative.
+This skill owns the *editable* parts (Constitution Rule 8): review criteria,
+loop order, the 10-minute interactive wait, and Foreman-mode rules. It
+**composes** `packages/quality/skills/pr-review-remediation/SKILL.md` for
+every triage, regression-test and minimal-fix decision.
+
+Companion files hold each step's full detail; read the one a step names before running it. Their rules are normative.
 Template for the PR body `fix-issue` builds: `reference/fix-issue-pr-body.md`.
 
 ---
@@ -103,9 +108,9 @@ guessed input.
 
 ## Light-mode runner
 
-When `selectMode` answers `light`, `MODE=local` and `MODE=gate` run `prepare`, `collect` of
-`lib/review-run-cli.js` (`$REVIEW_RUN_CLI`) per `reference/review-run.md`, not Steps below.
-`NEEDS_FULL_MODE`, a High tier or sensitive path: narrated Steps 1-10, unchanged.
+When `selectMode` answers `light`, `MODE=local` and `MODE=gate` run `prepare` then `collect` of
+`lib/review-run-cli.js` (`$REVIEW_RUN_CLI`) per `reference/review-run.md`, not the Steps below.
+`NEEDS_FULL_MODE`: the narrated Steps 1-10, unchanged.
 
 ---
 
@@ -263,11 +268,8 @@ explainer is produced only on request, and generate only what `generate` names
 ### Step 9 -- Write state (CLI `state-write`)
 
 Detail: `reference/status-and-state.md`. Run `state-write` with `{ prId, state }` (the
-full status result); `ok:false` wrote nothing -- report `reason`. The report lives at
-`.ensemble/pr-review/pr-<PR_ID>.json`, is gitignored and never committed (committing
-changes the head and invalidates the review). Resume with `state-read`
-(`{ prId, headSha, treeSha }`); a report whose head or reviewed tree does not match is
-discarded.
+full status result); `ok:false` wrote nothing -- report `reason`. The report
+(`.ensemble/pr-review/pr-<PR_ID>.json`) is gitignored and never committed.
 
 ### Step 10 -- Merge gate (`MODE=gate` only)
 
