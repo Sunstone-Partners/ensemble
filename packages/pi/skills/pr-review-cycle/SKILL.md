@@ -108,6 +108,20 @@ guessed input.
 
 ---
 
+## Light-mode runner (default for `MODE=local` and `MODE=gate`)
+
+Detail: `reference/review-run.md`. When the tier is Low or Medium (`selectMode` answers `light`), drive the
+review through `node "$REVIEW_RUN_CLI" prepare` and `collect` (`lib/review-run-cli.js`, resolved like
+`PR_REVIEW_CLI`) instead of narrating the Steps below. `prepare` returns a `DISPATCH` manifest: start exactly
+the agents it names, pass each `prompt` unedited, respect `maxConcurrentAgents` and stop each agent at its
+`deadlineAtIso`, then call `collect`. Repeat on `DISPATCH` and `PENDING`; stop on `DONE`; on `ADJUDICATE` decide
+only the items it lists and call `collect` again with `adjudications`. The model composes no brief, computes no
+vote and sets no status. `NEEDS_FULL_MODE` (and any unresolvable runner) means the narrated Steps 1-10 below,
+unchanged, are the procedure; so is every High-tier or sensitive-path PR. `RUN_INVALIDATED` and `RUN_FAILED`
+are handled as the reference says.
+
+---
+
 ## Algorithm
 
 The steps run in this fixed order. No step is reordered, skipped, or
