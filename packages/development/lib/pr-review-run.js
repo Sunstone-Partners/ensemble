@@ -95,6 +95,9 @@ const msg = (error) => (error && error.message ? error.message : String(error));
 const failure = (status, fields) => ({ ok: false, status, ...fields });
 const redactor = (deps) => (typeof deps.redact === 'function' ? deps.redact : (value) => value);
 
+/** A PR the host does not state as exactly OPEN gets no review and no verdict. */
+const notOpen = (state, runId, headSha) => failure('RUN_FAILED', { reason: 'pr-not-open', error: `the pull request is ${JSON.stringify(state)}, not OPEN`, prState: state, ...(runId === undefined ? {} : { runId }), ...(headSha === undefined ? {} : { headSha }) });
+
 const runDirOf = (repoRoot, runId) => path.join(repoRoot, RUN_SUBDIR, runId);
 
 function noopTracer() {
@@ -310,6 +313,10 @@ async function prepareRun(input, deps) {
       headSha,
     });
   }
+
+  // Only an open PR is reviewed: a merged or closed one gets no agents and no answer that could read as mergeable (the
+  // precheck refuses it too, but its refusal is advisory here).
+  if (first.pr.state !== 'OPEN') return notOpen(first.pr.state, undefined, headSha);
 
   const runId = input.runId !== undefined ? input.runId : `pr${input.pr}-${headSha.slice(0, 12)}-${Math.floor(startedAt / 1000)}`;
   if (!isValidRunId(runId)) return failure('RUN_FAILED', { reason: 'invalid-runId', error: `runId ${JSON.stringify(runId)} is not file-name safe (letters, digits, "_", "-"; no dots)` });
@@ -624,6 +631,7 @@ async function gateStage(run, built, deps, tracer) {
   const head = await readHead(deps);
   if (!head.ok) return { invalid: failure('RUN_FAILED', { reason: 'head-unreadable', error: head.error, runId: run.runId }) };
   if (head.headSha !== run.headSha) return { invalid: failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), moved: true };
+  if (head.pr.state !== 'OPEN') return { invalid: notOpen(head.pr.state, run.runId), moved: false };
 
   const headTreeSha = await treeOf(deps, run.headSha);
   if (headTreeSha === undefined) warnings.push('head-tree-unreadable: only approvals given on the head commit itself are counted');
@@ -822,6 +830,7 @@ async function collectRun(input, deps) {
   if (head.headSha !== run.headSha) {
     return terminate(run, 'invalidated', failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), 'collect', startedAt, deps);
   }
+  if (head.pr.state !== 'OPEN') return notOpen(head.pr.state, run.runId);
 
   // ---- 2. the outstanding wave
   const wave = run.waves.find((w) => w.status === 'dispatched');

@@ -248,12 +248,15 @@ describe('prepare: the dispatch manifest', () => {
     expect(o.gitCalls.some((a) => a[0] === 'merge-base')).toBe(false);
   });
 
-  test('a PR that is not OPEN is still reviewed and the state is recorded', async () => {
+  test.each(['MERGED', 'CLOSED', 'open', undefined])('a PR whose state is %p is refused before anything runs (it was reviewed and answered mergeable before; review of PR 264, P2)', async (state) => {
     const h = harness();
-    h.pr.state = 'MERGED';
-    const m = await h.prepare();
-    expect(m.status).toBe('DISPATCH');
-    expect(m.prState).toBe('MERGED');
+    h.pr.state = state;
+    const out = await h.prepare();
+    expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'pr-not-open', error: expect.stringContaining('not OPEN') });
+    expect(h.precheckCalls).toEqual([]);
+    expect(h.prepareCalls).toEqual([]);
+    expect(h.gitCalls).toEqual([]);
+    expect(fs.existsSync(path.join(h.repoRoot, '.ensemble'))).toBe(false);
   });
 
   test('the default run id names the PR, the head and the second; a run id that is not file-name safe is refused', async () => {
@@ -435,6 +438,40 @@ describe('fail closed: a head that moves invalidates the run (AC4)', () => {
     await h.prepare();
     h.deps.readPr = async () => ({ ...h.pr, headSha: 'not-a-sha' });
     expect(await h.collect()).toMatchObject({ status: 'RUN_FAILED', reason: 'head-unreadable' });
+  });
+});
+
+describe('fail closed: a PR that is no longer open gets no verdict (review of PR 264, P2)', () => {
+  test('closed while the agents ran: collect refuses before collecting anything, records nothing, and a retry on a reopened PR proceeds', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+    h.pr.state = 'CLOSED';
+    const out = await h.collect();
+    expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'pr-not-open', prState: 'CLOSED', runId: 'run1' });
+    expect(h.stateWrites).toEqual([]);
+    expect(h.readRun().phase).toBe('review-dispatched');
+    expect(h.readRun().waves[0].status).toBe('dispatched');
+    h.pr.state = 'OPEN';
+    expect((await h.collect()).status).toBe('DONE');
+  });
+
+  test('merged between the last wave and the gate: no verdict, no state report, no final.json; the phase is unchanged', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+    // the first head read (collect step 1) still says OPEN; the read made for the gate says MERGED
+    let reads = 0;
+    h.deps.readPr = async () => {
+      reads += 1;
+      return { ...h.pr, headSha: HEAD, state: reads === 1 ? 'OPEN' : 'MERGED' };
+    };
+    const out = await h.collect();
+    expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'pr-not-open', prState: 'MERGED' });
+    expect(reads).toBe(2);
+    expect(h.stateWrites).toEqual([]);
+    expect(fs.existsSync(path.join(h.runDir(), 'final.json'))).toBe(false);
+    expect(h.readRun().phase).not.toBe('done');
   });
 });
 

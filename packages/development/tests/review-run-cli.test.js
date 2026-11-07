@@ -360,6 +360,17 @@ describe('a head from outside this repository is never run (review of PR 264, P0
   });
 });
 
+describe('the PR and its base are read from the host, not taken from the caller (review of PR 264, P2)', () => {
+  test.each(['MERGED', 'CLOSED'])('a %s PR is refused: no agents, no precheck comment, no run', (prState) => {
+    setGh({ prState });
+    const r = prep({ runId: `not-open-${prState}` });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'pr-not-open', prState });
+    expect(fs.existsSync(runDir(`not-open-${prState}`))).toBe(false);
+    expect(ghLog().filter((a) => a.includes('-X'))).toEqual([]);
+  });
+});
+
 describe('in-process: every process the runner starts is recorded', () => {
   const FORBIDDEN_GIT = /^(push|checkout|switch|reset|stash|commit|add|rebase|apply|merge|cherry-pick|revert|clean|rm|mv|restore|pull|tag|branch|update-ref|worktree|am|gc|prune)$/;
 
