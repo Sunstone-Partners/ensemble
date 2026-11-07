@@ -42,7 +42,7 @@ the resolved `nodeModules`. The manifest records them under `inputs`.
 | `snapshot/` | The head's tree from `git archive`, checked against `git ls-tree` object for object (every file, symlink and executable bit, and no other file or symlink), made read-only before any head code runs and checked again after it. The step writes nothing inside it. |
 | `range.diff` | `BASE...HEAD`. |
 | `delta.diff` | `lastReviewedSha..HEAD`, only when `review-range` says `delta`. Otherwise absent, with the reason under `absent` in the manifest (`first-round`, `unvouched-history`, ...). |
-| `facts.json` | Policy and CODEOWNERS as the **base** commit states them, the `paths` classification (inputs and result), tier inputs, and `changedPaths`: the union of `git diff --numstat -z --no-renames BASE HEAD` (the two-argument form the skill pins) and `... BASE...HEAD` (what `range.diff` shows), in git's byte order, so a path the PR changes is never dropped when the base already holds an identical change. `numstat` has one entry per changed path (the two-argument counts where that listing names the path). `diffForm` records both commands and the `range.diff` form. |
+| `facts.json` | Policy and CODEOWNERS as the **base** commit states them, the `paths` classification (inputs and result), tier inputs, and `changedPaths`: the union of `git diff --numstat -z --no-renames BASE HEAD` (the two-argument form the skill pins) and `... BASE...HEAD` (what `range.diff` shows), in git's byte order, so a path the PR changes is never dropped when the base already holds an identical change. `numstat` has one entry per changed path (the two-argument counts where that listing names the path). `diffForm` records both commands and the `range.diff` form. `delta` and `deltaPlan` say what a re-review reads (see "The delta plan" below). |
 | `probe.js` | A runner agents `require()`: `load(rel)` a module of the head, `read`, `readAtBase`, `run(argv)` (no shell, read-only snapshot as cwd) and `chain(steps)`. `load` and `read` refuse a path that leaves the snapshot, by its spelling or through a symlink the head committed. |
 | `baseline.json`, `baseline.log` | The baseline test run: files and why each was picked, command (with the real `node_modules` path), exit code, the `skippedLinks` left out of the `node_modules` copy, output. Credential-shaped values and the values of inherited credential-named variables are replaced by `[REDACTED]`. |
 | `manifest.json` | The inputs, their fingerprint and the sha256 of every artifact. |
@@ -51,6 +51,49 @@ The result printed on stdout carries the same paths, the `fingerprint` and
 `hashes`, plus `reused` and `wallMs`. `hashes.snapshot` is a digest of the tree
 listing; the other hashes are sha256 of the file bytes. `baseline.log` includes
 the test runner's own timings, so key carry-over on the other hashes.
+
+## The delta plan
+
+A re-review after a fix push does not have to re-read the whole PR, but it must
+not read less than it can justify. `facts.json` carries `deltaPlan`, the answer of
+`planDeltaReview` (`lib/pr-review-delta.js`, pure), and `delta`, the facts it was
+given when the range is a delta: `{ lastReviewedSha, changedPaths, headSeenBefore }`
+(`changedPaths` are the paths changed in `lastReviewedSha..HEAD`, not the whole PR;
+`delta` is `null` for a full range).
+
+```json
+{ "mode": "delta", "reasons": ["delta-since-last-review"],
+  "readSet": [ { "path": "src/app.js", "reasons": ["caller-of:src/thing.js"] },
+               { "path": "src/thing.js", "reasons": ["changed"] },
+               { "path": "tests/thing.test.js", "reasons": ["test-of:src/thing.js"] } ] }
+```
+
+`mode: "delta"`: read the delta plus `readSet`, not the full range. The read set is
+every path the delta changed, the files that import one of them (`caller-of`) and
+the tests that import one or carry its name (`test-of`, `thing.js` is tested by
+`thing.test.js`). A path the delta deleted is listed as changed (read it in
+`delta.diff`); its importers are still named. `mode: "full"` (with `readSet: []`):
+read the full range. `reasons` lists every rule that applied, none is dropped:
+
+| Reason | Meaning |
+|---|---|
+| `range-is-full` plus the range reason | `review-range` did not vouch for a delta (`first-round`, `unvouched-history`, ...). A full range is never turned into a delta. |
+| `head-never-seen` | The last reviewed head is not a commit this repository holds. |
+| `high-path-touched`, `sensitive-path-touched` | The delta changes a High or sensitive path, or a review declaration file (`REVIEW.md`, `CODEOWNERS`), as the **base** commit's declaration classifies it. |
+| `empty-delta` | The delta changes no path: nothing justifies reading nothing. |
+| `unanalyzed-source-changed` | The delta changes source in a language the import graph does not read (`.py`, `.sh`, `.ex`, ...). |
+| `import-graph-unavailable`, `import-graph-unreadable`, `classification-unreadable`, `classification-incomplete`, `changed-paths-unreadable`, `delta-unreadable` | An input the plan needs could not be read, so no blast radius can be justified. |
+
+The blast radius is computed here, in the preparation step, because it needs a
+repo scan: one `git grep` over the head tree for import-bearing lines, turned
+into a reverse import graph by `lib/pr-review-import-graph.js` (pure). **Limits,
+stated rather than hidden:** the graph is file level and covers JavaScript and
+TypeScript with relative specifiers (`require`, `import ... from`, `import()`,
+`export ... from`). It treats "importers of a changed file" as "callers of a
+changed symbol", which can only ask a reviewer to read more; it does not follow
+importers of importers, bare package specifiers, or references by string path
+(a test that spawns a script by path is found only by its name). A failed repo
+scan makes the plan `full`, not a failed preparation.
 
 ## Guarantees
 
