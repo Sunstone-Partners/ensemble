@@ -37,6 +37,7 @@
  *     star that is a whole segment inside a pattern (`a`, `**`, `b`, joined by
  *     slashes) is zero or more whole directories: it takes `a/b` and `a/x/b`,
  *     never `a/xb`.
+ *   - A pattern with no `/` matches a basename at any depth (`*.yml`).
  *   - A leading `/` anchors the pattern to the repository root (`/*.yml`).
  *   - A trailing `/` makes the pattern directory-only (`docs/`).
  *   - A pattern that names a directory -- one written with a trailing `/`, or
@@ -53,12 +54,21 @@
  *     owner stay exact: GitHub resolves CODEOWNERS paths case-sensitively.
  *     "Ignoring letter case" is the full Unicode case fold a case-insensitive
  *     file system applies (U+212A, U+017F, U+00DF, U+FB00..U+FB06 read as the
- *     letters they spell), not the narrower fold of a regex flag.
+ *     letters they spell), not the narrower fold of a regex flag. A name is
+ *     read two ways and either selects it: by the letters of its full fold
+ *     (U+00DF is `ss`, so `??` takes it) and as written with the regex flag's
+ *     one-to-one fold (U+00DF is one character, so `?` takes it). Keeping the
+ *     second reading means the full fold only ever ADDS matches to what the
+ *     regex flag selected, `?` included. A name that would need both readings
+ *     at once (`a/?ss/b` against `a/\u00DF\u00DF/b`) is not selected.
+ *   - `?` takes one code point: an astral name is one character, in exact-case
+ *     patterns too.
  *   - A name is matched both as git printed it and with its surrounding
  *     whitespace dropped, so neither spelling escapes a guarded area.
  *
- * `tests/pr-review-paths-property.test.js` checks all of the above against an
- * independent oracle over seeded generated cases.
+ * `tests/pr-review-paths-property.test.js` compares `matchesPattern` and
+ * `classifyPaths` with an independent oracle over seeded generated cases; its
+ * header says which name forms it generates and which it does not.
  */
 
 const { isObjectId } = require('./pr-review-scope');
@@ -222,6 +232,11 @@ function compilePattern(pattern, ignoreCase) {
       // `u`: `?` and `[^/]` take one code point, not half of a surrogate pair, so an astral name is one character
       // here as it is to the file system. Every source is escaped literals plus the glob forms, all valid under `u`.
       regex: new RegExp(`^${globToRegExpSource(fold ? foldCase(body) : body)}$`, 'u'),
+      // The fold turns one character into several letters (U+00DF into `ss`), and `?` then takes one LETTER, so the
+      // folded form alone would stop a `?` from taking such a character, which it takes as written. The name as
+      // written, read with the regex flag's one-to-one fold, is therefore tried as well: the full fold adds matches
+      // and takes none away.
+      written: fold ? new RegExp(`^${globToRegExpSource(body)}$`, 'iu') : null,
       fold,
       basenameOnly,
       // Only a directory-shaped pattern stands in for the files beneath it.
@@ -261,6 +276,7 @@ function matchesPattern(pattern, path, options) {
     for (const named of candidates) {
       const candidate = compiled.fold ? foldCase(named) : named;
       if (compiled.regex.test(candidate)) return true;
+      if (compiled.written !== null && compiled.written.test(named)) return true;
       if (compiled.basenameOnly && compiled.regex.test(basenameOf(candidate))) return true;
     }
   }

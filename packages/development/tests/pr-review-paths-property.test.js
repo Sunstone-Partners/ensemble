@@ -13,24 +13,56 @@
  *
  *   - The oracle shares no code with the production module: no regex is built
  *     from a pattern, it matches by dynamic programming over arrays of
- *     case-folded units, and its fold is an explicit alias table, not
+ *     case-folded units, and its folds are explicit alias tables, not
  *     `toLowerCase` or the `i`/`u` regex flags the production code leans on.
- *   - The fold table is the ground truth of what a case-insensitive file system
+ *   - The tables are the ground truth of what a case-insensitive file system
  *     does, not of what a JS regex does: on APFS, `U+212A` names `k`, `U+017F`
  *     names `s`, and the FULL fold also maps `U+00DF`, `U+1E9E` to `ss` and
  *     `U+FB00`..`U+FB06` to `ff`, `fi`, `fl`, `ffi`, `ffl`, `st`. (Checked by
  *     creating `fl` and `ss` on APFS and opening them as `\uFB02` and `\u00DF`.)
  *     The `iu` regex flag folds only the one-to-one aliases, so `work\uFB02ows`
- *     would escape `.github/workflows/**` on such a checkout.
+ *     would escape `.github/workflows/**` on such a checkout. The oracle reads
+ *     a case-loosened name both ways, as the matcher's header says, and either
+ *     reading selects it: by the full fold (`ONE_TO_MANY`: a character may
+ *     become several letters, so `?` counts letters) and with the one-to-one
+ *     fold only (`ONE_TO_ONE`: a character stays one, so `?` counts written
+ *     characters).
  *
  * Reproducibility: the cases are a pure function of the seed. The default seed
- * is fixed, so CI is deterministic; `PR_REVIEW_FUZZ_SEED=<int>` explores another
- * run, and every failure prints the seed and the case index to replay it.
+ * is fixed, so CI is deterministic; `PR_REVIEW_FUZZ_SEED=<int>` (decimal or
+ * 0x-hex) explores another run, and every failure prints the seed and the case
+ * index to replay it.
  *
- * NOT modelled (so not claimed): Unicode normalization (APFS is also
- * normalization-insensitive) and bracket classes -- the matcher has none and
- * the generator never emits a backslash escape. Astral code points ARE
- * generated: `?` takes one code point.
+ * What a run generates (the reviewer brief points here, so this list is the
+ * claim and a test below checks that each form is reached):
+ *   - Names: ASCII and Latin-1 letters in either case; the case-fold aliases
+ *     Kelvin U+212A, long s U+017F, sharp s U+00DF and U+1E9E, ligatures
+ *     U+FB00..U+FB06, Ohm U+2126, Angstrom U+212B, Greek omega, sigma and
+ *     final sigma; dotted capital I U+0130 and dotless i U+0131; the regex
+ *     metacharacters ( ) + | ^ $ { } [ ]; newline, CR, tab, space, NBSP,
+ *     U+2028, U+2029 and NUL (NUL only for `matchesPattern`: git cannot print
+ *     one); an astral character; `./`, `/` and `\` forms; whitespace around a
+ *     name; a trailing `/`.
+ *   - Patterns: a name's segments with some kept, some replaced by `*`, `?`,
+ *     `**` or `**` + `/`, some cut off, an alias spelling, a leading or
+ *     trailing `/`, whitespace at the pattern's edge; random globs; and a
+ *     family that sets `?`, `*` and the letters a character folds to against
+ *     names holding a character whose fold is several letters.
+ *   - `classifyPaths`: the default floor and the declaration files, declared
+ *     sensitive and High patterns and CODEOWNERS rules (owners), over names
+ *     that travel through the real `git diff --numstat -z --no-renames`
+ *     parser (`parseNumstatZ`).
+ *
+ * NOT generated, or not modelled (so not claimed): Unicode normalization (APFS
+ * is also normalization-insensitive); combining marks written apart from their
+ * base letter; other file systems' folds (NTFS, ext4 casefold: only APFS was
+ * checked); bracket classes, `!` negation and backslash escapes in patterns
+ * (the matcher has none and the generator never emits an escape); paths of
+ * more than five segments; the declaration `path` key; a malformed declaration
+ * or CODEOWNERS line. And the rules themselves: the oracle is written from the
+ * same documented rules as the matcher (fold, then match; two readings of a
+ * case-loosened name; the subtree rule; the two whitespace spellings), so
+ * agreement shows the code follows them, not that they are the right ones.
  */
 
 const {
@@ -39,15 +71,24 @@ const {
   DEFAULT_SENSITIVE_PATHS,
   DEFAULT_DECLARATION_PATHS,
 } = require('../lib/pr-review-paths');
+const { parseNumstatZ } = require('../lib/pr-review-prepare');
+
+/** A non-negative whole number from the environment, decimal or 0x-hex; anything else is an error, never a quiet 0. */
+function envInteger(name, fallback, env = process.env) {
+  const raw = env[name];
+  if (raw === undefined) return fallback;
+  const value = raw.trim() === '' ? Number.NaN : Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name}=${JSON.stringify(raw)} is not a non-negative whole number (decimal, or 0x-prefixed hex)`);
+  }
+  return value;
+}
 
 const DEFAULT_SEED = 0x5eed1234;
-const SEED = process.env.PR_REVIEW_FUZZ_SEED !== undefined
-  ? Number.parseInt(process.env.PR_REVIEW_FUZZ_SEED, 10) >>> 0
-  : DEFAULT_SEED;
+const SEED = envInteger('PR_REVIEW_FUZZ_SEED', DEFAULT_SEED) >>> 0;
+const CASES = envInteger('PR_REVIEW_FUZZ_CASES', 60000);
 const REPLAY = (seed) =>
   `PR_REVIEW_FUZZ_SEED=${seed} PR_REVIEW_FUZZ_CASES=${CASES} npx jest tests/pr-review-paths-property.test.js`;
-
-const CASES = process.env.PR_REVIEW_FUZZ_CASES !== undefined ? Number.parseInt(process.env.PR_REVIEW_FUZZ_CASES, 10) : 60000;
 const BASE = 'b'.repeat(40);
 
 // ---------------------------------------------------------------------------
@@ -72,10 +113,27 @@ function makeRng(seed) {
 // The oracle.
 // ---------------------------------------------------------------------------
 
-/** What a case-insensitive file system treats as another spelling of a letter. */
-const FOLD = Object.freeze({
+/**
+ * Folds a character to ONE character: what the regex `i` flag does under `u` (Unicode simple case folding), and what
+ * a case-insensitive file system does for these. U+1E9E folds to U+00DF here (simple fold), to `ss` in the full fold.
+ */
+const ONE_TO_ONE = Object.freeze({
   '\u212A': 'k', // KELVIN SIGN
   '\u017F': 's', // LATIN SMALL LETTER LONG S
+  '\u1E9E': '\u00DF', // CAPITAL SHARP S -> SHARP S
+  '\u2126': '\u03C9', // OHM SIGN
+  '\u212B': '\u00E5', // ANGSTROM SIGN
+  '\u00C5': '\u00E5',
+  '\u00C9': '\u00E9',
+  '\u00DC': '\u00FC',
+  '\u00C4': '\u00E4',
+  '\u03A9': '\u03C9',
+  '\u03A3': '\u03C3',
+  '\u03C2': '\u03C3', // FINAL SIGMA
+});
+
+/** Full case folding (CaseFolding.txt status F): ONE character that is several letters once folded. */
+const ONE_TO_MANY = Object.freeze({
   '\u00DF': 'ss', // SHARP S
   '\u1E9E': 'ss', // CAPITAL SHARP S
   '\uFB00': 'ff',
@@ -85,26 +143,21 @@ const FOLD = Object.freeze({
   '\uFB04': 'ffl',
   '\uFB05': 'st',
   '\uFB06': 'st',
-  '\u2126': '\u03C9', // OHM SIGN
-  '\u212B': '\u00E5', // ANGSTROM SIGN
-  '\u00C5': '\u00E5',
-  '\u00C9': '\u00E9',
-  '\u00DC': '\u00FC',
-  '\u00C4': '\u00E4',
-  '\u03A9': '\u03C9',
-  '\u03A3': '\u03C3',
-  '\u03C2': '\u03C3',
+  '\u0130': 'i\u0307', // DOTTED CAPITAL I: i + combining dot above, and NOT `i`
 });
 
-/** A string as an array of comparable units; folded units when `fold` is set. */
-function units(text, fold) {
+/**
+ * A string as an array of comparable units. `exact`: the characters as written. `oneToOne`: ASCII and the one-to-one
+ * folds only. `full`: those plus the one-to-many folds, so one character may be several units.
+ */
+function units(text, mode) {
   const out = [];
   for (const ch of text) {
-    if (!fold) {
-      out.push(ch);
-    } else if (FOLD[ch] !== undefined) {
-      out.push(...FOLD[ch]);
-    } else if (ch >= 'A' && ch <= 'Z') {
+    if (mode === 'full' && ONE_TO_MANY[ch] !== undefined) {
+      out.push(...ONE_TO_MANY[ch]);
+    } else if (mode !== 'exact' && ONE_TO_ONE[ch] !== undefined) {
+      out.push(ONE_TO_ONE[ch]);
+    } else if (mode !== 'exact' && ch >= 'A' && ch <= 'Z') {
       out.push(String.fromCharCode(ch.charCodeAt(0) + 32));
     } else {
       out.push(ch);
@@ -125,7 +178,7 @@ function oracleNormalize(raw, trim) {
   return text.slice(start, end);
 }
 
-function tokenize(body, fold) {
+function tokenize(body, mode) {
   const tokens = [];
   const chars = [...body];
   for (let i = 0; i < chars.length; i += 1) {
@@ -143,7 +196,7 @@ function tokenize(body, fold) {
     } else if (ch === '?') {
       tokens.push({ kind: 'one' }); // `?`: one unit but `/`
     } else {
-      for (const unit of units(ch, fold)) tokens.push({ kind: 'lit', unit });
+      for (const unit of units(ch, mode)) tokens.push({ kind: 'lit', unit });
     }
   }
   return tokens;
@@ -200,7 +253,7 @@ function globMatch(tokens, text) {
  * ONE spelling of the name: `trim` drops surrounding whitespace, as a Windows checkout does.
  */
 function oracleMatchesSpelling(pattern, rawPath, ignoreCase, trim) {
-  let spelled = pattern.split('\\').join('/');
+  let spelled = pattern.trim().split('\\').join('/'); // a pattern is read after trim()
   const anchored = spelled.startsWith('/');
   if (anchored) spelled = spelled.slice(1);
   const directoryOnly = spelled.endsWith('/');
@@ -212,6 +265,8 @@ function oracleMatchesSpelling(pattern, rawPath, ignoreCase, trim) {
   const bareName = !anchored && !body.includes('/');
   const subtree = directoryOnly || !/[*?]/.test(body);
   const fold = ignoreCase && !bareName;
+  // A case-loosened name is read both ways and either selects it; every other name is read as written.
+  const readings = (fold ? ['full', 'oneToOne'] : ['exact']).map((mode) => ({ mode, tokens: tokenize(body, mode) }));
 
   const path = oracleNormalize(rawPath, trim);
   if (path === '') return false;
@@ -221,16 +276,29 @@ function oracleMatchesSpelling(pattern, rawPath, ignoreCase, trim) {
   if (!directoryOnly) named.push(segments);
   if (subtree) for (let i = 1; i < segments.length; i += 1) named.push(segments.slice(0, i));
 
-  const tokens = tokenize(body, fold);
   return named.some((thing) => {
-    const target = bareName ? thing[thing.length - 1] : thing.join('/');
-    return globMatch(tokens, units(target, fold));
+    // A bare name is tried against the whole name AND its last segment: `**` crosses `/`, so `a**` reaches `a/x`.
+    const targets = bareName ? [thing.join('/'), thing[thing.length - 1]] : [thing.join('/')];
+    return targets.some((target) => readings.some(({ mode, tokens }) => globMatch(tokens, units(target, mode))));
   });
 }
 
 /** A path matches when the name matches as git printed it OR with its surrounding whitespace dropped (more review, never less). */
 function oracleMatches(pattern, rawPath, ignoreCase) {
   return oracleMatchesSpelling(pattern, rawPath, ignoreCase, false) || oracleMatchesSpelling(pattern, rawPath, ignoreCase, true);
+}
+
+/** What `classifyPaths` must answer for each name: sensitive, High, and the owners of the last CODEOWNERS rule that matches. */
+function oracleClassify({ names, declaration, rules }) {
+  return names.map((name) => {
+    const declarationFile = DEFAULT_DECLARATION_PATHS.some((file) => oracleNormalize(name, true) === file);
+    const declared = declaration !== null && declaration.sensitive.some((pattern) => oracleMatches(pattern, name, true));
+    const floor = DEFAULT_SENSITIVE_PATHS.some((pattern) => oracleMatches(pattern, name, true));
+    const high = declaration !== null && declaration.high.some((pattern) => oracleMatches(pattern, name, true));
+    let winner = null;
+    for (const rule of rules) if (oracleMatches(rule.pattern, name, false)) winner = rule;
+    return { sensitive: declarationFile || declared || floor, declared, high, owners: winner ? winner.owners : [] };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -243,16 +311,23 @@ const ATOMS = [
   'CONSTITUTION.md', 'REVIEW.md', 'CODEOWNERS', 'packages', 'development', 'lib', 'pr-review-paths.js', 'skills',
   'pr-review-cycle', 'SKILL.md', 'docs', 'src', 'auth', 'a', 'b', 'c.yml', 'ci.yml', 'index.js', 'azure-pipelines.yml',
   '.gitlab-ci.yml', 'test', 'dist',
+  // Names whose letters have case-fold aliases (`ss`, `ff`, `fi`, Greek, Angstrom): respelled below.
+  'assets', 'config', 'office', 'staff', 'caf\u00E9', '\u00E5ngstrom', '\u03C9mega',
 ];
+const METACHARS = ['(', ')', '+', '|', '^', '$', '{', '}', '[', ']'];
 // Characters a name may hold that a glob engine must not trip over. No `*`/`?` (a pattern cannot spell them
 // literally) and no `/` or `\` (separators).
 const JUNK = [
   'a', 'b', 'k', 'K', 's', 'S', 'f', 'l', 'i', 't', 'x', 'z', '.', '-', '_', ' ', '0',
-  '\n', '\r', '\u2028', '\u2029', '\0', '\u00A0', '\u00E9', '\u00C9', '\u65E5', '\u{1F600}',
+  '\n', '\r', '\t', '\u2028', '\u2029', '\0', '\u00A0', '\u00E9', '\u00C9', '\u65E5', '\u{1F600}',
+  ...METACHARS,
+  '\u0130', '\u0131', '\u00DF', '\u1E9E', '\uFB01', '\uFB06', '\u212A', '\u017F',
+  '\u03C9', '\u03A9', '\u2126', '\u00E5', '\u212B', '\u03C3', '\u03C2', '\u03A3',
 ];
 const ALIASES = [
   ['k', '\u212A'], ['s', '\u017F'], ['ss', '\u00DF'], ['ss', '\u1E9E'], ['ff', '\uFB00'], ['fi', '\uFB01'],
   ['fl', '\uFB02'], ['ffi', '\uFB03'], ['ffl', '\uFB04'], ['st', '\uFB05'], ['st', '\uFB06'],
+  ['\u03C9', '\u2126'], ['\u00E5', '\u212B'], ['\u03C3', '\u03C2'],
 ];
 
 function flipCase(rng, text) {
@@ -295,9 +370,13 @@ function segmentList(rng) {
   return list;
 }
 
-/** A changed path as git can print it, including the spellings a checkout can alias. */
-function makePath(rng, segments) {
-  const spelled = segments.map((segment) => (rng.chance(0.45) ? respell(rng, segment) : segment));
+/** Some segments re-spelled the way a case-insensitive checkout can spell them. */
+function spellSegments(rng, segments) {
+  return segments.map((segment) => (rng.chance(0.45) ? respell(rng, segment) : segment));
+}
+
+/** The segments joined the way git can print a changed path: separators, prefixes, surrounding whitespace. */
+function joinPath(rng, spelled) {
   let text = spelled[0];
   for (let i = 1; i < spelled.length; i += 1) text += (rng.chance(0.04) ? '\\' : '/') + spelled[i];
   if (rng.chance(0.15)) text = rng.pick(['./', '/', '././']) + text;
@@ -305,6 +384,11 @@ function makePath(rng, segments) {
   if (rng.chance(0.04)) text = rng.pick([' ', '\n', '\u2028', '\u00A0']) + text;
   if (rng.chance(0.04)) text += rng.pick([' ', '\n', '\u2028', '\u00A0']);
   return text;
+}
+
+/** A changed path as git can print it, including the spellings a checkout can alias. */
+function makePath(rng, segments) {
+  return joinPath(rng, spellSegments(rng, segments));
 }
 
 /** A glob read off a path: some segments kept, some wildcarded, the rest cut off. */
@@ -343,6 +427,8 @@ function randomGlob(rng) {
     else if (roll < 0.35) parts.push(`${rng.pick(ATOMS).slice(0, 3)}*`);
     else if (roll < 0.45) parts.push(`*${rng.pick(['.js', '.yml', '.md', '-all.js', 'ws'])}`);
     else if (roll < 0.55) parts.push(`${rng.pick(['a', 'b', 'x'])}?`);
+    else if (roll < 0.6) parts.push(`${rng.pick(ATOMS).slice(0, 2)}${rng.pick(METACHARS)}*`);
+    else if (roll < 0.64) parts.push(rng.pick(['?', '??']));
     else parts.push(rng.chance(0.3) ? respell(rng, rng.pick(ATOMS)) : rng.pick(ATOMS));
   }
   let glob = parts.join('/');
@@ -351,20 +437,84 @@ function randomGlob(rng) {
   return glob;
 }
 
-/** A pattern is read after `trim()`: keep generated edges free of whitespace, which no real pattern carries. */
-function trimEdges(glob) {
-  return glob.replace(/^\s/, 'x').replace(/\s$/, 'x');
+const MULTI = Object.keys(ONE_TO_MANY);
+
+/**
+ * The family a case-fold narrowing of `?` lives in: a name holding a character that is ONE character as written but
+ * SEVERAL letters once folded, set against `?`, `*`, the character itself and the letters it folds to.
+ */
+function multiFoldCase(rng) {
+  const pool = [...MULTI, ...MULTI, 'a', 's', 'x', 'f', 'i', 'k', '\u212A', '\u017F'];
+  const written = [];
+  const length = 1 + rng.int(3);
+  for (let i = 0; i < length; i += 1) written.push(rng.pick(pool));
+  const part = (unit) => {
+    const roll = rng.next();
+    if (roll < 0.34) return '?';
+    if (roll < 0.52) return unit;
+    if (roll < 0.74) return ONE_TO_MANY[unit] !== undefined ? ONE_TO_MANY[unit] : unit; // the letters it folds to
+    if (roll < 0.82) return '*';
+    return unit.toUpperCase();
+  };
+  const dir = rng.pick(['a', 'docs', 'private']);
+  const path = `${dir}/${written.join('')}${rng.chance(0.5) ? '/x.md' : ''}`;
+  const pattern = `${dir}/${written.map(part).join('')}${rng.pick(['', '', '/x.md', '/*', '/**'])}`;
+  return { pattern, path, ignoreCase: rng.chance(0.85) };
 }
 
 function* generateCases(seed, count) {
   const rng = makeRng(seed);
   for (let index = 0; index < count; index += 1) {
-    const segments = segmentList(rng);
-    const path = makePath(rng, segments);
-    const pattern = trimEdges(rng.chance(0.7) ? deriveGlob(rng, segments) : randomGlob(rng));
-    yield { index, pattern, path, ignoreCase: rng.chance(0.6) };
+    if (rng.chance(0.08)) {
+      yield { index, ...multiFoldCase(rng) };
+    } else {
+      const segments = segmentList(rng);
+      const spelled = spellSegments(rng, segments);
+      const path = joinPath(rng, spelled);
+      // A pattern is read after `trim()`, so whitespace at its edges is generated too.
+      const pattern = rng.chance(0.7) ? deriveGlob(rng, rng.chance(0.35) ? spelled : segments) : randomGlob(rng);
+      yield { index, pattern, path, ignoreCase: rng.chance(0.6) };
+    }
   }
 }
+
+const OWNERS = ['@org/team', '@alice', 'bob@example.com'];
+
+/** One PR's worth of input for `classifyPaths`: names, a declaration (or none), CODEOWNERS rules. */
+function* generateClassifyBatches(seed, count) {
+  const rng = makeRng(seed);
+  for (let batch = 0; batch < count; batch += 1) {
+    // A rename is two entries under --no-renames; both sides go through the grader. git cannot print a NUL in a name.
+    const lists = Array.from({ length: 1 + rng.int(4) }, () => segmentList(rng));
+    const names = lists
+      .map((segments) => makePath(rng, segments).replace(/\0/g, ''))
+      .filter((name) => name.trim() !== '');
+    if (names.length === 0) continue;
+
+    const globs = (max) => {
+      const out = [];
+      for (let i = rng.int(max + 1); i > 0; i -= 1) {
+        const glob = rng.chance(0.75) ? deriveGlob(rng, rng.pick(lists)) : randomGlob(rng);
+        if (glob.trim() !== '') out.push(glob); // a blank entry would make the whole declaration malformed
+      }
+      return out;
+    };
+    const declaration = rng.chance(0.75) ? { sourceSha: BASE, sensitive: globs(3), high: globs(3) } : null;
+
+    const rules = [];
+    for (let i = rng.chance(0.6) ? 1 + rng.int(4) : 0; i > 0; i -= 1) {
+      const pattern = rng.chance(0.75) ? deriveGlob(rng, rng.pick(lists)) : randomGlob(rng);
+      // A CODEOWNERS line is split on whitespace, and a leading `#` starts a comment: such a pattern cannot be written.
+      if (/\s/.test(pattern) || pattern.startsWith('#')) continue;
+      rules.push({ pattern, owners: rng.chance(0.5) ? [rng.pick(OWNERS)] : [OWNERS[0], OWNERS[1]] });
+    }
+    const codeowners = rules.length > 0 ? rules.map((rule) => `${rule.pattern} ${rule.owners.join(' ')}`).join('\n') : undefined;
+    yield { batch, names, declaration, rules, codeowners };
+  }
+}
+
+/** `git diff --numstat -z --no-renames`: `<added>\t<deleted>\t<path>\0` per file, the path verbatim. */
+const numstatListing = (names) => names.map((name) => `1\t0\t${name}\0`).join('');
 
 // ---------------------------------------------------------------------------
 // Properties.
@@ -383,23 +533,68 @@ describe('pr-review-paths property harness: the cases are a function of the seed
     const run = (seed) => [...generateCases(seed, 500)];
     expect(run(SEED)).toEqual(run(SEED));
     expect(run(SEED)).not.toEqual(run(SEED + 1));
+    const batches = (seed) => [...generateClassifyBatches(seed, 200)];
+    expect(batches(SEED)).toEqual(batches(SEED));
+    expect(batches(SEED)).not.toEqual(batches(SEED + 1));
   });
 
-  test('the generator reaches the forms the matcher must survive', () => {
+  test('a seed or case count that is not a whole number is refused, never read as 0', () => {
+    expect(envInteger('X', 7, {})).toBe(7);
+    expect(envInteger('X', 7, { X: '42' })).toBe(42);
+    expect(envInteger('X', 7, { X: '0x5eed1234' })).toBe(0x5eed1234);
+    for (const bad of ['', ' ', 'abc', '-3', '12.5', '0xzz', 'NaN']) {
+      expect(() => envInteger('X', 7, { X: bad })).toThrow(/X=.* is not a non-negative whole number/);
+    }
+  });
+
+  test('the generator reaches the forms the header says it generates', () => {
     const cases = [...generateCases(SEED, CASES)];
     const seen = (test) => cases.some(test);
-    expect(seen((c) => c.path.includes('\u212A') || c.path.includes('\u017F'))).toBe(true);
-    expect(seen((c) => /[\u00DF\u1E9E\uFB00-\uFB06]/.test(c.path))).toBe(true);
-    expect(seen((c) => /[\n\r\u2028\u2029]/.test(c.path))).toBe(true);
-    expect(seen((c) => c.path.includes('\0'))).toBe(true);
-    expect(seen((c) => /^\s|\s$/.test(c.path))).toBe(true);
+    const names = (test) => seen((c) => test(c.path));
+    expect(names((p) => p.includes('\u212A') || p.includes('\u017F'))).toBe(true);
+    expect(names((p) => /[\u00DF\u1E9E\uFB00-\uFB06]/.test(p))).toBe(true);
+    expect(names((p) => /[\u2126\u212B\u03C9\u03A9\u00E5\u00C5\u03C3\u03C2\u03A3]/.test(p))).toBe(true);
+    expect(names((p) => p.includes('\u0130'))).toBe(true);
+    expect(names((p) => p.includes('\u0131'))).toBe(true);
+    expect(names((p) => /[()+|^${}[\]]/.test(p))).toBe(true);
+    expect(names((p) => /[\n\r\u2028\u2029]/.test(p))).toBe(true);
+    expect(names((p) => p.includes('\t') || p.includes('\u00A0'))).toBe(true);
+    expect(names((p) => p.includes('\0'))).toBe(true);
+    expect(names((p) => p.includes('\u{1F600}'))).toBe(true);
+    expect(names((p) => p.includes('\\') && p.indexOf('\\') > 0)).toBe(true);
+    expect(names((p) => /^\s|\s$/.test(p))).toBe(true);
+    expect(names((p) => p.endsWith('/'))).toBe(true);
+    expect(names((p) => p.startsWith('./'))).toBe(true);
+    expect(names((p) => p.startsWith('/'))).toBe(true);
+    expect(seen((c) => /[()+|^${}[\]]/.test(c.pattern))).toBe(true);
+    expect(seen((c) => /^\s|\s$/.test(c.pattern))).toBe(true);
     expect(seen((c) => c.pattern.includes('**/'))).toBe(true);
     expect(seen((c) => c.pattern.endsWith('/'))).toBe(true);
+    expect(seen((c) => c.pattern.startsWith('/'))).toBe(true);
+    expect(seen((c) => /[\u00DF\u1E9E\uFB00-\uFB06\u0130\u212A\u017F]/.test(c.pattern))).toBe(true);
+    // The multi-letter fold family: `?` and `*` against a character that folds to several letters, on both answers.
+    const multi = (c) => c.pattern.includes('?') && MULTI.some((m) => c.path.includes(m));
+    expect(seen((c) => multi(c) && oracleMatches(c.pattern, c.path, c.ignoreCase))).toBe(true);
+    expect(seen((c) => multi(c) && !oracleMatches(c.pattern, c.path, c.ignoreCase))).toBe(true);
     expect(seen((c) => oracleMatches(c.pattern, c.path, c.ignoreCase))).toBe(true);
     expect(seen((c) => !oracleMatches(c.pattern, c.path, c.ignoreCase))).toBe(true);
     // A healthy share of cases must be positives, or agreement on "no" proves little.
     const positives = cases.filter((c) => oracleMatches(c.pattern, c.path, c.ignoreCase)).length;
     expect(positives / cases.length).toBeGreaterThan(0.15);
+  });
+
+  test('the classifyPaths generator reaches declarations, High patterns and owners, on both answers', () => {
+    const rows = [...generateClassifyBatches(SEED, 3000)].flatMap((b) => oracleClassify(b).map((row) => ({ ...row, batch: b })));
+    expect(rows.some((r) => r.batch.declaration === null)).toBe(true);
+    expect(rows.some((r) => r.declared)).toBe(true);
+    expect(rows.some((r) => r.batch.declaration !== null && !r.declared)).toBe(true);
+    expect(rows.some((r) => r.high)).toBe(true);
+    expect(rows.some((r) => r.batch.declaration !== null && r.batch.declaration.high.length > 0 && !r.high)).toBe(true);
+    expect(rows.some((r) => r.owners.length > 0)).toBe(true);
+    expect(rows.some((r) => r.batch.rules.length > 0 && r.owners.length === 0)).toBe(true);
+    expect(rows.some((r) => r.sensitive && !r.declared)).toBe(true); // the default floor and declaration files answer alone
+    expect(rows.some((r) => r.batch.names.some((n) => n !== n.trim()))).toBe(true);
+    expect(rows.some((r) => r.batch.names.some((n) => DEFAULT_DECLARATION_PATHS.includes(oracleNormalize(n, true))))).toBe(true);
   });
 });
 
@@ -420,8 +615,32 @@ describe('pr-review-paths property harness: the oracle itself', () => {
     ['.github/workflows/**', '.github/work\uFB02ows/ci.yml', true, true],
     ['packages/**/pr-review-*', 'packages/a/pr-revie\u017F', true, false],
     ['a/ss/b', 'a/\u00DF/b', true, true],
-    ['a/?/b', 'a/\u00DF/b', true, false],
     ['REVIEW.md', 'docs/review.md', true, false],
+    // `?` is one character as written, so it takes a character whose full fold is several letters (the one-to-one
+    // reading), and the full fold reads that character as its letters, so `??` takes it too.
+    ['a/?/b', 'a/\u00DF/b', true, true],
+    ['a/?/b', 'a/\uFB01/b', true, true],
+    ['a/?/b', 'a/\u0130/b', true, true],
+    ['a/??/b', 'a/\u00DF/b', true, true],
+    ['a/?s/b', 'a/\u00DF/b', true, true],
+    ['a/???/b', 'a/\u00DF/b', true, false],
+    ['a/?ss/b', 'a/\u00DFss/b', true, true],
+    // A name that would need both readings at once is not selected (the matcher's header says so).
+    ['a/?ss/b', 'a/\u00DF\u00DF/b', true, false],
+    // Exact case: one character as written, no fold.
+    ['a/?/b', 'a/\u00DF/b', false, true],
+    ['a/??/b', 'a/\u00DF/b', false, false],
+    ['a/ss/b', 'a/\u00DF/b', false, false],
+    // The dotted capital I is `i` plus a dot, not `i`; the dotless i is no `i` either.
+    ['a/i/b', 'a/\u0130/b', true, false],
+    ['a/i/b', 'a/\u0131/b', true, false],
+    // A bare pattern holding `**` also reaches across segments, because `**` takes `/`.
+    ['a**', 'a/x', false, true],
+    ['a*', 'a/x', false, false],
+    // A pattern is read after trim().
+    ['  docs/a.md\n', 'docs/a.md', false, true],
+    ['\u2028/docs/', 'docs/x', false, true],
+    [' ', 'docs/a.md', false, false],
   ])('%j vs %j (ignoreCase %s) -> %s', (pattern, path, ignoreCase, expected) => {
     expect(oracleMatches(pattern, path, ignoreCase)).toBe(expected);
   });
@@ -449,47 +668,60 @@ describe('pr-review-paths property harness: matchesPattern agrees with the oracl
   });
 });
 
-describe('pr-review-paths property harness: classifyPaths over `git diff --name-only -z --no-renames` listings', () => {
-  const ZLIST = (names) => `${names.join('\0')}\0`;
-  const parseZ = (raw) => raw.split('\0').slice(0, -1);
-
-  test('a name holding a newline, a space or a line separator stays ONE entry in the documented listing', () => {
-    const names = ['a b.yml', 'dir/new\nline.yml', '.github/workflows/u\u2028v.yml', 'p\u2029q'];
-    expect(parseZ(ZLIST(names))).toEqual(names);
+describe('pr-review-paths property harness: classifyPaths over `git diff --numstat -z --no-renames` listings', () => {
+  test('a name holding a newline, a tab, a space or a line separator stays ONE entry through the production parser', () => {
+    const names = ['a b.yml', 'dir/new\nline.yml', '.github/workflows/u\u2028v.yml', 'p\u2029q', 'tab\tname', ' lead', 'trail ', '.circleci/\r'];
+    expect(parseNumstatZ(numstatListing(names)).map((entry) => entry.path)).toEqual(names);
   });
 
-  test('every path is graded by the default sensitive set and the declaration files exactly as the oracle grades it', () => {
-    const rng = makeRng(SEED ^ 0x51ed270b);
+  test('every path is graded by the default floor, the declaration files, the declared patterns and CODEOWNERS exactly as the oracle grades it', () => {
     const mismatches = [];
-    for (let batch = 0; batch < 3000; batch += 1) {
-      // A rename is two entries under --no-renames; both sides go through the grader.
-      const names = [];
-      const count = 1 + rng.int(4);
-      for (let i = 0; i < count; i += 1) names.push(makePath(rng, segmentList(rng)).replace(/\0/g, ''));
-      const changedPaths = parseZ(ZLIST(names)).filter((name) => name.trim() !== '');
-      if (changedPaths.length === 0) continue;
+    for (const batch of generateClassifyBatches(SEED ^ 0x51ed270b, 3000)) {
+      // The names travel the way prepare sends them: through the numstat -z parser, then into the grader.
+      const changedPaths = parseNumstatZ(numstatListing(batch.names)).map((entry) => entry.path);
+      if (JSON.stringify(changedPaths) !== JSON.stringify(batch.names)) {
+        mismatches.push({ names: batch.names, parsed: changedPaths });
+        continue;
+      }
 
-      const result = classifyPaths({ changedPaths, declaration: null, baseSha: BASE });
-      if (!result.ok) { mismatches.push({ names, reason: result.reason }); continue; }
+      const input = { changedPaths, declaration: batch.declaration, baseSha: BASE };
+      if (batch.codeowners !== undefined) input.codeowners = batch.codeowners;
+      const result = classifyPaths(input);
+      if (!result.ok) { mismatches.push({ names: batch.names, reason: result.reason }); continue; }
+      if (result.warnings.length > 0) { mismatches.push({ names: batch.names, warnings: result.warnings }); continue; }
 
+      const expected = oracleClassify(batch);
       changedPaths.forEach((name, i) => {
-        const sensitive = DEFAULT_SENSITIVE_PATHS.some((pattern) => oracleMatches(pattern, name, true));
-        const declarationFile = DEFAULT_DECLARATION_PATHS.some((file) => oracleNormalize(name, true) === file);
-        if (result.paths[i].sensitive !== (sensitive || declarationFile)) {
-          mismatches.push({ name, lib: result.paths[i].sensitive, oracle: sensitive || declarationFile });
+        const got = result.paths[i];
+        const want = expected[i];
+        if (got.sensitive !== want.sensitive || got.high !== want.high || JSON.stringify(got.owners) !== JSON.stringify(want.owners)) {
+          mismatches.push({
+            name,
+            declaration: batch.declaration,
+            codeowners: batch.codeowners,
+            lib: { sensitive: got.sensitive, high: got.high, owners: got.owners },
+            oracle: { sensitive: want.sensitive, high: want.high, owners: want.owners },
+          });
         }
       });
-      const anySensitive = result.paths.some((p) => p.sensitive);
-      if (result.prSensitive !== anySensitive) mismatches.push({ names, prSensitive: result.prSensitive, anySensitive });
+      const wantSensitive = changedPaths.filter((_, i) => expected[i].sensitive);
+      const wantHigh = changedPaths.filter((_, i) => expected[i].high);
+      if (JSON.stringify(result.sensitive) !== JSON.stringify(wantSensitive) || JSON.stringify(result.high) !== JSON.stringify(wantHigh)) {
+        mismatches.push({ names: batch.names, sensitive: result.sensitive, high: result.high, wantSensitive, wantHigh });
+      }
+      const declarationChanged = changedPaths.some((name) => DEFAULT_DECLARATION_PATHS.some((file) => oracleNormalize(name, true) === file));
+      if (result.prSensitive !== (declarationChanged || wantSensitive.length > 0)) {
+        mismatches.push({ names: batch.names, prSensitive: result.prSensitive });
+      }
     }
     fail('classifyPaths vs oracle', mismatches);
   });
 
   // Spellings a case-insensitive checkout resolves onto a guarded file (each verified as an alias on APFS). They
-  // are fixed by hand, not by the oracle, so a shared mistake in both cannot hide them.
+  // are fixed by hand, not by the oracle, so a shared mistake in both cannot hide them. In each the alias sits in a
+  // LITERAL part of the guarding pattern: an alias under `*` or `**` would match with the fold removed too.
   test.each([
     ['.github/work\uFB02ows/ci.yml'], // ligature fl, needs the FULL fold: `iu` does not map it to `fl`
-    ['.github/workflows/\uFB01x.yml'],
     ['.GitHub/Workflows/ci.yml'],
     ['.github/wor\u212Aflows/ci.yml'], // Kelvin sign
     ['SCRIPT\u017F/generate-x/a.js'], // long s
@@ -497,10 +729,29 @@ describe('pr-review-paths property harness: classifyPaths over `git diff --name-
     ['scripts/in\uFB06all-hook'],
     ['scripts/in\u017Ftall-hook'],
     ['scripts/relea\u017Fe-notes.sh'],
-    ['scripts/generate-\u017Fub/\u00DF.js'], // long s in a generate-* directory, with a sharp-s file under it
+    ['.GITHUB/ACTIONS/x.yml'],
+    ['.Circleci/config.yml'],
   ])('the alias %j of a guarded path is sensitive', (changedPath) => {
     const result = classifyPaths({ changedPaths: [changedPath], declaration: null, baseSha: BASE });
     expect(result.paths[0].sensitive).toBe(true);
+  });
+
+  // The default floor has no literal `ss`, `ff` or Greek, so these go through a declared pattern outside it.
+  test.each([
+    ['docs/strasse/**', 'docs/stra\u00DFe/a.md'], // sharp s is `ss`
+    ['docs/strasse/**', 'docs/stra\u1E9Ee/a.md'], // capital sharp s too
+    ['docs/office/**', 'docs/o\uFB03ce/a.md'], // ligature ffi
+    ['docs/staff/**', 'docs/\uFB06aff/a.md'], // ligature st
+    ['docs/diff/**', 'docs/di\uFB00/a.md'], // ligature ff
+    ['docs/config/**', 'docs/con\uFB01g/a.md'], // ligature fi
+    ['docs/\u00E5ngstrom/**', 'docs/\u212Bngstrom/a.md'], // Angstrom sign is a-ring
+    ['docs/\u03C9mega/**', 'docs/\u2126mega/a.md'], // Ohm sign is omega
+    ['docs/\u03C3/**', 'docs/\u03C2/a.md'], // final sigma is sigma
+    ['docs/kilo/**', 'docs/\u212Ailo/a.md'], // Kelvin sign
+  ])('a declared pattern %j selects the alias %j', (pattern, changedPath) => {
+    const result = classifyPaths({ changedPaths: [changedPath], declaration: { sourceSha: BASE, sensitive: [pattern] }, baseSha: BASE });
+    expect(result.paths[0].sensitive).toBe(true);
+    expect(result.paths[0].matchedBy).toBe(pattern);
   });
 
   test.each([
@@ -548,6 +799,70 @@ describe('pr-review-paths property harness: defects found by the fuzz, pinned', 
     expect(matchesPattern('skills/', 'skills/     ')).toBe(true);
     expect(matchesPattern('/REVIEW.md', ' REVIEW.md')).toBe(true);
   });
+
+  test('a pattern is read after trim(): whitespace at its edges changes nothing', () => {
+    expect(matchesPattern('  docs/a.md\n', 'docs/a.md')).toBe(true);
+    expect(matchesPattern('\u2028/docs/', 'docs/x')).toBe(true); // trimmed, then anchored
+    expect(matchesPattern(' ', 'docs/a.md')).toBe(false); // nothing is left of it
+    expect(matchesPattern('\n/\n', 'docs/a.md')).toBe(false);
+  });
+});
+
+// `?` is one character as the name is written: `a/?/b` selected `a/\u00DF/b` before the full fold existed, and the
+// full fold must not take that away, although it reads \u00DF as the two letters `ss` and a `?` takes one letter.
+describe('pr-review-paths property harness: `?` takes a character whose full fold is several letters', () => {
+  test.each([
+    ['a/?/b', 'a/\u00DF/b'],
+    ['a/?/b', 'a/\u1E9E/b'],
+    ['a/?/b', 'a/\uFB00/b'],
+    ['a/?/b', 'a/\uFB01/b'],
+    ['a/?/b', 'a/\uFB03/b'],
+    ['a/?/b', 'a/\uFB06/b'],
+    ['a/?/b', 'a/\u0130/b'],
+    ['.github/workflows/?.yml', '.github/workflows/\u00DF.yml'],
+    ['.github/workflows/?.yml', '.github/workflows/\uFB01.yml'],
+    ['a/?ss/b', 'a/\u00DFss/b'], // `?` is one written character, and the letters after it are literal
+    ['A/?/B', 'a/\u00DF/b'],
+  ])('%j selects %j under ignoreCase', (pattern, changedPath) => {
+    expect(matchesPattern(pattern, changedPath, { ignoreCase: true })).toBe(true);
+  });
+
+  test.each([
+    ['a/??/b', 'a/\u00DF/b'], // the full fold reads sharp s as `ss`, so two `?` take it
+    ['a/?s/b', 'a/\u00DF/b'],
+    ['a/??/b', 'a/\uFB01/b'],
+    ['a/???/b', 'a/\uFB03/b'],
+  ])('%j selects %j under ignoreCase by the letters of its full fold', (pattern, changedPath) => {
+    expect(matchesPattern(pattern, changedPath, { ignoreCase: true })).toBe(true);
+  });
+
+  test.each([
+    ['a/???/b', 'a/\u00DF/b'], // two letters, not three
+    ['a/?ss/b', 'a/\u00DF\u00DF/b'], // would need both readings at once: documented, not selected
+    ['a/?/b', 'a/ss/b'], // `ss` written as two letters is two characters
+    ['a/i/b', 'a/\u0130/b'], // dotted capital I is not `i`
+  ])('%j does not select %j', (pattern, changedPath) => {
+    expect(matchesPattern(pattern, changedPath, { ignoreCase: true })).toBe(false);
+  });
+
+  test('exact case is unchanged: a character as written is one `?`, and no fold applies', () => {
+    expect(matchesPattern('a/?/b', 'a/\u00DF/b')).toBe(true);
+    expect(matchesPattern('a/??/b', 'a/\u00DF/b')).toBe(false);
+    expect(matchesPattern('a/ss/b', 'a/\u00DF/b')).toBe(false);
+  });
+
+  // Through the grader, with a declared pattern outside the default floor, which has no `?` pattern at all.
+  test.each([
+    ['sensitive', 'docs/private/?', 'docs/private/\u00DF'],
+    ['sensitive', 'docs/private/?', 'docs/private/\uFB01'],
+    ['sensitive', 'docs/private/??', 'docs/private/\u00DF'],
+    ['high', 'docs/private/?', 'docs/private/\u1E9E'],
+    ['high', 'docs/private/?', 'docs/private/\uFB03'],
+  ])('a declared %s pattern %j selects the one-character name %j', (kind, pattern, changedPath) => {
+    const declaration = { sourceSha: BASE, [kind]: [pattern] };
+    const result = classifyPaths({ changedPaths: [changedPath], declaration, baseSha: BASE });
+    expect(result.paths[0][kind === 'high' ? 'high' : 'sensitive']).toBe(true);
+  });
 });
 
 describe('pr-review-paths property harness: alias rows prove folding, not the pattern', () => {
@@ -557,6 +872,8 @@ describe('pr-review-paths property harness: alias rows prove folding, not the pa
     ['scripts/install-hook'],
     ['scripts/release-notes.sh'],
     ['scripts/generate-sub/x.js'],
+    ['.github/actions/x.yml'],
+    ['.circleci/config.yml'],
   ])('the plain twin %j is sensitive', (changedPath) => {
     expect(classifyPaths({ changedPaths: [changedPath], declaration: null, baseSha: BASE }).paths[0].sensitive).toBe(true);
   });
