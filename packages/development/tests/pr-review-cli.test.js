@@ -891,10 +891,10 @@ describe('pr-review-cli: the guidance subcommands are registered and documented 
   const SOURCE = fs.readFileSync(CLI, 'utf8');
   const GUIDANCE = ['policy', 'rules', 'paths', 'description'];
 
-  test('HANDLERS is exported, frozen, and holds exactly the twenty-nine subcommands', () => {
+  test('HANDLERS is exported, frozen, and holds exactly the thirty subcommands', () => {
     expect(Object.keys(HANDLERS).sort()).toEqual(
       [
-        'approvals', 'brief', 'depth', 'description', 'eval-compare', 'eval-score', 'eval-stale', 'explainer-offer', 'gate',
+        'approvals', 'brief', 'carry', 'depth', 'description', 'eval-compare', 'eval-score', 'eval-stale', 'explainer-offer', 'gate',
         'ledger', 'metrics', 'metrics-compare', 'mode', 'paths', 'policy', 'reachability', 'remote', 'results', 'review-range', 'rules',
         'scope', 'slices', 'state-read', 'state-write', 'status', 'tier', 'timing', 'verify-assign', 'votes',
       ].sort()
@@ -1829,5 +1829,83 @@ describe('pr-review-cli: status for a review of someone else\'s PR (review-only,
     const forgotten = runStatus(remoteFacts(read.state));
     expect(forgotten.status).toBe('REVIEW_BLOCKED');
     expect(forgotten.tests.passed).toBe(false);
+  });
+});
+
+describe('pr-review-cli: carry is a pass-through to planCarry (kata qw98)', () => {
+  const { planCarry } = require('../lib/pr-review-carry');
+  const SHA = (c) => c.repeat(64);
+  const LAST = '1'.repeat(40);
+  const HEAD = '2'.repeat(40);
+  const vote = { verifier: 'v1', verdict: 'confirmed' };
+  const prior = (over = {}) => ({
+    file: 'src/a.js', claim: 'Null deref', hunkHash: SHA('a'), depHashes: { 'src/b.js': SHA('b') }, head: LAST, outcome: 'present', votes: [vote], ...over,
+  });
+  const candidate = (over = {}) => ({ file: 'src/a.js', claim: 'null deref', hunkHash: SHA('a'), depHashes: { 'src/b.js': SHA('b') }, ...over });
+  const request = (over = {}) => ({
+    headSha: HEAD, lastReviewedSha: LAST, deltaPlan: { mode: 'delta' }, deltaPaths: ['src/c.js'], highPaths: [],
+    priorVerdicts: [prior()], candidates: [candidate()], ...over,
+  });
+  const cli = (payload, raw) => spawnSync('node', [CLI, 'carry'], { input: raw !== undefined ? raw : JSON.stringify(payload), encoding: 'utf8' });
+
+  test('a carrying case equals planCarry on the same payload, and really carries', () => {
+    const payload = request();
+    const res = cli(payload);
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout)).toEqual(JSON.parse(JSON.stringify(planCarry(payload))));
+    expect(JSON.parse(res.stdout).carried).toHaveLength(1);
+    expect(JSON.parse(res.stdout).carried[0].head).toBe(HEAD);
+    expect(JSON.parse(res.stdout).carried[0].carriedFrom).toBe(LAST);
+  });
+
+  test('a reverify case equals planCarry and exits 0: a changed hunk is listed, never carried', () => {
+    const payload = request({ candidates: [candidate({ hunkHash: SHA('c') })] });
+    const res = cli(payload);
+    expect(res.status).toBe(0);
+    const out = JSON.parse(res.stdout);
+    expect(out).toEqual(JSON.parse(JSON.stringify(planCarry(payload))));
+    expect(out.carried).toEqual([]);
+    expect(out.reverify[0].reasons).toContain('hunk-changed');
+  });
+
+  test('a missing in-band fact (no deltaPlan) is graded by the module as reverify, exit 0, not an error', () => {
+    const { deltaPlan, ...rest } = request();
+    const res = cli(rest);
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout).carried).toEqual([]);
+    expect(JSON.parse(res.stdout).reverify[0].reasons).toContain('range-not-delta');
+  });
+
+  test.each([
+    ['priorVerdicts missing', (p) => { delete p.priorVerdicts; }],
+    ['priorVerdicts misspelt', (p) => { p.priorVerdict = p.priorVerdicts; delete p.priorVerdicts; }],
+    ['priorVerdicts not an array', (p) => { p.priorVerdicts = {}; }],
+    ['candidates missing', (p) => { delete p.candidates; }],
+    ['candidates misspelt', (p) => { p.candidate = p.candidates; delete p.candidates; }],
+    ['candidates not an array', (p) => { p.candidates = 'x'; }],
+  ])('%s is an exit-1 error, never read as empty', (_name, mutate) => {
+    const payload = request();
+    mutate(payload);
+    const res = cli(payload);
+    expect(res.status).toBe(1);
+    const out = JSON.parse(res.stdout);
+    expect(out.error).toMatch(/carry requires payload key/);
+    expect(out.carried).toBeUndefined();
+  });
+
+  test('invalid JSON on stdin is an exit-1 error', () => {
+    const res = cli(null, '{not json');
+    expect(res.status).toBe(1);
+    expect(JSON.parse(res.stdout).error).toMatch(/invalid JSON on stdin/);
+  });
+
+  test('redaction applies: a credential-shaped string in a vote verdict does not reach stdout', () => {
+    const token = `gh${'p'}_${'A1b2C3d4E5'.repeat(3)}`;
+    const payload = request({ priorVerdicts: [prior({ votes: [{ verifier: 'v1', verdict: `confirmed ${token}` }] })] });
+    expect(JSON.stringify(planCarry(payload))).toContain(token); // the module itself passes it through
+    const res = cli(payload);
+    expect(res.status).toBe(0);
+    expect(res.stdout).not.toContain(token);
+    expect(JSON.parse(res.stdout).carried).toHaveLength(1);
   });
 });
