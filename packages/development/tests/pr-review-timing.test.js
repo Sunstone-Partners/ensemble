@@ -1,0 +1,466 @@
+'use strict';
+
+/**
+ * Review timing (kata gkt9): stage names, critical path and orchestrator-only time computed from a
+ * run trace. The headline scenario replays a RECORDED review (#234, 2026-11-05) converted to a
+ * run-trace file (see fixtures/pr-review-timing/README.md) and must reproduce the figures the plan
+ * measured by hand: 92 turns, 19.7 min, 70% orchestrator-only.
+ */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const { createTracer, readTrace, KINDS } = require('../lib/run-trace');
+const {
+  AGENT_ROLES,
+  STAGES,
+  STAGE_KINDS,
+  intervalOf,
+  computeReviewTiming,
+  loadReviewTiming,
+  formatReviewTiming,
+  main,
+} = require('../lib/pr-review-timing');
+
+const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
+const FIXTURE = path.join(__dirname, 'fixtures', 'pr-review-timing', 'trace-review-pr234.jsonl');
+const MIN = 60000;
+
+const T0 = Date.parse('2026-11-05T10:00:00.000Z');
+const at = (sec) => new Date(T0 + sec * 1000).toISOString();
+let seq = 0;
+
+/** A materialized run-trace span, times in seconds from T0. `end: null` is an unfinished span. */
+function span(name, start, end, attrs = {}) {
+  seq += 1;
+  return {
+    run_id: 'r',
+    span_id: `s${seq}`,
+    parent_id: null,
+    name,
+    kind: STAGE_KINDS[name] || 'phase',
+    start_ts: at(start),
+    end_ts: end === null ? null : at(end),
+    duration_ms: end === null ? null : (end - start) * 1000,
+    status: end === null ? 'unfinished' : 'ok',
+    attrs,
+  };
+}
+
+const root = (start, end, attrs = { turns: 10, tool_calls: 12 }) => span(STAGES.root, start, end, attrs);
+const agent = (role, start, end, attrs) => span(STAGES[role], start, end, attrs);
+
+const minutes = (ms) => Math.round((ms / MIN) * 10) / 10;
+
+describe('the recorded #234 review (AC1, AC2, AC3)', () => {
+  const trace = readTrace(FIXTURE);
+  const timing = computeReviewTiming({ spans: trace.spans, warnings: trace.warnings });
+
+  test('the fixture is a well-formed run trace', () => {
+    expect(trace.warnings).toEqual([]);
+    expect(trace.spans.length).toBeGreaterThan(60);
+    expect(timing.ok).toBe(true);
+  });
+
+  test('AC1: reproduces the plan figures: 92 turns, 19.7 min wall, 70% orchestrator-only (13.8 min)', () => {
+    expect(timing.turns).toEqual({ ms: 92, missing: false });
+    expect(timing.toolCalls).toEqual({ ms: 102, missing: false });
+    expect(minutes(timing.wall.ms)).toBe(19.7);
+    expect(timing.agents.count).toBe(61);
+    expect(minutes(timing.activeMs.ms)).toBe(5.9);
+    expect(minutes(timing.orchestratorOnly.ms)).toBe(13.8);
+    expect(timing.orchestratorOnly.pct).toBe(70);
+    expect(timing.orchestratorOnly.bound).toBeUndefined();
+    expect(minutes(timing.beforeFirstDispatch.ms)).toBe(3.0);
+  });
+
+  test('the slowest reviewer and verifier match the agent figures the plan reports (2.1 min and 79 s)', () => {
+    expect(Math.round(timing.agents.byRole.reviewer.slowest.ms / 1000)).toBe(129); // 2 min 9 s: the plan reports the same reviewer as 2.1 min
+    expect(Math.round(timing.agents.byRole.verifier.slowest.ms / 1000)).toBe(79);
+    expect(timing.agents.byRole.classifier.slowest.ms).toBeLessThan(5000);
+  });
+
+  test('AC2: every agent in the fixture was closed at session_exit, 7 minutes after its last message, and is measured to the last message', () => {
+    const lingers = trace.spans
+      .filter((s) => s.name.startsWith('review.') && s.kind === 'agent')
+      .map((s) => Date.parse(s.end_ts) - Date.parse(s.attrs.last_message_ts));
+    expect(lingers).toHaveLength(61);
+    for (const linger of lingers) expect(Math.abs(linger - 7 * MIN)).toBeLessThan(100);
+
+    // Mutation: measuring to the span end (the session_exit) instead of the last message.
+    const lingering = computeReviewTiming(
+      trace.spans.map((s) => {
+        const attrs = { ...s.attrs };
+        if (s.kind === 'agent') delete attrs.last_message_ts;
+        return { ...s, attrs };
+      })
+    );
+    expect(minutes(lingering.orchestratorOnly.ms)).toBeLessThan(4);
+    expect(minutes(timing.orchestratorOnly.ms)).toBeGreaterThan(13);
+  });
+
+  test('AC3: stages the old session never recorded are MISSING, never zero', () => {
+    for (const name of [STAGES.headRead, STAGES.gate, STAGES.verdict]) {
+      expect(timing.stages[name]).toMatchObject({ count: 0, ms: null, missing: true });
+    }
+    expect(timing.criticalPath.missing).toBe(true);
+    expect(timing.criticalPath.ms).toBeNull();
+    // ...while the steps that ARE recorded are still reported.
+    const [round] = timing.criticalPath.rounds;
+    expect(round.steps.map((s) => [s.stage, s.missing])).toEqual([
+      ['reviewer', false],
+      ['verifier', false],
+      ['verdict', true],
+    ]);
+    expect(formatReviewTiming(timing)).toContain('MISSING');
+  });
+});
+
+describe('an agent interval ends at its last message, never at session_exit (AC2)', () => {
+  test('last_message_ts replaces the later span end', () => {
+    const interval = intervalOf(agent('reviewer', 60, 540, { last_message_ts: at(120) }));
+    expect(interval).toEqual({ ok: true, start: T0 + 60000, end: T0 + 120000, lingerMs: 420000 });
+  });
+
+  test('without last_message_ts the span end is the end', () => {
+    expect(intervalOf(agent('reviewer', 60, 120))).toMatchObject({ ok: true, end: T0 + 120000, lingerMs: 0 });
+  });
+
+  test('orchestrator-only time excludes the idle linger', () => {
+    const t = computeReviewTiming([root(0, 600), agent('reviewer', 60, 540, { last_message_ts: at(120) })]);
+    expect(t.activeMs.ms).toBe(60000);
+    expect(t.orchestratorOnly.ms).toBe(540000);
+    expect(t.orchestratorOnly.pct).toBe(90);
+  });
+
+  test.each([
+    ['before the span starts', at(30)],
+    ['after the span ends', at(541)],
+    ['not a time', 'yesterday'],
+  ])('a last_message_ts %s makes the interval UNUSABLE: not trusted, not replaced by the span end', (_, value) => {
+    const bad = agent('reviewer', 60, 540, { last_message_ts: value });
+    expect(intervalOf(bad)).toMatchObject({ ok: false });
+    const t = computeReviewTiming([root(0, 600), bad]);
+    expect(t.agents.unusable).toHaveLength(1);
+    expect(t.activeMs).toMatchObject({ ms: 0, bound: 'lower', unusableAgents: 1 });
+    expect(t.orchestratorOnly).toMatchObject({ ms: 600000, bound: 'upper' });
+  });
+
+  test('the orchestrator window itself ends at its last message', () => {
+    const t = computeReviewTiming([root(0, 1000, { last_message_ts: at(600), turns: 1, tool_calls: 1 })]);
+    expect(t.wall.ms).toBe(600000);
+  });
+});
+
+describe('orchestrator-only time', () => {
+  test('overlapping agents are one interval, and an agent outside the window is clipped to it', () => {
+    const t = computeReviewTiming([
+      root(100, 400),
+      agent('reviewer', 50, 200), // clipped to 100..200
+      agent('reviewer', 150, 250), // overlaps the first: union 100..250
+      agent('verifier', 300, 900), // clipped to 300..400
+    ]);
+    expect(t.wall.ms).toBe(300000);
+    expect(t.activeMs.ms).toBe(250000);
+    expect(t.orchestratorOnly.ms).toBe(50000);
+    expect(t.orchestratorOnly.pct).toBe(17);
+    expect(t.beforeFirstDispatch.ms).toBe(0); // the first agent started before the window
+  });
+
+  test('every agent role counts as a dispatched agent', () => {
+    const t = computeReviewTiming([root(0, 500), ...AGENT_ROLES.map((role, i) => agent(role, i * 100, i * 100 + 50))]);
+    expect(t.agents.count).toBe(AGENT_ROLES.length);
+    expect(t.activeMs.ms).toBe(250000);
+  });
+
+  test('an unfinished agent makes the figure an upper bound, not an exact one', () => {
+    const t = computeReviewTiming([root(0, 600), agent('reviewer', 10, 110), agent('verifier', 200, null)]);
+    expect(t.agents.unusable).toEqual([{ stage: STAGES.verifier, name: expect.any(String), reason: 'unfinished' }]);
+    expect(t.orchestratorOnly).toMatchObject({ ms: 500000, bound: 'upper', unusableAgents: 1 });
+    expect(formatReviewTiming(t)).toContain('upper bound');
+  });
+
+  test('no dispatched-agent span: orchestrator-only is MISSING, not 100% and not 0', () => {
+    const t = computeReviewTiming([root(0, 600)]);
+    expect(t.orchestratorOnly).toMatchObject({ ms: null, missing: true });
+    expect(t.activeMs).toMatchObject({ ms: null, missing: true });
+    expect(t.beforeFirstDispatch).toMatchObject({ ms: null, missing: true });
+    expect(t.wall.ms).toBe(600000);
+  });
+});
+
+describe('the orchestrator window and its counts', () => {
+  test.each([
+    ['none', [agent('reviewer', 0, 10)]],
+    ['two', [root(0, 100), root(0, 200), agent('reviewer', 0, 10)]],
+    ['an unfinished one', [root(0, null), agent('reviewer', 0, 10)]],
+  ])('%s review span: wall and orchestrator-only are MISSING, and the agents are still reported', (_, spans) => {
+    const t = computeReviewTiming(spans);
+    expect(t.wall).toMatchObject({ ms: null, missing: true });
+    expect(t.orchestratorOnly).toMatchObject({ ms: null, missing: true });
+    expect(t.agents.count).toBe(1);
+    expect(t.agents.byRole.reviewer.slowest.ms).toBe(10000);
+  });
+
+  test('turns and tool calls absent are MISSING, never 0; digit strings (what `trace --attr` records) count', () => {
+    expect(computeReviewTiming([root(0, 10, {})]).turns).toMatchObject({ ms: null, missing: true });
+    expect(computeReviewTiming([root(0, 10, { turns: '92', tool_calls: '102' })])).toMatchObject({
+      turns: { ms: 92, missing: false },
+      toolCalls: { ms: 102, missing: false },
+    });
+    for (const bad of ['9.5', '-1', 'many', 1.5, -1, null]) {
+      expect(computeReviewTiming([root(0, 10, { turns: bad })]).turns.missing).toBe(true);
+    }
+  });
+});
+
+describe('critical path: slowest reviewer -> slowest verifier -> verdict', () => {
+  const full = [
+    root(0, 1000),
+    agent('reviewer', 0, 100, { agent: 'RevA' }),
+    agent('reviewer', 0, 130, { agent: 'RevB' }),
+    agent('verifier', 140, 160, { agent: 'VerA' }),
+    agent('verifier', 140, 200, { agent: 'VerB' }),
+    span(STAGES.verdict, 210, 215),
+  ];
+
+  test('takes the slowest of each stage, not the sum, and sums the steps', () => {
+    const { criticalPath } = computeReviewTiming(full);
+    expect(criticalPath.rounds).toHaveLength(1);
+    expect(criticalPath.rounds[0].steps).toEqual([
+      { stage: 'reviewer', ms: 130000, missing: false, name: 'RevB' },
+      { stage: 'verifier', ms: 60000, missing: false, name: 'VerB' },
+      { stage: 'verdict', ms: 5000, missing: false },
+    ]);
+    expect(criticalPath).toMatchObject({ ms: 195000, missing: false });
+  });
+
+  test('rounds (attr round, also as the string `trace --attr` records) are computed separately and summed', () => {
+    const { criticalPath } = computeReviewTiming([
+      root(0, 1000),
+      agent('reviewer', 0, 100, { round: 1 }),
+      agent('verifier', 100, 150, { round: '1' }),
+      span(STAGES.verdict, 150, 160, { round: 1 }),
+      agent('reviewer', 300, 330, { round: 2 }),
+      agent('verifier', 330, 400, { round: 2 }),
+      span(STAGES.verdict, 400, 410, { round: 2 }),
+    ]);
+    expect(criticalPath.rounds.map((r) => [r.round, r.ms])).toEqual([
+      [1, 160000],
+      [2, 110000],
+    ]);
+    expect(criticalPath.ms).toBe(270000);
+  });
+
+  test.each([
+    ['verdict', full.filter((s) => s.name !== STAGES.verdict)],
+    ['verifier', full.filter((s) => s.name !== STAGES.verifier)],
+    ['reviewer', full.filter((s) => s.name !== STAGES.reviewer)],
+  ])('no %s span: the total is MISSING and names the gap, never a shorter number', (stage, spans) => {
+    const { criticalPath } = computeReviewTiming(spans);
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.reason).toContain(stage);
+  });
+
+  test('one round complete and another without a verdict: the total is MISSING', () => {
+    const { criticalPath } = computeReviewTiming([
+      ...full.map((s) => ({ ...s, attrs: { ...s.attrs, round: 1 } })),
+      agent('reviewer', 300, 330, { round: 2 }),
+      agent('verifier', 330, 400, { round: 2 }),
+    ]);
+    expect(criticalPath.rounds[0].missing).toBe(false);
+    expect(criticalPath.rounds[1].missing).toBe(true);
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+  });
+
+  test('an unfinished slowest verifier makes the step a lower bound from the finished ones', () => {
+    const { criticalPath } = computeReviewTiming([...full, agent('verifier', 140, null, { agent: 'VerC' })]);
+    const verifier = criticalPath.rounds[0].steps[1];
+    expect(verifier).toMatchObject({ ms: 60000, lowerBound: true, unusable: 1 });
+    expect(criticalPath.lowerBound).toBe(true);
+  });
+
+  test('nothing recorded for any critical-path stage: MISSING', () => {
+    expect(computeReviewTiming([root(0, 10)]).criticalPath).toMatchObject({ ms: null, missing: true, rounds: [] });
+  });
+});
+
+describe('input checking', () => {
+  test.each([[undefined], [null], ['spans'], [{ spans: 'x' }], [{}]])('%j is refused, not read as an empty trace', (input) => {
+    expect(computeReviewTiming(input)).toMatchObject({ ok: false });
+  });
+
+  test('a span without a name or a start time is refused naming its index', () => {
+    expect(computeReviewTiming([root(0, 1), { name: 'x' }])).toEqual({
+      ok: false,
+      reason: 'spans[1] is not a run-trace span (name and start_ts are required)',
+    });
+  });
+
+  test('an empty span list is a timing with every figure missing', () => {
+    const t = computeReviewTiming([]);
+    expect(t.ok).toBe(true);
+    expect(t.wall.missing && t.orchestratorOnly.missing && t.criticalPath.missing).toBe(true);
+  });
+});
+
+describe('loadReviewTiming reads one trace through injectable deps', () => {
+  test('uses the injected reader and passes the trace warnings through', () => {
+    const calls = [];
+    const deps = {
+      tracePath: (projectRoot, runId) => {
+        calls.push(['path', projectRoot, runId]);
+        return '/virtual/trace.jsonl';
+      },
+      readTrace: (file) => {
+        calls.push(['read', file]);
+        return { spans: [root(0, 100), agent('reviewer', 0, 50)], warnings: ['line 3: not valid JSON, skipped'] };
+      },
+    };
+    const t = loadReviewTiming({ runId: 'abc', projectRoot: '/p' }, deps);
+    expect(calls).toEqual([['path', '/p', 'abc'], ['read', '/virtual/trace.jsonl']]);
+    expect(t).toMatchObject({ ok: true, runId: 'abc', tracePath: '/virtual/trace.jsonl', warnings: ['line 3: not valid JSON, skipped'] });
+    expect(t.orchestratorOnly.ms).toBe(50000);
+  });
+
+  test('an unreadable trace is ok:false with the reason, never an empty timing and never a throw', () => {
+    const deps = { tracePath: () => '/x', readTrace: () => { throw new Error('ENOENT'); } };
+    expect(loadReviewTiming({ runId: 'abc', projectRoot: '/p' }, deps)).toEqual({ ok: false, reason: 'cannot read the run trace: ENOENT' });
+  });
+
+  test('an invalid run id is refused by the real run-trace path check', () => {
+    const t = loadReviewTiming({ runId: '../escape', projectRoot: os.tmpdir() });
+    expect(t.ok).toBe(false);
+  });
+
+  test.each([[{ runId: 'a' }], [{ projectRoot: '/p' }], [null]])('%j is refused', (request) => {
+    expect(loadReviewTiming(request)).toMatchObject({ ok: false });
+  });
+});
+
+describe('the stage contract is emitted through run-trace and read back', () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-timing-'));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  test('every stage name has a kind run-trace accepts', () => {
+    for (const kind of Object.values(STAGE_KINDS)) expect(KINDS).toContain(kind);
+    expect(Object.keys(STAGE_KINDS).sort()).toEqual(Object.values(STAGES).sort());
+  });
+
+  test('spans recorded by the real tracer under the contract names produce the timing', () => {
+    let now = T0;
+    const unavailable = [];
+    const tracer = createTracer({
+      runId: 'review-1',
+      projectRoot: dir,
+      clock: { now: () => now, mono: () => now },
+      onUnavailable: (reason) => unavailable.push(reason),
+    });
+    const step = (sec) => {
+      now = T0 + sec * 1000;
+    };
+    step(0);
+    const rootId = tracer.startSpan(STAGES.root, { kind: STAGE_KINDS[STAGES.root], attrs: { turns: '5', tool_calls: '6' } });
+    step(2);
+    const head = tracer.startSpan(STAGES.headRead, { kind: STAGE_KINDS[STAGES.headRead], parentId: rootId });
+    step(3);
+    tracer.endSpan(head);
+    step(10);
+    const reviewer = tracer.startSpan(STAGES.reviewer, { kind: 'agent', parentId: rootId, attrs: { agent: 'RevA', round: '1' } });
+    step(70);
+    tracer.endSpan(reviewer, { attrs: { last_message_ts: at(65) } });
+    step(75);
+    const verifier = tracer.startSpan(STAGES.verifier, { kind: 'agent', parentId: rootId, attrs: { agent: 'VerA', round: '1' } });
+    step(95);
+    tracer.endSpan(verifier);
+    const verdict = tracer.startSpan(STAGES.verdict, { kind: STAGE_KINDS[STAGES.verdict], parentId: rootId, attrs: { round: '1' } });
+    step(96);
+    tracer.endSpan(verdict);
+    step(100);
+    tracer.endSpan(rootId);
+    expect(unavailable).toEqual([]);
+
+    const t = loadReviewTiming({ runId: 'review-1', projectRoot: dir });
+    expect(t).toMatchObject({ ok: true, runId: 'review-1' });
+    expect(t.wall.ms).toBe(100000);
+    expect(t.turns.ms).toBe(5);
+    expect(t.stages[STAGES.headRead]).toMatchObject({ count: 1, ms: 1000, missing: false });
+    expect(t.activeMs.ms).toBe(55000 + 20000); // reviewer to its last message (10..65), verifier 75..95
+    expect(t.orchestratorOnly.ms).toBe(25000);
+    expect(t.criticalPath).toMatchObject({ ms: 55000 + 20000 + 1000, missing: false });
+    expect(t.criticalPath.rounds[0].round).toBe(1);
+  });
+});
+
+describe('the entry points', () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-timing-cli-'));
+    const target = path.join(dir, '.ensemble', 'state', 'toolchain');
+    fs.mkdirSync(target, { recursive: true });
+    fs.copyFileSync(FIXTURE, path.join(target, 'trace-pr234.jsonl'));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const cli = (payload) => {
+    const res = spawnSync('node', [CLI, 'timing'], { input: JSON.stringify(payload), encoding: 'utf8' });
+    return { status: res.status, out: JSON.parse(res.stdout) };
+  };
+
+  test('pr-review-cli timing { runId, cwd } answers the #234 figures from the trace on disk', () => {
+    const { status, out } = cli({ runId: 'pr234', cwd: dir });
+    expect(status).toBe(0);
+    expect(out.turns.ms).toBe(92);
+    expect(minutes(out.wall.ms)).toBe(19.7);
+    expect(out.orchestratorOnly.pct).toBe(70);
+    expect(out.criticalPath.missing).toBe(true);
+  });
+
+  test('pr-review-cli timing { spans } answers from spans handed in', () => {
+    const { status, out } = cli({ spans: [root(0, 100), agent('reviewer', 0, 40)] });
+    expect(status).toBe(0);
+    expect(out.orchestratorOnly.ms).toBe(60000);
+  });
+
+  test('a trace that does not exist is an in-band ok:false (exit 0), not zeros', () => {
+    const { status, out } = cli({ runId: 'nothere', cwd: dir });
+    expect(status).toBe(0);
+    expect(out.ok).toBe(false);
+    expect(out.wall).toBeUndefined();
+  });
+
+  test.each([
+    ['neither runId nor spans', {}],
+    ['both runId and spans', { runId: 'pr234', spans: [] }],
+    ['a misspelt key', { runid: 'pr234' }],
+    ['a non-string runId', { runId: 234 }],
+    ['spans that are not a list', { spans: {} }],
+    ['a non-string cwd', { runId: 'pr234', cwd: 5 }],
+  ])('%s is an error (exit 1)', (_, payload) => {
+    const { status, out } = cli(payload);
+    expect(status).toBe(1);
+    expect(out.error).toContain('timing');
+  });
+
+  test('the script entry prints the text report and exits 0; a missing trace exits 1', () => {
+    const lines = [];
+    expect(main(['pr234', '--cwd', dir], { out: (t) => lines.push(t) })).toBe(0);
+    expect(lines.join('')).toContain('orchestrator-only:           13m47s (70%)');
+    const bad = [];
+    expect(main(['nothere', '--cwd', dir], { out: (t) => bad.push(t) })).toBe(1);
+    expect(bad.join('')).toContain('Review timing unavailable');
+    expect(main([], { out: () => {} })).toBe(1);
+    expect(main(['pr234', '--bogus'], { out: () => {} })).toBe(1);
+  });
+
+  test('the script entry as a real process', () => {
+    const res = spawnSync('node', [path.join(__dirname, '..', 'lib', 'pr-review-timing.js'), 'pr234', '--cwd', dir, '--json'], { encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout).orchestratorOnly.pct).toBe(70);
+  });
+});

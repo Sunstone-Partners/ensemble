@@ -1,0 +1,460 @@
+'use strict';
+
+/**
+ * Review timing: stage names, critical path and orchestrator-only time, computed from a run
+ * trace (kata gkt9, epic ptqb, docs/plans/pr-review-speedup-plan.md sections 1 and 5).
+ *
+ * This module defines no timing primitive. Spans are recorded by `./run-trace.js` (kata acvv,
+ * `toolchain-cli trace start|end`, `trace-<runId>.jsonl`); this module only NAMES the review
+ * stages a recorder emits and READS a materialized trace (`readTrace`) back into the figures
+ * the plan measured by hand with an out-of-repo script over omp session files. Nothing here
+ * reads a session file.
+ *
+ * STAGE CONTRACT (span `name`, recommended `kind`; the names are the contract):
+ *   review                  phase  the orchestrator's whole window. Exactly one per trace.
+ *                                  Optional attrs `turns` and `tool_calls` (non-negative integers).
+ *   review.head-read        io     reading the PR head and base
+ *   review.gate             gate   one run of the merge gate
+ *   review.classifier       agent  one dispatched agent per role ...
+ *   review.second-assessor  agent
+ *   review.security-lane    agent
+ *   review.reviewer         agent
+ *   review.verifier         agent
+ *   review.verdict          phase  the CLI computing REVIEW_COMPLETE / REVIEW_PENDING / REVIEW_BLOCKED
+ * Any span MAY carry an integer attr `round` (1 = the first review, 2.. = delta re-reviews): the
+ * critical path is then computed per round and summed. `trace start --attr k=v` records strings, so
+ * a decimal string counts as the integer it spells (`turns`, `tool_calls` and `round`). Agent spans carry `agent` (a name)
+ * for the report.
+ *
+ * AN AGENT ENDS AT ITS LAST `message`, NEVER AT `session_exit` (plan section 1, correction C01:
+ * the idle linger after the final yield, observed as exactly 7 minutes, inflated every agent
+ * figure by 7 minutes). Close an agent span when its result arrives. A recorder that can only
+ * close the span later (at the session's exit) records the real end as the span attr
+ * `last_message_ts` (ISO-8601); the interval then ends there and the linger is ignored. A
+ * `last_message_ts` outside the span's own [start, end] is a recorder error: that agent's
+ * interval is UNUSABLE, never silently trusted and never replaced by the span end.
+ *
+ * FAIL CLOSED (pattern: local-ci-timing.js). A figure this module cannot compute from what was
+ * recorded is `{ ms: null, missing: true, reason }`, never 0 and never a guess: a stage nobody
+ * recorded, an unfinished span, a trace without an orchestrator window. A figure that is
+ * computable only as a bound says so (`bound: 'upper'` / `lowerBound: true`).
+ *
+ * Orchestrator-only time = orchestrator wall time minus the union of the intervals (clipped to
+ * the orchestrator window) in which at least one dispatched agent was active.
+ * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval
+ * length; the total is missing when ANY step is missing.
+ *
+ * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
+ * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
+ * file reads.
+ */
+
+const AGENT_ROLES = Object.freeze(['classifier', 'second-assessor', 'security-lane', 'reviewer', 'verifier']);
+
+const STAGES = Object.freeze({
+  root: 'review',
+  headRead: 'review.head-read',
+  gate: 'review.gate',
+  verdict: 'review.verdict',
+  ...Object.fromEntries(AGENT_ROLES.map((role) => [role, `review.${role}`])),
+});
+
+/** Recommended run-trace `kind` per stage name (run-trace.js KINDS). */
+const STAGE_KINDS = Object.freeze({
+  [STAGES.root]: 'phase',
+  [STAGES.headRead]: 'io',
+  [STAGES.gate]: 'gate',
+  [STAGES.verdict]: 'phase',
+  ...Object.fromEntries(AGENT_ROLES.map((role) => [STAGES[role], 'agent'])),
+});
+
+const AGENT_NAMES = new Set(AGENT_ROLES.map((role) => STAGES[role]));
+const STAGE_NAMES = Object.freeze(Object.values(STAGES).filter((name) => name !== STAGES.root));
+
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isText = (value) => typeof value === 'string' && value.trim() !== '';
+
+function parseMs(ts) {
+  return typeof ts === 'string' ? Date.parse(ts) : NaN;
+}
+
+function missing(reason) {
+  return { ms: null, missing: true, reason };
+}
+
+function known(ms, extra) {
+  return { ms, missing: false, ...extra };
+}
+
+/**
+ * The usable interval of a materialized span, or why there is none.
+ * End = `attrs.last_message_ts` when the recorder supplied one (see the header), else `end_ts`.
+ *
+ * @returns {{ok: true, start: number, end: number, lingerMs: number}|{ok: false, reason: string}}
+ */
+function intervalOf(span) {
+  const start = parseMs(span.start_ts);
+  if (!Number.isFinite(start)) return { ok: false, reason: 'unparseable start_ts' };
+  const end = span.status === 'unfinished' ? NaN : parseMs(span.end_ts);
+  if (!Number.isFinite(end)) return { ok: false, reason: 'unfinished' };
+  if (end < start) return { ok: false, reason: 'ends before it starts' };
+  const attrs = isObject(span.attrs) ? span.attrs : {};
+  if (attrs.last_message_ts === undefined || attrs.last_message_ts === null) {
+    return { ok: true, start, end, lingerMs: 0 };
+  }
+  const lastMessage = parseMs(attrs.last_message_ts);
+  if (!Number.isFinite(lastMessage) || lastMessage < start || lastMessage > end) {
+    return { ok: false, reason: 'last_message_ts is not a time within the span' };
+  }
+  return { ok: true, start, end: lastMessage, lingerMs: end - lastMessage };
+}
+
+/**
+ * A non-negative integer attr. `toolchain-cli trace start --attr k=v` can only record STRINGS, so a decimal-digit
+ * string counts as the integer it spells; anything else (a float, a negative, prose) is not a count.
+ */
+function asCount(value) {
+  if (Number.isInteger(value) && value >= 0) return value;
+  if (typeof value === "string" && /^\d{1,15}$/.test(value)) return Number(value);
+  return null;
+}
+
+function countFigure(value, what) {
+  const n = asCount(value);
+  return n === null ? missing(`the review span does not record ${what}`) : known(n);
+}
+
+/** Union length of [start, end] intervals, each first clipped to [lo, hi]. */
+function unionLength(intervals, lo, hi) {
+  const clipped = intervals
+    .map((i) => [Math.max(i.start, lo), Math.min(i.end, hi)])
+    .filter(([s, e]) => e > s)
+    .sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let curStart = null;
+  let curEnd = null;
+  for (const [s, e] of clipped) {
+    if (curEnd === null || s > curEnd) {
+      if (curEnd !== null) total += curEnd - curStart;
+      curStart = s;
+      curEnd = e;
+    } else if (e > curEnd) {
+      curEnd = e;
+    }
+  }
+  if (curEnd !== null) total += curEnd - curStart;
+  return total;
+}
+
+function agentLabel(span) {
+  const agent = isObject(span.attrs) ? span.attrs.agent : undefined;
+  return isText(agent) ? agent : span.span_id;
+}
+
+function roundOf(span) {
+  const round = isObject(span.attrs) ? asCount(span.attrs.round) : null;
+  return round !== null && round >= 1 ? round : null;
+}
+
+/** Slowest usable span of `spans` as a step figure; missing when none was recorded or none is usable. */
+function slowestStep(stage, spans) {
+  if (spans.length === 0) return { stage, ...missing(`no ${stage} span recorded`) };
+  let best = null;
+  let unusable = 0;
+  for (const span of spans) {
+    const interval = intervalOf(span);
+    if (!interval.ok) {
+      unusable += 1;
+      continue;
+    }
+    const ms = interval.end - interval.start;
+    if (best === null || ms > best.ms) best = { ms, span };
+  }
+  if (best === null) return { stage, ...missing(`every ${stage} span is unusable (unfinished or inconsistent)`) };
+  return {
+    stage,
+    ...known(best.ms, { ...(best.span.name !== STAGES.verdict ? { name: agentLabel(best.span) } : {}), ...(unusable > 0 ? { lowerBound: true, unusable } : {}) }),
+  };
+}
+
+function criticalPath(spans, warnings) {
+  const reviewers = spans.filter((s) => s.name === STAGES.reviewer);
+  const verifiers = spans.filter((s) => s.name === STAGES.verifier);
+  const verdicts = spans.filter((s) => s.name === STAGES.verdict);
+  const all = [...reviewers, ...verifiers, ...verdicts];
+  if (all.length === 0) {
+    return { ...missing('no reviewer, verifier or verdict span recorded'), rounds: [] };
+  }
+  const numbered = all.filter((s) => roundOf(s) !== null).length;
+  if (numbered > 0 && numbered < all.length) {
+    warnings.push('some reviewer/verifier/verdict spans carry a round and some do not; the unnumbered ones are one extra group');
+  }
+  const keys = [...new Set(all.map(roundOf))].sort((a, b) => (a === null ? 1 : b === null ? -1 : a - b));
+  const rounds = keys.map((round) => {
+    const inRound = (list) => list.filter((s) => roundOf(s) === round);
+    const steps = [
+      slowestStep('reviewer', inRound(reviewers)),
+      slowestStep('verifier', inRound(verifiers)),
+      slowestStep('verdict', inRound(verdicts)),
+    ];
+    const gaps = steps.filter((s) => s.missing);
+    if (gaps.length > 0) {
+      return { round, steps, ...missing(`${gaps.map((s) => s.stage).join(', ')} missing`) };
+    }
+    const lowerBound = steps.some((s) => s.lowerBound);
+    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), lowerBound ? { lowerBound: true } : {}) };
+  });
+  const gaps = rounds.filter((r) => r.missing);
+  if (gaps.length > 0) {
+    return { ...missing(`round ${gaps.map((r) => (r.round === null ? '(unnumbered)' : r.round)).join(', ')}: ${gaps[0].reason}`), rounds };
+  }
+  const lowerBound = rounds.some((r) => r.lowerBound);
+  return { ...known(rounds.reduce((n, r) => n + r.ms, 0), lowerBound ? { lowerBound: true } : {}), rounds };
+}
+
+function stageTable(spans) {
+  const table = {};
+  for (const name of STAGE_NAMES) {
+    const own = spans.filter((s) => s.name === name);
+    const usable = own.map(intervalOf).filter((i) => i.ok).map((i) => i.end - i.start);
+    if (own.length === 0) {
+      table[name] = { count: 0, ...missing('no span recorded') };
+    } else if (usable.length === 0) {
+      table[name] = { count: own.length, ...missing('every span is unusable (unfinished or inconsistent)') };
+    } else {
+      const unusable = own.length - usable.length;
+      table[name] = {
+        count: own.length,
+        ...known(Math.max(...usable), unusable > 0 ? { lowerBound: true, unusable } : {}),
+      };
+    }
+  }
+  return table;
+}
+
+/**
+ * Compute the review timing from a materialized trace.
+ *
+ * @param {object[]|{spans: object[], runId?: string, warnings?: string[]}} input
+ *   a `readTrace()` result, or just its `spans`.
+ * @returns {object} `{ ok: false, reason }` for input that is not a span list, else
+ *   `{ ok: true, runId, wall, turns, toolCalls, agents, activeMs, orchestratorOnly,
+ *      beforeFirstDispatch, criticalPath, stages, warnings }`. Every figure is
+ *   `{ms, missing: false}` or `{ms: null, missing: true, reason}`.
+ */
+function computeReviewTiming(input) {
+  const spans = Array.isArray(input) ? input : isObject(input) ? input.spans : undefined;
+  if (!Array.isArray(spans)) return { ok: false, reason: 'spans must be an array of run-trace spans' };
+  const bad = spans.findIndex((s) => !isObject(s) || !isText(s.name) || !isText(s.start_ts));
+  if (bad !== -1) return { ok: false, reason: `spans[${bad}] is not a run-trace span (name and start_ts are required)` };
+
+  const warnings = isObject(input) && Array.isArray(input.warnings) ? [...input.warnings] : [];
+  const runId = (isObject(input) && input.runId) || (spans[0] && spans[0].run_id) || null;
+
+  // --- the orchestrator window ---
+  const roots = spans.filter((s) => s.name === STAGES.root);
+  let wall;
+  let window = null;
+  let rootSpan = null;
+  if (roots.length === 0) {
+    wall = missing(`no '${STAGES.root}' span recorded (the orchestrator window)`);
+  } else if (roots.length > 1) {
+    wall = missing(`${roots.length} '${STAGES.root}' spans recorded; one orchestrator window per trace is required`);
+  } else {
+    rootSpan = roots[0];
+    const interval = intervalOf(rootSpan);
+    if (!interval.ok) {
+      wall = missing(`the '${STAGES.root}' span is unusable: ${interval.reason}`);
+    } else {
+      window = interval;
+      wall = known(interval.end - interval.start, {
+        start: new Date(interval.start).toISOString(),
+        end: new Date(interval.end).toISOString(),
+      });
+    }
+  }
+  const rootAttrs = rootSpan && isObject(rootSpan.attrs) ? rootSpan.attrs : {};
+  const turns = rootSpan ? countFigure(rootAttrs.turns, 'turns') : missing('no review span recorded');
+  const toolCalls = rootSpan ? countFigure(rootAttrs.tool_calls, 'tool_calls') : missing('no review span recorded');
+
+  // --- dispatched agents ---
+  const agentSpans = spans.filter((s) => AGENT_NAMES.has(s.name));
+  const usable = [];
+  const unusable = [];
+  for (const span of agentSpans) {
+    const interval = intervalOf(span);
+    if (interval.ok) usable.push({ span, ...interval });
+    else unusable.push({ span, reason: interval.reason });
+  }
+  const byRole = {};
+  for (const role of AGENT_ROLES) {
+    const own = agentSpans.filter((s) => s.name === STAGES[role]);
+    byRole[role] = { count: own.length, slowest: slowestStep(role, own) };
+  }
+  const agents = {
+    count: agentSpans.length,
+    unusable: unusable.map((u) => ({ stage: u.span.name, name: agentLabel(u.span), reason: u.reason })),
+    byRole,
+  };
+
+  // --- orchestrator-only time ---
+  let activeMs;
+  let orchestratorOnly;
+  let beforeFirstDispatch;
+  if (agentSpans.length === 0) {
+    activeMs = missing('no dispatched-agent span recorded');
+    orchestratorOnly = missing('no dispatched-agent span recorded');
+    beforeFirstDispatch = missing('no dispatched-agent span recorded');
+  } else if (window === null) {
+    activeMs = missing(wall.reason);
+    orchestratorOnly = missing(wall.reason);
+    beforeFirstDispatch = missing(wall.reason);
+  } else {
+    const active = unionLength(usable, window.start, window.end);
+    const bound = unusable.length > 0 ? { bound: 'upper', unusableAgents: unusable.length } : {};
+    // An agent whose end is unknown can only have made the real active time larger.
+    activeMs = known(active, unusable.length > 0 ? { bound: 'lower', unusableAgents: unusable.length } : {});
+    const only = wall.ms - active;
+    orchestratorOnly = known(only, {
+      pct: wall.ms > 0 ? Math.round((only / wall.ms) * 100) : null,
+      ...bound,
+    });
+    const firstStart = Math.min(...agentSpans.map((s) => parseMs(s.start_ts)).filter(Number.isFinite));
+    beforeFirstDispatch = Number.isFinite(firstStart)
+      ? known(Math.max(0, firstStart - window.start))
+      : missing('no dispatched-agent span has a readable start_ts');
+  }
+
+  return {
+    ok: true,
+    runId,
+    wall,
+    turns,
+    toolCalls,
+    agents,
+    activeMs,
+    orchestratorOnly,
+    beforeFirstDispatch,
+    criticalPath: criticalPath(spans, warnings),
+    stages: stageTable(spans),
+    warnings,
+  };
+}
+
+function defaultDeps() {
+  const runTrace = require('./run-trace');
+  return { readTrace: runTrace.readTrace, tracePath: runTrace.tracePath };
+}
+
+/**
+ * Read `trace-<runId>.jsonl` under `<projectRoot>/.ensemble/state/toolchain/` and compute its
+ * review timing. An unreadable or absent trace is `{ ok: false, reason }`, never an empty timing.
+ *
+ * @param {{runId: string, projectRoot: string}} request
+ * @param {{readTrace: Function, tracePath: Function}} [deps] real run-trace by default
+ */
+function loadReviewTiming(request, deps) {
+  if (!isObject(request) || !isText(request.runId) || !isText(request.projectRoot)) {
+    return { ok: false, reason: 'runId and projectRoot are required (non-empty strings)' };
+  }
+  const io = deps === undefined ? defaultDeps() : deps;
+  let file;
+  let trace;
+  try {
+    file = io.tracePath(request.projectRoot, request.runId);
+    trace = io.readTrace(file);
+  } catch (error) {
+    return { ok: false, reason: `cannot read the run trace: ${error && error.message ? error.message : String(error)}` };
+  }
+  const result = computeReviewTiming({ spans: trace.spans, runId: request.runId, warnings: trace.warnings });
+  return result.ok ? { ...result, tracePath: file } : result;
+}
+
+function fmtMs(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${String(Math.round(s - m * 60)).padStart(2, '0')}s`;
+}
+
+function fmtFigure(figure) {
+  if (figure.missing) return `MISSING (${figure.reason})`;
+  const tags = [];
+  if (figure.lowerBound || figure.bound === 'lower') tags.push('lower bound');
+  if (figure.bound === 'upper') tags.push('upper bound');
+  return `${fmtMs(figure.ms)}${figure.pct !== undefined && figure.pct !== null ? ` (${figure.pct}%)` : ''}${tags.length ? ` [${tags.join(', ')}]` : ''}`;
+}
+
+/** Human-readable report for a `computeReviewTiming` result. */
+function formatReviewTiming(timing) {
+  if (!timing || timing.ok !== true) return `Review timing unavailable: ${timing && timing.reason ? timing.reason : 'no result'}`;
+  const out = [];
+  out.push(`Review timing${timing.runId ? ` for run ${timing.runId}` : ''}`);
+  out.push(`  wall (orchestrator window):  ${fmtFigure(timing.wall)}`);
+  out.push(`  orchestrator turns:          ${timing.turns.missing ? `MISSING (${timing.turns.reason})` : timing.turns.ms}`);
+  out.push(`  orchestrator tool calls:     ${timing.toolCalls.missing ? `MISSING (${timing.toolCalls.reason})` : timing.toolCalls.ms}`);
+  out.push(`  agents active (union):       ${fmtFigure(timing.activeMs)}`);
+  out.push(`  orchestrator-only:           ${fmtFigure(timing.orchestratorOnly)}`);
+  out.push(`  before first dispatch:       ${fmtFigure(timing.beforeFirstDispatch)}`);
+  out.push(`  critical path:               ${fmtFigure(timing.criticalPath)}`);
+  for (const round of timing.criticalPath.rounds) {
+    const steps = round.steps
+      .map((s) => `${s.stage} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}`}`)
+      .join(' -> ');
+    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}`);
+  }
+  out.push(`  dispatched agents: ${timing.agents.count} (${timing.agents.unusable.length} unusable)`);
+  out.push('  slowest per stage:');
+  for (const name of STAGE_NAMES) {
+    const row = timing.stages[name];
+    out.push(`    ${name.padEnd(22)} ${String(row.count).padStart(3)} span(s)  ${row.missing ? `MISSING (${row.reason})` : fmtFigure(row)}`);
+  }
+  for (const warning of timing.warnings) out.push(`  warning: ${warning}`);
+  return out.join('\n');
+}
+
+/**
+ * Script entry: `node pr-review-timing.js <runId> [--cwd <projectRoot>] [--json]` prints the report for one trace
+ * (text by default). Exit 0 when a timing was computed (missing figures are reported, not errors), 1 when it could not be.
+ *
+ * @param {string[]} argv process.argv.slice(2)
+ * @param {{out?: (text: string) => void, deps?: object}} [io]
+ * @returns {number} exit code
+ */
+function main(argv, io = {}) {
+  const out = io.out || ((text) => process.stdout.write(text));
+  let runId;
+  let cwd = process.cwd();
+  let json = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--json') json = true;
+    else if (arg === '--cwd' && i + 1 < argv.length) cwd = argv[(i += 1)];
+    else if (!arg.startsWith('--') && runId === undefined) runId = arg;
+    else {
+      out(`Unexpected argument ${JSON.stringify(arg)}. Usage: node pr-review-timing.js <runId> [--cwd <projectRoot>] [--json]\n`);
+      return 1;
+    }
+  }
+  if (runId === undefined) {
+    out('Usage: node pr-review-timing.js <runId> [--cwd <projectRoot>] [--json]\n');
+    return 1;
+  }
+  const result = loadReviewTiming({ runId, projectRoot: cwd }, io.deps);
+  out(json ? `${JSON.stringify(result)}\n` : `${formatReviewTiming(result)}\n`);
+  return result.ok ? 0 : 1;
+}
+
+module.exports = {
+  AGENT_ROLES,
+  STAGES,
+  STAGE_KINDS,
+  intervalOf,
+  computeReviewTiming,
+  loadReviewTiming,
+  formatReviewTiming,
+  main,
+};
+
+if (require.main === module) process.exit(main(process.argv.slice(2)));
