@@ -137,7 +137,9 @@ persistent (never `/tmp`). It lives under the user's home directory, so it seria
 another account, or a process started with a different `$HOME`, has its own lock. A holder whose pid is dead (or whose
 record is unreadable) is reclaimed; a live holder is honoured; a lock written by another host cannot be judged and is
 honoured. A second run waits its turn, polling (waiters are not served first-come-first-served), and the report carries
-`queued_ms`. Posting the status happens after the lock is released, and the lock is released when the run throws.
+`queued_ms`. Posting the status happens after the lock is released, and the lock is released when the run throws. The
+review precheck (`review-precheck-cli.js`) starts a detached `gate` per head; that gate takes the lock like any other,
+and while it waits its start marker stays live, so a second precheck for the same head starts nothing.
 
 A run that cannot get the lock stops at `stage:"lock"` with an `errorCode` and runs and posts nothing: `lock-timeout` (the
 wait ran out; the error names the holder pid, or the lock path when it holds no readable record, such as a dangling
