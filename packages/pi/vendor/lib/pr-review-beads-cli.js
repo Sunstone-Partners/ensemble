@@ -80,9 +80,8 @@ const tracker = require('./tracker-findings');
 const { beadKeys, planBeads } = require('./pr-review-beads');
 const { redact, statePath } = require('./pr-review-state');
 const repoFacts = require('./pr-review-repo');
+const runtime = require('./review-record-runtime');
 const { isObjectId } = require('./pr-review-scope');
-
-const GH_TIMEOUT_MS = 60 * 1000;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -212,39 +211,6 @@ function recordBeads(input, deps, options = {}) {
 // What the head under review must not control
 // ---------------------------------------------------------------------------
 
-/** The real `gh` (and any tool): no shell, a deadline, a failure to start reads as status 127. */
-function defaultRun(command, argv) {
-  const { spawnSync } = require('child_process');
-  const result = spawnSync(command, argv, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, shell: false, maxBuffer: 8 * 1024 * 1024 });
-  if (result.error) return { status: 127, stdout: '', stderr: String(result.error.message) };
-  return { status: typeof result.status === 'number' ? result.status : 127, stdout: result.stdout || '', stderr: result.stderr || '' };
-}
-
-/**
- * The host's own answer about the pull request (`gh pr view`): what the head's files cannot
- * supply. `run(command, argv) -> {status, stdout, stderr}` is replaced by tests.
- *
- * @returns {(request: {repo: string, prNumber: number}) => {ok:true, isCrossRepository:*, headRefOid:*, baseRefName:*, state:*}|{ok:false, error:string}}
- */
-function makeReadPr(run = defaultRun) {
-  return ({ repo, prNumber }) => {
-    const fields = 'isCrossRepository,headRefOid,baseRefName,state';
-    const result = run('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', fields]);
-    if (!isObject(result) || result.status !== 0) {
-      const detail = isObject(result) ? String(result.stderr || '').trim().split('\n').pop() : '';
-      return { ok: false, error: `gh pr view failed${detail ? `: ${detail}` : ''}` };
-    }
-    let data;
-    try {
-      data = JSON.parse(result.stdout);
-    } catch (error) {
-      return { ok: false, error: 'gh pr view answered with output that is not JSON' };
-    }
-    if (!isObject(data)) return { ok: false, error: 'gh pr view answered with something that is not an object' };
-    return { ok: true, isCrossRepository: data.isCrossRepository, headRefOid: data.headRefOid, baseRefName: data.baseRefName, state: data.state };
-  };
-}
-
 const TOOLCHAIN_CONFIG = path.posix.join('.ensemble', 'toolchain.yaml');
 
 /**
@@ -322,7 +288,7 @@ function relativeReportLink(prNumber, projectRoot) {
 /**
  * @param {Object} [io]  `{ readJson, emit, deps, env, now, git, readPr }`, replaced by tests. `deps` are
  *   the tracker deps: when absent they are built for the repository's primary checkout. `git` is
- *   `pr-review-repo.js`'s injected git, `readPr` the host read (`makeReadPr`).
+ *   `pr-review-repo.js`'s injected git, `readPr` the host read (`makeReadPr` in `review-record-runtime.js`).
  */
 function main(io = {}) {
   const readJson = io.readJson || (() => JSON.parse(fs.readFileSync(0, 'utf8')));
@@ -360,8 +326,8 @@ function main(io = {}) {
   if (resolved.error) return finish(failed(resolved.error.message));
   const projectRoot = resolved.projectRoot;
 
-  const git = io.git || repoFacts.defaultGit();
-  const readPr = io.readPr || makeReadPr();
+  const git = io.git || runtime.defaultGit();
+  const readPr = io.readPr || runtime.makeReadPr();
   const trust = checkTrust({ input, repoRoot: projectRoot, baseSha: baseSha.trim(), git, readPr });
   if (!trust.ok) return finish(trust.result);
 
@@ -388,7 +354,7 @@ function main(io = {}) {
   return finish(result);
 }
 
-module.exports = { main, recordBeads, makeReadPr, checkTrust, verifyFixes };
+module.exports = { main, recordBeads, checkTrust, verifyFixes };
 
 if (require.main === module) {
   process.exit(main());
