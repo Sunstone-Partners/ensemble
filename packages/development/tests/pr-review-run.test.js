@@ -13,6 +13,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const { prepareRun, collectRun, PREPARE_KEYS, COLLECT_KEYS } = require('../lib/pr-review-run');
 const S = require('../lib/pr-review-run-support');
@@ -20,7 +21,7 @@ const { collectResults } = require('../lib/pr-review-results');
 const { renderBriefFromFiles } = require('../lib/pr-review-brief-files');
 const { classifyPaths } = require('../lib/pr-review-paths');
 const { loadPolicy } = require('../lib/pr-review-policy');
-const { realFs } = require('../lib/review-run-cli');
+const { realFs, headFile } = require('../lib/review-run-cli');
 const { redact, statePath } = require('../lib/pr-review-state');
 
 const SCRATCH = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'znd1', 'scratch');
@@ -34,6 +35,52 @@ let roots = [];
 afterAll(() => {
   for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
 });
+
+const posix = process.platform === 'win32' ? test.skip : test;
+const CLI_MODULE = path.join(__dirname, '..', 'lib', 'review-run-cli.js');
+
+/** A snapshot directory holding `files` ({ 'src/a.js': 'text' }), in a scratch directory of its own: `{ root, snap }`. */
+function headTree(files = {}) {
+  fs.mkdirSync(SCRATCH, { recursive: true });
+  const root = fs.mkdtempSync(path.join(SCRATCH, 'hf-'));
+  roots.push(root);
+  const snap = path.join(root, 'snap');
+  fs.mkdirSync(snap);
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(snap, rel)), { recursive: true });
+    fs.writeFileSync(path.join(snap, rel), text);
+  }
+  return { root, snap };
+}
+
+/**
+ * The file system under `root` as a CASE-INSENSITIVE volume answers it (the default on macOS and Windows): a path reaches
+ * whatever its segments match ignoring case, while a directory listing still gives every name as it is stored. With it one
+ * test pins the exact-name rule on any host: a lookup that reads the cited path instead of matching it against the listing
+ * is fooled here exactly as it is on a Mac.
+ */
+function caseInsensitive(root) {
+  const fold = (target) => {
+    if (!target.startsWith(`${root}${path.sep}`)) return target;
+    let current = root;
+    for (const name of path.relative(root, target).split(path.sep)) {
+      let names;
+      try {
+        names = fs.readdirSync(current);
+      } catch {
+        return target;
+      }
+      const hit = names.find((entry) => entry.toLowerCase() === name.toLowerCase());
+      if (hit === undefined) return target;
+      current = path.join(current, hit);
+    }
+    return current;
+  };
+  return {
+    io: { readdirSync: fs.readdirSync, openSync: (target, flags, mode) => fs.openSync(fold(target), flags, mode), fstatSync: fs.fstatSync, readSync: fs.readSync, closeSync: fs.closeSync },
+    readText: (file) => realFs().readText(fold(file)),
+  };
+}
 
 function makeFacts({ changedPaths, numstat, policyJson = {} }) {
   const text = `# Review\n\n\`\`\`ensemble-review-policy\n${JSON.stringify(policyJson)}\n\`\`\`\n`;
@@ -739,7 +786,8 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
   ].join('\n')}\n`;
   // the files of the head the fake tree holds (the run reads the real snapshot directory); the deleted old.js is not one of them
   const HEAD_FILES = new Set(['src/a.js', 'src/new.js', 'src/other.js', 'src/c.js', 'img.png', 'README.md']);
-  const diffOf = (over = {}) => ({ index: S.parseDiffHunks(DIFF), changedPaths: ['src/a.js', 'src/new.js', 'old.js', 'img.png'], snapshotDir: '/snap/dir', exists: (rel) => HEAD_FILES.has(rel), ...over });
+  // every file is long enough for the lines cited below (a line past the end of a file has its own test)
+  const diffOf = (over = {}) => ({ index: S.parseDiffHunks(DIFF), changedPaths: ['src/a.js', 'src/new.js', 'old.js', 'img.png'], snapshotDir: '/snap/dir', exists: (rel) => HEAD_FILES.has(rel), lines: () => 200, ...over });
   const claim = (location, over = {}) => S.completeFinding(finding({ severity: 'pre-existing', locationOrLink: location, ...over }), 'reviewer-s1-a', 'f1');
 
   test('parseDiffHunks: the new-side range of every hunk, per file; a deleted and a binary file have none', () => {
@@ -838,7 +886,7 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     const real = 'packages/development/lib/a.js';
     const other = 'packages/development/lib/other.js';
     const hunk = ['@@ -10,3 +10,3 @@', ' keep', '-old', '+new', ' keep'];
-    const diff = { index: S.parseDiffHunks(`${[`diff --git a/${real} b/${real}`, 'index 1111111..2222222 100644', `--- a/${real}`, `+++ b/${real}`, ...hunk].join('\n')}\n`), changedPaths: [real], snapshotDir: '/snap/dir', exists: (rel) => rel === real || rel === other };
+    const diff = { index: S.parseDiffHunks(`${[`diff --git a/${real} b/${real}`, 'index 1111111..2222222 100644', `--- a/${real}`, `+++ b/${real}`, ...hunk].join('\n')}\n`), changedPaths: [real], snapshotDir: '/snap/dir', exists: (rel) => rel === real || rel === other, lines: () => 100 };
     // controls: the exact path of a file the diff does not touch, or a line of the changed file outside its hunk, is honoured; a line inside the hunk is not
     expect(S.gradePreExisting(claim(`${other}:3`), diff).severity).toBe('pre-existing');
     expect(S.gradePreExisting(claim(`${real}:30`), diff).severity).toBe('pre-existing');
@@ -850,12 +898,28 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     expect(S.gradePreExisting(claim(`${real}:30`), { ...diff, exists: undefined }).severity).toBe('important');
   });
 
+  test('a citation past the end of the file names no line and is never honoured (review of PR 264, round 3, finding 5)', () => {
+    const diff = diffOf({ lines: (rel) => (rel === 'src/c.js' ? 40 : 1) });
+    // src/c.js has 40 lines and the diff does not touch it: its last line is borne out, the next one is not
+    for (const [location, honoured] of [['src/c.js:1', true], ['src/c.js:40', true], ['src/c.js:30-40', true], ['src/c.js:41', false], ['src/c.js:99999', false], ['src/c.js:30-41', false], ['src/c.js:41-30', false], ['src/other.js:1', true], ['src/other.js:2', false]]) {
+      expect([location, S.gradePreExisting(claim(location), diff).severity]).toEqual([location, honoured ? 'pre-existing' : 'important']);
+    }
+    expect(S.gradePreExisting(claim('src/c.js:41'), diff)).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('src/c.js has 40 lines, so line 41 is past its end'), strippedFields: ['severity'] });
+    expect(S.gradePreExisting(claim('src/other.js:2'), diff).severityNote).toContain('src/other.js has 1 line, so line 2 is past its end');
+    // nothing to tell how long it is: fail closed, and say so
+    expect(S.gradePreExisting(claim('src/c.js:7'), diffOf({ lines: undefined })).severity).toBe('important');
+    expect(S.gradePreExisting(claim('src/c.js:7'), diffOf({ lines: () => null })).severityNote).toMatch(/length of src\/c\.js[^]*could not be read/);
+  });
+
+  // the files the through-a-run cases cite hold 60 lines: a line past the end of a file is not borne out
+  const FILE_TEXT = 'line\n'.repeat(60);
+
   async function claimsRun(h, locations, files = ['src/a.js', 'src/c.js']) {
     // the cited files exist at the head: a citation of a file that does not is never honoured as pre-existing
     for (const file of files) {
       const target = path.join(h.root, 'prepared', 'snapshot', file);
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, 'line\n');
+      fs.writeFileSync(target, FILE_TEXT);
     }
     h.reviews = { ok: true, reviews: [{ login: 'bob', authorType: 'User', state: 'APPROVED', commitSha: HEAD, submittedAt: '2026-01-01T00:00:00Z' }] };
     const m = await h.prepare();
@@ -908,6 +972,75 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     expect(out.gate.mergeable).toBe(false);
   });
 
+  const snapshotAt = (h, rel) => path.join(h.root, 'prepared', 'snapshot', rel);
+  const seed = (h, rel, text = FILE_TEXT) => {
+    fs.mkdirSync(path.dirname(snapshotAt(h, rel)), { recursive: true });
+    fs.writeFileSync(snapshotAt(h, rel), text);
+  };
+  const link = (h, rel, target) => {
+    fs.mkdirSync(path.dirname(snapshotAt(h, rel)), { recursive: true });
+    fs.symlinkSync(target, snapshotAt(h, rel));
+  };
+
+  posix('through a run: a symlink is never followed and a mis-cased name names no file, so none of them bears a pre-existing claim out (review of PR 264, round 3, findings 1 and 2)', async () => {
+    const h = harness({ rangeDiff: DIFF });
+    const outside = path.join(h.root, 'outside.txt');
+    fs.writeFileSync(outside, FILE_TEXT);
+    seed(h, 'src/c.js'); // control: a regular file of the head
+    link(h, 'src/alias.js', 'c.js'); // a link to a file inside the snapshot
+    link(h, 'src/leak.js', outside); // a link out of the snapshot, to a file that has the cited line
+    link(h, 'src/device.js', '/dev/null'); // a link to a device
+    link(h, 'linked', 'src'); // a link where a directory should be
+    const out = await claimsRun(h, ['src/c.js:7', 'src/alias.js:7', 'src/leak.js:7', 'src/device.js:7', 'linked/c.js:7', 'SRC/C.JS:7', 'src/C.js:7'], []);
+    expect(out.status).toBe('DONE');
+    const byId = Object.fromEntries(out.ledger.map((entry) => [entry.id, entry]));
+    expect(byId.f1.severity).toBe('pre-existing');
+    for (const id of ['f2', 'f3', 'f4', 'f5', 'f6', 'f7']) {
+      expect(byId[id]).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('is not a file at this head') });
+    }
+    expect(out.gate.findings).toMatchObject({ open: ['f2', 'f3', 'f4', 'f5', 'f6', 'f7'], important: 6, preExisting: 1 });
+    expect(out.gate.mergeable).toBe(false);
+  });
+
+  test('through a run on a case-insensitive filesystem a mis-cased name still names no file (review of PR 264, round 3, finding 2)', async () => {
+    const h = harness({ rangeDiff: DIFF });
+    seed(h, 'src/c.js');
+    const volume = caseInsensitive(path.join(h.root, 'prepared', 'snapshot'));
+    h.deps.fs = { ...h.deps.fs, readText: volume.readText, headFile: (root, rel) => headFile(root, rel, volume.io) };
+    const out = await claimsRun(h, ['src/c.js:7', 'SRC/C.JS:7', 'src/C.js:7', 'Src/c.JS:7'], []);
+    expect(out.status).toBe('DONE');
+    const byId = Object.fromEntries(out.ledger.map((entry) => [entry.id, entry]));
+    expect(byId.f1.severity).toBe('pre-existing');
+    for (const id of ['f2', 'f3', 'f4']) {
+      expect(byId[id]).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('is not a file at this head') });
+    }
+    expect(out.gate.mergeable).toBe(false);
+  });
+
+  test('through a run: a line past the end of the file is graded Important and the last line is not (review of PR 264, round 3, finding 5)', async () => {
+    const h = harness({ rangeDiff: DIFF });
+    const out = await claimsRun(h, ['src/c.js:60', 'src/c.js:61', 'src/c.js:99999', 'src/c.js:50-70', 'src/c.js:1-60'], ['src/c.js']);
+    expect(out.status).toBe('DONE');
+    const byId = Object.fromEntries(out.ledger.map((entry) => [entry.id, entry]));
+    expect(byId.f1.severity).toBe('pre-existing');
+    expect(byId.f5.severity).toBe('pre-existing');
+    for (const id of ['f2', 'f3', 'f4']) {
+      expect(byId[id]).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('src/c.js has 60 lines') });
+    }
+    expect(out.gate.findings).toMatchObject({ open: ['f2', 'f3', 'f4'], important: 3, preExisting: 2 });
+    expect(out.gate.mergeable).toBe(false);
+  });
+
+  test('a file system that cannot look a file up, or throws, bears nothing out', async () => {
+    for (const lookup of [undefined, () => { throw new Error('EIO'); }, () => ({ lines: 'many' }), () => ({})]) {
+      const h = harness({ rangeDiff: DIFF });
+      h.deps.fs = { ...h.deps.fs, headFile: lookup };
+      const out = await claimsRun(h, ['src/c.js:7'], ['src/c.js']);
+      expect(out.ledger[0]).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing' });
+      expect(out.gate.mergeable).toBe(false);
+    }
+  });
+
   test('a diff that cannot be read bears nothing out: every pre-existing claim is graded Important', async () => {
     const h = harness({ rangeDiff: DIFF });
     const out = await (async () => {
@@ -943,6 +1076,115 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     const m = await h.prepare();
     expect(fs.readFileSync(m.agents[0].briefPath, 'utf8')).toMatch(/pre-existing[^\n]*checks the `file:line` you cite against the diff[^\n]*graded Important/);
   });
+
+  test('the reviewer is told that a symlink is not followed and that a line past the end of the file is graded Important', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    expect(fs.readFileSync(m.agents[0].briefPath, 'utf8')).toMatch(/pre-existing[^\n]*regular file at the head[^\n]*symlink[^\n]*past the end of that file[^\n]*graded Important/);
+  });
+});
+
+describe('headFile: the file a citation names -- exactly spelled, a regular file, never followed -- and its line count (review of PR 264, round 3, findings 1, 2 and 5)', () => {
+  // the count is read in 64 KiB pieces: the cases around that size pin what carries over from one read to the next
+  test.each([
+    ['an empty file', '', 0],
+    ['no newline at all', 'a', 1],
+    ['one line', 'a\n', 1],
+    ['a last line without a newline', 'a\nb', 2],
+    ['two lines', 'a\nb\n', 2],
+    ['one empty line', '\n', 1],
+    ['two empty lines', '\n\n', 2],
+    ['CRLF endings', 'a\r\nb\r\n', 2],
+    ['a newline that is the last byte of the first read', `${'x'.repeat(65535)}\n`, 1],
+    ['a partial line after that newline', `${'x'.repeat(65535)}\ny`, 2],
+    ['a newline in the first read and none after', `\n${'x'.repeat(70000)}`, 2],
+    ['many reads', 'x\n'.repeat(70000), 70000],
+    ['many reads and a partial last line', `${'x\n'.repeat(70000)}y`, 70001],
+    ['a first read that ends mid-line and a last read that ends with the newline', `${'x'.repeat(70000)}\n`, 1],
+  ])('counts the lines of %s', (_label, text, count) => {
+    const { snap } = headTree({ 'src/f.txt': text });
+    expect(headFile(snap, 'src/f.txt')).toEqual({ lines: count });
+  });
+
+  test('every segment of the path must match a directory entry exactly: a mis-cased name names no file, whatever the host does', () => {
+    const { snap } = headTree({ 'src/Deep/a.js': 'x\n' });
+    expect(headFile(snap, 'src/Deep/a.js')).toEqual({ lines: 1 });
+    for (const rel of ['SRC/Deep/a.js', 'src/deep/a.js', 'src/Deep/A.js', 'src/Deep/a.JS', 'SRC/DEEP/A.JS']) expect([rel, headFile(snap, rel)]).toEqual([rel, null]);
+  });
+
+  test('the same on a case-insensitive volume, where a path reaches whatever its segments match ignoring case', () => {
+    const { snap } = headTree({ 'src/Deep/a.js': 'x\n' });
+    const volume = caseInsensitive(snap);
+    const fd = volume.io.openSync(path.join(snap, 'SRC', 'deep', 'A.JS'), fs.constants.O_RDONLY); // the volume really does answer for a mis-cased name
+    fs.closeSync(fd);
+    expect(headFile(snap, 'src/Deep/a.js', volume.io)).toEqual({ lines: 1 });
+    for (const rel of ['SRC/Deep/a.js', 'src/deep/a.js', 'src/Deep/A.js', 'SRC/DEEP/A.JS']) expect([rel, headFile(snap, rel, volume.io)]).toEqual([rel, null]);
+  });
+
+  test('a path that is not a plain relative path to a file names nothing', () => {
+    const { snap } = headTree({ 'src/a.js': 'x\n', 'top.js': 'y\n' });
+    for (const rel of ['', '.', '..', '../snap/src/a.js', 'src/../src/a.js', './src/a.js', 'src//a.js', '/src/a.js', 'src/a.js/', 'src', 'src/', 'nope.js', 'src/nope.js', 'src/a.js/x', 'src/a.js\0']) {
+      expect([rel, headFile(snap, rel)]).toEqual([rel, null]);
+    }
+    expect(headFile(snap, undefined)).toBeNull();
+    expect(headFile(snap, 5)).toBeNull();
+    expect(headFile(snap, 'top.js')).toEqual({ lines: 1 });
+  });
+
+  posix('a symlink is not a file of the head: wherever it points, whatever it points at', () => {
+    const { root, snap } = headTree({ 'src/a.js': 'x\n', 'real/b.js': 'y\n' });
+    const outside = path.join(root, 'outside.txt');
+    fs.writeFileSync(outside, 'secret\n');
+    fs.symlinkSync('a.js', path.join(snap, 'src', 'inside.js')); // to a file inside the snapshot
+    fs.symlinkSync(path.join('..', '..', 'outside.txt'), path.join(snap, 'src', 'relative-out.js')); // out of the snapshot, relative
+    fs.symlinkSync(outside, path.join(snap, 'src', 'absolute-out.js')); // out of the snapshot, absolute
+    fs.symlinkSync('/dev/null', path.join(snap, 'src', 'device.js')); // to a device
+    fs.symlinkSync('nope.js', path.join(snap, 'src', 'dangling.js')); // to nothing
+    fs.symlinkSync('real', path.join(snap, 'linked')); // a directory link inside the snapshot
+    fs.symlinkSync(root, path.join(snap, 'out-dir')); // a directory link out of the snapshot
+    for (const rel of ['src/inside.js', 'src/relative-out.js', 'src/absolute-out.js', 'src/device.js', 'src/dangling.js', 'linked/b.js', 'out-dir/outside.txt', 'linked']) {
+      expect([rel, headFile(snap, rel)]).toEqual([rel, null]);
+    }
+    // controls: the files themselves
+    expect(headFile(snap, 'src/a.js')).toEqual({ lines: 1 });
+    expect(headFile(snap, 'real/b.js')).toEqual({ lines: 1 });
+  });
+
+  posix('a symlink to a FIFO, or a FIFO itself, is refused at once instead of blocking the collector', () => {
+    const { root, snap } = headTree({ 'src/a.js': 'x\n' });
+    expect(spawnSync('mkfifo', [path.join(root, 'fifo')]).status).toBe(0);
+    fs.symlinkSync(path.join('..', '..', 'fifo'), path.join(snap, 'src', 'evil.js'));
+    expect(spawnSync('mkfifo', [path.join(snap, 'src', 'direct.js')]).status).toBe(0);
+    // a child process with a deadline: a lookup that opened the FIFO would block forever, and the test must fail rather than hang
+    const script = `const { headFile } = require(${JSON.stringify(CLI_MODULE)}); console.log(JSON.stringify(['src/evil.js', 'src/direct.js', 'src/a.js'].map((rel) => headFile(${JSON.stringify(snap)}, rel))));`;
+    const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000 });
+    expect(child.error).toBeUndefined();
+    expect(JSON.parse(child.stdout)).toEqual([null, null, { lines: 1 }]);
+  }, 20000);
+
+  posix('an entry swapped for a FIFO or a symlink after it was listed is still refused, at the descriptor', () => {
+    const { snap } = headTree({ 'src/ok.js': 'x\n', 'src/target.js': 'a\nb\nc\n' });
+    expect(spawnSync('mkfifo', [path.join(snap, 'src', 'swapped-fifo.js')]).status).toBe(0);
+    fs.symlinkSync('target.js', path.join(snap, 'src', 'swapped-link.js'));
+    // the listing is stale: it still calls both entries regular files, as it did before they were swapped
+    const script = `
+      const fs = require('fs');
+      const { headFile } = require(${JSON.stringify(CLI_MODULE)});
+      const stale = new Set(['swapped-fifo.js', 'swapped-link.js']);
+      const io = {
+        openSync: fs.openSync, fstatSync: fs.fstatSync, readSync: fs.readSync, closeSync: fs.closeSync,
+        readdirSync: (dir, options) => fs.readdirSync(dir, options).map((entry) => (stale.has(entry.name) ? { name: entry.name, isFile: () => true, isDirectory: () => false } : entry)),
+      };
+      const answer = (rel) => { try { return headFile(${JSON.stringify(snap)}, rel, io); } catch (error) { return { threw: error.code }; } };
+      console.log(JSON.stringify(['src/swapped-fifo.js', 'src/swapped-link.js', 'src/ok.js'].map(answer)));
+    `;
+    const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000 });
+    expect(child.error).toBeUndefined();
+    const [fifo, symlink, ok] = JSON.parse(child.stdout);
+    expect(fifo).toBeNull(); // opened without blocking, then refused: it is not a regular file
+    expect(['ELOOP', 'EMLINK']).toContain(symlink.threw); // never followed
+    expect(ok).toEqual({ lines: 1 });
+  }, 20000);
 });
 
 describe('the verify round', () => {

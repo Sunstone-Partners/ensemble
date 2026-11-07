@@ -28,7 +28,9 @@
  *     OPEN PR (collect re-reads the PR first), and a PR that is not OPEN gets no run and no verdict at all.
  *   - A head from outside this repository (a fork, or a repository GitHub did not state) is refused by name before anything
  *     is fetched, prepared, run or posted; a baseSha other than the merge base is refused (RUN_FAILED, no run).
- *   - A reviewer's `pre-existing` severity is a claim, borne out only by the diff: on a changed line, or on a path that names no file at the head, it is graded Important.
+ *   - A reviewer's `pre-existing` severity is a claim, borne out only by the diff and the head: on a changed line, on a path
+ *     that names no regular file of the head (a mis-spelled, mis-cased or invented path, a symlink) or on a line past the end of
+ *     that file, it is graded Important.
  *   - An agent that did not arrive is never read as reviewed: its slice is in `notReviewed`, a verifier's candidates are
  *     `unverified`, a missing security lane is not `clean`.
  *   - An unreadable, ambiguous, raised, High or sensitive tier is NEEDS_FULL_MODE with nothing dispatched.
@@ -52,6 +54,7 @@
  *   renderBrief(role, vars)                  -> markdown; THROWS when the renderer refuses an input
  *   writeState(path, state)                  -> {ok, path|reason}
  *   fs.{mkdirp(dir,mode), writeAtomic(file,text,mode), readText(file) -> string|null}
+ *   fs.headFile(root, rel)                   -> {lines}|null     the regular file `rel` names in the head snapshot `root`, exactly spelled, never followed
  *   redact(value)                            optional deep redaction applied to everything written or returned
  */
 
@@ -524,15 +527,24 @@ function processReview(run, deps) {
   // when the cited lines lie outside the PR's diff (S.gradePreExisting). The diff is read once, and only when a claim needs it.
   const claimsPreExisting = raw.some((finding) => finding.reviewer !== LANE_NAME && normalizeSeverity(finding.severity) === 'pre-existing');
   const snapshotDir = run.prepared.snapshotDir;
-  // exact path, in the head snapshot: a truncated or mis-spelled citation names nothing (S.gradePreExisting then refuses the label)
-  const existsAtHead = (rel) => {
-    try {
-      return typeof snapshotDir === 'string' && deps.fs.readText(path.join(snapshotDir, rel)) !== null;
-    } catch (_error) {
-      return false;
+  // The file a citation names, looked up once per path: exactly spelled, a regular file of the head snapshot, never followed,
+  // with its line count (S.gradePreExisting then refuses a label whose path names no such file or whose line is past its end).
+  // A file system that cannot look it up, or throws, names nothing.
+  const headFiles = new Map();
+  const headFileOf = (rel) => {
+    if (!headFiles.has(rel)) {
+      let found = null;
+      try {
+        found = typeof snapshotDir === 'string' && typeof deps.fs.headFile === 'function' ? deps.fs.headFile(snapshotDir, rel) : null;
+      } catch (_error) {
+        found = null;
+      }
+      headFiles.set(rel, isObject(found) ? found : null);
     }
+    return headFiles.get(rel);
   };
-  const diff = claimsPreExisting ? { index: readDiffIndex(deps, run.prepared.rangeDiff), changedPaths: run.changedPaths, snapshotDir, exists: existsAtHead } : null;
+  const linesOf = (rel) => (headFileOf(rel) === null ? null : headFileOf(rel).lines);
+  const diff = claimsPreExisting ? { index: readDiffIndex(deps, run.prepared.rangeDiff), changedPaths: run.changedPaths, snapshotDir, exists: (rel) => headFileOf(rel) !== null, lines: linesOf } : null;
 
   const completed = [];
   const laneFindings = [];

@@ -9,7 +9,7 @@
  *   - `deriveKinds`        the change kinds the runner may cite from the changed PATHS alone (never lowers a tier);
  *   - `planDepth`          resolveDepth + checkBounds, re-planned until no bound is violated or refused;
  *   - `completeFinding`    a reviewer's finding -> a ledger entry, completing (never dropping) what is missing;
- *   - `parseDiffHunks`, `gradePreExisting`  a `pre-existing` label is a claim about provenance, checked against the diff;
+ *   - `parseDiffHunks`, `gradePreExisting`  a `pre-existing` label is a claim about provenance, checked against the diff and the head;
  *   - `planVerifierPool`   planVerification with a pool sized so no verifier holds more than 3 candidates;
  *   - `chunk`              agents -> waves of at most `maxConcurrentAgents`;
  *   - `reviewerContract`, `verifierContract`, `agentPrompt`  the text an agent is given;
@@ -275,20 +275,26 @@ function citedPlace(location, snapshotDir) {
 }
 
 /**
- * Is the claim "this defect is not in code the pull request introduced" borne out by the diff? Only when the cited lines lie
- * outside every hunk of the diff (or in a file the pull request does not touch). Anything this cannot place is NOT borne out.
+ * Is the claim "this defect is not in code the pull request introduced" borne out by the diff and the head? Only when the cited
+ * path is a regular file of the head, the cited lines lie within that file, and they lie outside every hunk of the diff (or the
+ * pull request does not touch the file). Anything this cannot place is NOT borne out.
  *
  * @param {string} location  the finding's `file:line`
- * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string, exists:function(string):boolean}} diff
+ * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string, exists:function(string):boolean, lines:function(string):number}} diff
+ *   `exists(file)`: is `file` a regular file of the head, spelled exactly? `lines(file)`: how many lines it has.
  * @returns {{honoured:boolean, why?:string}}
  */
 function preExistingVerdict(location, diff) {
   const place = citedPlace(location, diff.snapshotDir);
   if (place === null) return { honoured: false, why: 'its location is not a plain `file:line` the diff can be checked against' };
   if (diff.index === null) return { honoured: false, why: 'the diff of this range could not be read to check it' };
-  // A citation that names no file of the head (a truncated, mis-spelled or invented path) places the defect nowhere: that is
-  // not "outside the diff", so nothing bears the claim out. Only an exact path that exists in the head snapshot is checked.
-  if (typeof diff.exists !== 'function' || diff.exists(place.file) !== true) return { honoured: false, why: `${place.file} is not a file at this head, so the cited location names nothing the diff can be checked against` };
+  // A citation that names no regular file of the head (a truncated, mis-spelled or invented path, a symlink, a directory) places the
+  // defect nowhere: that is not "outside the diff", so nothing bears the claim out. Only an exact path that is a file of the head is checked.
+  if (typeof diff.exists !== 'function' || diff.exists(place.file) !== true) return { honoured: false, why: `${place.file} is not a file at this head (it is missing, spelled differently, a symlink or a directory), so the cited location names nothing the diff can be checked against` };
+  // Nor does a line past the end of the file: a fabricated line number is as unplaced as a fabricated path.
+  const length = typeof diff.lines === 'function' ? diff.lines(place.file) : null;
+  if (!Number.isSafeInteger(length) || length < 0) return { honoured: false, why: `the length of ${place.file} at this head could not be read to check line ${place.end} against` };
+  if (place.end > length) return { honoured: false, why: `${place.file} has ${length} line${length === 1 ? '' : 's'}, so line ${place.end} is past its end` };
   const key = place.file.toLowerCase();
   const changedFile = Array.isArray(diff.changedPaths) && diff.changedPaths.some((p) => String(p).toLowerCase() === key);
   const entry = diff.index.files.get(key);
@@ -307,7 +313,7 @@ function preExistingVerdict(location, diff) {
  * no right to set. Any other severity, and any finding that is not an object, comes back untouched.
  *
  * @param {Object} entry  a completed finding (`completeFinding`)
- * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string, exists:function(string):boolean}} diff
+ * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string, exists:function(string):boolean, lines:function(string):number}} diff
  */
 function gradePreExisting(entry, diff) {
   if (!isObject(entry) || normalizeSeverity(entry.severity) !== 'pre-existing') return entry;
@@ -375,7 +381,7 @@ function reviewerContract(agent) {
     '- No findings is `"findings": []`. Never invent a finding to fill the list.',
     '- Set `"uncertain": true` on a finding you cannot settle yourself; a person then decides it.',
     '- Do not write `resolution`, `cleared` or `blocking`: they are ignored.',
-    '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff and the head: a pre-existing finding whose cited lines are inside a hunk of the diff, whose location it cannot place, or whose path is not a file at the head (cite the full repository-relative path, spelled exactly) is graded Important.',
+    '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff and the head: a pre-existing finding whose cited lines are inside a hunk of the diff, whose location it cannot place, whose path is not a regular file at the head (cite the full repository-relative path, spelled exactly; a symlink is not followed) or whose line is past the end of that file is graded Important.',
     `- Write the file atomically: a temp file in the same directory, then rename it to \`${agent.outPath}\`. Finish before ${agent.deadlineAtIso || 'your deadline'}; a result that arrives later is not read.`,
     '',
   ].join('\n');

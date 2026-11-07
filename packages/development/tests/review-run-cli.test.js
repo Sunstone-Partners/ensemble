@@ -99,9 +99,15 @@ function buildFixture() {
   git(work, 'add', '.');
   git(work, 'commit', '-q', '-m', 'a test that records that it ran');
   git(work, 'checkout', '-q', 'feature');
+  // a head whose tree holds a symlink that leads out of the snapshot: a PR can add any link it likes (the test makes the target a FIFO)
+  git(work, 'checkout', '-q', '-b', 'link');
+  fs.symlinkSync('../../escape', path.join(work, 'src', 'evil.js'));
+  git(work, 'add', '.');
+  git(work, 'commit', '-q', '-m', 'a symlink out of the snapshot');
+  git(work, 'checkout', '-q', 'feature');
   // the review state is gitignored in real repositories; the fixture does the same so `git status` can be exact
   fs.appendFileSync(path.join(work, '.git', 'info', 'exclude'), '.ensemble/\n');
-  return { root, origin, work, bin, marker, head: git(work, 'rev-parse', 'feature'), high: git(work, 'rev-parse', 'high'), exec: git(work, 'rev-parse', 'exec'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
+  return { root, origin, work, bin, marker, head: git(work, 'rev-parse', 'feature'), high: git(work, 'rev-parse', 'high'), exec: git(work, 'rev-parse', 'exec'), link: git(work, 'rev-parse', 'link'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
 }
 
 beforeAll(() => {
@@ -121,16 +127,16 @@ beforeEach(() => {
 
 const cliEnv = () => ({ ...process.env, PATH: `${fx.bin}${path.delimiter}${process.env.PATH}`, STUB_GH_STATE: fx.stateFile, STUB_GH_LOG: fx.logFile, GIT_CONFIG_GLOBAL: '/dev/null' });
 
-/** Runs the real CLI process: `{code, out}` with stdout parsed as the one JSON object. */
-function cli(command, payload, { raw } = {}) {
-  const r = spawnSync(process.execPath, [CLI, command], { input: raw === undefined ? JSON.stringify(payload) : raw, env: cliEnv(), encoding: 'utf8', cwd: fx.root });
+/** Runs the real CLI process: `{code, out}` with stdout parsed as the one JSON object. `timeout` (ms) kills a process that does not return. */
+function cli(command, payload, { raw, timeout } = {}) {
+  const r = spawnSync(process.execPath, [CLI, command], { input: raw === undefined ? JSON.stringify(payload) : raw, env: cliEnv(), encoding: 'utf8', cwd: fx.root, ...(timeout === undefined ? {} : { timeout }) });
   let out;
   try {
     out = JSON.parse(r.stdout);
   } catch (error) {
     out = { unparsable: r.stdout, stderr: r.stderr, parseError: error.message };
   }
-  return { code: r.status, out, stderr: r.stderr, stdout: r.stdout };
+  return { code: r.status, out, stderr: r.stderr, stdout: r.stdout, error: r.error };
 }
 
 const prep = (extra = {}) => cli('prepare', { repo: 'o/r', pr: 7, repoRoot: fx.work, agentAuthored: false, ...extra });
@@ -147,8 +153,7 @@ const writeResult = (agent, object) => {
 const reviewerFinding = (over = {}) => ({ locationOrLink: 'src/a.js:1', severity: 'important', failureMode: 'list[i + 1] reads one past the end on the last element', disposition: 'fix', evidence: 'src/a.js line 1 indexes list[list.length]', originalTextOrLink: 'src/a.js:1', ...over });
 
 /** Answers a review manifest as real agents would: every reviewer covers its paths, the lane covers every changed path. */
-function answerReview(manifest, { findings = {}, skip = [] } = {}) {
-  const changed = ['src/a.js', 'src/b.js'];
+function answerReview(manifest, { findings = {}, skip = [], changed = ['src/a.js', 'src/b.js'] } = {}) {
   for (const agent of manifest.agents) {
     if (skip.includes(agent.name)) continue;
     if (agent.role === 'reviewer') writeResult(agent, { findings: findings[agent.name] || [], pathsReviewed: agent.paths });
@@ -448,6 +453,58 @@ describe('the PR and its base are read from the host, not taken from the caller 
     expect(run.baseSha).toBe(mergeBase);
     expect(run.changedPaths).toEqual(['src/a.js', 'src/b.js', 'src/b.test.js']); // not just the last commit's file
   });
+});
+
+describe('a pre-existing citation is checked against the head snapshot the real prepare made (review of PR 264, round 3)', () => {
+  const posix = process.platform === 'win32' ? test.skip : test;
+  const claim = (location, failureMode) => reviewerFinding({ severity: 'pre-existing', locationOrLink: location, originalTextOrLink: location, failureMode });
+  const byId = (done) => Object.fromEntries(done.out.ledger.map((entry) => [entry.id, entry]));
+
+  test('a line past the end of a file and a mis-cased path stay in the gate; the real path and line of a file the PR does not touch do not (findings 2 and 5)', () => {
+    const review = prep({ runId: 'cited-head' }).out;
+    answerReview(review, {
+      findings: {
+        'reviewer-s1-a': [
+          claim('README.md:1', 'the fixture readme says nothing about how to run it'),
+          claim('README.md:99999', 'the readme has a line nobody wrote that is wrong'),
+          claim('readme.md:1', 'the readme named with the wrong case is wrong'),
+        ],
+      },
+    });
+    const verify = coll('cited-head').out;
+    expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    answerVotes(verify, 'real');
+    const done = coll('cited-head');
+    expect(done.out.status).toBe('DONE');
+    const ledger = byId(done);
+    expect(ledger.f1.severity).toBe('pre-existing');
+    expect(ledger.f2).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('README.md has 1 line, so line 99999 is past its end') });
+    expect(ledger.f3).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('readme.md is not a file at this head') });
+    expect(done.out.gate.findings).toMatchObject({ open: ['f2', 'f3'], preExisting: 1 });
+    expect(done.out.gate.mergeable).toBe(false);
+  });
+
+  posix('a symlink the PR adds, pointing at a FIFO, is refused: collect returns and the claim stays in the gate (finding 1)', () => {
+    setGh({ head: fx.link });
+    const review = prep({ runId: 'fifo-link' }).out;
+    expect(review).toMatchObject({ ok: true, status: 'DISPATCH' });
+    // the snapshot is the head's tree, links included: src/evil.js -> ../../escape lands beside the snapshot, in the prepared directory
+    const snapshot = JSON.parse(fs.readFileSync(path.join(runDir('fifo-link'), 'run.json'), 'utf8')).prepared.snapshotDir;
+    expect(fs.readlinkSync(path.join(snapshot, 'src', 'evil.js'))).toBe('../../escape');
+    execFileSync('mkfifo', [path.join(snapshot, '..', 'escape')]);
+    answerReview(review, { changed: ['src/a.js', 'src/b.js', 'src/evil.js'], findings: { 'reviewer-s1-a': [claim('src/evil.js:1', 'the link is followed to a file the PR does not control')] } });
+    // a deadline on every collect: one that opened the FIFO would block forever, and the test must fail rather than hang
+    const collect = () => cli('collect', { repoRoot: fx.work, runId: 'fifo-link' }, { timeout: 30000 });
+    const first = collect();
+    expect(first.error).toBeUndefined();
+    expect(first.out).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    answerVotes(first.out, 'real');
+    const done = collect();
+    expect(done.error).toBeUndefined();
+    expect(done.out.status).toBe('DONE');
+    expect(byId(done).f1).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('src/evil.js is not a file at this head') });
+    expect(done.out.gate.mergeable).toBe(false);
+  }, 120000);
 });
 
 describe('in-process: every process the runner starts is recorded', () => {
