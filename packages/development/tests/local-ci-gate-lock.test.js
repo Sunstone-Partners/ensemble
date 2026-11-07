@@ -5,8 +5,8 @@
  *  - runGateFlow and runRun in-process: the lock brackets the run (and only the run), is released when the run throws,
  *    and a lock that cannot be had stops it before anything runs or posts.
  *  - the real CLI entry point against a real fixture repo: the CI step itself records when it started and finished, and
- *    the intervals must not overlap, for two gates and for a run started during a gate. Fake: only `gh` and `npx` (no
- *    network, no Node download).
+ *    the intervals must not overlap, for two gates, for a run started during a gate and for the gate the precheck
+ *    starts. Fake: only `gh` and `npx` (no network, no Node download).
  */
 
 const fs = require('fs');
@@ -16,6 +16,8 @@ const { spawn } = require('child_process');
 
 const cli = require('../lib/local-ci-cli');
 const lock = require('../lib/local-ci-lock');
+const { makeDeps } = require('../lib/review-precheck-cli');
+const { runPrecheck } = require('../lib/pr-review-precheck');
 const { makeBaseRepo, cleanupBaseRepos, prInfoFor, fakePostStatus, fakeGhDir, PR } = require('./helpers/local-ci-base-repo');
 
 const CLI_PATH = path.join(__dirname, '..', 'lib', 'local-ci-cli.js');
@@ -411,5 +413,83 @@ describe('run and gate share one lock across real processes (review round 1)', (
       releaseStep();
     }
     expect(fs.existsSync(path.join(lockDir, lock.LOCK_FILE))).toBe(false);
+  }, 120000);
+});
+
+describe('the gate the precheck starts goes through the lock (AC4, review round 1)', () => {
+  const ok = (stdout) => ({ status: 0, stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout), stderr: '' });
+
+  /** What `gh` and `git` answer the precheck's own reads for a healthy open PR on this repository. */
+  function scriptedRun(fx) {
+    const table = {
+      'pr view': ok({ headRefOid: fx.headSha, baseRefName: 'trusted-base', state: 'OPEN', body: '## Testing\nx\n## Risk\nx\n## How to revert\nx\n', author: { login: 'author' }, isCrossRepository: false }),
+      [`pulls/${PR}/reviews`]: ok([[]]),
+      'git/commits': ok({ tree: { sha: 'c'.repeat(40) } }),
+      'branches/trusted-base/protection': { status: 1, stdout: JSON.stringify({ message: 'Branch not protected' }), stderr: 'gh: Branch not protected (HTTP 404)' },
+      '/statuses': ok([[]]),
+      'fetch --quiet origin trusted-base': ok(''),
+      'rev-parse --verify --end-of-options refs/remotes/origin/trusted-base^{commit}': ok(`${fx.baseSha}\n`),
+      [`show ${fx.baseSha}:.ensemble/local-ci.yaml`]: ok(CONFIG_YAML),
+      'cat-file -e': ok(''),
+      'api user': ok({ login: 'me' }),
+      [`issues/${PR}/comments`]: ok([[]]),
+      '-X POST': ok({ id: 1, html_url: 'u' }),
+    };
+    return async (cmd, args) => {
+      const key = `${cmd} ${args.join(' ')}`;
+      for (const [needle, answer] of Object.entries(table)) if (key.includes(needle)) return answer;
+      return { status: 1, stdout: '', stderr: `unexpected ${key}` };
+    };
+  }
+
+  it('starts ONE gate per head even while it is queued behind another gate, and that gate runs once the lock is free', async () => {
+    const { fx, fakeDir, steps, releaseStep } = holdableFixture();
+    releaseStep(); // this test never holds the step: it holds the lock instead
+    const lockDir = tmpDir();
+    const env = { ...process.env, PATH: fakeDir + path.delimiter + process.env.PATH, ENSEMBLE_LOCAL_CI_LOCK_DIR: lockDir, ENSEMBLE_LOCAL_CI_LOCK_TIMEOUT_MS: '60000' };
+    const spawned = [];
+    // The real detached `local-ci-cli.js gate`, with only its environment pointed at the fixture's lock, `gh` and `npx`.
+    const spawnProcess = (cmd, args, opts) => {
+      const child = spawn(cmd, args, { ...opts, env });
+      spawned.push(child);
+      return child;
+    };
+    const precheck = () => runPrecheck({ dryRun: true }, makeDeps({ repo: 'o/r', pr: PR, repoRoot: fx.dir, run: scriptedRun(fx), spawnProcess }));
+
+    // Another gate holds the lock: this very process, which is alive.
+    const held = await lock.acquire({ lockPath: path.join(lockDir, lock.LOCK_FILE), timeoutMs: 0 });
+    expect(held.acquired).toBe(true);
+    let gatePid = null;
+    try {
+      const first = await precheck();
+      expect(first.gate).toMatchObject({ action: 'started', dryRun: true });
+      gatePid = first.gate.pid;
+      await sleep(3000); // the gate is up and queued
+      expect(process.kill(gatePid, 0)).toBe(true); // alive, waiting
+      expect(steps()).toEqual([]); // and no CI step has run: it is waiting for the lock
+
+      const second = await precheck();
+      expect(second.gate.action).toBe('already-started');
+      expect(spawned).toHaveLength(1); // at most one gate for the head, queued or not
+
+      held.release();
+      const finished = await until(() => {
+        const text = fs.existsSync(first.gate.logPath) ? fs.readFileSync(first.gate.logPath, 'utf8') : '';
+        const line = text.split('\n').find((l) => l.startsWith('{'));
+        return line ? JSON.parse(line) : null;
+      }, 60000, 'the queued gate to report');
+      expect(finished).toMatchObject({ ok: true, dryRun: true, mergeReady: true });
+      expect(finished.queued_ms).toBeGreaterThanOrEqual(500); // it spent the wait in the queue
+      expect(steps().map((e) => e.event)).toEqual(['start', 'end']);
+    } finally {
+      held.release();
+      if (gatePid !== null) {
+        try {
+          process.kill(-gatePid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      }
+    }
   }, 120000);
 });
