@@ -202,6 +202,8 @@ describe('prepare: the dispatch manifest', () => {
     }
     expect(fs.readFileSync(m.agents[0].briefPath, 'utf8')).toContain('src/a.js');
     expect(m.rules.join(' ')).toMatch(/cannot enforce/);
+    // the honest limit on coverage is in every manifest (review of PR 264, nit): self-reported, and read-only is not enforced
+    expect(m.rules.join(' ')).toMatch(/Coverage is self-reported[^]*`pathsReviewed`[^]*cannot tell a read from a claim[^]*cannot enforce/);
     expect(m.next).toContain('collect');
     // the run directory and its files are private
     expect(fs.statSync(h.runDir()).mode & 0o777).toBe(0o700);
@@ -1108,6 +1110,24 @@ describe('the gate stage', () => {
     expect(res.gate.blockers.some((b) => b.section === 'directed-by')).toBe(true);
   });
 
+  test('agentAuthored is the caller\'s statement and the answer says so: true (a credit), false (a waiver); absent is the strictest reading and says nothing (review of PR 264, P2)', async () => {
+    const answer = async (extra) => {
+      const h = harness();
+      h.pr.body = `${GOOD_BODY}\nDirected by: @boss\n`;
+      const m = await prepareRun({ repo: 'o/r', pr: 7, repoRoot: h.repoRoot, runId: 'run1', ...extra }, h.deps);
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      return h.collect();
+    };
+    const stated = (out) => out.warnings.filter((w) => w.startsWith('agent-authored-unverified'));
+    const yes = await answer({ agentAuthored: true });
+    expect(stated(yes)).toEqual([expect.stringMatching(/agentAuthored:true[^]*credits the person it names as one approval[^]*cannot verify who wrote/)]);
+    expect(yes.approvals).toMatchObject({ directedBy: 'boss', humansCounted: 1 });
+    const no = await answer({ agentAuthored: false });
+    expect(stated(no)).toEqual([expect.stringMatching(/agentAuthored:false[^]*no "Directed by:" line was required[^]*cannot verify who wrote/)]);
+    expect(no.approvals).toMatchObject({ directedBy: null, humansCounted: 0 });
+    expect(stated(await answer({}))).toEqual([]);
+  });
+
   test('the state report is written once, redacted, under the PR id, with the status facts, the ledger and the reduced-review notice', async () => {
     const h = harness();
     const { next } = await reviewRound(h);
@@ -1282,19 +1302,38 @@ describe('metrics and the acvv recorder', () => {
     const out = await h.collect({ now: Date.now() });
     expect(out.status).toBe('DONE');
     const x = out.metrics;
-    expect(x).toMatchObject({ runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 3 });
+    expect(x).toMatchObject({ runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 3, adjudicationCalls: 0, agentsByRole: { reviewer: 2, security: 1 }, orchestratorTurns: { atLeast: 3 } });
     expect(x.wallMs).toBeGreaterThan(0);
     expect(x.runnerMs).toBeGreaterThan(0);
     expect(x.runnerMs).toBeLessThanOrEqual(x.wallMs);
     expect(x.orchestratorOnlyMs).toBe(Math.max(0, x.wallMs - x.runnerMs - x.agentActiveMs));
-    expect(Object.keys(x).sort()).toEqual(['agentActiveMs', 'agentsDispatched', 'dispatchRounds', 'orchestratorOnlyMs', 'runnerCalls', 'runnerMs', 'wallMs']);
+    expect(Object.keys(x).sort()).toEqual(['adjudicationCalls', 'agentActiveMs', 'agentsByRole', 'agentsDispatched', 'dispatchRounds', 'orchestratorOnlyMs', 'orchestratorTurns', 'runnerCalls', 'runnerMs', 'wallMs']);
+  });
+
+  test('AC1: the orchestrator turns the protocol itself requires are counted and recorded (a lower bound), with the agents by role and the adjudication calls', async () => {
+    // prepare -> review agents -> collect -> verify wave -> collect -> ADJUDICATE -> collect with adjudications -> DONE
+    const h = harness();
+    const m = await h.prepare();
+    answerReview(m, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding({ uncertain: true })] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
+    const verify = await h.collect();
+    voteAll(verify, () => 'real');
+    const adjudicate = await h.collect();
+    expect(adjudicate.status).toBe('ADJUDICATE');
+    expect(adjudicate.metrics).toMatchObject({ runnerCalls: 3, dispatchRounds: 2, agentsDispatched: 6, adjudicationCalls: 0, agentsByRole: { reviewer: 2, security: 1, verifier: 3 }, orchestratorTurns: { atLeast: 5 } });
+    const done = await h.collect({ adjudications: [{ id: 'f1', disposition: 'fix', reason: 'will fix' }] });
+    expect(done.metrics).toMatchObject({ runnerCalls: 4, dispatchRounds: 2, adjudicationCalls: 1, orchestratorTurns: { atLeast: 6 } });
+    expect(done.metrics.orchestratorTurns.basis).toMatch(/lower bound, not a measurement of the model/);
+    // recorded with the run, and re-reading a finished run is not another turn of the protocol
+    expect(h.readRun().metrics).toEqual(JSON.parse(JSON.stringify(done.metrics)));
+    expect((await h.collect()).metrics).toEqual(done.metrics);
+    expect(h.readRun().calls.map((c) => c.call)).toEqual(['prepare', 'collect', 'collect', 'collect']);
   });
 
   test('computeMetrics and unionMs on a hand-made run', () => {
     expect(S.unionMs([[0, 10], [5, 20], [30, 40]])).toBe(30);
     expect(S.unionMs([])).toBe(0);
-    const run = { calls: [{ call: 'prepare', startedAt: 0, endedAt: 100 }, { call: 'collect', startedAt: 9000, endedAt: 9100 }], waves: [{ status: 'collected', agents: [{ dispatchedAt: 100, arrivedAt: 5000, deadlineAt: 99999 }, { dispatchedAt: 100, arrivedAt: 8000, deadlineAt: 99999 }] }, { status: 'planned', agents: [{}] }] };
-    expect(S.computeMetrics(run, 9100)).toEqual({ wallMs: 9100, runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 2, runnerMs: 200, agentActiveMs: 7900, orchestratorOnlyMs: 1000 });
+    const run = { calls: [{ call: 'prepare', startedAt: 0, endedAt: 100 }, { call: 'collect', startedAt: 9000, endedAt: 9100, adjudication: true }], waves: [{ status: 'collected', agents: [{ role: 'reviewer', dispatchedAt: 100, arrivedAt: 5000, deadlineAt: 99999 }, { role: 'verifier', dispatchedAt: 100, arrivedAt: 8000, deadlineAt: 99999 }] }, { status: 'planned', agents: [{}] }] };
+    expect(S.computeMetrics(run, 9100)).toEqual({ wallMs: 9100, runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 2, agentsByRole: { reviewer: 1, verifier: 1 }, adjudicationCalls: 1, orchestratorTurns: { atLeast: 3, basis: expect.stringContaining('lower bound') }, runnerMs: 200, agentActiveMs: 7900, orchestratorOnlyMs: 1000 });
   });
 
   test('stage spans: precheck, prepare-head, one span per agent from dispatch to collection, and the gate', async () => {

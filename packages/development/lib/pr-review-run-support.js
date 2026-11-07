@@ -439,11 +439,16 @@ function unionMs(intervals) {
   return total + (curEnd - curStart);
 }
 
+/** What `orchestratorTurns.atLeast` counts, said in the record itself so a reader of final.json cannot take it for a transcript count. */
+const ORCHESTRATOR_TURNS_BASIS = 'one model turn per runner call plus one per dispatch round (the model starts that round\'s agents): the turns this protocol itself requires. A lower bound, not a measurement of the model: the runner cannot see the dispatcher\'s transcript, so turns spent outside the protocol (reading the skill, retries, the final report) are not counted, and re-reading a finished run is not counted either.';
+
 /**
- * The AC5 timing record, from the run's own call log and agent times (nothing else is measured):
+ * The timing and turn record of a run (AC1, AC5), from the run's own call log and agent times (nothing else is measured):
  *   wallMs              first runner call start -> `endAt`
  *   runnerCalls/runnerMs   the prepare/collect calls and the time spent inside them
- *   dispatchRounds / agentsDispatched
+ *   dispatchRounds / agentsDispatched / agentsByRole   the waves emitted and who was in them (reviewer, security, verifier)
+ *   adjudicationCalls   the collect calls that carried an adjudication, the one place the model decides something
+ *   orchestratorTurns   `atLeast`: the model turns the protocol requires (runner calls + dispatch rounds), with its `basis`
  *   agentActiveMs       union of [dispatchedAt, arrival or deadline-or-now] over every agent
  *   orchestratorOnlyMs  wall - runner - agent time: the time nobody but the orchestrating model was running
  */
@@ -456,11 +461,16 @@ function computeMetrics(run, endAt) {
   const agents = waves.flatMap((w) => w.agents);
   const intervals = agents.map((a) => [a.dispatchedAt, Number.isFinite(a.arrivedAt) ? a.arrivedAt : Math.min(a.deadlineAt, endAt)]);
   const agentActiveMs = unionMs(intervals);
+  const agentsByRole = {};
+  for (const agent of agents) agentsByRole[agent.role] = (agentsByRole[agent.role] || 0) + 1;
   return {
     wallMs,
     runnerCalls: calls.length,
     dispatchRounds: waves.length,
     agentsDispatched: agents.length,
+    agentsByRole,
+    adjudicationCalls: calls.filter((c) => c.adjudication === true).length,
+    orchestratorTurns: { atLeast: calls.length + waves.length, basis: ORCHESTRATOR_TURNS_BASIS },
     runnerMs,
     agentActiveMs,
     orchestratorOnlyMs: Math.max(0, wallMs - runnerMs - agentActiveMs),

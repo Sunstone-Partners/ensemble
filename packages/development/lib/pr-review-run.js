@@ -84,6 +84,7 @@ const RULES = Object.freeze([
   'Stop every agent at its `deadlineAtIso`. The runner records the deadline and cannot stop an agent: the dispatcher must. A result written later is not read.',
   'When the agents are done (or their deadlines have passed), call `collect`. Never read a result file, tally votes or decide a gate yourself.',
   'On ADJUDICATE decide only the findings listed, with a reason, and call `collect` with `adjudications`.',
+  'Coverage is self-reported: the runner counts a slice as reviewed when the agent lists its paths in `pathsReviewed`, and cannot tell a read from a claim. Read-only access is an instruction in the prompt that the runner cannot enforce: the dispatcher must.',
 ]);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -175,9 +176,9 @@ function readDiffIndex(deps, file) {
   }
 }
 
-function logCall(run, call, startedAt, deps) {
+function logCall(run, call, startedAt, deps, adjudication = false) {
   run.calls = Array.isArray(run.calls) ? run.calls : [];
-  run.calls.push({ call, startedAt, endedAt: deps.now() });
+  run.calls.push({ call, startedAt, endedAt: deps.now(), ...(adjudication ? { adjudication: true } : {}) });
 }
 
 /** Records a terminal phase with its answer, so every later call repeats it. */
@@ -662,6 +663,11 @@ async function gateStage(run, built, deps, tracer) {
     reviews.push({ ...review, ...(commit !== null && trees.get(commit) ? { treeSha: trees.get(commit) } : {}) });
   }
 
+  // Who wrote the PR is not something the runner can read: the author's login cannot say it (an agent PR is committed under
+  // the maintainer's own login), so `agentAuthored` is the caller's statement, passed on as given. The answer says so, so a
+  // relaxation (or a credit) that rests on that word is visible instead of silent. Absent is the strictest reading.
+  if (run.agentAuthored === true) warnings.push('agent-authored-unverified: the caller stated agentAuthored:true, so a "Directed by:" line in the PR body credits the person it names as one approval; the runner cannot verify who wrote this pull request');
+  else if (run.agentAuthored === false) warnings.push('agent-authored-unverified: the caller stated agentAuthored:false, so no "Directed by:" line was required and nobody was credited as the director; the runner cannot verify who wrote this pull request');
   const description = checkDescription({ body: head.pr.body, agentAuthored: run.agentAuthored });
   const policy = run.policy === null ? undefined : run.policy;
   const approvals = evaluateApprovals({ reviews, headSha: run.headSha, headTreeSha, tier: run.tier, policy, author: run.author, directedBy: description.directedBy || undefined, agentAuthored: run.agentAuthored });
@@ -743,7 +749,7 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     return { invalid: failure('RUN_FAILED', { reason: 'state-write-failed', error: isObject(written) ? written.reason || written.error : 'no answer', runId: run.runId }), moved: false };
   }
 
-  logCall(run, extra.call, startedAt, deps);
+  logCall(run, extra.call, startedAt, deps, extra.adjudications !== undefined);
   const metrics = S.computeMetrics(run, deps.now());
   const answer = {
     ok: true,
