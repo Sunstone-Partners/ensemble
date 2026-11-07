@@ -30,8 +30,8 @@ neither needs network access or a credential.
 - `tracker.create`: create a new beads issue (`br create --title ... --type ... -d ...`)
 - `tracker.create-detailed`: create with labels, priority and external dedupe key in one call
   (optional)
-- `tracker.find-by-key`: list issues by label; `lib/tracker-findings.js` picks the exact
-  `external_ref` match (optional)
+- `tracker.find-by-key`: list every issue, not label-scoped; `lib/tracker-findings.js` picks the
+  exact `external_ref` match (optional)
 - `tracker.update`: REPLACE the issue's notes (`br update <id> --notes ...`; see "Known limits")
 - `tracker.update-detailed`: rewrite title/description/priority, APPEND a note (optional)
 - `tracker.close-with-reason`: close with a reason and resolving commit (optional)
@@ -130,13 +130,15 @@ separately), matching `validate.js`'s own documented limit.
 - **`tracker.update` REPLACES notes (`--notes`), it does not append** (captured live). Kept
   because `refine-beads` calls it as shipped; use `tracker.update-detailed` or
   `tracker.comment` to keep history.
-- **`br` rejects a duplicate `--external-ref`** (`CONFIG_ERROR ... already exists`), so
-  `tracker.create-detailed` cannot duplicate a key; `findByKey`'s `AMBIGUOUS_KEY` guards data
-  that bypassed it. `br update --add-label` rejects a comma list and fails the whole update,
-  so `tracker.update-detailed` leaves labels to `tracker.label`.
+- **`br` rejects a duplicate `--external-ref` workspace-wide** (`CONFIG_ERROR ... already
+  exists`, any labels): `tracker.find-by-key` is therefore not label-scoped, and `findByKey`'s
+  `AMBIGUOUS_KEY` guards data that bypassed it. A deleted (`tombstone`) bead keeps its key,
+  unlisted by `br list --all`. `br update --add-label` rejects a comma list and fails the whole
+  update, so `tracker.update-detailed` leaves labels to `tracker.label`.
 - **The runner drops `br`'s error detail.** `br` prints its JSON error on stdout with a
   non-zero exit; `TOOL_FAILED` carries only `Command failed: br ...`, so
-  `lib/tracker-findings.js` tests for the `.beads` directory instead of `NOT_INITIALIZED`.
+  `lib/tracker-findings.js` decides "unavailable" before spawning (no adapter, no `.beads`
+  directory, no executable `br`), never from that text.
 - **`toolchain.default.yaml`'s `work-graph: auto` does not yet resolve to any
   adapter.** No shipped task implements the TRD's own `auto`-sentinel selection
   algorithm (use the resolved tracker adapter's own work-graph capabilities when

@@ -107,13 +107,21 @@ capabilities:
     run: ["br", "list", "--all", "--limit", "0", "--json"]
 
   # Find-by-key. `br list` has NO filter on `external_ref` (captured live: `--desc-contains`
-  # and `br search` do not see it), so this lists every bead carrying `${label}` (closed ones
+  # and `br search` do not see it), so this lists EVERY bead in the workspace (closed ones
   # included, `--all`) and the caller-side exact match on each item's `external_ref` against
   # the key happens in lib/tracker-findings.js#findByKey -- the manifest's declarative mapping
-  # cannot filter. `${key}` is a declared contract input but deliberately absent from argv.
-  # Raw `{issues:[...]}` stdout, no `parse` block, same reason as tracker.list.
+  # cannot filter. It is deliberately NOT scoped by label: br enforces `external_ref`
+  # uniqueness across the whole workspace whatever the label (captured live: a second bead
+  # with the same key under another label is refused, exit 7, `CONFIG_ERROR ... already
+  # exists`; br-create-duplicate-key.error.json), so a label-scoped list can miss the bead
+  # that holds the key and a find-then-create then fails with an opaque duplicate error. Every
+  # listed item carries its own `labels`, so the caller judges scope. Known limit (captured
+  # live): a DELETED bead (status `tombstone`) still holds its key but neither `--all` nor
+  # `--status all` lists it (only `--status tombstone` does), so such a key reads as not found
+  # and creating it is refused. `${key}` is a declared contract input but deliberately absent
+  # from argv. Raw `{issues:[...]}` stdout, no `parse` block, same reason as tracker.list.
   tracker.find-by-key:
-    run: ["br", "list", "--all", "--limit", "0", "--label", "${label}", "--json"]
+    run: ["br", "list", "--all", "--limit", "0", "--json"]
 
   # br create --json: CAPTURED LIVE (br 0.6.0, scratch workspace under ~/.omp, never this
   # repo's own .beads/; stored under scripts/tests/fixtures/toolchain/adapter-tracker-beads-
