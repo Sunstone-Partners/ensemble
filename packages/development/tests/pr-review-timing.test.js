@@ -207,7 +207,7 @@ describe('span lengths come from the recorder, never from a stepped wall clock (
     for (const figure of [t.activeMs, t.orchestratorOnly, t.beforeFirstDispatch]) {
       expect(figure).toMatchObject({ ms: null, missing: true });
       expect(figure.reason).toContain('wall clock stepped');
-      expect(figure.reason).toContain('review spans 9m02s on the wall clock but 1m02s by the recorder');
+      expect(figure.reason).toContain('review lasted 9m02s on the wall clock but 1m02s by the recorder');
     }
   });
 
@@ -577,6 +577,20 @@ describe('the critical path never exceeds the window and counts the verdict once
     ]);
   });
 
+  test('an untagged first review followed by tagged rounds is still a chain: rounds are taken in time order', () => {
+    const t = computeReviewTiming([
+      root(0, 1000),
+      agent('reviewer', 0, 100), // no round attr: the extra group, here the first review
+      agent('verifier', 100, 150),
+      verdict(150, 160),
+      agent('reviewer', 300, 330, { round: 2 }),
+      agent('verifier', 330, 400, { round: 2 }),
+      verdict(400, 410, { round: 2 }),
+    ]);
+    expect(t.warnings.join(' ')).toContain('carry a round and some do not');
+    expect(t.criticalPath).toMatchObject({ ms: 270000, missing: false });
+  });
+
   test('a step that overruns the window is cut to it, so the critical path cannot exceed the window', () => {
     const t = computeReviewTiming([root(0, 400), agent('reviewer', 0, 300), agent('verifier', 300, 390), verdict(390, 500)]);
     expect(t.criticalPath.rounds[0].steps[2]).toMatchObject({ stage: 'verdict', ms: 10000 });
@@ -736,6 +750,42 @@ describe('the stage contract is emitted through run-trace and read back', () => 
     expect(t.criticalPath).toMatchObject({ ms: 55000 + 20000 + 1000, missing: false });
     expect(t.criticalPath.rounds[0].round).toBe(1);
   });
+
+  test('a whole review recorded with the real `toolchain-cli trace start|end` verbs (one process per call, string attrs, real clocks) is read back by `pr-review-cli timing`', () => {
+    const toolchainCli = path.join(__dirname, '..', 'lib', 'toolchain-cli.js');
+    const tc = (...args) => {
+      const res = spawnSync(process.execPath, [toolchainCli, ...args], { cwd: dir, encoding: 'utf8' });
+      expect({ status: res.status, stderr: res.stderr }).toEqual({ status: 0, stderr: '' });
+      return res.stdout.trim();
+    };
+    const start = (name, parent, ...attrs) =>
+      tc('trace', 'start', '--run-id', 'real', '--name', name, '--kind', STAGE_KINDS[name], ...(parent ? ['--parent', parent] : []), ...attrs.flatMap((a) => ['--attr', a]));
+    const end = (spanId, ...attrs) => tc('trace', 'end', '--run-id', 'real', '--span-id', spanId, ...attrs.flatMap((a) => ['--attr', a]));
+
+    const rootId = start(STAGES.root, null);
+    const head = start(STAGES.headRead, rootId);
+    end(head);
+    const reviewer = start(STAGES.reviewer, rootId, 'agent=RevA', 'round=1');
+    end(reviewer);
+    const verifier = start(STAGES.verifier, rootId, 'agent=VerA', 'round=1');
+    end(verifier);
+    const verdict = start(STAGES.verdict, rootId, 'round=1');
+    end(verdict);
+    end(rootId, 'turns=7', 'tool_calls=9');
+
+    const res = spawnSync(process.execPath, [CLI, 'timing'], { input: JSON.stringify({ runId: 'real', cwd: dir }), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    const t = JSON.parse(res.stdout);
+    expect(t).toMatchObject({ ok: true, turns: { ms: 7, missing: false }, toolCalls: { ms: 9, missing: false }, warnings: [] });
+    expect(t.stages[STAGES.headRead]).toMatchObject({ count: 1, missing: false });
+    expect(t.agents.count).toBe(2);
+    // Real clocks agree with each other, so nothing is flagged and every figure is a number.
+    expect(t.orchestratorOnly.missing).toBe(false);
+    expect(t.criticalPath).toMatchObject({ missing: false });
+    expect(t.criticalPath.rounds[0].round).toBe(1);
+    expect(t.criticalPath.ms).toBeLessThanOrEqual(t.wall.ms);
+    expect(t.criticalPath.ms + t.orchestratorOnly.ms).toBeLessThanOrEqual(t.wall.ms);
+  }, 30000);
 });
 
 describe('the entry points', () => {

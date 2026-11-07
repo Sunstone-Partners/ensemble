@@ -14,7 +14,7 @@
  *   review                  phase  the orchestrator's whole window. Exactly one per trace.
  *                                  Optional attrs `turns` and `tool_calls` (non-negative integers).
  *   review.head-read        io     reading the PR head and base
- *   review.gate             gate   one run of the merge gate
+ *   review.gate             gate   one run of the merge gate (Step 10 of the pr-review-cycle skill)
  *   review.classifier       agent  one dispatched agent per role ...
  *   review.second-assessor  agent
  *   review.security-lane    agent
@@ -24,7 +24,9 @@
  * Any span MAY carry an integer attr `round` (1 = the first review, 2.. = delta re-reviews): the
  * critical path is then computed per round and summed. `trace start --attr k=v` records strings, so
  * a decimal string counts as the integer it spells (`turns`, `tool_calls` and `round`). Agent spans carry `agent` (a name)
- * for the report.
+ * for the report. `review.gate` is not the `review-gate` span of /ensemble-pr-merge's own trace (skills/pr-merge-trace):
+ * that one wraps the merge command's whole review step, a different and broader span this module never reads, so the
+ * two can share one trace file without either being taken for the other.
  *
  * AN AGENT ENDS AT ITS LAST `message`, NEVER AT `session_exit` (plan section 1, correction C01:
  * the idle linger after the final yield, observed as exactly 7 minutes, inflated every agent
@@ -160,7 +162,7 @@ function timelineOf(spans) {
       const who = AGENT_NAMES.has(span.name) ? `${span.name} ${agentLabel(span)}` : span.name;
       return {
         ok: false,
-        reason: `the wall clock stepped against the recorder's monotonic clock: ${who} spans ${fmtMs(wallMs)} on the wall clock but ${fmtMs(span.duration_ms)} by the recorder, so its timestamps cannot place spans against each other`,
+        reason: `the wall clock stepped against the recorder's monotonic clock: ${who} lasted ${fmtMs(wallMs)} on the wall clock but ${fmtMs(span.duration_ms)} by the recorder, so timestamps cannot place spans against each other`,
       };
     }
   }
@@ -313,8 +315,9 @@ function criticalPath(spans, warnings, { window, timeline }) {
   if (gaps.length > 0) {
     return { ...missing(`round ${gaps.map((r) => labelOf(r.round)).join(', ')}: ${gaps[0].reason}`), rounds };
   }
-  // A head change restarts the whole chain, so each round must also follow the one before it.
-  const overlap = firstOverlap(chains.flat());
+  // A head change restarts the whole chain, so no round may overlap another. Rounds are taken in time order, not by
+  // their `round` number: spans without one are one extra group whose place in the sequence is not known.
+  const overlap = firstOverlap(chains.sort((a, b) => a[0].interval.start - b[0].interval.start).flat());
   if (overlap) return { ...missing(overlapReason(overlap)), rounds };
   const lowerBound = rounds.some((r) => r.lowerBound);
   return { ...known(rounds.reduce((n, r) => n + r.ms, 0), lowerBound ? { lowerBound: true } : {}), rounds };
