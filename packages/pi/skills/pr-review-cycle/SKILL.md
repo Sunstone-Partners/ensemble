@@ -106,7 +106,7 @@ guessed input.
 
 When `selectMode` answers `light`, `MODE=local` and `MODE=gate` run `prepare` then `collect` of
 `lib/review-run-cli.js` (`$REVIEW_RUN_CLI`) per `reference/review-run.md`, not the Steps below.
-`NEEDS_FULL_MODE`, a High tier or a sensitive path: the narrated Steps 1-10, unchanged.
+`NEEDS_FULL_MODE`, a High tier or a sensitive path: narrated Steps 1-10, unchanged.
 
 ---
 
