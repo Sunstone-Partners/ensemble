@@ -426,20 +426,28 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
     ];
     const plan = runSlices({ paths, areas: ['a', 'b'], threshold: 1000 });
     const [sliceA, sliceB] = plan.slices;
+    const slicePaths = (id) => plan.slices.find((slice) => slice.id === id).paths;
+    // Every slice is crossed with two lenses (plan 3A): the reviewers of a slice are the plan's assignments for it.
+    const assigned = (sliceId) => plan.reviewerAssignments.filter((assignment) => assignment.sliceId === sliceId);
+    const expectedFor = (assignments) =>
+      assignments.map(({ reviewer: name, sliceId, lens }) => reviewer(name, { sliceId, lens, paths: slicePaths(sliceId) }));
+    const arrive = (assignments) => {
+      for (const { reviewer: name, sliceId } of assignments) write(name, review([], slicePaths(sliceId)));
+    };
 
-    const slicesOf = (collected) => runSlices({ paths, areas: ['a', 'b'], threshold: 1000, reviewed: collected.reviewedSlices });
+    const slicesOf = (collected) =>
+      runSlices({ paths, areas: ['a', 'b'], threshold: 1000, reviewedBy: collected.reviewedBy });
 
-    test('the plan really has two slices (so the checks below cannot pass vacuously)', () => {
+    test('the plan really has two slices, each with two lenses (so the checks below cannot pass vacuously)', () => {
       expect(plan.slices.map((slice) => slice.id)).toHaveLength(2);
       expect(sliceA.paths).toEqual(['a/one.js', 'a/two.js']);
+      expect(assigned(sliceA.id)).toHaveLength(2);
+      expect(assigned(sliceB.id)).toHaveLength(2);
     });
 
-    test('an expired reviewer leaves its slice reported uncovered by the real slices subcommand', () => {
-      write('revA', review([], sliceA.paths));
-      const collected = collect(
-        [reviewer('revA', { sliceId: sliceA.id, paths: sliceA.paths }), reviewer('revB', { sliceId: sliceB.id, paths: sliceB.paths })],
-        T0 + 16 * MIN
-      );
+    test('an expired reviewer pair leaves its slice reported uncovered by the real slices subcommand', () => {
+      arrive(assigned(sliceA.id));
+      const collected = collect(expectedFor([...assigned(sliceA.id), ...assigned(sliceB.id)]), T0 + 16 * MIN);
       expect(collected.reviewedSlices).toEqual([sliceA.id]);
       expect(collected.unreviewedSlices).toEqual([sliceB.id]);
       const coverage = slicesOf(collected);
@@ -449,30 +457,27 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
     });
 
     test('every reviewer arriving covers the whole plan', () => {
-      write('revA', review([], sliceA.paths));
-      write('revB', review([], sliceB.paths));
-      const collected = collect([
-        reviewer('revA', { sliceId: sliceA.id, paths: sliceA.paths }),
-        reviewer('revB', { sliceId: sliceB.id, paths: sliceB.paths }),
-      ]);
-      expect(slicesOf(collected)).toMatchObject({ ok: true, covered: true, uncovered: [] });
+      arrive(plan.reviewerAssignments);
+      const collected = collect(expectedFor(plan.reviewerAssignments));
+      expect(slicesOf(collected)).toMatchObject({ ok: true, covered: true, uncovered: [], underReviewed: [] });
     });
 
     test('a reviewer that arrived without covering every path of its slice leaves the slice unreviewed', () => {
       write('revA', review([], ['a/one.js']));
-      const collected = collect([reviewer('revA', { sliceId: sliceA.id, paths: sliceA.paths })]);
+      const collected = collect([reviewer('revA', { sliceId: sliceA.id, lens: 'correctness', paths: sliceA.paths })]);
       expect(collected.reviewedSlices).toEqual([]);
       expect(collected.unreviewedDetail).toEqual([
         { sliceId: sliceA.id, reasons: [{ agent: 'revA', reason: 'paths-not-reviewed' }], missingPaths: ['a/two.js'] },
       ]);
+      expect(collected.reviewedBy).toEqual([]);
     });
 
     test('one slice with two lenses is reviewed only when both lenses arrived', () => {
       write('lensCorrect', review([], sliceA.paths));
       const collected = collect(
         [
-          reviewer('lensCorrect', { sliceId: sliceA.id, paths: sliceA.paths }),
-          reviewer('lensSecurity', { sliceId: sliceA.id, paths: sliceA.paths }),
+          reviewer('lensCorrect', { sliceId: sliceA.id, lens: 'correctness', paths: sliceA.paths }),
+          reviewer('lensSecurity', { sliceId: sliceA.id, lens: 'security', paths: sliceA.paths }),
         ],
         T0 + 16 * MIN
       );
@@ -485,6 +490,78 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
       const collected = collect([reviewer('rev1')]);
       expect(collected.findings).toHaveLength(1);
       expect(collected.reviewedSlices).toEqual([]);
+      expect(collected.reviewedBy).toEqual([]);
+    });
+
+    describe('reviewedBy (the per-lens record verifyCoverage counts distinct lenses from)', () => {
+      test('an expired lens is absent from reviewedBy while its sibling lens on the same slice is present', () => {
+        const [first, second] = assigned(sliceA.id);
+        write(first.reviewer, review([], sliceA.paths));
+        const collected = collect(expectedFor([first, second]), T0 + 16 * MIN);
+        expect(collected.reviewedSlices).toEqual([]); // the slice itself is not reviewed ...
+        expect(collected.reviewedBy).toEqual([{ sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer }]); // ... but one lens is on record
+      });
+
+      test('a reviewer whose pathsReviewed misses a path is absent from reviewedBy, the complete one is present', () => {
+        const [first, second] = assigned(sliceA.id);
+        write(first.reviewer, review([], sliceA.paths));
+        write(second.reviewer, review([], ['a/one.js']));
+        const collected = collect(expectedFor([first, second]));
+        expect(collected.reviewedBy).toEqual([{ sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer }]);
+      });
+
+      test('lists every reviewer that arrived and covered its paths, lens lower-cased', () => {
+        arrive(plan.reviewerAssignments);
+        const upper = plan.reviewerAssignments.map((a) => ({ ...a, lens: ` ${a.lens.toUpperCase()} ` }));
+        const collected = collect(expectedFor(upper));
+        expect(collected.reviewedBy).toEqual(plan.reviewerAssignments.map(({ reviewer: name, sliceId, lens }) => ({ sliceId, lens, reviewer: name })));
+      });
+
+      test('end to end: collect -> slices reports a slice with only one lens arrived as under-reviewed, not covered', () => {
+        arrive(assigned(sliceA.id));
+        const [bFirst, bSecond] = assigned(sliceB.id);
+        write(bFirst.reviewer, review([], sliceB.paths)); // slice b: only one of its two lenses arrives
+        const collected = collect(expectedFor([...assigned(sliceA.id), bFirst, bSecond]), T0 + 16 * MIN);
+        const coverage = slicesOf(collected);
+        expect(coverage.ok).toBe(false);
+        expect(coverage.covered).toBe(false);
+        expect(coverage.underReviewed).toEqual([{ path: 'b/three.js', lenses: [bFirst.lens] }]);
+        expect(coverage.reviewedSlices).toEqual([sliceA.id, sliceB.id]);
+      });
+    });
+
+    describe('a reviewer given a sliceId must name its lens', () => {
+      test('no lens at all is refused and nothing is collected', () => {
+        write('rev1', review([], sliceA.paths));
+        const result = collect([reviewer('rev1', { sliceId: sliceA.id, paths: sliceA.paths })]);
+        expect(result).toMatchObject({ ok: false, agents: [], reviewedSlices: [], reviewedBy: [] });
+        expect(result.reason).toMatch(/lens/);
+      });
+
+      test.each([
+        ['an empty lens', ''],
+        ['a blank lens', '   '],
+        ['a lens that is not text', 7],
+      ])('%s is refused', (_label, lens) => {
+        write('rev1', review([], sliceA.paths));
+        const result = collect([reviewer('rev1', { sliceId: sliceA.id, paths: sliceA.paths, lens })]);
+        expect(result.ok).toBe(false);
+        expect(result.reason).toMatch(/lens/);
+      });
+
+      test('a lens on a verifier is refused', () => {
+        write('ver1', ballot(['f1', 'real']));
+        const result = collect([verifier('ver1', { lens: 'security' })]);
+        expect(result.ok).toBe(false);
+        expect(result.reason).toMatch(/lens/);
+      });
+
+      test('a lens on a reviewer without a sliceId is refused', () => {
+        write('rev1', review([], []));
+        const result = collect([reviewer('rev1', { lens: 'security' })]);
+        expect(result.ok).toBe(false);
+        expect(result.reason).toMatch(/lens/);
+      });
     });
   });
 });
@@ -494,7 +571,7 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
 // ---------------------------------------------------------------------------
 
 describe('AC3: re-collecting over the same directory reproduces the classification', () => {
-  const expected = () => [reviewer('rev1', { sliceId: 's1', paths: ['a.js'] }), verifier('ver1'), verifier('ver2'), verifier('ver3')];
+  const expected = () => [reviewer('rev1', { sliceId: 's1', lens: 'correctness', paths: ['a.js'] }), verifier('ver1'), verifier('ver2'), verifier('ver3')];
   const setup = () => {
     write('rev1', review([{ id: 'f1' }], ['a.js']));
     write('ver1', ballot(['f1', 'real']));
@@ -520,6 +597,7 @@ describe('AC3: re-collecting over the same directory reproduces the classificati
     expect(second.findings).toEqual(first.findings);
     expect(stateOf(second, 'ver1')).toMatchObject({ state: 'arrived', scratchPath: path.join(scratch(), 'out-ver1.json') });
     expect(second.reviewedSlices).toEqual(['s1']);
+    expect(second.reviewedBy).toEqual([{ sliceId: 's1', lens: 'correctness', reviewer: 'rev1' }]);
   });
 
   test('a later overwrite with garbage cannot un-arrive a result, nor a later rewrite change its votes', () => {

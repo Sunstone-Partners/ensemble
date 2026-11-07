@@ -224,7 +224,7 @@ function sweep({ repo, sweepSha, scope = ['.'], tier, maxPaths, requestedBy = 'd
     ...classified.sensitive.map((entry) => path.dirname(entry)),
   ])];
   const threshold = policy.policy.sliceThreshold;
-  const plan = cli('slices', { paths: slicePaths, areas, threshold });
+  const plan = cli('slices', { paths: slicePaths, areas, threshold, mode: depth.mode });
   if (!plan.ok) {
     return { outcome: 'SWEEP_BLOCKED', reason: `slices: ${plan.reason}`, plan, findings: undefined };
   }
@@ -248,7 +248,8 @@ function sweep({ repo, sweepSha, scope = ['.'], tier, maxPaths, requestedBy = 'd
     paths: slicePaths,
     areas,
     threshold,
-    reviewed: plan.slices.map((slice) => slice.id),
+    mode: depth.mode,
+    reviewedBy: plan.reviewerAssignments,
     changedPaths: examined,
   });
 
@@ -273,7 +274,7 @@ function sweep({ repo, sweepSha, scope = ['.'], tier, maxPaths, requestedBy = 'd
     leftForNextRun,
     complete: leftForNextRun.length === 0,
     sensitiveSkipped,
-    sliceInputs: { paths: slicePaths, areas, threshold },
+    sliceInputs: { paths: slicePaths, areas, threshold, mode: depth.mode },
     notFound,
     policy,
     rules,
@@ -383,13 +384,14 @@ describe('Scenario AC-021-1: a maintainer requests a sweep, and it reviews exist
     // The same sweep set, sliced (a threshold this tree exceeds), with one
     // slice left unread: the CLI names exactly what went unexamined.
     const sliced = cli('slices', { ...report.sliceInputs, threshold: 1 });
+    expect(sliced.reviewerAssignments.length).toBeGreaterThanOrEqual(2 * sliced.slices.length);
     expect(sliced.sliced).toBe(true);
     expect(sliced.slices.length).toBeGreaterThan(1);
 
     const partial = cli('slices', {
       ...report.sliceInputs,
       threshold: 1,
-      reviewed: sliced.slices.slice(1).map((slice) => slice.id),
+      reviewedBy: sliced.reviewerAssignments.filter((entry) => entry.sliceId !== sliced.slices[0].id),
       changedPaths: report.examined,
     });
     expect(partial.covered).toBe(false);
@@ -401,9 +403,20 @@ describe('Scenario AC-021-1: a maintainer requests a sweep, and it reviews exist
     const whole = cli('slices', {
       ...report.sliceInputs,
       threshold: 1,
-      reviewed: sliced.slices.map((slice) => slice.id),
+      reviewedBy: sliced.reviewerAssignments,
       changedPaths: report.examined,
     });
+
+    // One lens per slice is not enough at Deep: the sweep may not call it clean.
+    const oneLens = cli('slices', {
+      ...report.sliceInputs,
+      threshold: 1,
+      reviewedBy: sliced.slices.map((slice) => sliced.reviewerAssignments.find((entry) => entry.sliceId === slice.id)),
+      changedPaths: report.examined,
+    });
+    expect(oneLens.covered).toBe(false);
+    expect(oneLens.ok).toBe(false);
+    expect(oneLens.underReviewed.length).toBeGreaterThan(0);
     expect(whole.covered).toBe(true);
     expect(whole.uncovered).toEqual([]);
   });

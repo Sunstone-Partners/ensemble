@@ -304,14 +304,16 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     expectCleanProcess(plan);
     const sliceIds = plan.result.slices.map((slice) => slice.id);
     const changedPaths = bigPaths.map((entry) => entry.path);
+    // Each slice is crossed with two lenses; "reviewed" means the plan's reviewers reported (reviewedBy).
+    const reviewedByAll = plan.result.reviewerAssignments;
 
-    const all = runCli('slices', { paths: bigPaths, areas: AREAS, reviewed: sliceIds, changedPaths });
+    const all = runCli('slices', { paths: bigPaths, areas: AREAS, reviewedBy: reviewedByAll, changedPaths });
     expectCleanProcess(all);
     expect(all.result.ok).toBe(true);
     expect(all.result.covered).toBe(true);
     expect(all.result.uncovered).toEqual([]);
 
-    const skipped = runCli('slices', { paths: bigPaths, areas: AREAS, reviewed: sliceIds.slice(1), changedPaths });
+    const skipped = runCli('slices', { paths: bigPaths, areas: AREAS, reviewedBy: reviewedByAll.filter((entry) => entry.sliceId !== sliceIds[0]), changedPaths });
     expectCleanProcess(skipped);
     expect(skipped.result.ok).toBe(false);
     expect(skipped.result.covered).toBe(false);
@@ -323,7 +325,7 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     const run = runCli('slices', {
       paths: bigPaths,
       areas: AREAS,
-      reviewed: ['everything'],
+      reviewedBy: [{ sliceId: 'everything', lens: 'correctness', reviewer: 'r1' }],
       changedPaths: bigPaths.map((entry) => entry.path),
     });
     expectCleanProcess(run);
@@ -332,8 +334,60 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     expect(run.result.covered).toBe(false);
   });
 
+  describe('a large PR cut by size, reviewed under two lenses per slice (real process, plan then coverage)', () => {
+    const sizedPaths = [
+      { path: 'packages/development/lib/a.js', lines: 900 },
+      { path: 'packages/development/lib/b.js', lines: 800 },
+      { path: 'packages/quality/agents/code-reviewer.yaml', lines: 700 },
+      { path: 'docs/guide.md', lines: 600 },
+      { path: 'README.md', lines: 100 },
+    ];
+    const request = { paths: sizedPaths, areas: AREAS, targetLines: 1000, maxSlices: 3 };
+    const changedPaths = sizedPaths.map((entry) => entry.path);
+
+    test('the plan hands out reviewerAssignments; the reviewers it names, reporting back, cover the PR', () => {
+      const plan = runCli('slices', request);
+      expectCleanProcess(plan);
+      expect(plan.result.sliced).toBe(true);
+      expect(plan.result.slices.length).toBeGreaterThan(1);
+      expect(plan.result.reviewerAssignments.length).toBe(plan.result.slices.length * plan.result.lensesPerSlice);
+      expect(plan.result.lensesPerSlice).toBeGreaterThanOrEqual(2);
+
+      const graded = runCli('slices', { ...request, reviewedBy: plan.result.reviewerAssignments, changedPaths });
+      expectCleanProcess(graded);
+      expect(graded.result).toMatchObject({ ok: true, covered: true, uncovered: [], underReviewed: [], unknownReviewed: [] });
+      expect(graded.result.requiredLenses).toBe(2);
+    });
+
+    test('one reviewer of the plan missing leaves its slice read under one lens: refused, with the paths and the lens that did read them', () => {
+      const plan = runCli('slices', request);
+      expectCleanProcess(plan);
+      const [dropped, ...kept] = plan.result.reviewerAssignments;
+      const slice = plan.result.slices.find((entry) => entry.id === dropped.sliceId);
+      const sibling = kept.find((entry) => entry.sliceId === dropped.sliceId);
+
+      const graded = runCli('slices', { ...request, reviewedBy: kept, changedPaths });
+      expectCleanProcess(graded);
+      expect(graded.result.ok).toBe(false);
+      expect(graded.result.covered).toBe(false);
+      expect(graded.result.underReviewed).toHaveLength(slice.paths.length);
+      expect(graded.result.underReviewed).toEqual(
+        expect.arrayContaining(slice.paths.map((entry) => ({ path: entry, lenses: [sibling.lens] })))
+      );
+    });
+
+    test('the old reviewed slice-id list is refused by the real process, never graded', () => {
+      const plan = runCli('slices', request);
+      expectCleanProcess(plan);
+      const graded = runCli('slices', { ...request, reviewed: plan.result.slices.map((slice) => slice.id), changedPaths });
+      expectCleanProcess(graded);
+      expect(graded.result.ok).toBe(false);
+      expect(graded.result.reason).toMatch(/reviewedBy/);
+    });
+  });
+
   test('a refused plan is never graded as fully covered', () => {
-    const run = runCli('slices', { paths: [{ path: 'a.js' }], areas: AREAS, reviewed: ['whole-pr'] });
+    const run = runCli('slices', { paths: [{ path: 'a.js' }], areas: AREAS, reviewedBy: [{ sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1' }] });
     expectCleanProcess(run);
 
     expect(run.result.ok).toBe(false);

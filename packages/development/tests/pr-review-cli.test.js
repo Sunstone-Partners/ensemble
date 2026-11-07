@@ -1275,33 +1275,93 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
     expect(result.slices).toEqual([{ id: 'whole-pr', area: '', paths: ['README.md'], lines: 10 }]);
   });
 
-  test('with reviewed slice ids the answer names every path that was not covered (AC-018-2)', () => {
-    const plan = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500 });
-    const reviewed = plan.slices.map((slice) => slice.id).filter((id) => id !== 'packages/quality');
+  // Every slice is crossed with two lenses (plan 3A), so "reviewed" is the plan's reviewers reporting back: reviewedBy.
+  const planOf = () => runSlices({ paths: PATHS, areas: AREAS, threshold: 1500 });
+  const lensOf = (assignments, sliceId) => assignments.filter((entry) => entry.sliceId === sliceId).map((entry) => entry.lens);
 
-    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewed });
+  test('with reviewedBy the answer names every path that was not covered (AC-018-2)', () => {
+    const plan = planOf();
+    const reviewedBy = plan.reviewerAssignments.filter((entry) => entry.sliceId !== 'packages/quality');
+
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
     expect(result.covered).toBe(false);
     expect(result.ok).toBe(false);
     expect(result.uncovered).toEqual(['packages/quality/skills/c.md']);
     expect(result.unreviewedSlices).toEqual(['packages/quality']);
   });
 
-  test('every slice reviewed is full coverage, and it equals verifyCoverage on the same plan', () => {
-    const plan = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500 });
-    const reviewed = plan.slices.map((slice) => slice.id);
-    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewed });
+  test('every slice reviewed under both its lenses is full coverage, and it equals verifyCoverage on the same plan', () => {
+    const plan = planOf();
+    const reviewedBy = plan.reviewerAssignments;
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
 
     expect(result.covered).toBe(true);
     expect(result.uncovered).toEqual([]);
+    expect(result.underReviewed).toEqual([]);
     expect(result.ok).toBe(true);
-    expect(result.reviewedSlices).toEqual(verifyCoverage({ slices: plan.slices, reviewed }).reviewedSlices);
+    expect(result.reviewedSlices).toEqual(verifyCoverage({ slices: plan.slices, reviewedBy }).reviewedSlices);
   });
 
-  test('a plan the module refused is never read as covered, whatever slice ids the caller claims', () => {
-    const result = runSlices({ paths: 'everything', reviewed: ['whole-pr'] });
+  test('a plan the module refused is never read as covered, whatever reviewers the caller claims', () => {
+    const result = runSlices({ paths: 'everything', reviewedBy: [{ sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1' }] });
     expect(result.ok).toBe(false);
     expect(result.slices).toEqual([]);
     expect(result.covered).not.toBe(true);
+  });
+
+  test('a payload still carrying the old reviewed slice-id list is refused, even though the plan itself is fine', () => {
+    const plan = planOf();
+    expect(plan.ok).toBe(true); // the refusal below is about the payload, not the plan
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewed: plan.slices.map((slice) => slice.id) });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/reviewedBy/);
+    expect(result.covered).toBeUndefined();
+  });
+
+  test('reviewedBy with one lens per slice is not enough at Standard: refused, every path listed with its single lens', () => {
+    const plan = planOf();
+    const reviewedBy = plan.slices.map((slice) => plan.reviewerAssignments.find((entry) => entry.sliceId === slice.id));
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
+
+    expect(result.ok).toBe(false);
+    expect(result.covered).toBe(false);
+    expect(result.requiredLenses).toBe(2);
+    expect(result.uncovered).toEqual([]); // every slice WAS reviewed: the shortfall is in lenses
+    expect(result.underReviewed).toHaveLength(PATHS.length);
+    for (const slice of plan.slices) {
+      for (const entry of slice.paths) {
+        expect(result.underReviewed).toContainEqual({ path: entry, lenses: lensOf(reviewedBy, slice.id) });
+      }
+    }
+  });
+
+  test('the same lens reported by two reviewers of a slice is still one lens', () => {
+    const plan = planOf();
+    const reviewedBy = plan.slices.flatMap((slice) => [
+      { sliceId: slice.id, lens: 'correctness', reviewer: `${slice.id}-x` },
+      { sliceId: slice.id, lens: 'correctness', reviewer: `${slice.id}-y` },
+    ]);
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
+    expect(result.ok).toBe(false);
+    expect(result.underReviewed).toHaveLength(PATHS.length);
+  });
+
+  test('at quick one lens per slice is coverage', () => {
+    const quick = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'quick' });
+    expect(quick.ok).toBe(true);
+    expect(quick.reviewerAssignments.every((entry) => entry.reviewer === 'r1-correctness')).toBe(true);
+    const reviewedBy = quick.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness' }));
+
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'quick', reviewedBy });
+    expect(result).toMatchObject({ ok: true, covered: true, requiredLenses: 1, underReviewed: [], uncovered: [] });
+  });
+
+  test('the same single lens that is coverage at quick is not at standard', () => {
+    const plan = planOf();
+    const reviewedBy = plan.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness' }));
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'standard', reviewedBy });
+    expect(result.ok).toBe(false);
+    expect(result.requiredLenses).toBe(2);
   });
 
   test('through the real process the answer is the same one', () => {

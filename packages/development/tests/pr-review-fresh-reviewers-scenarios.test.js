@@ -218,9 +218,10 @@ describe('AC-018-2: a sliced PR reports one sorted list and the slices that were
     const verified = cli('slices', {
       paths,
       areas,
-      reviewed: plan.slices.map((slice) => slice.id),
+      reviewedBy: plan.reviewerAssignments,
       changedPaths: paths.map((entry) => entry.path),
     });
+    expect(verified.underReviewed).toEqual([]);
     expect(verified.covered).toBe(true);
     expect(verified.uncovered).toEqual([]);
     expect(verified.unreviewedSlices).toEqual([]);
@@ -233,7 +234,7 @@ describe('AC-018-2: a sliced PR reports one sorted list and the slices that were
     const partial = cli('slices', {
       paths,
       areas,
-      reviewed: [plan.slices[0].id],
+      reviewedBy: plan.reviewerAssignments.filter((entry) => entry.sliceId === plan.slices[0].id),
       changedPaths: paths.map((entry) => entry.path),
     });
     expect(partial.covered).toBe(false);

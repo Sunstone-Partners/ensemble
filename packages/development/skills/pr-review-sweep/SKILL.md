@@ -105,9 +105,13 @@ exactly as it is in `pr-review-cycle`: re-plan and call again until it is
 empty, and never dispatch a plan the CLI refused.
 
 Run `slices` over the sweep set (`lines` per file; no diff) with the rules and
-sensitive areas and the policy's threshold, then re-run it with `reviewed` and
-`changedPaths` to prove coverage: an `uncovered` path is reported as unswept,
-never as clean. Shapes: reference, "Step 4".
+sensitive areas, the policy's threshold and the `mode` `depth` resolved. Its
+`reviewerAssignments` (`{ reviewer, sliceId, lens }`) are the reviewer plan and
+the `planned.reviewers` of `depth`: every slice is read under at least two
+distinct lenses. Then re-run it with `reviewedBy` (from `results` `collect`) and
+`changedPaths` to prove coverage: an `uncovered` path (nobody read it) or an
+`underReviewed` one (too few distinct lenses) is reported as unswept, never as
+clean; `reviewed` is no longer accepted. Shapes: reference, "Step 4".
 
 ### Step 5 -- Review with the same reviewers (fresh context, read-only)
 
