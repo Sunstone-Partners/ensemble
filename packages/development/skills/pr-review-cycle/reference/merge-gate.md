@@ -248,5 +248,35 @@ pre-selected or batched, and needs a reason the operator gives for that finding.
 (`FOREMAN`) run never applies it and never fixes.
 The list never changes `mergeable`.
 
+**The review never fixes -- record, ask, then record who decided.** A review run edits no
+file, commits nothing and pushes nothing. It records every confirmed finding as a bead
+through the tracker adapter (one per finding, labelled `pr-review`; a repository with no
+tracker skips the beads, says so, and still shows the list). The caller shows the list,
+asks about it, and only then asks the merge question (`mergeConfirmation` is what that
+question displays). Each finding's **Fix on this PR** option states that the head moves
+and any approvals reset. It is the operator's own answer that gets recorded; an agent never
+chooses for the operator, applies a `default`, or types a login or reason.
+
+* **Fix in a follow-on PR** and **Accept without fixing**: `ledger` `resolve` with the
+  operator's login, this head and a timestamp. A follow-on reason names the bead when
+  one was recorded (`follow-on: <bead id>`), an accept carries the reason the operator gave.
+* **Fix on this PR: never `ledger` `resolve`.** The gate reads a resolution with
+  provenance as the finding closed, whatever its reason says, so recording this answer
+  there would let the merge pass with no fix. The selection (`{ id, by, at, headSha }`
+  per finding: the operator's login, the time and the head) is the `FIX_SELECTION` of a
+  separate fix run (`SKILL.md`, Step 5), which sends all of it to ONE fix agent and ONE
+  push. The push moves the head, so approvals and every earlier decision stop counting;
+  re-run `MODE=local` (a delta re-review of the new head) and then `MODE=gate`. The
+  finding closes when that review no longer raises it, never because it was selected.
+* **`--foreman`**: the list is logged and nothing is recorded as decided: no `resolve`,
+  no fix run, no waiver. A blocking finding keeps `mergeable:false` until a person
+  answers. Beads for the findings are recorded where the repository has a tracker.
+* **Nothing here edits a file, commits or pushes.** `MODE=gate` and the review runs that
+  feed it only read, grade and report.
+* **Pre-publication is not a PR review.** A `MODE=local` run with no `PR_URL`, no
+  `PR_NUMBER` and no `REVIEW_ONLY` reviews the author's own unpublished snapshot: no PR, no
+  gate, no operator list and no push by this skill, so Step 5 there is the author revising
+  its own working tree. Any other run never enters Step 5 by itself.
+
 A caller reaches all of this through this skill. `pr-merge` and every other
 command invoke `MODE=gate`; none of them runs `pr-review-cli.js` itself.
