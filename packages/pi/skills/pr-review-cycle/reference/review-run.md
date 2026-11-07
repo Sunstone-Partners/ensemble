@@ -70,11 +70,14 @@ light-mode verdict off for a full-mode one.
 * Coverage is self-reported: a slice counts as reviewed when the agent lists its paths in `pathsReviewed`, and the
   runner cannot tell a read from a claim. Read-only access for agents is an instruction in the prompt that the runner
   cannot enforce: the dispatcher must.
-* A reviewer's `pre-existing` severity is checked against the diff, not taken on its word: it stands only when the
-  cited `file:line` names a file that exists at the head and is outside every hunk of the PR's diff; otherwise (a
-  changed line, a path that names no file at the head, an unreadable diff) the finding is graded Important and the
-  reviewer's word is kept as `claimedSeverity`. That checks lines, not cause: a defect this change causes in an
-  untouched caller is outside the diff. Important versus Nit is the reviewer's classification and is not verified.
+* A reviewer's `pre-existing` severity is checked against the diff and the head, not taken on its word: it stands only
+  when the cited `file:line` names a regular file of the head (exact spelling; a symlink is never followed), that line is
+  in the file, and it is outside every hunk of the PR's diff; otherwise (a changed line, a path that names no such file,
+  a line past the end of the file, an unreadable diff) the finding is graded Important and the reviewer's word is kept as
+  `claimedSeverity`. That checks lines, not cause: a defect this change causes in an untouched caller is outside the diff.
+* Important versus Nit is the reviewer's classification and is not verified, and a finding labelled Nit does not block the
+  gate (the shared gate skips Nit findings, `pr-review-gate.js`, AC-008-4): a real defect called a Nit never makes
+  `mergeable` false. The narrated flow shares the exemption; closing it changes the shared gate's contract (owner decision).
 * `agentAuthored` is the caller's statement and cannot be checked (an agent PR is committed under the maintainer's own
   login, so the author cannot say): `true` lets a `Directed by:` line credit one approval, `false` waives that line,
   absent is the strictest reading. A stated value is named in the answer's `warnings`.
