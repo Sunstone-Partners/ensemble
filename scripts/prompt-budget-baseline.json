@@ -18,6 +18,7 @@
   "packages/dotnet/agents/dotnet-backend-expert.yaml": 1755,
   "packages/e2e-testing/agents/playwright-tester.yaml": 1313,
   "packages/e2e-testing/commands/author-playwright-tests.yaml": 4078,
+  "packages/git/commands/pr-merge.yaml": 2880,
   "packages/infrastructure/agents/infrastructure-developer.yaml": 3197,
   "packages/infrastructure/agents/infrastructure-specialist.yaml": 1776,
   "packages/infrastructure/skills/supabase/SKILL.md": 1676,
