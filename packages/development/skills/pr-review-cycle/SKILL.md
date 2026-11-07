@@ -46,7 +46,7 @@ it, never typed), else one local run. The result is `REVIEW_PENDING` whatever el
 complete, never `REVIEW_COMPLETE`; `localPhase` is never `LOCAL_REVIEW_COMPLETE`.
 
 **Wall-clock budget:** 45 minutes per cycle, 20 per independent
-reviewer; give each reviewer its timebox and the reviewer brief.
+reviewer; give each reviewer its timebox and its CLI `brief`.
 When spent, stop, derive status with the CLI (never `REVIEW_COMPLETE` from
 prose) and report what was not reviewed.
 
@@ -165,11 +165,11 @@ the same dedupe and Step 3b verification, never pre-trusted or pre-dismissed.
 ### Step 3b -- Verify the candidates before they are presented (CLI `votes`)
 
 Detail: `reference/ledger-and-verification.md`. Every candidate is verified first
-(REQ-005) and nothing is dropped (REQ-006). Dispatch exactly
-`bounds.verifiers` fresh-context verifiers per named finding, each under the verifier
-brief; a verifier never votes on a finding its own reviewer raised (record
-`incompleteVerifiers`). Verdicts: `real`, `not-real`, `abstain`. Run `votes` with
-`{ findings, depth, expectedVerifiers, verificationCapability }`. Present exactly
+(REQ-005) and nothing is dropped (REQ-006). Plan with `verify-assign`: exactly
+`bounds.verifiers` distinct fresh-context verifiers per candidate, never its
+raiser, few candidates per agent, under the verifier brief; short pool errors.
+Verdicts: `real`, `not-real`, `abstain`. Run `votes` with
+`{ findings, depth, assignment, expectedVerifiers, verificationCapability }`. Present exactly
 `presented[]` (`present`, `disputed`, `unverified`) with each `authorLabel` verbatim;
 `filtered` stays in the ledger with tally and reason. A missing verifier (a dispatch that
 returns nothing included) makes a finding `unverified` / `verifier-incomplete` even if
