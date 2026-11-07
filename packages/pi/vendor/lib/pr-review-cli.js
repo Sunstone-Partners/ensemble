@@ -33,13 +33,16 @@
  *   recordRound      { ledger, incoming, round } -- suppresses repeats, attaches
  *                    class instances to their one class finding and reports
  *                    both (AC-010-2, AC-011-1, AC-011-2)
- *   resolve          { finding, resolution:{ reason, by, headSha, at } } -- records an OPERATOR's decision on a
+ *   resolve          { finding, resolution:{ reason, by, headSha, at }, policy? } -- records a decision on a
  *                    finding (`recordOperatorResolution`): all four resolution keys are required, `by` is a login,
- *                    `headSha` the head the decision was made against, `at` an ISO timestamp. Answers
- *                    `{ finding }` on success; a refusal is an error (exit 1). The merge gate only honours an
- *                    Important or security resolution that carries all four and whose `headSha` is the gate's
- *                    head. HONEST LIMIT: that proves a reason, a named login and a head binding, never that a
- *                    human typed it -- the skill must put the operator's own answer here, never an agent's.
+ *                    `headSha` the head the decision was made against, `at` an ISO-8601 timestamp with a zone. Given
+ *                    `policy` (the base-branch policy block) `by` must also be a login it lets decide: not one of its
+ *                    `botLogins`, and one of its `maintainerLogins` when it names any. Answers `{ finding }` on
+ *                    success; a refusal is an error (exit 1). The merge gate only honours an Important or security
+ *                    resolution that passes the same check and whose `headSha` is the gate's head. HONEST LIMIT: that
+ *                    proves a reason, a named login (a bot or a stranger is refused only when a policy says so) and a
+ *                    head binding, never that a human typed it -- the skill must put the operator's own answer here,
+ *                    never an agent's.
  * `state-read` takes { headSha } plus an optional { treeSha } (the tree of that
  * head) and `state-write` { state } (whose `reviewedTreeSha`, when present, must
  * be a full object id), each with either an explicit `targetPath` or a `prId`
@@ -169,16 +172,20 @@
  *              the head; a director who is the author is credited on their
  *              own word (warning `solo-maintainer-self-credit`)
  *   gate       { ledger[], approvals, tier?, description, security{ status, findings?, reason? },
- *                headSha?, unavailable?[] }
+ *                headSha?, policy?, unavailable?[] }
  *              -- the one answer to "may this PR merge?", with every blocker
  *              carrying its code, message and next action. An Important or
- *              security finding closed by a resolution WITHOUT provenance
- *              (`by`, `at`, and a `headSha` equal to this head) still blocks.
+ *              security finding is closed only by a later head that cleared it
+ *              or by a resolution WITH provenance (`by`, a login the optional
+ *              `policy` lets decide; `at`; and a `headSha` equal to this head).
+ *              A resolution without it, and the review's own deferral of a
+ *              non-blocking Major (`blocking: false`), still block.
  *              On top of that answer the CLI adds the operator's decision
  *              list (`dispositionChoices`, `dispositionGroups`,
  *              `mergeConfirmation`; lib/pr-review-disposition.js), computed
- *              from the same `ledger`, `security` and `headSha` plus an
- *              optional `votes` (a `votes` result) for the per-finding tally.
+ *              from the same `ledger`, `security`, `headSha` and `policy` plus
+ *              an optional `votes` (a `votes` result) for the per-finding
+ *              tally, and asking the gate which findings block.
  *              `evaluateGate`'s own answer is unchanged by it.
  *
  * FAIL CLOSED at the boundary. Two kinds of payload value are told apart:
@@ -318,8 +325,9 @@ const LEDGER_ACTIONS = Object.freeze({
   },
   resolve: {
     keys: { finding: OBJECT, resolution: OBJECT },
+    optional: { policy: OBJECT },
     run: (p) => {
-      const result = recordOperatorResolution(p.finding, p.resolution);
+      const result = recordOperatorResolution(p.finding, p.resolution, p.policy);
       if (!result.ok) throw new Error(result.reason);
       return { finding: result.finding };
     },
@@ -336,6 +344,7 @@ function runLedger(payload) {
     );
   }
   requireKeys(payload, action.keys, `ledger action '${name}'`);
+  if (action.optional !== undefined) optionalKeys(payload, action.optional, `ledger action '${name}'`);
   return action.run(payload);
 }
 
@@ -562,12 +571,14 @@ function runApprovals(payload) {
 /**
  * `gate` answers `evaluateGate` verbatim and ADDS the operator's decision
  * list, computed by the separate pure `buildDispositionChoices` so the gate's
- * own input contract and answer stay exactly what they were. The list can
- * only be built from what the gate was handed (`ledger`, `security`,
- * `headSha`) plus an optional `votes` result; when it cannot be built, the
- * gate's answer is still returned and `dispositionChoices` is empty with the
- * refusal in `dispositionReason`. Nothing about the list can make the gate
- * more permissive: it never reads the gate's verdict and the gate never reads it.
+ * own input contract and answer stay exactly what they were. The list is built
+ * from what the gate was handed (`ledger`, `security`, `headSha`, the optional
+ * `policy`) plus an optional `votes` result, and it asks the gate which
+ * findings block (`findingsHeldOpen`), so it cannot disagree with the verdict
+ * about them. When it cannot be built, the gate's answer is still returned and
+ * `dispositionChoices` is empty with the refusal in `dispositionReason`. The
+ * gate never reads the list, so nothing about the list can make it more
+ * permissive.
  */
 function runGate(payload) {
   const gate = evaluateGate(payload);
@@ -576,6 +587,7 @@ function runGate(payload) {
     ledger: request.ledger,
     security: request.security,
     votes: request.votes,
+    policy: request.policy,
     headSha: request.headSha,
   });
   return {
