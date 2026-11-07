@@ -743,12 +743,15 @@ describe('the gate stage', () => {
     expect(bad.reviewStatus.reasons).toContain('failed test');
   });
 
-  test('an absent or timed-out baseline is tests NOT shown, never a pass', async () => {
+  test('an absent or timed-out baseline is tests NOT shown: skipped, never a pass and never a failure it did not have', async () => {
     for (const baseline of [{ ran: false, reason: 'no-test-files', exitCode: null, timedOut: false, selection: [] }, { ran: true, exitCode: 0, timedOut: true, command: ['jest'], selection: [{ file: 't' }] }]) {
       const h = harness({ baseline });
       const out = (await reviewRound(h)).next;
       expect(out.reviewStatus.tests.passed).toBe(false);
-      expect(out.reviewStatus.reasons).toContain('failed test');
+      expect(out.reviewStatus.tests.skipped).toBe(true);
+      expect(out.reviewStatus.reasons).toContain('tests skipped');
+      expect(out.reviewStatus.reasons).not.toContain('failed test');
+      expect(out.reviewStatus.status).not.toBe('REVIEW_COMPLETE');
       expect(out.reducedReview).toMatch(/tests not shown/);
     }
   });

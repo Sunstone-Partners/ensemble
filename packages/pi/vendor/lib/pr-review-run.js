@@ -639,7 +639,9 @@ async function gateStage(run, built, deps, tracer) {
     reviewedHeadSha: run.headSha,
     ...(headTreeSha === undefined ? {} : { reviewedTreeSha: headTreeSha, headTreeSha }),
     findingCounts: { total: built.ledger.length, actionable, deferred },
-    ...(tests === undefined ? {} : { tests }),
+    // No usable baseline (no relevant test files, a timed-out run, none at all) is a run that did not happen, never a
+    // failure it did not have: recorded as skipped, so the status reads `tests skipped` and can never be complete.
+    tests: tests === undefined ? { skipped: true, command: 'none: the baseline run produced no usable result (no relevant test files, a timed-out run or no run)' } : tests,
     roundsUsed: 0,
     ...(run.policy && Number.isInteger(run.policy.roundCap) ? { roundCap: run.policy.roundCap } : {}),
     reportPath: statePath(run.pr, run.repoRoot),
