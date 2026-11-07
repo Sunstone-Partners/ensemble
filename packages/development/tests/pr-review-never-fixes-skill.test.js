@@ -447,6 +447,26 @@ describe('the bead recorder the skill names is a real entry point', () => {
     expect(fs.existsSync(cli)).toBe(true);
     expect(typeof require(cli).main).toBe('function');
   });
+
+  test('merge-gate.md defines both CLIs and names every status, refusal code and closed-bead field the recorder answers with', () => {
+    const flat = flatten(GATE_REF);
+    const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'pr-review-beads-cli.js'), 'utf8');
+    for (const needle of ['PR_REVIEW_BEADS_CLI', 'PR_REVIEW_CLEAR_CLI', 'UNAVAILABLE', 'REFUSED', 'PARTIAL', 'FAILED', 'closedBeadId', 'unverifiedFixes']) {
+      expect(flat).toContain(needle);
+    }
+    for (const code of ['cross-repository-head', 'head-repository-unknown', 'pr-unreadable', 'no-primary-worktree', 'head-checked-out', 'head-checkout-unknown', 'base-unavailable', 'base-config-unreadable']) {
+      expect(source).toContain(`'${code}'`);
+      expect(flat).toContain(code);
+    }
+    expect(fs.existsSync(path.join(__dirname, '..', 'lib', 'pr-review-clear-cli.js'))).toBe(true);
+    expect(typeof require('../lib/pr-review-clear-cli').main).toBe('function');
+  });
+
+  test('no doc still says the recorder or the producer of cleared is not implemented', () => {
+    for (const text of [GATE_REF, readRepo('docs', 'guides', 'user-guide.md'), readRepo('packages', 'development', 'skills', 'pr-review-cycle', 'reference', 'triage-fix-reverify.md')]) {
+      expect(flatten(text)).not.toMatch(/not (yet )?implemented|no producer|nothing writes (a )?`?cleared/i);
+    }
+  });
 });
 
 describe('the docs do not claim more than /ensemble:pr-merge does', () => {

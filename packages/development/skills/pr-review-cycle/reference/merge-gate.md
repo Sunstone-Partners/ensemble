@@ -222,8 +222,9 @@ decision made on an earlier head stops counting and is asked again. **What this
 proves and what it does not:** a reason is present, it names a login (a bot or a
 stranger is refused only when `policy` says so) and it is bound to this head; it
 cannot prove a human typed it, and a session that writes a permitted login into
-`by` defeats it. A `cleared: true` flag is likewise taken at its word. The
-control against that is this rule, not the code.
+`by` defeats it. A `cleared: true` flag is likewise taken at its word: the skill's only
+writer of it is `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6), and a flag written
+any other way is outside this rule. The control against that is this rule, not the code.
 
 **The operator's decision list.** Beside the verdict, `gate` returns
 `dispositionChoices` (one entry per undecided finding: `id`, `severity`,
@@ -252,30 +253,70 @@ The list never changes `mergeable`.
 tracked file, commits nothing and pushes nothing (it writes only the gitignored state
 report). **Every presented finding is recorded as a bead** by `node "$PR_REVIEW_BEADS_CLI"`
 (kata `n350`; `PR_REVIEW_BEADS_CLI` is `pr-review-beads-cli.js` in the same directory as
-`PR_REVIEW_CLI`), run BEFORE `gate` so the
-list can show each finding's bead. Payload `{ repo, prNumber, headSha, ledger, security?,
-votes?, repoRoot?, followOnIds? }` (the keys are documented in that file's header):
-`repo` is `owner/name`, `ledger` the ledger as it stands (a finding a later head cleared carries
-`cleared` and `clearedBy`, from `ledger` `clearFixedFindings`), `votes` the Step 3b result,
-`repoRoot` the repository UNDER REVIEW (never assumed to be the current directory; it is used
-for its working directory and `.ensemble/toolchain.yaml` only, never for adapter code, so a PR
-head cannot supply the tracker that records its own findings). One bead per finding, labelled
-`pr-review`, keyed by repository + file + normalized claim (not the line, the head or the PR),
-holding severity, `file:line`, the claim, the verifier votes, the state report path, the PR and
-the head. A later head UPDATES the bead and appends a note (a finding that has not changed at
-the same head writes nothing); a finding the ledger marks `cleared` closes its bead with that
-commit; a finding that is merely missing from the next review leaves its bead open, so after a
-force-push no bead is orphaned (they are found by key, not by commit) and a person closes the
-ones whose finding is gone. More Nits (or Pre-existing findings) in one file than the decision
-list's collapse threshold become ONE bead for that file; Important and security findings are
-never collapsed. `followOnIds` carries the findings the OPERATOR chose to defer (their beads get
-the `follow-on` label, also after the beads exist); an agent never fills it. Put each
-`beads[<finding id>].beadId` from the answer on that ledger entry as `beadId` before `gate`.
-`status: UNAVAILABLE` (the repository has no tracker, or its adapter lacks a capability) means
-no bead was recorded: say so and still show the list. `PARTIAL` or `FAILED` (exit 1) means some
-findings have no bead: name them and still show the list. A bead failure never changes the
-gate. The recorder only records: it never writes a `resolution` or a `cleared` mark and never
-fixes, so it runs the same way under `--foreman`. The caller shows the list,
+`PR_REVIEW_CLI`), run BEFORE `gate` so the list can show each finding's bead. Payload
+`{ repoRoot, baseSha, repo, prNumber, headSha, ledger, security?, votes?, followOnIds? }` (the
+keys are documented in that file's header): `repo` is `owner/name`, `ledger` the ledger as it
+stands, `votes` the Step 3b result, `baseSha` the base Step 1 resolved. **`repoRoot` (the
+repository under review: a git root, or a linked worktree of it) and `baseSha` are required**:
+the recorder never assumes the current directory, and a payload without either is `FAILED` with
+nothing read or written. Put each `beads[<finding id>].beadId` from the answer on that ledger
+entry as `beadId` before `gate`, and each `closedBeadId` as `closedBeadId`: `beadId` is only ever
+an OPEN bead, so a live finding whose bead is closed carries `closedBeadId` and the list shows
+it as its own state, never counted among the open beads.
+
+**What the head under review cannot control.** Before it reads or writes the tracker the
+recorder asks the HOST (`gh pr view`) about the pull request and refuses, by name, a head on a
+fork (`cross-repository-head`), a head whose repository the host did not state
+(`head-repository-unknown`) and a pull request it could not read (`pr-unreadable`), as the
+precheck and the review runner do. It runs the tracker in the repository's PRIMARY checkout,
+never in the head's worktree or a clone of it, and refuses a primary checkout that holds the head
+or work built on it (`head-checked-out`; also `no-primary-worktree`, `head-checkout-unknown`):
+that checkout's `.beads` would be the head's own. It reads which tracker to use from
+`.ensemble/toolchain.yaml` AS COMMITTED AT `baseSha`, then the user's config, then the default --
+never from the tree and never by detection against it (`base-unavailable` and
+`base-config-unreadable` refuse when the base cannot be read). So a head that names another
+tracker, or none, cannot switch its own findings' recording off. A refusal is `status: REFUSED`
+(exit 0; `code` and `reason` say why): no bead was recorded, say so and still show the list.
+
+One bead per finding, labelled `pr-review`, holding severity, `file:line`, the claim, the
+verifier votes, the state report path (relative to the repository), the PR and the head.
+**Identity, with its limits:** the key is repository + file + the claim with case, punctuation
+and spacing normalized (not the line, the head or the PR). A REWORDED claim is another key and so
+a second bead: the recorder does not guess that two sentences mean one defect, and a person
+closes the stale one. A second PR raising the same claim in the same file updates the first PR's
+bead (its description then names the later PR and the update note names the record it replaced),
+and a bead already labelled `follow-on` stays so. A later head UPDATES the bead: it rewrites the
+title, description and priority from the review (a manual re-prioritisation of a recorded bead is
+overwritten) and appends ONE note per head; the same head reviewed again writes nothing.
+
+**A fix closes a bead, and only a fix does.** After a later head has been reviewed, run
+`node "$PR_REVIEW_CLEAR_CLI"` (`reference/triage-fix-reverify.md`: it derives the `cleared`
+marks from git) and pass the ledger it returns on. A finding marked `cleared` (the diff since the
+prior round's reviewed head changed the file and line it cites, and no reviewer raised it again)
+closes its bead with that commit, but only when the recorder itself checks with git that
+`clearedBy` is a commit on the PR (an ancestor of `headSha`, not of `baseSha`): a hand-written
+mark naming any other commit closes nothing and is listed under `unverifiedFixes`. A finding that
+is merely missing from the next review leaves its bead open, so after a force-push no bead is
+orphaned (they are found by key, not by commit, and a rewritten history clears nothing) and a
+person closes the ones whose finding is gone. A live finding whose bead this recorder closed as a
+fix is a regression: the bead is reopened, rewritten and noted. A bead anyone else closed stays
+closed and is reported as `closedBeadId`.
+
+More Nits (or Pre-existing findings) in one file than the decision list's collapse threshold
+become ONE bead for that file, counted over the findings that have no bead yet: a finding that
+already has its own bead keeps it (only a fix closes a bead), so Nits that arrive a few reviews at
+a time can leave a file with more beads than the threshold, and a one-member collapsed bead is
+never made. Important and security findings are never collapsed. `followOnIds` carries the
+findings the OPERATOR chose to defer (their beads get the `follow-on` label, also after the beads
+exist); an agent never fills it.
+
+`status: UNAVAILABLE` (the repository has no tracker, or its adapter lacks a capability) and
+`REFUSED` mean no bead was recorded: say so and still show the list. `PARTIAL` or `FAILED`
+(exit 1) means some findings have no bead: name them and still show the list. A bead deleted with
+`br delete` leaves a tombstone that still holds its key but is not listed, so recording that
+finding is `PARTIAL` on every later head until the tombstone is purged. A bead failure never
+changes the gate. The recorder only records: it never writes a `resolution` or a `cleared` mark
+and never fixes, so it runs the same way under `--foreman`. The caller shows the list,
 asks about it, and only then asks the merge question (`mergeConfirmation` is what that
 question displays). Each finding's **Fix on this PR** option states that the head moves
 and any approvals reset. It is the operator's own answer that gets recorded; an agent never
