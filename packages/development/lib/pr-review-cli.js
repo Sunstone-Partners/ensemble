@@ -205,8 +205,10 @@
  *              tally, and asking the gate which findings block.
  *              `evaluateGate`'s own answer is unchanged by it.
  *
- *   carry      { action, ... } -- (lib/pr-review-carry.js) settled verification verdicts across heads. One `action` per call,
- *              every key of it required (an absent or misspelt one is exit 1), as `ledger` does:
+ *   carry      { action, ... } -- (lib/pr-review-carry.js) settled verification verdicts across heads. One `action` per call.
+ *              Its REQUEST parameters (`prId` and `candidates` for plan; `findings` and `candidates` for record; `ledger`,
+ *              `changedLocations`, `headSha` and `observations` for reconcile) are required, as `ledger`'s keys are: an absent or
+ *              misspelt one is exit 1. Every other fact is graded in band (re-verification, exit 0):
  *                plan       { prId, headSha, lastReviewedSha, baseSha, depth, expectedVerifiers?, deltaPlan, deltaPaths[],
  *                             highPaths[], candidates[], cwd? } -- which settled verdicts of the prior round still stand
  *                             after a fix push. The prior verdicts and the prior ledger are NOT payload keys (one is refused):

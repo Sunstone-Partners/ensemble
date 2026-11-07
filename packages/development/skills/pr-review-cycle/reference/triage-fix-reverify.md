@@ -96,15 +96,38 @@ cannot vouch for), fall back to the full base-correct range and report
 never trusted as "nothing else changed."
 
 **Carry settled verdicts (CLI `carry`).** Only when `review-range` answered `delta` AND the prepare facts'
-`deltaPlan.mode` is `delta`: hash each citation with `node "$PR_REVIEW_CARRY_HASH_CLI"` (`pr-review-carry-hash-cli.js`,
-in the same directory as the `$PR_REVIEW_CLI` you resolved; `{ repoRoot?, headSha, citations }`), then run
-`node "$PR_REVIEW_CLI" carry` with `{ headSha, lastReviewedSha, deltaPlan, deltaPaths` (facts
-`delta.changedPaths`)`, highPaths` (the High and sensitive paths of `paths`)`, priorVerdicts` (the `verdicts` of the
-prior state report)`, candidates` (the hashed citations)` }`. Verify only the `reverify` candidates plus any new ones,
-with independent fresh verifiers under the unchanged verification contract and `expectedVerifiers`; append their
-verdicts. Stamp each `carried` finding `headSha = carried.head` and `carriedFrom = carried.carriedFrom`, and run
-`clearFixedFindings` explicitly for `unmatched` and reverify findings. A `full` range, an unreadable or `ok:false`
-result, a failed hash, or any doubt: verify everything, carry nothing.
+`deltaPlan.mode` is `delta`; on a `full` range, or when anything below is unreadable, `ok:false` or in doubt, verify
+everything and carry nothing. `carry` takes one `action` per call and reads the prior round from the PR's own state
+report, never from stdin. It saves a verifier run only for a finding the push cannot have changed; it never lowers the
+verification contract.
+
+1. **Hash.** Present as candidates the prior ledger's open findings, each with its own `id`, its `failureMode` verbatim as
+   `claim` and its `file` and `line` or `lines` (from `locationOrLink`), plus this round's new ones. Run
+   `node "$PR_REVIEW_CARRY_HASH_CLI"` (`pr-review-carry-hash-cli.js`, in the same directory as the `$PR_REVIEW_CLI` you
+   resolved; `{ repoRoot?, headSha, citations }`) at the new head. Each candidate comes back with `hunkHash`, `depHashes`
+   and `dependents`, or with `hashError` and no hash: that one is verified again.
+2. **Plan.** Run `node "$PR_REVIEW_CLI" carry` with `{ action: "plan", prId, cwd?, headSha, lastReviewedSha, baseSha,
+   depth, expectedVerifiers?, deltaPlan, deltaPaths, highPaths, candidates }`: `deltaPlan` and `deltaPaths` are the facts'
+   `deltaPlan` and `delta.changedPaths` verbatim, `highPaths` the High and sensitive paths of `paths`, `baseSha` the base
+   of the range, and `depth` and `expectedVerifiers` the very ones Step 3b runs `votes` with. Never pass `priorVerdicts`
+   or `priorLedger`: `plan` reads them from the report written for `lastReviewedSha` (the report `state-read` returns for
+   that head) and refuses a payload that has them. `priorState` other than `read` (no report, a discarded or a corrupt
+   one) is `prior-state-unavailable`: nothing carries.
+3. **Use the answer's `ledger`.** It is the prior ledger with each carried finding stamped (`headSha` = the new head,
+   `carriedFrom` = the head it was first settled on). Make it this round's `existingLedger` for Step 3 (`dedupe`,
+   `recordRound`, `merge`). Never stamp by hand: a ledger already stamped with the new head is refused (`ok:false`).
+4. **Verify the rest.** Every `reverify` candidate and every new candidate goes through Step 3b exactly as in a first
+   review: K independent fresh verifiers each, the same `votes` call and `expectedVerifiers`. A `carried` verdict is not
+   verified again. Report each `reverify` reason.
+5. **Record.** Run `carry` with `{ action: "record", prId, baseSha, headSha, depth, expectedVerifiers?, findings,
+   candidates }`: `findings` the `votes` result's `findings`, `candidates` this round's hashed citations. It answers the
+   settled verdict records, stamped with the PR, base, depth and verifier count; a finding it `skipped` is recorded
+   nowhere and is verified again next round. The state report's `verdicts` (Step 9) are the plan's `carried` plus these.
+6. **Reconcile.** Run `carry` with `{ action: "reconcile", ledger, changedLocations, headSha, observations }`: `ledger`
+   the merged ledger, `changedLocations` the hunks of `delta.diff` (`{ path, lines }`) and `observations` EVERY finding
+   this round observed (the `votes` result's `findings`: present, disputed, unverified and filtered alike). A prior
+   finding that nobody observed again and whose cited location the push changed is cleared, which is how an `unmatched`
+   verdict ends; one that was observed again, whatever its verdict, is never cleared, and neither is a carried finding.
 
 The batch fix changes the tree, so re-resolve after it lands: the re-review
 diff (same base), `headSha`, `reviewedHeadSha` (Step 8) and `reviewedTreeSha`

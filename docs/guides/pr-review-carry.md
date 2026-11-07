@@ -2,87 +2,158 @@
 
 After a fix push the next review round used to verify every finding again, even
 those the push could not have touched. `carry` decides, per candidate finding,
-whether the verdict an earlier head settled still stands. Anything it is not
-sure of is verified again: every rule fails toward re-verification, because a
-wrong "carry" silently reuses a stale verdict.
+whether the verification verdict an earlier head settled still stands. Anything
+it is not sure of is verified again: every rule fails toward re-verification,
+because a wrong "carry" silently reuses a stale verdict.
 
 ```bash
 node packages/development/lib/pr-review-cli.js carry < payload.json
 ```
 
-`carry` is a pure pass-through to `planCarry` (`lib/pr-review-carry.js`). It
-never reads a file, runs `git` or hashes anything: the hashes are inputs, made
-by `lib/pr-review-carry-hash-cli.js` over git at the head under review.
+`carry` is one subcommand with three `action`s: `plan`, `record` and
+`reconcile`. It never hashes anything and never runs `git`. The one file `plan`
+reads is the PR's own state report (the same read as `state-read`, at
+`lastReviewedSha`), which is where the prior verdicts and the prior ledger come
+from. The hashing is a separate step, `lib/pr-review-carry-hash-cli.js`, which
+reads git objects at the head under review.
 
 ## Flow
 
 1. `review-range` answers `delta` and the prepare facts' `deltaPlan.mode` is `delta`. Otherwise nothing carries: verify everything.
-2. Hash every candidate citation at the current head with `node "$PR_REVIEW_CARRY_HASH_CLI"` (`{ repoRoot?, headSha, citations }`).
-3. Run `carry` with the input below.
-4. Verify only the `reverify` candidates and the new ones, with independent fresh verifiers; the verification contract and `expectedVerifiers` are unchanged.
-5. Record: stamp each `carried` finding `headSha = carried.head` and `carriedFrom = carried.carriedFrom`, append the new verdicts, and write the settled ones to the state report's `verdicts`.
-6. Run `clearFixedFindings` explicitly for the `unmatched` and reverify findings.
+2. Build the candidates: the open findings of the prior ledger, re-presented with their own `id`, `claim` = the ledger finding's `failureMode` verbatim, and `file` and `line`/`lines` from its `locationOrLink`; plus the new candidates of this round.
+3. Hash them at the new head: `node "$PR_REVIEW_CARRY_HASH_CLI"` with `{ repoRoot?, headSha, citations }`. Each answered candidate carries `hunkHash`, `depHashes` and `dependents` (or `hashError`).
+4. Run `carry` with `action: "plan"`.
+5. Use the answer's `ledger` as the round's existing ledger. It is the prior ledger with the carried findings stamped; never stamp by hand.
+6. Verify only the `reverify` candidates and the new ones, with the unchanged verification contract.
+7. Run `carry` with `action: "record"` for the findings of the `votes` result.
+8. Write the state report's `verdicts` = the `carried` records of step 4 plus the `verdicts` of step 7.
+9. Run `carry` with `action: "reconcile"` with every observation of the round (the `votes` result's findings, every outcome).
 
-An unreadable result, a failed hash or any doubt means: verify everything.
+An unreadable or `ok:false` answer, `prior-state-unavailable`, a failed hash or
+any doubt means: verify everything.
 
 ## Input
 
-`priorVerdicts` and `candidates` are request parameters and must be arrays: a
-missing or misspelt key is an error (exit 1), never read as empty. Every other
-fact is graded in band; a missing one means re-verification (exit 0).
+A request parameter that is missing or of the wrong type is an error (exit 1),
+never read as empty. Every other fact is graded in band: a missing or invalid
+one means re-verification (`plan`) or a refusal (`record`), exit 0.
+
+`plan`:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `prId` | request parameter | The PR; also names the state report to read. |
+| `candidates` | request parameter | Every candidate this round has, hashed at `headSha`. A prior verdict is only ever carried onto one of these. |
+| `cwd` | optional | Where the state report is looked up (default: the current directory). |
+| `headSha`, `lastReviewedSha` | in band | Full object ids: the head under review and the head the previous round reviewed (the delta's start). |
+| `baseSha` | in band | The base the round reviews against (full object id). |
+| `depth`, `expectedVerifiers` | in band | The round's verifier depth word and, optionally, its verifier count override (the `votes` inputs). |
+| `deltaPlan` | in band | The `deltaPlan` of `facts.json`; only `mode: 'delta'` carries, and its `readSet` must be readable. |
+| `deltaPaths` | in band | The paths changed between the two heads (`facts.delta.changedPaths`); they must equal the read set's `changed` entries. |
+| `highPaths` | in band | The High or sensitive paths from `paths`, changed or not. |
+
+A payload carrying `priorVerdicts` or `priorLedger` is refused (exit 1): they
+are read from the state report, never from stdin.
+
+`record`:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `findings` | request parameter | The `findings` of the `votes` result (ledger entries with `outcome` and `votes`). |
+| `candidates` | request parameter | The hash step's candidates for this head, matched to the findings by `id`. |
+| `prId`, `baseSha`, `headSha`, `depth`, `expectedVerifiers` | in band | As for `plan`; an unreadable one is answered `ok:false` with the reason. |
+
+`reconcile` (all four keys are request parameters):
 
 | Key | Meaning |
 |---|---|
-| `headSha`, `lastReviewedSha` | Full object ids: the head under review and the head the previous round reviewed (the delta's start). |
-| `deltaPlan` | The `deltaPlan` of `facts.json`; only `mode: 'delta'` carries. |
-| `deltaPaths` | The paths changed between the two heads (`facts.delta.changedPaths`). |
-| `highPaths` | The High or sensitive paths from `paths`, changed or not. |
-| `priorVerdicts` | The state report's `verdicts` of the previous round. |
-| `candidates` | Every candidate this round has, hashed at `headSha`. A prior verdict is only ever carried onto one of these. |
+| `ledger` | The round's ledger (the `ledger` of the `plan` answer, with this round's findings merged in). |
+| `changedLocations` | The locations the push changed. |
+| `headSha` | The head under review. |
+| `observations` | EVERY observation of the round, passed to `clearFixedFindings` as `reReported`. |
 
 ## Record shapes
 
-Prior verdict (the state report's `verdicts`):
-`{ id?, file, claim, hunkHash, depHashes, head, carriedFrom?, outcome, votes[{ verifier, verdict }], incompleteVerifiers? }`.
-Candidate: `{ id?, file, claim, hunkHash, depHashes }`. `hunkHash` is the sha256
-of the cited hunk; `depHashes` is `{ path: sha256 }` of the files the cited file
-imports (`{}` is "no dependencies"; absent or unreadable is "missing").
+Verdict record (the state report's `verdicts`; `record` is the one producer):
+`{ id, file, claim, lines, hunkHash, depHashes, head, carriedFrom?, outcome, votes[{ verifier, verdict }], prId, baseSha, depth, expectedVerifiers }`.
+`prId`, `baseSha`, `depth` and `expectedVerifiers` bind the verdict to the PR,
+the base and the verifier depth and count it was settled under; `lines` is the
+cited `[start, end]`; `hunkHash` is the sha256 of the cited lines widened by
+three lines of context; `depHashes` is `{ path: sha256 }` of the transitive
+relative imports of the cited file (`{}` is "no dependencies"; absent or
+unreadable is "missing").
 
-Output: `{ ok, carried[], reverify[], unmatched[], reasons[] }`.
+Candidate: `{ id?, file, claim, line|lines, hunkHash, depHashes, dependents }`;
+exactly one of `line` and `lines`. `dependents` is the sorted list of files that
+use the cited file at the head.
 
-- `carried`: the prior verdict and votes, `head` = the current head, `carriedFrom` = the head it was first settled on (kept through any number of carries). Stamping the current head keeps `mergeFindings` from re-opening it and `clearFixedFindings` from clearing it.
-- `reverify`: `{ id?, file, claim, reasons[] }`, every reason that applies; the old head stays so `clearFixedFindings` can reconcile it.
-- `unmatched`: a prior verdict no current candidate re-presents (`no-current-candidate`); it is never carried.
-- `reasons`: the global reasons that apply to every candidate. `ok:false` only for an unreadable request.
+Answers:
 
-A candidate is identified by its file and its claim, normalized (lower case,
-punctuation and runs of whitespace flattened).
+- `plan`: `{ ok, carried[], reverify[], unmatched[], reasons[], ledger, priorState }`.
+  - `carried`: the prior verdict and votes, `head` = the current head, `carriedFrom` = the head it was first settled on (kept through any number of carries).
+  - `reverify`: `{ id?, file, claim, reasons[] }`, every reason that applies.
+  - `unmatched`: a prior verdict no current candidate re-presents (`no-current-candidate`); never carried.
+  - `reasons`: the whole-round reasons that apply to every candidate. `ok:false` only for an unreadable request.
+  - `ledger`: the prior ledger with exactly the carried findings stamped (`headSha` = the carried record's head, `carriedFrom`), so `mergeFindings` does not re-open them and `clearFixedFindings` does not clear them. A ledger that already holds a finding stamped with the current head is refused (`ok:false`, `ledger: null`). `null` when the prior ledger was not readable.
+  - `priorState`: `read`, or why nothing was read: `absent`, `discarded`, `corrupt`, `unreadable`. Anything but `read` adds `prior-state-unavailable` to every reason list: nothing carries.
+- `record`: `{ ok, verdicts[], skipped[{ id, reason }] }` (or `{ ok:false, verdicts:[], skipped:[], reason }`). A finding that is not settled, has no id, no candidate (or an ambiguous one), no usable hash, cites another file or claim than its ledger entry says, or whose votes do not give its outcome under the round's verifier count is `skipped` and recorded nowhere: the next round verifies it again.
+- `reconcile`: `{ ok, ledger[], cleared[] }`. A finding no reviewer reported again whose cited location the push changed is cleared; one that was observed again, whatever its verdict, is not.
+
+A candidate's identity is its file and its claim: the claim as written, case
+folded and whitespace collapsed, nothing else erased. `x < y` and `x > y`, or
+`if (!ok)` and `if (ok)`, are different claims.
 
 ## Rules
 
-Any one of these forces re-verification; all that apply are listed.
+Any one of these forces re-verification; all that apply are listed. The
+whole-round gates hold for every candidate: when one holds, nothing carries.
 
 | Reason | When |
 |---|---|
-| `range-not-delta` | The delta plan is not a readable `delta`: a full range carries nothing. |
-| `head-unknown` | The head, the last reviewed head or a verdict's own head is not a full object id. |
-| `delta-paths-unreadable` | The delta's changed paths are not a list of paths. |
-| `high-paths-unreadable` | The High/sensitive paths are not a list of paths. |
-| `high-path-touched` | The delta touched a High or sensitive path: nothing carries, for any candidate. |
+| `range-not-delta` | Whole-round gate. The delta plan is not a readable `delta`: a full range carries nothing. |
+| `head-unknown` | Whole-round gate: the head or the last reviewed head is not a full object id. Per candidate: the verdict's own head (or its `carriedFrom`) is not a full object id. |
+| `delta-paths-unreadable` | Whole-round gate. The delta's changed paths are not a list of paths. |
+| `high-paths-unreadable` | Whole-round gate. The High/sensitive paths are not a list of paths. |
+| `high-path-touched` | Whole-round gate. The delta touched a High or sensitive path. |
+| `read-set-unreadable` | Whole-round gate. The delta plan carries no readable `readSet`, so its blast radius is unknown. |
+| `delta-inconsistent` | Whole-round gate. The changed paths differ from the read set's `changed` entries: the two came from different deltas. |
+| `pr-unknown` | Whole-round gate. No PR to bind verdicts to. |
+| `base-unknown` | Whole-round gate. The base is not a full object id. |
+| `depth-unreadable` | Whole-round gate. The depth is unreadable or expects no verifier (Quick settles nothing). |
+| `ledger-unreadable` | Whole-round gate. The prior ledger is not a list of findings. |
+| `prior-state-unavailable` | Whole-round gate (added by the CLI). The PR's state report at `lastReviewedSha` is missing, discarded, corrupt or unreadable. |
 | `new-candidate` | No prior verdict for it. |
-| `candidate-unreadable` | No file, a claim with no words, or a duplicate of another candidate's key. |
+| `candidate-unreadable` | No file, or a claim with no words, or a duplicate of another candidate's key. |
 | `ambiguous-prior-verdict` | Two prior verdicts for one key. |
-| `head-not-last-reviewed` | The verdict was last confirmed on a head other than the delta's start, so the delta does not cover everything that changed since. |
-| `verdict-not-settled` | The outcome is not `present` or `filtered` (`disputed` and `unverified` are not settled), or it has no votes, or an assigned verifier was incomplete. |
-| `hash-missing` | A prior or current hunk hash, or either dependency map, is missing or unreadable. |
-| `cited-file-in-delta` | The cited file is among the delta's changed paths, whatever the hashes say. |
+| `id-mismatch` | The candidate's id is not the id of the verdict it would inherit. |
+| `head-not-last-reviewed` | The verdict was last confirmed on a head other than the delta's start, so the delta does not cover everything that changed since (a carried verdict is re-stamped with each head it passes). |
+| `verdict-not-settled` | The prior outcome is not `present` or `filtered` (`disputed` and `unverified` are not settled), or its votes are not distinct verifiers' `real` / `not-real` / `abstain`, or an assigned verifier was incomplete: a verdict nobody recorded is not carried. |
+| `verdict-other-pr` | The verdict was recorded for another PR (or for none). |
+| `verdict-other-base` | The verdict was recorded against another base (or none). |
+| `verdict-other-depth` | The verdict was settled at another depth or verifier count than this round runs. |
+| `verdict-retally-differs` | Its votes, counted again under this round's verifier count, do not give its outcome (exactly K distinct voters; `present` needs a strict majority of K `real`, `filtered` must not have one). |
+| `verdict-not-in-ledger` | The prior ledger holds no finding with the verdict's id, file and claim. |
+| `hash-missing` | The prior or the current hunk hash, its location, or either dependency hash map is missing. |
+| `dependents-missing` | The candidate's dependents are not a list of paths. |
+| `cited-file-in-delta` | The cited file is among the delta's changed paths (whatever the hashes say). |
+| `blast-radius` | The cited file is in the delta plan's read set for a reason other than `changed` (`caller-of:`, `test-of:` or `names:`). |
+| `dependent-changed` | A file that uses the cited file (one of its `dependents`) is among the changed paths. |
 | `hunk-changed` | The cited hunk's hash differs. |
+| `hunk-moved` | The cited lines differ from the verdict's (identical text elsewhere in the file is not it). |
 | `dependency-changed` | A dependency file is among the changed paths, or the dependency set or a hash differs. |
+| `no-current-candidate` | Not a `reverify` reason: the `unmatched` entry of a prior verdict that no candidate re-presents. |
 
 ## Honest limits
 
-- Callers and importers of the cited file are not part of the dependency hashes: a change in code that uses the cited file does not invalidate its verdict by itself. A change to a file the cited file imports does.
-- Bare npm packages are not hashed, so an upgraded third-party dependency invalidates nothing.
-- The transitive dependency closure is capped at 200 files; a larger one is not hashed (the citation gets `hashError`, hence `hash-missing`) rather than truncated.
-- The per-vote count is not re-checked: only that the settled outcome has votes and no incomplete verifier. Whether those votes met the depth's quorum was decided when the verdict was settled.
-- `carry` trusts the hashes it is given; it cannot tell a wrong hash from a right one.
+- `carry plan` never hashes: `hunkHash`, `depHashes` and `dependents` are inputs, and it trusts them; it cannot tell a wrong hash from a right one.
+- Direct dependents only: the files that use the cited file (importers, name-matched tests, computed-specifier files naming it) are listed and a changed one re-verifies; callers of callers are not covered. Anything the cited file reads at run time that no relative specifier names is not covered either.
+- Bare npm packages (`require('lodash')`) are not hashed: an upgraded third-party dependency invalidates nothing.
+- The dependency closure is capped at 200 files; a larger one is not hashed (the citation gets `hashError`, hence `hash-missing`) rather than truncated.
+- Symlinks are refused by the hash step, whether cited or in the dependency closure (the citation gets `hashError`).
+- Redaction: the hash CLI's output and the state writer replace the value of any key matching `/token|secret|password|api[-_]?key|authorization/i`. A `depHashes` entry keyed like `lib/token-cache.js` comes back `[REDACTED]`, which reads as a missing hash and disables carry for that closure (it fails closed).
+- A claim's identity is its exact words and symbols, so a re-worded or re-punctuated claim is a new candidate and is verified again.
+- `runId` is not bound: the review procedure records no run id today. A verdict is bound to the PR, the base, the verifier depth and count, and a finding of the prior ledger (id, file, claim), not to a run.
+- The state report is an untracked file. The binding stops a verdict from the wrong PR, base, depth or ledger; it does not stop someone who can write the repository's `.ensemble/` directory from forging a report.
+- Only `present` and `filtered` verdicts carry. A `full` range carries nothing.
+- In this repository `packages/development/lib/**` is a High path (`highPaths` in `REVIEW.md`), and nothing carries whenever a changed path is High. A fix push that touches lib code therefore carries nothing; the saving applies to docs-, tests- and skill-only pushes.
+- The plan's "about 5x on re-review" (`docs/plans/pr-review-speedup-plan.md`, section 3B) is the target, not a measurement. No live re-review has been run: acceptance criterion AC5 of kata `qw98` is open and belongs to kata `q3a9`.
