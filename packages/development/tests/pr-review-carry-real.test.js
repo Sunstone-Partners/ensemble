@@ -79,7 +79,7 @@ const pad = (n, marks = {}) => Array.from({ length: n }, (_, i) => marks[i + 1] 
 const reader = (repo, head) => (file) => {
   try {
     return execFileSync('git', ['show', `${head}:${file}`], { cwd: repo.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch (err) {
+  } catch {
     return null;
   }
 };
@@ -268,22 +268,35 @@ describe('a stale verdict is never carried: each push below flips the oracle, an
     expect(r.second.outcomes).toEqual(r.full2);
   });
 
-  test('an OPPOSITE claim on the same hunk is a new finding: it is verified, it does not inherit the filtered verdict of its opposite', () => {
-    const lt = finding('F-lt', 'src/cmp.js', 10, 'x < y should be x > y', (read) => (has(lineOf(read('src/cmp.js'), 10), 'x < y') ? 'real' : 'not-real'));
-    const gt = finding('F-gt', 'src/cmp.js', 10, 'x > y should be x < y', (read) => (has(lineOf(read('src/cmp.js'), 10), 'x > y') ? 'real' : 'not-real'));
-    // round 1 reports only `gt` (the code has `x < y`, so it is not real); round 2 reports `lt`, the OPPOSITE claim, and it is real
+  test.each([
+    ['< and >', 'x < y', 'x > y'],
+    ['= and !', 'x == y', 'x != y'],
+    ['& and |', 'a && b', 'a || b'],
+    ['+ and -', 'n + 1', 'n - 1'],
+    ['% and ^', 'n % 2', 'n ^ 2'],
+    ['! and brackets', '!ready', 'ready()'],
+    ['brackets', 'items[0]', 'items(0)'],
+    ['quotes', 'name = "s"', 'name = s'],
+    ['. and ,', 'a.b', 'a,b'],
+    ['? and :', 'x ? y', 'x : y'],
+    ['@ and #', 'a@b', 'a#b'],
+  ])('an OPPOSITE claim on the same hunk (%s) is a new finding: it is verified, it does not inherit the filtered verdict of its opposite', (_name, here, there) => {
+    const says = (code, other) => `${code} should be ${other}`;
+    const present = finding('F-here', 'src/cmp.js', 10, says(here, there), (read) => (has(lineOf(read('src/cmp.js'), 10), here) ? 'real' : 'not-real'));
+    const absent = finding('F-there', 'src/cmp.js', 10, says(there, here), (read) => (has(lineOf(read('src/cmp.js'), 10), there) ? 'real' : 'not-real'));
+    // round 1 reports only `absent` (the code has `here`, so the claim about `there` is not real); round 2 reports `present`, the OPPOSITE claim, and it is real
     const r = scenario({
-      files: { 'src/cmp.js': pad(20, { 10: 'if (x < y) retry();' }) },
-      findings: [gt],
-      findings2: [lt],
+      files: { 'src/cmp.js': pad(20, { 10: `// ${here}` }) },
+      findings: [absent],
+      findings2: [present],
       push: { 'docs/note.md': 'unrelated\n' },
     });
-    expect(r.full1).toEqual({ 'F-gt': 'filtered' });
-    expect(r.full2).toEqual({ 'F-lt': 'present' });
+    expect(r.full1).toEqual({ 'F-there': 'filtered' });
+    expect(r.full2).toEqual({ 'F-here': 'present' });
     expect(r.second.plan.carried).toEqual([]);
-    expect(reasonsOf(r, 'F-lt')).toEqual([REASONS.NEW_CANDIDATE]);
-    expect(r.second.outcomes).toEqual({ 'F-lt': 'present' });
-    expect(r.second.plan.unmatched.map((entry) => entry.id)).toEqual(['F-gt']);
+    expect(reasonsOf(r, 'F-here')).toEqual([REASONS.NEW_CANDIDATE]);
+    expect(r.second.outcomes).toEqual({ 'F-here': 'present' });
+    expect(r.second.plan.unmatched.map((entry) => entry.id)).toEqual(['F-there']);
   });
 
   test.each([

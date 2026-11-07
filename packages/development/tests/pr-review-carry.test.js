@@ -508,6 +508,7 @@ describe('AC1 hunk-changed and hunk-moved', () => {
 
   test.each([
     ['the start moved', [40, 42]],
+    ['only the start moved', [11, 12]],
     ['the end moved', [10, 13]],
     ['a window of identical text 40 lines down', [50, 52]],
   ])('the same hunk hash at other lines is hunk-moved (%s): identical windows are not one finding', (_name, lines) => {
@@ -626,6 +627,10 @@ describe('blast radius: the planner\'s read set and the cited file\'s dependents
     const emptyPaths = planCarry(flipped((i) => { i.deltaPaths = []; }));
     expect(emptyPaths.carried).toEqual([]);
     expect(emptyPaths.reasons).toEqual([REASONS.DELTA_INCONSISTENT]);
+    // the same NUMBER of paths, a different one: a size check alone would call these one delta
+    const swapped = planCarry(flipped((i) => { i.deltaPaths = ['src/third.js']; }));
+    expect(swapped.carried).toEqual([]);
+    expect(swapped.reasons).toEqual([REASONS.DELTA_INCONSISTENT]);
   });
 
   test('entries read for another reason than `changed` are not changed paths', () => {

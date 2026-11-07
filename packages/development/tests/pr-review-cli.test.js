@@ -1944,10 +1944,10 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
 
   test('a report with no verdicts (or no ledger) carries nothing and says so per candidate', () => {
     const cwd = tmpCwd();
-    const { verdicts, ...noVerdicts } = round1();
+    const { verdicts: _verdicts, ...noVerdicts } = round1();
     writeRound(cwd, noVerdicts);
     expect(run(plan(cwd)).reverify.map((entry) => entry.reasons)).toEqual([[REASONS.NEW_CANDIDATE], [REASONS.NEW_CANDIDATE]]);
-    const { ledger, ...noLedger } = round1();
+    const { ledger: _ledger, ...noLedger } = round1();
     writeRound(cwd, noLedger);
     const out = run(plan(cwd, { candidates: [candidate('a'), candidate('b')] }));
     expect(out.carried).toEqual([]);
