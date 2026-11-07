@@ -43,6 +43,7 @@ const { classifyPaths } = require('../lib/pr-review-paths');
 const { assignTier, effectiveTier } = require('../lib/pr-review-tier');
 const { planSlices, verifyCoverage } = require('../lib/pr-review-depth');
 const { readSkillReference } = require('./helpers/pr-review-cycle-skill');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const GUIDANCE = readSkillReference('scope-guidance-depth.md').replace(/\s+/g, ' ');
 
@@ -347,8 +348,8 @@ describe("Step 1c's slices check: the listing git writes by default never covers
       .git(...documentedListing(), slicing.baseSha, slicing.headSha)
       .split('\0')
       .filter((name) => name !== '');
-    // Every assigned reviewer (2 distinct lenses per slice) reported: the plan's own `reviewerAssignments`.
-    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: plan.reviewerAssignments, changedPaths });
+    // Every assigned reviewer (2 distinct lenses per slice) reported on its whole slice.
+    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: reviewedByOf(plan), changedPaths });
     expect(coverage.covered).toBe(false);
     expect(coverage.unreviewedSlices).toEqual([]);
     expect(coverage.uncovered).toEqual(expect.arrayContaining(['.github/workflows/ci.yml', 'tools/ci.yml']));
@@ -396,14 +397,14 @@ describe('the documented numstat is rename-free and verbatim: its plan is covere
   });
 
   test('with every slice reviewed the check answers covered, with nothing uncovered and no slice unreviewed', () => {
-    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: plan.reviewerAssignments, changedPaths });
+    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: reviewedByOf(plan), changedPaths });
     expect(coverage.underReviewed).toEqual([]);
     expect(coverage).toMatchObject({ ok: true, covered: true, uncovered: [], unreviewedSlices: [], unknownReviewed: [] });
   });
 
   test('a slice left unreviewed is named, and exactly its paths are uncovered', () => {
     const [left] = plan.slices;
-    const reviewedBy = plan.reviewerAssignments.filter((entry) => entry.sliceId !== left.id);
+    const reviewedBy = reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId !== left.id));
     const coverage = verifyCoverage({ slices: plan.slices, reviewedBy, changedPaths });
     expect(coverage.covered).toBe(false);
     expect(coverage.unreviewedSlices).toEqual([left.id]);

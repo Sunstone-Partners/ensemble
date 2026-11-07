@@ -41,6 +41,7 @@ const { spawnSync, execFileSync } = require('child_process');
 const yaml = require('js-yaml');
 
 const { EXPECTED_VERIFIERS } = require('../lib/pr-review-votes');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
@@ -249,7 +250,7 @@ function sweep({ repo, sweepSha, scope = ['.'], tier, maxPaths, requestedBy = 'd
     areas,
     threshold,
     mode: depth.mode,
-    reviewedBy: plan.reviewerAssignments,
+    reviewedBy: reviewedByOf(plan),
     changedPaths: examined,
   });
 
@@ -391,7 +392,7 @@ describe('Scenario AC-021-1: a maintainer requests a sweep, and it reviews exist
     const partial = cli('slices', {
       ...report.sliceInputs,
       threshold: 1,
-      reviewedBy: sliced.reviewerAssignments.filter((entry) => entry.sliceId !== sliced.slices[0].id),
+      reviewedBy: reviewedByOf(sliced, sliced.reviewerAssignments.filter((entry) => entry.sliceId !== sliced.slices[0].id)),
       changedPaths: report.examined,
     });
     expect(partial.covered).toBe(false);
@@ -403,7 +404,7 @@ describe('Scenario AC-021-1: a maintainer requests a sweep, and it reviews exist
     const whole = cli('slices', {
       ...report.sliceInputs,
       threshold: 1,
-      reviewedBy: sliced.reviewerAssignments,
+      reviewedBy: reviewedByOf(sliced),
       changedPaths: report.examined,
     });
 
@@ -411,7 +412,7 @@ describe('Scenario AC-021-1: a maintainer requests a sweep, and it reviews exist
     const oneLens = cli('slices', {
       ...report.sliceInputs,
       threshold: 1,
-      reviewedBy: sliced.slices.map((slice) => sliced.reviewerAssignments.find((entry) => entry.sliceId === slice.id)),
+      reviewedBy: reviewedByOf(sliced, sliced.slices.map((slice) => sliced.reviewerAssignments.find((entry) => entry.sliceId === slice.id))),
       changedPaths: report.examined,
     });
     expect(oneLens.covered).toBe(false);

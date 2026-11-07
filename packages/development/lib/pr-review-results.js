@@ -103,10 +103,16 @@
  *         reviewer given a `sliceId` must also be given its `paths` and its
  *         `lens`: a slice with no paths to check would count as reviewed by
  *         anyone, and a reviewer with no lens is not a distinct pass, so such a
- *         request is refused. `reviewedBy` lists, apart from that all-or-nothing
- *         slice rule, each reviewer that arrived and covered every path of its
- *         slice as `{ sliceId, lens, reviewer }`: what `verifyCoverage` counts
- *         distinct lenses from, so one expired lens costs only its own pass.
+ *         request is refused, and so is a `lens` that is not a lens token
+ *         (lower case letters, digits and `-`, at most 32 characters: the
+ *         grammar of the reviewer brief). `reviewedBy` lists, apart from that
+ *         all-or-nothing slice rule, each reviewer that arrived and covered
+ *         every path of its slice as `{ sliceId, lens, reviewer, paths }`:
+ *         what `verifyCoverage` counts distinct lenses from, so one expired
+ *         lens costs only its own pass. `paths` are the paths the reviewer was
+ *         asked to read and reported having read: a lens is credited to those
+ *         paths and to no others, so a slice whose `expected.paths` was left
+ *         short is not covered for the paths nobody was asked to read.
  *     `ok` is true only when the request was readable and every agent
  *     arrived; the lists are filled either way so a partial result is usable.
  *
@@ -138,6 +144,7 @@ const path = require('path');
 
 const { DEADLINE_ROLES, DEFAULT_DEADLINE_MINUTES, DEADLINE_MINUTES_MIN, DEADLINE_MINUTES_MAX } = require('./pr-review-policy');
 const { VERDICTS } = require('./pr-review-votes');
+const { LENS_TOKEN } = require('./pr-review-depth');
 
 const MINUTE_MS = 60 * 1000;
 
@@ -544,6 +551,9 @@ function readExpected(input) {
         return { reason: `${label}.lens belongs to a reviewer given a sliceId` };
       }
       agent.lens = entry.lens.trim().toLowerCase();
+      if (!LENS_TOKEN.test(agent.lens)) {
+        return { reason: `${label}.lens must be a lens token: lower case letters, digits and "-", at most 32 characters (the grammar of the reviewer brief), not ${JSON.stringify(entry.lens)}` };
+      }
     }
     if (entry.paths !== undefined) {
       if (!Array.isArray(entry.paths) || !entry.paths.every(isText)) return { reason: `${label}.paths must be an array of paths` };
@@ -701,11 +711,13 @@ function collectResults(input, deps) {
 
     // reviewer and security lane
     let missingPaths = [];
+    let readPaths = [];
     if (arrived) {
       for (const finding of record.data.findings) findings.push({ ...finding, reviewer: agent.name });
       if (agent.paths !== undefined) {
         const reviewedPaths = new Set(record.data.pathsReviewed);
         missingPaths = agent.paths.filter((p) => !reviewedPaths.has(p));
+        readPaths = agent.paths.filter((p) => reviewedPaths.has(p));
       }
     }
     if (agent.sliceId !== undefined) {
@@ -715,7 +727,7 @@ function collectResults(input, deps) {
         slice.reasons.push({ agent: agent.name, reason: 'paths-not-reviewed' });
         for (const p of missingPaths) if (!slice.missingPaths.includes(p)) slice.missingPaths.push(p);
       } else {
-        reviewedBy.push({ sliceId: agent.sliceId, lens: agent.lens, reviewer: agent.name });
+        reviewedBy.push({ sliceId: agent.sliceId, lens: agent.lens, reviewer: agent.name, paths: readPaths });
       }
       slices.set(agent.sliceId, slice);
     }

@@ -25,6 +25,7 @@ const fs = require('fs');
 const { readSkillBundle } = require('./helpers/pr-review-cycle-skill');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const SKILL_PATH = path.join(__dirname, '..', 'skills', 'pr-review-cycle', 'SKILL.md');
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
@@ -140,6 +141,14 @@ describe('TRD-019 AC: a PR above the slice threshold is reviewed by area and the
     expect(section).not.toMatch(/more reviewers are more independent passes over the same/);
   });
 
+  test('the skill states what the default slicing costs and that reviewedBy names the paths read', () => {
+    const section = sliceSection();
+    expect(section).toMatch(/Without `targetLines` nothing caps the number of slices/);
+    expect(section).toMatch(/`maxSlices` \(default 4\) caps the count only together with `targetLines`/);
+    expect(section).toMatch(/a lens counts for those paths only/);
+    expect(section).toMatch(/an entry built from one, with no `paths`, is refused/);
+  });
+
   test('findings from every slice are combined into one sorted list and the reviewed slices are reported', () => {
     const section = sliceSection();
     expect(section).toMatch(/one sorted list|combined/i);
@@ -169,14 +178,14 @@ describe('TRD-019 AC: a PR above the slice threshold is reviewed by area and the
 
     const partial = run('slices', {
       ...payload,
-      reviewedBy: plan.reviewerAssignments.filter((entry) => entry.sliceId === planned[0]),
+      reviewedBy: reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId === planned[0])),
       changedPaths: paths.map((entry) => entry.path),
     });
     expect(partial.out.covered).toBe(false);
     expect(partial.out.uncovered.length).toBeGreaterThan(0);
     expect(partial.out.ok).toBe(false);
 
-    const full = run('slices', { ...payload, reviewedBy: plan.reviewerAssignments, changedPaths: paths.map((entry) => entry.path) });
+    const full = run('slices', { ...payload, reviewedBy: reviewedByOf(plan), changedPaths: paths.map((entry) => entry.path) });
     expect(full.out.covered).toBe(true);
     expect(full.out.reviewedSlices.sort()).toEqual(planned.sort());
     expect(full.out.ok).toBe(true);
@@ -186,7 +195,7 @@ describe('TRD-019 AC: a PR above the slice threshold is reviewed by area and the
     const paths = [{ path: 'packages/development/lib/a.js', lines: 900 }];
     const payload = { paths, areas: [], threshold: 1500, mode: 'standard' };
     const plan = run('slices', payload).out;
-    const oneLens = run('slices', { ...payload, reviewedBy: plan.reviewerAssignments.slice(0, 1), changedPaths: ['packages/development/lib/a.js'] });
+    const oneLens = run('slices', { ...payload, reviewedBy: reviewedByOf(plan, plan.reviewerAssignments.slice(0, 1)), changedPaths: ['packages/development/lib/a.js'] });
 
     expect(oneLens.out.covered).toBe(false);
     expect(oneLens.out.underReviewed.map((entry) => entry.path)).toEqual(['packages/development/lib/a.js']);

@@ -38,6 +38,7 @@ const { resolveDepth, checkBounds, planSlices, verifyCoverage } = require('../li
 const { assignTier, effectiveTier } = require('../lib/pr-review-tier');
 const { loadPolicy } = require('../lib/pr-review-policy');
 const { sortFindings } = require('../lib/pr-review-ledger');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -226,7 +227,7 @@ describe('AC-018-2: sliced findings are combined and the reviewed slices are nam
 
   test('when every assigned reviewer reported, coverage is complete and the reviewed slices are named', () => {
     // The reviewer plan IS `reviewerAssignments`; every one arriving is what `collect` reports as `reviewedBy`.
-    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: plan.reviewerAssignments, mode: 'standard' });
+    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: reviewedByOf(plan), mode: 'standard' });
 
     expect(coverage.ok).toBe(true);
     expect(coverage.covered).toBe(true);
@@ -239,7 +240,7 @@ describe('AC-018-2: sliced findings are combined and the reviewed slices are nam
     const skipped = plan.slices[0];
     const coverage = verifyCoverage({
       slices: plan.slices,
-      reviewedBy: plan.reviewerAssignments.filter((entry) => entry.sliceId !== skipped.id),
+      reviewedBy: reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId !== skipped.id)),
       mode: 'standard',
     });
 
@@ -251,7 +252,7 @@ describe('AC-018-2: sliced findings are combined and the reviewed slices are nam
   test('a changed path that no slice covers is reported, not assumed reviewed', () => {
     const coverage = verifyCoverage({
       slices: plan.slices,
-      reviewedBy: plan.reviewerAssignments,
+      reviewedBy: reviewedByOf(plan),
       mode: 'standard',
       changedPaths: [...changed.map((entry) => entry.path), 'packages/git/commands/pr-merge.yaml'],
     });
@@ -287,7 +288,7 @@ describe('AC-018-2: every path is read under at least two DISTINCT lenses at Sta
   });
 
   test('verifyCoverage over the full assignments is covered, every path under >= 2 lenses', () => {
-    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: plan.reviewerAssignments, mode: 'standard' });
+    const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: reviewedByOf(plan), mode: 'standard' });
 
     expect(coverage.requiredLenses).toBe(2);
     expect(coverage.covered).toBe(true);
@@ -297,8 +298,8 @@ describe('AC-018-2: every path is read under at least two DISTINCT lenses at Sta
 
   test('dropping the second lens of one slice makes exactly that slice\'s paths underReviewed', () => {
     const target = plan.slices[0];
-    const kept = plan.reviewerAssignments.filter((entry) => entry.sliceId !== target.id);
-    const first = plan.reviewerAssignments.find((entry) => entry.sliceId === target.id);
+    const kept = reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId !== target.id));
+    const [first] = reviewedByOf(plan, [plan.reviewerAssignments.find((entry) => entry.sliceId === target.id)]);
     const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: [...kept, first], mode: 'standard' });
 
     expect(coverage.covered).toBe(false);
@@ -309,8 +310,8 @@ describe('AC-018-2: every path is read under at least two DISTINCT lenses at Sta
 
   test('two reviewers with the SAME lens on a slice do not satisfy the floor', () => {
     const target = plan.slices[0];
-    const kept = plan.reviewerAssignments.filter((entry) => entry.sliceId !== target.id);
-    const first = plan.reviewerAssignments.find((entry) => entry.sliceId === target.id);
+    const kept = reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId !== target.id));
+    const [first] = reviewedByOf(plan, [plan.reviewerAssignments.find((entry) => entry.sliceId === target.id)]);
     const twin = { ...first, reviewer: `${first.reviewer}-twin` };
     const coverage = verifyCoverage({ slices: plan.slices, reviewedBy: [...kept, first, twin], mode: 'standard' });
 

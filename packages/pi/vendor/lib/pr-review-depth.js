@@ -316,13 +316,16 @@ function sliceFailure(reason) {
 
 /**
  * What a reviewer is asked to emphasise, in priority order. The FIRST lens is on every slice; the others rotate
- * across slices so each is used about equally. The caller may pass its own list (the policy owns what a lens means).
+ * across slices so each is used about equally. A caller may pass its own pool as `lenses`; nothing in the policy
+ * block of REVIEW.md feeds one today, so this default is the only source in practice.
  */
 const DEFAULT_LENSES = Object.freeze(['correctness', 'security', 'tests', 'docs-mirrors']);
 
 /**
  * A lens is a token from a closed grammar, never a sentence: it is carried into reviewer names, brief inputs and
- * result file names. Lower case, so "Security" and "security" are one lens, not two.
+ * result file names. Lower case, so "Security" and "security" are one lens, not two. `collect` checks the lens of
+ * every reviewer it is given against this same pattern (exported for it), so a label the brief would refuse cannot
+ * count as one more pass.
  */
 const LENS_TOKEN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -495,7 +498,9 @@ function assignReviewers(slices, lenses, perSlice, quick) {
  * @param {number} [input.threshold]  Changed lines above which the PR is sliced by area; defaults to 1500.
  * @param {number} [input.targetLines]  Lines per slice to aim for; absent means no size-driven split. Ignored at Quick.
  * @param {number} [input.maxSlices]  Most slices a size-driven split may produce (default 4 once `targetLines` is
- *   given); smaller bases are merged into `mixed~N` slices to hold it. Ignored at Quick.
+ *   given); smaller bases are merged into `mixed~N` slices to hold it. It applies ONLY together with `targetLines`:
+ *   without one the slices are one per area above the threshold, with no cap, and each is read under at least two
+ *   lenses at Standard and Deep (ten areas are ten slices and twenty reviewers). Ignored at Quick.
  * @param {string} [input.mode]       `quick`, `standard` or `deep`: Quick is one reviewer, one lens, no size split;
  *   absent means the stricter two lenses.
  * @param {string[]} [input.lenses]   The lens pool, first = on every slice; defaults to `DEFAULT_LENSES`.
@@ -620,16 +625,21 @@ function coverageFailure(reason) {
  * Checks that every changed path was read under enough DIFFERENT lenses (AC-018-2, plan 3A), and names every path
  * that was not.
  *
- * A path is covered only when the reviewers of the slices holding it, between them, used at least the mode's number
- * of distinct lenses (two at Standard and Deep, one at Quick). Two reviewers with the SAME lens are one pass seen
- * twice, not two independent ones, so they do not count; a path read under one lens is `underReviewed`, never
- * `covered`. A reviewer holds ONE lens (it is in the reviewer's brief): the same reviewer reported under two lenses
- * is refused, because it would otherwise count as two passes.
+ * A path is covered only when the reviewers that read it, between them, used at least the mode's number of distinct
+ * lenses (two at Standard and Deep, one at Quick). A reviewer read a path when its entry NAMES the path in `paths`
+ * (and a slice holding that path is the reviewer's own): the lens is credited to those paths and to no others,
+ * because a slice only says which paths a reviewer was assigned, never which it read. Crediting the whole slice
+ * because one of its reviewers arrived would let a reviewer whose list was shorter than its slice cover files nobody
+ * read. Two reviewers with the SAME lens are one pass seen twice, not two independent ones, so they do not count; a
+ * path read under one lens is `underReviewed`, never `covered`. A reviewer holds ONE lens (it is in the reviewer's
+ * brief): the same reviewer reported under two lenses is refused, because it would otherwise count as two passes.
  *
  * @param {Object} input
  * @param {Array<{id:string, paths:string[]}>} input.slices
- * @param {Array<{sliceId:string, lens:string, reviewer:string}>} input.reviewedBy  One entry per reviewer that
- *   arrived and covered its slice (`collect` returns this); a reviewer that did not is simply absent.
+ * @param {Array<{sliceId:string, lens:string, reviewer:string, paths:string[]}>} input.reviewedBy  One entry per
+ *   reviewer that arrived and covered its slice (`collect` returns this); a reviewer that did not is simply absent.
+ *   `paths` are the paths of the slice the reviewer read and reported: its lens counts toward THOSE paths only.
+ *   An entry without a non-empty `paths` list is refused: it would credit nothing, or the whole slice.
  * @param {string} [input.mode]            `quick` (one lens suffices) | `standard` | `deep`; absent means two.
  * @param {string[]} [input.changedPaths]  Every changed path, when the caller
  *   wants a path the plan never held to count as uncovered too. An uncovered
@@ -638,13 +648,14 @@ function coverageFailure(reason) {
  * @returns {{ok:boolean, covered:boolean, uncovered:string[], underReviewed:Array<{path:string, lenses:string[]}>,
  *   requiredLenses:number, reviewedSlices:string[], unreviewedSlices:string[], unknownReviewed:string[], reason?:string}}
  *   `uncovered`: paths no reviewer read at all (an unreviewed slice, or a path the plan never held).
- *   `underReviewed`: every path with fewer distinct lenses than required, none included (`lenses: []`).
+ *   `underReviewed`: every path with fewer distinct lenses than required, none included (`lenses: []`): a path of a
+ *   reviewed slice that no reviewer's `paths` names is one of those.
  */
 function verifyCoverage(input) {
   if (!isObject(input)) return coverageFailure('invalid-input');
   const { slices, reviewedBy } = input;
   if (!Array.isArray(slices)) return coverageFailure('slices must be an array');
-  if (!Array.isArray(reviewedBy)) return coverageFailure('reviewedBy must be an array of { sliceId, lens, reviewer }');
+  if (!Array.isArray(reviewedBy)) return coverageFailure('reviewedBy must be an array of { sliceId, lens, reviewer, paths }');
   const floor = lensFloor(input.mode);
   if (floor === null) return coverageFailure('unknown-mode');
 
@@ -658,10 +669,18 @@ function verifyCoverage(input) {
   }
 
   const lensOfReviewer = new Map();
-  const lensesBySlice = new Map();
+  const readBySlice = new Map(); // slice id -> one { lens, paths: Set } per `reviewedBy` entry for that slice
   for (const entry of Array.from(reviewedBy)) {
-    if (!isObject(entry) || !isText(entry.sliceId) || !isText(entry.lens) || !isText(entry.reviewer)) {
-      return coverageFailure('each reviewedBy entry must be { sliceId, lens, reviewer } with non-empty strings');
+    if (
+      !isObject(entry) ||
+      !isText(entry.sliceId) ||
+      !isText(entry.lens) ||
+      !isText(entry.reviewer) ||
+      !Array.isArray(entry.paths) ||
+      entry.paths.length === 0 ||
+      !entry.paths.every(isText)
+    ) {
+      return coverageFailure('each reviewedBy entry must be { sliceId, lens, reviewer, paths } with non-empty strings and at least one path');
     }
     const lens = entry.lens.trim().toLowerCase();
     const reviewer = entry.reviewer.trim().toLowerCase();
@@ -670,19 +689,23 @@ function verifyCoverage(input) {
     }
     lensOfReviewer.set(reviewer, lens);
     const sliceId = entry.sliceId.trim();
-    if (!lensesBySlice.has(sliceId)) lensesBySlice.set(sliceId, new Set());
-    lensesBySlice.get(sliceId).add(lens);
+    if (!readBySlice.has(sliceId)) readBySlice.set(sliceId, []);
+    readBySlice.get(sliceId).push({ lens, paths: new Set(entry.paths) });
   }
 
   const sliceIds = new Set(plan.map((slice) => slice.id));
-  const unreviewedSlices = plan.filter((slice) => !lensesBySlice.has(slice.id)).map((slice) => slice.id);
-  const uncovered = plan.filter((slice) => !lensesBySlice.has(slice.id)).flatMap((slice) => slice.paths);
+  const unreviewedSlices = plan.filter((slice) => !readBySlice.has(slice.id)).map((slice) => slice.id);
+  const uncovered = plan.filter((slice) => !readBySlice.has(slice.id)).flatMap((slice) => slice.paths);
 
+  // The plan says which paths a slice holds; the lens of a reviewer is credited to a path only when that reviewer's
+  // own list names it.
   const lensesByPath = new Map();
   for (const slice of plan) {
     for (const path of slice.paths) {
       if (!lensesByPath.has(path)) lensesByPath.set(path, new Set());
-      for (const lens of lensesBySlice.get(slice.id) || []) lensesByPath.get(path).add(lens);
+      for (const read of readBySlice.get(slice.id) || []) {
+        if (read.paths.has(path)) lensesByPath.get(path).add(read.lens);
+      }
     }
   }
 
@@ -709,9 +732,9 @@ function verifyCoverage(input) {
     uncovered,
     underReviewed,
     requiredLenses: floor.count,
-    reviewedSlices: plan.filter((slice) => lensesBySlice.has(slice.id)).map((slice) => slice.id),
+    reviewedSlices: plan.filter((slice) => readBySlice.has(slice.id)).map((slice) => slice.id),
     unreviewedSlices,
-    unknownReviewed: [...lensesBySlice.keys()].filter((id) => !sliceIds.has(id)),
+    unknownReviewed: [...readBySlice.keys()].filter((id) => !sliceIds.has(id)),
   };
 }
 
@@ -726,4 +749,5 @@ module.exports = {
   DEFAULT_SLICE_THRESHOLD,
   DEFAULT_LENSES,
   DEFAULT_MAX_SLICES,
+  LENS_TOKEN,
 };

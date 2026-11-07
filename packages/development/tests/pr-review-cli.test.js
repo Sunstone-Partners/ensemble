@@ -50,6 +50,7 @@ const { assignTier, effectiveTier, tierRecord, HUMANS_REQUIRED } = require('../l
 const { evaluateApprovals } = require('../lib/pr-review-approvals');
 const { evaluateGate } = require('../lib/pr-review-gate');
 const { statePath, readState } = require('../lib/pr-review-state');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 
@@ -1281,7 +1282,7 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
 
   test('with reviewedBy the answer names every path that was not covered (AC-018-2)', () => {
     const plan = planOf();
-    const reviewedBy = plan.reviewerAssignments.filter((entry) => entry.sliceId !== 'packages/quality');
+    const reviewedBy = reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId !== 'packages/quality'));
 
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
     expect(result.covered).toBe(false);
@@ -1292,7 +1293,7 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
 
   test('every slice reviewed under both its lenses is full coverage, and it equals verifyCoverage on the same plan', () => {
     const plan = planOf();
-    const reviewedBy = plan.reviewerAssignments;
+    const reviewedBy = reviewedByOf(plan);
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
 
     expect(result.covered).toBe(true);
@@ -1303,7 +1304,7 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
   });
 
   test('a plan the module refused is never read as covered, whatever reviewers the caller claims', () => {
-    const result = runSlices({ paths: 'everything', reviewedBy: [{ sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1' }] });
+    const result = runSlices({ paths: 'everything', reviewedBy: [{ sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1', paths: ['a.js'] }] });
     expect(result.ok).toBe(false);
     expect(result.slices).toEqual([]);
     expect(result.covered).not.toBe(true);
@@ -1320,7 +1321,7 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
 
   test('reviewedBy with one lens per slice is not enough at Standard: refused, every path listed with its single lens', () => {
     const plan = planOf();
-    const reviewedBy = plan.slices.map((slice) => plan.reviewerAssignments.find((entry) => entry.sliceId === slice.id));
+    const reviewedBy = reviewedByOf(plan, plan.slices.map((slice) => plan.reviewerAssignments.find((entry) => entry.sliceId === slice.id)));
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
 
     expect(result.ok).toBe(false);
@@ -1338,8 +1339,8 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
   test('the same lens reported by two reviewers of a slice is still one lens', () => {
     const plan = planOf();
     const reviewedBy = plan.slices.flatMap((slice) => [
-      { sliceId: slice.id, lens: 'correctness', reviewer: `${slice.id}-x` },
-      { sliceId: slice.id, lens: 'correctness', reviewer: `${slice.id}-y` },
+      { sliceId: slice.id, lens: 'correctness', reviewer: `${slice.id}-x`, paths: slice.paths },
+      { sliceId: slice.id, lens: 'correctness', reviewer: `${slice.id}-y`, paths: slice.paths },
     ]);
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy });
     expect(result.ok).toBe(false);
@@ -1350,7 +1351,7 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
     const quick = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'quick' });
     expect(quick.ok).toBe(true);
     expect(quick.reviewerAssignments.every((entry) => entry.reviewer === 'r1-correctness')).toBe(true);
-    const reviewedBy = quick.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness' }));
+    const reviewedBy = quick.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness', paths: slice.paths }));
 
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'quick', reviewedBy });
     expect(result).toMatchObject({ ok: true, covered: true, requiredLenses: 1, underReviewed: [], uncovered: [] });
@@ -1358,10 +1359,32 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
 
   test('the same single lens that is coverage at quick is not at standard', () => {
     const plan = planOf();
-    const reviewedBy = plan.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness' }));
+    const reviewedBy = plan.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness', paths: slice.paths }));
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'standard', reviewedBy });
     expect(result.ok).toBe(false);
     expect(result.requiredLenses).toBe(2);
+  });
+
+  // The plan's own assignments say who is ASKED to read what; only a report names what was read (review of #263, F2).
+  test('the plan\'s own reviewerAssignments are not a report: with no paths named, nothing is covered and the call is refused', () => {
+    const plan = planOf();
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy: plan.reviewerAssignments });
+    expect(result.ok).toBe(false);
+    expect(result.covered).toBe(false);
+    expect(result.coverageReason).toMatch(/paths/);
+  });
+
+  test('a lens counts only for the paths a reviewer named: one path left off one reviewer\'s list is named under-reviewed', () => {
+    const plan = planOf();
+    const reviewedBy = reviewedByOf(plan);
+    const victim = reviewedBy.find((entry) => entry.paths.length > 1);
+    const shortened = reviewedBy.map((entry) => (entry === victim ? { ...entry, paths: entry.paths.slice(1) } : entry));
+    const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, reviewedBy: shortened, changedPaths: PATHS.map((entry) => entry.path) });
+
+    expect(result.ok).toBe(false);
+    expect(result.covered).toBe(false);
+    expect(result.uncovered).toEqual([]);
+    expect(result.underReviewed).toEqual([{ path: victim.paths[0], lenses: lensOf(reviewedBy.filter((entry) => entry !== victim), victim.sliceId) }]);
   });
 
   test('through the real process the answer is the same one', () => {

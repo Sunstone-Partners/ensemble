@@ -45,6 +45,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const { EXPECTED_VERIFIERS } = require('../lib/pr-review-votes');
 const { DEFAULT_BOUNDS } = require('../lib/pr-review-depth');
 const { sortFindings } = require('../lib/pr-review-ledger');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -218,7 +219,7 @@ describe('AC-018-2: a sliced PR reports one sorted list and the slices that were
     const verified = cli('slices', {
       paths,
       areas,
-      reviewedBy: plan.reviewerAssignments,
+      reviewedBy: reviewedByOf(plan),
       changedPaths: paths.map((entry) => entry.path),
     });
     expect(verified.underReviewed).toEqual([]);
@@ -234,7 +235,7 @@ describe('AC-018-2: a sliced PR reports one sorted list and the slices that were
     const partial = cli('slices', {
       paths,
       areas,
-      reviewedBy: plan.reviewerAssignments.filter((entry) => entry.sliceId === plan.slices[0].id),
+      reviewedBy: reviewedByOf(plan, plan.reviewerAssignments.filter((entry) => entry.sliceId === plan.slices[0].id)),
       changedPaths: paths.map((entry) => entry.path),
     });
     expect(partial.covered).toBe(false);

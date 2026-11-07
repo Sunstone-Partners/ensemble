@@ -499,7 +499,7 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
         write(first.reviewer, review([], sliceA.paths));
         const collected = collect(expectedFor([first, second]), T0 + 16 * MIN);
         expect(collected.reviewedSlices).toEqual([]); // the slice itself is not reviewed ...
-        expect(collected.reviewedBy).toEqual([{ sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer }]); // ... but one lens is on record
+        expect(collected.reviewedBy).toEqual([{ sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer, paths: sliceA.paths }]); // ... but one lens is on record
       });
 
       test('a reviewer whose pathsReviewed misses a path is absent from reviewedBy, the complete one is present', () => {
@@ -507,14 +507,16 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
         write(first.reviewer, review([], sliceA.paths));
         write(second.reviewer, review([], ['a/one.js']));
         const collected = collect(expectedFor([first, second]));
-        expect(collected.reviewedBy).toEqual([{ sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer }]);
+        expect(collected.reviewedBy).toEqual([{ sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer, paths: sliceA.paths }]);
       });
 
       test('lists every reviewer that arrived and covered its paths, lens lower-cased', () => {
         arrive(plan.reviewerAssignments);
         const upper = plan.reviewerAssignments.map((a) => ({ ...a, lens: ` ${a.lens.toUpperCase()} ` }));
         const collected = collect(expectedFor(upper));
-        expect(collected.reviewedBy).toEqual(plan.reviewerAssignments.map(({ reviewer: name, sliceId, lens }) => ({ sliceId, lens, reviewer: name })));
+        expect(collected.reviewedBy).toEqual(
+          plan.reviewerAssignments.map(({ reviewer: name, sliceId, lens }) => ({ sliceId, lens, reviewer: name, paths: slicePaths(sliceId) }))
+        );
       });
 
       test('end to end: collect -> slices reports a slice with only one lens arrived as under-reviewed, not covered', () => {
@@ -527,6 +529,35 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
         expect(coverage.covered).toBe(false);
         expect(coverage.underReviewed).toEqual([{ path: 'b/three.js', lenses: [bFirst.lens] }]);
         expect(coverage.reviewedSlices).toEqual([sliceA.id, sliceB.id]);
+      });
+
+      test('each entry carries the paths the reviewer was asked to read and reported, and none it only reported beyond them', () => {
+        const [first, second] = assigned(sliceA.id);
+        write(first.reviewer, review([], [...sliceA.paths, 'elsewhere/extra.js']));
+        write(second.reviewer, review([], sliceA.paths));
+        const collected = collect(expectedFor([first, second]));
+        expect(collected.reviewedBy).toEqual([
+          { sliceId: sliceA.id, lens: first.lens, reviewer: first.reviewer, paths: sliceA.paths },
+          { sliceId: sliceA.id, lens: second.lens, reviewer: second.reviewer, paths: sliceA.paths },
+        ]);
+      });
+
+      test('end to end: a list that leaves a path of the slice out cannot cover it, however many reviewers read the rest', () => {
+        // The slice holds a/one.js and a/two.js, but the orchestrator named only a/one.js for its two reviewers. Both read
+        // exactly that, so collect has nothing to refuse; the coverage check must still say that a/two.js was never read.
+        const [aFirst, aSecond] = assigned(sliceA.id);
+        const shortList = [aFirst, aSecond].map(({ reviewer: name, sliceId, lens }) => reviewer(name, { sliceId, lens, paths: ['a/one.js'] }));
+        write(aFirst.reviewer, review([], ['a/one.js']));
+        write(aSecond.reviewer, review([], ['a/one.js']));
+        arrive(assigned(sliceB.id));
+        const collected = collect([...shortList, ...expectedFor(assigned(sliceB.id))]);
+        expect(collected.ok).toBe(true);
+        expect(collected.reviewedBy.filter((entry) => entry.sliceId === sliceA.id).map((entry) => entry.paths)).toEqual([['a/one.js'], ['a/one.js']]);
+        const coverage = slicesOf(collected);
+        expect(coverage.ok).toBe(false);
+        expect(coverage.covered).toBe(false);
+        expect(coverage.underReviewed).toEqual([{ path: 'a/two.js', lenses: [] }]);
+        expect(coverage.uncovered).toEqual([]);
       });
     });
 
@@ -547,6 +578,18 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
         const result = collect([reviewer('rev1', { sliceId: sliceA.id, paths: sliceA.paths, lens })]);
         expect(result.ok).toBe(false);
         expect(result.reason).toMatch(/lens/);
+      });
+
+      test.each([
+        ['a lens with a space', 'two words'],
+        ['a lens with a path separator', 'a/b'],
+        ['a lens longer than 32 characters', 'x'.repeat(33)],
+        ['a lens that starts with a dash', '-security'],
+      ])('%s is refused: it is not a lens token, so it could not be briefed or counted as a distinct pass', (_label, lens) => {
+        write('rev1', review([], sliceA.paths));
+        const result = collect([reviewer('rev1', { sliceId: sliceA.id, paths: sliceA.paths, lens })]);
+        expect(result).toMatchObject({ ok: false, agents: [], reviewedSlices: [], reviewedBy: [] });
+        expect(result.reason).toMatch(/lens token/);
       });
 
       test('a lens on a verifier is refused', () => {
@@ -597,7 +640,7 @@ describe('AC3: re-collecting over the same directory reproduces the classificati
     expect(second.findings).toEqual(first.findings);
     expect(stateOf(second, 'ver1')).toMatchObject({ state: 'arrived', scratchPath: path.join(scratch(), 'out-ver1.json') });
     expect(second.reviewedSlices).toEqual(['s1']);
-    expect(second.reviewedBy).toEqual([{ sliceId: 's1', lens: 'correctness', reviewer: 'rev1' }]);
+    expect(second.reviewedBy).toEqual([{ sliceId: 's1', lens: 'correctness', reviewer: 'rev1', paths: ['a.js'] }]);
   });
 
   test('a later overwrite with garbage cannot un-arrive a result, nor a later rewrite change its votes', () => {

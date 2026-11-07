@@ -126,11 +126,13 @@
  *           -- resolves the mode AND, when planned or used counts are given,
  *           grades them against that mode's bounds in the same answer
  *   slices  { paths[{ path, lines }], areas?, threshold?, targetLines?, maxSlices?, mode?, lenses?, lensesPerSlice?,
- *             reviewedBy?[{ sliceId, lens, reviewer }], changedPaths? }
+ *             reviewedBy?[{ sliceId, lens, reviewer, paths }], changedPaths? }
  *           -- plans the areas (cut by size when `targetLines` is given) and the reviewer assignments
  *           (`reviewerAssignments[{ reviewer, sliceId, lens }]`: every slice crossed with at least two distinct
- *           lenses at Standard and Deep); when `reviewedBy` is given, names every changed path that was not read
- *           under enough distinct lenses (`uncovered` when nobody read it, `underReviewed` when too few lenses did)
+ *           lenses at Standard and Deep); when
+ *           `reviewedBy` is given, names every changed path that was not read under enough distinct lenses
+ *           (`uncovered` when nobody read it, `underReviewed` when too few lenses did, or when no reviewer's `paths`
+ *           names it: a lens counts for the paths it read, never for the rest of its slice)
  *
  * `results` (kata et2k) is the file-based half of the verification subcommands:
  * agents write `out-<name>.json` and this reads them, instead of the orchestrator
@@ -145,8 +147,9 @@
  *                    [dispatchedAt, deadlineAt]; an older file is stale, a later one expired. A reviewer given a
  *                    `sliceId` must give its `paths` and its `lens`. Each arrival is copied to scratch (default: the hidden sibling
  *                    `.<dir name>.collected` beside `dir`, never inside it), and the answer holds `reviewedBy` (the
- *                    `reviewedBy` of `slices`: one `{ sliceId, lens, reviewer }` per reviewer that arrived and covered
- *                    its slice), `reviewedSlices` and, when `depth` is given, `votesInput` (the payload of `votes`). An
+ *                    `reviewedBy` of `slices`: one `{ sliceId, lens, reviewer, paths }` per reviewer that arrived and
+ *                    covered its slice, `paths` being the paths it was asked to read and reported), `reviewedSlices`
+ *                    and, when `depth` is given, `votesInput` (the payload of `votes`). An
  *                    agent that did not arrive is never reviewed: its slice is unreviewed, its candidates unverified
  *   failure          { status?, retryAfterSec?, message?, attempt?, failFastAfterSec?, waitedSec?, deadlineAt?, now? }
  *                    -- retry, back off, fall back to the alternate model route, or fail fast to a recorded `partial`
@@ -495,7 +498,7 @@ function runSlices(payload) {
   const plan = planSlices(payload);
   const request = isObject(payload) ? payload : {};
   if (plan.ok && request.reviewed !== undefined) {
-    return { ...plan, ok: false, reason: 'reviewed is no longer accepted: pass reviewedBy, an array of { sliceId, lens, reviewer }' };
+    return { ...plan, ok: false, reason: 'reviewed is no longer accepted: pass reviewedBy, an array of { sliceId, lens, reviewer, paths }' };
   }
   if (!plan.ok || request.reviewedBy === undefined) return plan;
 

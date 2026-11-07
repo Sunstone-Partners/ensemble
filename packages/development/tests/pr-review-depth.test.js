@@ -40,6 +40,7 @@ const {
   DEFAULT_BOUNDS,
   DEFAULT_SLICE_THRESHOLD,
 } = require('../lib/pr-review-depth');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 // ---------------------------------------------------------------------------
 // AC-016-3: the mode defaults from the tier
@@ -315,8 +316,8 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
     areas: ['packages/development/lib', 'docs'],
   });
 
-  /** What a complete review reports: every planned reviewer arrived. */
-  const full = plan.reviewerAssignments;
+  /** What a complete review reports: every planned reviewer arrived and read its whole slice (what `collect` answers). */
+  const full = reviewedByOf(plan);
 
   test('every slice read under two lenses means full coverage', () => {
     const result = verifyCoverage({ slices: plan.slices, reviewedBy: full });
@@ -349,8 +350,8 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
 
   test('two reviewers with the SAME lens on a slice are one pass seen twice: they do not count', () => {
     const twin = [
-      { sliceId: 'docs', lens: 'correctness', reviewer: 'a' },
-      { sliceId: 'docs', lens: 'Correctness ', reviewer: 'b' },
+      { sliceId: 'docs', lens: 'correctness', reviewer: 'a', paths: ['docs/x.md'] },
+      { sliceId: 'docs', lens: 'Correctness ', reviewer: 'b', paths: ['docs/x.md'] },
       ...full.filter((entry) => entry.sliceId !== 'docs'),
     ];
     const result = verifyCoverage({ slices: plan.slices, reviewedBy: twin });
@@ -361,7 +362,10 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
   test('lenses are compared by their lower-case token: "Security" and "security" are one lens', () => {
     const result = verifyCoverage({
       slices: [{ id: 's', paths: ['a.js'] }],
-      reviewedBy: [{ sliceId: 's', lens: 'Security', reviewer: 'x' }, { sliceId: 's', lens: ' security', reviewer: 'y' }],
+      reviewedBy: [
+        { sliceId: 's', lens: 'Security', reviewer: 'x', paths: ['a.js'] },
+        { sliceId: 's', lens: ' security', reviewer: 'y', paths: ['a.js'] },
+      ],
     });
     expect(result.covered).toBe(false);
     expect(result.underReviewed).toEqual([{ path: 'a.js', lenses: ['security'] }]);
@@ -370,14 +374,17 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
   test('a path counts the lenses of EVERY slice holding it, not just one slice', () => {
     const result = verifyCoverage({
       slices: [{ id: 'one', paths: ['a.js'] }, { id: 'two', paths: ['a.js'] }],
-      reviewedBy: [{ sliceId: 'one', lens: 'correctness', reviewer: 'x' }, { sliceId: 'two', lens: 'tests', reviewer: 'y' }],
+      reviewedBy: [
+        { sliceId: 'one', lens: 'correctness', reviewer: 'x', paths: ['a.js'] },
+        { sliceId: 'two', lens: 'tests', reviewer: 'y', paths: ['a.js'] },
+      ],
     });
     expect(result.covered).toBe(true);
   });
 
   test('Quick is one reviewer and one lens: a single lens covers it, and an absent mode is the stricter two', () => {
     const slices = [{ id: 's', paths: ['a.js'] }];
-    const reviewedBy = [{ sliceId: 's', lens: 'correctness', reviewer: 'r1' }];
+    const reviewedBy = [{ sliceId: 's', lens: 'correctness', reviewer: 'r1', paths: ['a.js'] }];
     expect(verifyCoverage({ slices, reviewedBy, mode: 'quick' })).toMatchObject({ covered: true, requiredLenses: 1 });
     expect(verifyCoverage({ slices, reviewedBy })).toMatchObject({ covered: false, requiredLenses: 2 });
     expect(verifyCoverage({ slices, reviewedBy, mode: 'standard' }).covered).toBe(false);
@@ -387,7 +394,10 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
   test('a reviewer reported under two lenses is refused: it would otherwise count as two passes', () => {
     const result = verifyCoverage({
       slices: [{ id: 's', paths: ['a.js'] }],
-      reviewedBy: [{ sliceId: 's', lens: 'correctness', reviewer: 'x' }, { sliceId: 's', lens: 'security', reviewer: 'X' }],
+      reviewedBy: [
+        { sliceId: 's', lens: 'correctness', reviewer: 'x', paths: ['a.js'] },
+        { sliceId: 's', lens: 'security', reviewer: 'X', paths: ['a.js'] },
+      ],
     });
     expect(result.ok).toBe(false);
     expect(result.covered).toBe(false);
@@ -406,7 +416,7 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
   });
 
   test('a reviewed slice id that belongs to no slice is reported, not quietly accepted', () => {
-    const result = verifyCoverage({ slices: plan.slices, reviewedBy: [...full, { sliceId: 'imaginary', lens: 'tests', reviewer: 'z' }] });
+    const result = verifyCoverage({ slices: plan.slices, reviewedBy: [...full, { sliceId: 'imaginary', lens: 'tests', reviewer: 'z', paths: ['x.js'] }] });
     expect(result.unknownReviewed).toEqual(['imaginary']);
   });
 
@@ -419,6 +429,10 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
       { slices: plan.slices, reviewedBy: ['docs'] },
       { slices: plan.slices, reviewedBy: [{ sliceId: 'docs', reviewer: 'x' }] },
       { slices: plan.slices, reviewedBy: [{ sliceId: 'docs', lens: 'tests' }] },
+      { slices: plan.slices, reviewedBy: [{ sliceId: 'docs', lens: 'tests', reviewer: 'x' }] },
+      { slices: plan.slices, reviewedBy: [{ sliceId: 'docs', lens: 'tests', reviewer: 'x', paths: [] }] },
+      { slices: plan.slices, reviewedBy: [{ sliceId: 'docs', lens: 'tests', reviewer: 'x', paths: [7] }] },
+      { slices: plan.slices, reviewedBy: [{ sliceId: 'docs', lens: 'tests', reviewer: 'x', paths: 'docs/x.md' }] },
       { slices: plan.slices, reviewedBy: full, mode: 'thorough' },
       { slices: plan.slices, reviewed: ['docs', 'packages/development/lib'] },
     ]) {
@@ -432,6 +446,62 @@ describe('TRD-017 AC-018-2: verifyCoverage names every unreviewed path', () => {
     const result = verifyCoverage({ slices: plan.slices, reviewedBy: [] });
     expect(result.covered).toBe(false);
     expect(result.uncovered.sort()).toEqual(['docs/x.md', 'packages/development/lib/a.js']);
+  });
+
+  // A lens is credited to the paths a reviewer NAMED, not to the whole slice it was assigned (review of #263, F2).
+  test('a reviewer whose list is shorter than its slice covers only the paths it names: the rest is under-reviewed, never covered', () => {
+    const result = verifyCoverage({
+      slices: [{ id: 'whole-pr', paths: ['a.js', 'b.js'] }],
+      reviewedBy: [
+        { sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1', paths: ['a.js'] },
+        { sliceId: 'whole-pr', lens: 'security', reviewer: 'r2', paths: ['a.js'] },
+      ],
+      mode: 'standard',
+      changedPaths: ['a.js', 'b.js'],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.covered).toBe(false);
+    expect(result.underReviewed).toEqual([{ path: 'b.js', lenses: [] }]);
+    expect(result.uncovered).toEqual([]); // the slice WAS reviewed: the shortfall is in the paths each reviewer named
+    expect(result.reviewedSlices).toEqual(['whole-pr']);
+  });
+
+  test('a path named by one of two reviewers is read under ONE lens: under-reviewed with that lens, while the path both named is covered', () => {
+    const result = verifyCoverage({
+      slices: [{ id: 's', paths: ['a.js', 'b.js'] }],
+      reviewedBy: [
+        { sliceId: 's', lens: 'correctness', reviewer: 'r1', paths: ['a.js', 'b.js'] },
+        { sliceId: 's', lens: 'security', reviewer: 'r2', paths: ['a.js'] },
+      ],
+      mode: 'deep',
+    });
+    expect(result.covered).toBe(false);
+    expect(result.underReviewed).toEqual([{ path: 'b.js', lenses: ['correctness'] }]);
+  });
+
+  test('at Quick too a path the one reviewer did not name is under-reviewed', () => {
+    const result = verifyCoverage({
+      slices: [{ id: 's', paths: ['a.js', 'b.js'] }],
+      reviewedBy: [{ sliceId: 's', lens: 'correctness', reviewer: 'r1', paths: ['b.js'] }],
+      mode: 'quick',
+    });
+    expect(result.covered).toBe(false);
+    expect(result.underReviewed).toEqual([{ path: 'a.js', lenses: [] }]);
+  });
+
+  test('naming a path that belongs to another slice earns no credit for it: the plan decides which slice holds a path', () => {
+    const result = verifyCoverage({
+      slices: [{ id: 'one', paths: ['a.js'] }, { id: 'two', paths: ['b.js'] }],
+      reviewedBy: [
+        { sliceId: 'one', lens: 'correctness', reviewer: 'r1', paths: ['a.js', 'b.js'] },
+        { sliceId: 'one', lens: 'security', reviewer: 'r2', paths: ['a.js', 'b.js'] },
+      ],
+      mode: 'standard',
+    });
+    expect(result.covered).toBe(false);
+    expect(result.unreviewedSlices).toEqual(['two']);
+    expect(result.uncovered).toEqual(['b.js']);
+    expect(result.underReviewed).toEqual([{ path: 'b.js', lenses: [] }]);
   });
 });
 
@@ -473,6 +543,17 @@ describe('plan 3A: planSlices cuts by size and crosses every slice with >= 2 dis
     expect(capped.slices).toHaveLength(3);
     expect(capped.slices.flatMap((slice) => slice.paths).sort()).toEqual(paths.map((entry) => entry.path).sort());
     expect(planSlices({ paths, targetLines: 100 }).slices).toHaveLength(DEFAULT_MAX_SLICES);
+  });
+
+  test('nothing caps the slice count without targetLines: ten areas over the threshold are ten slices and twenty reviewers', () => {
+    const areas = Array.from({ length: 10 }, (_, index) => `area${index}`);
+    const paths = areas.map((area) => ({ path: `${area}/f.js`, lines: 200 }));
+    const uncapped = planSlices({ paths, areas, threshold: 1500, mode: 'standard' });
+    expect(uncapped.slices).toHaveLength(10);
+    expect(uncapped.reviewerAssignments).toHaveLength(20);
+    // maxSlices is the ceiling of the size-driven split: it applies together with targetLines, never alone.
+    expect(planSlices({ paths, areas, threshold: 1500, mode: 'standard', maxSlices: 3 }).slices).toHaveLength(10);
+    expect(planSlices({ paths, areas, threshold: 1500, mode: 'standard', targetLines: 400 }).slices).toHaveLength(DEFAULT_MAX_SLICES);
   });
 
   test('too many areas are merged (smallest first) into mixed~N slices, every path still in exactly one', () => {

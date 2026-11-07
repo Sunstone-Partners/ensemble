@@ -243,7 +243,11 @@ threshold too, into contiguous chunks by size, at most `maxSlices` of them, so
 an id can be `whole-pr~2`), and leave out `lenses` and `lensesPerSlice` unless
 `REVIEWER_COUNT` is set. Below the threshold with no `targetLines` the result
 is one slice, `whole-pr`. Above it, `sliced` is true and `slices` partitions
-every changed path into exactly one slice.
+every changed path into exactly one slice. Without `targetLines` nothing
+caps the number of slices: each area above the threshold is its own slice and
+Standard and Deep read each slice under two lenses, so ten areas are ten slices
+and twenty reviewers (the runtime runs 32 agents at once and the rest wait);
+`maxSlices` (default 4) caps the count only together with `targetLines`.
 
 Every slice is crossed with at least two DISTINCT lenses (`correctness`,
 `security`, `tests`, `docs-mirrors` by default): the result's
@@ -273,13 +277,17 @@ never edit, sort or trim a name by hand.
 After the review, re-run the same call as
 `{ paths, areas, threshold, targetLines?, mode, reviewedBy, changedPaths }`
 (the same `targetLines` as before, when one was given), where `reviewedBy` is
-the `reviewedBy` array of the `results` `collect` answer and `changedPaths` the
+the `reviewedBy` array of the `results` `collect` answer, passed as it is (each
+entry names the `paths` its reviewer read, and a lens counts for those paths
+only; `reviewerAssignments` say who was asked to read, so an entry built from
+one, with no `paths`, is refused) and `changedPaths` the
 list from Step 1b. The old `reviewed` list of slice ids is no longer accepted:
 a payload carrying it is refused. A result with `covered:false` names each
 `uncovered` path and each `unreviewedSlices` id (nobody read it: review the
 missing slice) and each `underReviewed` path with the `lenses` it was read
-under (too few distinct lenses: dispatch a reviewer under another lens for that
-slice) -- an uncovered path is never reported as reviewed, nor is an
+under (too few distinct lenses, or none because no reviewer's `paths` names it:
+dispatch a reviewer under another lens for that slice, over every path of it)
+-- an uncovered path is never reported as reviewed, nor is an
 under-reviewed one.
 `requiredLenses` is the floor graded (two at Standard and Deep, one at Quick).
 An `uncovered` path with an empty `unreviewedSlices` means `paths` was not cut
@@ -361,8 +369,10 @@ template by hand.
 
 What comes back is graded as it is. Run `node "$PR_REVIEW_CLI" results` with
 `{ action: "collect", expected, dir }`, `expected` naming for each reviewer its
-`sliceId`, `paths` and `lens`; the answer's `reviewedBy` holds one
-`{ sliceId, lens, reviewer }` for each reviewer that arrived and covered every
+`sliceId`, `lens` and `paths` (the slice's whole path list from the `slices`
+call, never shortened: a lens counts only for the paths named here); the
+answer's `reviewedBy` holds one
+`{ sliceId, lens, reviewer, paths }` for each reviewer that arrived and covered every
 path of its slice. A reviewer that stopped at its cap or its timebox covered less
 than its slice and is absent from `reviewedBy`, so its lens is missing from that
 slice when the `slices` coverage call is re-run: the call names the paths

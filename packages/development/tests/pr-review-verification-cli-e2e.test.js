@@ -32,6 +32,7 @@ const { spawnSync } = require('child_process');
 
 const { EXPECTED_VERIFIERS } = require('../lib/pr-review-votes');
 const { DEFAULT_BOUNDS, DEFAULT_SLICE_THRESHOLD } = require('../lib/pr-review-depth');
+const { reviewedByOf } = require('./helpers/pr-review-reviewed-by');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 
@@ -305,7 +306,7 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     const sliceIds = plan.result.slices.map((slice) => slice.id);
     const changedPaths = bigPaths.map((entry) => entry.path);
     // Each slice is crossed with two lenses; "reviewed" means the plan's reviewers reported (reviewedBy).
-    const reviewedByAll = plan.result.reviewerAssignments;
+    const reviewedByAll = reviewedByOf(plan.result);
 
     const all = runCli('slices', { paths: bigPaths, areas: AREAS, reviewedBy: reviewedByAll, changedPaths });
     expectCleanProcess(all);
@@ -325,7 +326,7 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     const run = runCli('slices', {
       paths: bigPaths,
       areas: AREAS,
-      reviewedBy: [{ sliceId: 'everything', lens: 'correctness', reviewer: 'r1' }],
+      reviewedBy: [{ sliceId: 'everything', lens: 'correctness', reviewer: 'r1', paths: ['README.md'] }],
       changedPaths: bigPaths.map((entry) => entry.path),
     });
     expectCleanProcess(run);
@@ -353,7 +354,7 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
       expect(plan.result.reviewerAssignments.length).toBe(plan.result.slices.length * plan.result.lensesPerSlice);
       expect(plan.result.lensesPerSlice).toBeGreaterThanOrEqual(2);
 
-      const graded = runCli('slices', { ...request, reviewedBy: plan.result.reviewerAssignments, changedPaths });
+      const graded = runCli('slices', { ...request, reviewedBy: reviewedByOf(plan.result), changedPaths });
       expectCleanProcess(graded);
       expect(graded.result).toMatchObject({ ok: true, covered: true, uncovered: [], underReviewed: [], unknownReviewed: [] });
       expect(graded.result.requiredLenses).toBe(2);
@@ -362,8 +363,9 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     test('one reviewer of the plan missing leaves its slice read under one lens: refused, with the paths and the lens that did read them', () => {
       const plan = runCli('slices', request);
       expectCleanProcess(plan);
-      const [dropped, ...kept] = plan.result.reviewerAssignments;
+      const [dropped, ...keptAssignments] = plan.result.reviewerAssignments;
       const slice = plan.result.slices.find((entry) => entry.id === dropped.sliceId);
+      const kept = reviewedByOf(plan.result, keptAssignments);
       const sibling = kept.find((entry) => entry.sliceId === dropped.sliceId);
 
       const graded = runCli('slices', { ...request, reviewedBy: kept, changedPaths });
@@ -387,7 +389,7 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
   });
 
   test('a refused plan is never graded as fully covered', () => {
-    const run = runCli('slices', { paths: [{ path: 'a.js' }], areas: AREAS, reviewedBy: [{ sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1' }] });
+    const run = runCli('slices', { paths: [{ path: 'a.js' }], areas: AREAS, reviewedBy: [{ sliceId: 'whole-pr', lens: 'correctness', reviewer: 'r1', paths: ['a.js'] }] });
     expectCleanProcess(run);
 
     expect(run.result.ok).toBe(false);
