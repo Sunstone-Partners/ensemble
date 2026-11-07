@@ -77,7 +77,7 @@ accept answers go to `ledger` `resolve`, a Fix on this PR answer never does (the
 read the finding as closed). `--foreman` logs and never fixes, waives no blocking finding
 and leaves the gate `mergeable:false`. A pre-publication snapshot (`MODE=local`, no
 `PR_URL`/`PR_NUMBER`, not `REVIEW_ONLY`) is the author's own unpublished work. Full rules:
-`reference/merge-gate.md`.
+`reference/merge-gate.md` (decision list, recording), `reference/triage-fix-reverify.md` (Step 5).
 
 ---
 
