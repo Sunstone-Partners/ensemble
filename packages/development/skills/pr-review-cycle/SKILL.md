@@ -7,17 +7,11 @@ description: Deterministic local-review, batch-fix and head-bound remote-review 
 
 Run one deterministic review-and-fix loop for a PR: resolve the diff scope, run
 an independent local review, triage and batch-fix every finding via
-`pr-review-remediation`, verify once, and -- after publication -- evaluate the
-real, head-bound remote review. Every grading decision (scope, ledger
-validity, remote-review binding, terminal status) is computed by
+`packages/quality/skills/pr-review-remediation/SKILL.md` (which this skill composes), verify once, and -- after
+publication -- evaluate the real, head-bound remote review. Every grading decision is computed by
 `pr-review-cli.js`, never guessed in prose.
 
-This skill owns the *editable* parts (Constitution Rule 8): review criteria,
-loop order, the 10-minute interactive wait, and Foreman-mode rules. It
-**composes** `packages/quality/skills/pr-review-remediation/SKILL.md` for
-every triage, regression-test and minimal-fix decision.
-
-Companion files hold each step's full detail; read the one a step names before running it. Their rules are normative.
+Companion files hold each step's full detail; read the one a step names. Their rules are normative.
 Template for the PR body `fix-issue` builds: `reference/fix-issue-pr-body.md`.
 
 ---
@@ -101,17 +95,11 @@ guessed input.
 
 ---
 
-## Light-mode runner (default for `MODE=local` and `MODE=gate`)
+## Light-mode runner
 
-Detail: `reference/review-run.md`. When the tier is Low or Medium (`selectMode` answers `light`), drive the
-review through `node "$REVIEW_RUN_CLI" prepare` and `collect` (`lib/review-run-cli.js`, resolved like
-`PR_REVIEW_CLI`) instead of narrating the Steps below. `prepare` returns a `DISPATCH` manifest: start exactly
-the agents it names, pass each `prompt` unedited, respect `maxConcurrentAgents` and stop each agent at its
-`deadlineAtIso`, then call `collect`. Repeat on `DISPATCH` and `PENDING`; stop on `DONE`; on `ADJUDICATE` decide
-only the items it lists and call `collect` again with `adjudications`. The model composes no brief, computes no
-vote and sets no status. `NEEDS_FULL_MODE` (and any unresolvable runner) means the narrated Steps 1-10 below,
-unchanged, are the procedure; so is every High-tier or sensitive-path PR. `RUN_INVALIDATED` and `RUN_FAILED`
-are handled as the reference says.
+When `selectMode` answers `light`, `MODE=local` and `MODE=gate` run `prepare` then `collect` of
+`lib/review-run-cli.js` (`$REVIEW_RUN_CLI`) per `reference/review-run.md`, not the Steps below.
+`NEEDS_FULL_MODE`, a High tier or a sensitive path: the narrated Steps 1-10, unchanged.
 
 ---
 

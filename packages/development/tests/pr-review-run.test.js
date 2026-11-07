@@ -955,15 +955,15 @@ describe('metrics and the acvv recorder', () => {
     expect(x.wallMs).toBeGreaterThan(0);
     expect(x.runnerMs).toBeGreaterThan(0);
     expect(x.runnerMs).toBeLessThanOrEqual(x.wallMs);
-    expect(x.orchestratorOnlyMs).toBe(Math.max(0, x.wallMs - x.runnerMs - x.agentWaitMs));
-    expect(Object.keys(x).sort()).toEqual(['agentWaitMs', 'agentsDispatched', 'dispatchRounds', 'orchestratorOnlyMs', 'runnerCalls', 'runnerMs', 'wallMs']);
+    expect(x.orchestratorOnlyMs).toBe(Math.max(0, x.wallMs - x.runnerMs - x.agentActiveMs));
+    expect(Object.keys(x).sort()).toEqual(['agentActiveMs', 'agentsDispatched', 'dispatchRounds', 'orchestratorOnlyMs', 'runnerCalls', 'runnerMs', 'wallMs']);
   });
 
   test('computeMetrics and unionMs on a hand-made run', () => {
     expect(S.unionMs([[0, 10], [5, 20], [30, 40]])).toBe(30);
     expect(S.unionMs([])).toBe(0);
     const run = { calls: [{ call: 'prepare', startedAt: 0, endedAt: 100 }, { call: 'collect', startedAt: 9000, endedAt: 9100 }], waves: [{ status: 'collected', agents: [{ dispatchedAt: 100, arrivedAt: 5000, deadlineAt: 99999 }, { dispatchedAt: 100, arrivedAt: 8000, deadlineAt: 99999 }] }, { status: 'planned', agents: [{}] }] };
-    expect(S.computeMetrics(run, 9100)).toEqual({ wallMs: 9100, runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 2, runnerMs: 200, agentWaitMs: 7900, orchestratorOnlyMs: 1000 });
+    expect(S.computeMetrics(run, 9100)).toEqual({ wallMs: 9100, runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 2, runnerMs: 200, agentActiveMs: 7900, orchestratorOnlyMs: 1000 });
   });
 
   test('stage spans: precheck, prepare-head, one span per agent from dispatch to collection, and the gate', async () => {

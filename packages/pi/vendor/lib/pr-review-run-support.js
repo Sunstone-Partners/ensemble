@@ -285,8 +285,8 @@ function unionMs(intervals) {
  *   wallMs              first runner call start -> `endAt`
  *   runnerCalls/runnerMs   the prepare/collect calls and the time spent inside them
  *   dispatchRounds / agentsDispatched
- *   agentWaitMs         union of [dispatchedAt, arrival or deadline-or-now] over every agent
- *   orchestratorOnlyMs  wall - runner - agent wait: the time nobody but the orchestrating model was running
+ *   agentActiveMs       union of [dispatchedAt, arrival or deadline-or-now] over every agent
+ *   orchestratorOnlyMs  wall - runner - agent time: the time nobody but the orchestrating model was running
  */
 function computeMetrics(run, endAt) {
   const calls = Array.isArray(run.calls) ? run.calls : [];
@@ -296,15 +296,15 @@ function computeMetrics(run, endAt) {
   const waves = Array.isArray(run.waves) ? run.waves.filter((w) => w.status !== 'planned') : [];
   const agents = waves.flatMap((w) => w.agents);
   const intervals = agents.map((a) => [a.dispatchedAt, Number.isFinite(a.arrivedAt) ? a.arrivedAt : Math.min(a.deadlineAt, endAt)]);
-  const agentWaitMs = unionMs(intervals);
+  const agentActiveMs = unionMs(intervals);
   return {
     wallMs,
     runnerCalls: calls.length,
     dispatchRounds: waves.length,
     agentsDispatched: agents.length,
     runnerMs,
-    agentWaitMs,
-    orchestratorOnlyMs: Math.max(0, wallMs - runnerMs - agentWaitMs),
+    agentActiveMs,
+    orchestratorOnlyMs: Math.max(0, wallMs - runnerMs - agentActiveMs),
   };
 }
 

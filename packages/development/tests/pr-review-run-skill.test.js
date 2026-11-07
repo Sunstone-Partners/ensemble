@@ -23,13 +23,14 @@ describe('pr-review-cycle light-mode runner prose', () => {
     expect(fs.existsSync(path.join(SKILL_DIR, 'reference', 'review-run.md'))).toBe(true);
   });
 
-  test('SKILL.md tells the model what to do and what never to do', () => {
-    expect(main).toMatch(/exactly\s+the agents/);
-    expect(main).toMatch(/`prompt` unedited/);
-    expect(main).toContain('maxConcurrentAgents');
-    expect(main).toContain('deadlineAtIso');
-    expect(main).toMatch(/composes no brief, computes no\s+vote and sets no status/);
-    expect(main).toMatch(/on `ADJUDICATE` decide\s+only the items it lists/);
+  test('the reference tells the model what to do and what never to do', () => {
+    const ref = readSkillReference('review-run.md').replace(/\s+/g, ' ');
+    expect(ref).toMatch(/start exactly the agents in `agents\[\]`/);
+    expect(ref).toMatch(/`prompt` UNEDITED/);
+    expect(ref).toContain('maxConcurrentAgents');
+    expect(ref).toContain('deadlineAtIso');
+    expect(ref).toMatch(/composes no brief, computes no vote, sets no status/);
+    expect(ref).toMatch(/Decide ONLY the items in `adjudicate\[\]`/);
   });
 
   test('SKILL.md falls back to the narrated Steps 1-10 on NEEDS_FULL_MODE', () => {

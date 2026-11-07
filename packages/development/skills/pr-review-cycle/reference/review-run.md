@@ -4,7 +4,7 @@ Light mode (tier Low or Medium, as `selectMode` answers) is run through one re-e
 `packages/development/lib/review-run-cli.js`, with two subcommands, `prepare` and `collect`. Each takes one JSON
 object on stdin and prints one JSON object on stdout (exit 0 when `ok:true`, 1 when `ok:false`). Resolve it the
 way `PR_REVIEW_CLI` is resolved (tool-path-resolution skill, file `lib/review-run-cli.js`); if it does not
-resolve or `node` is missing, use the narrated Steps 1-10 below instead. The runner cannot start model agents:
+resolve or Node.js is missing, use the narrated Steps 1-10 below instead. The runner cannot start model agents:
 you do, from its manifest. Never retry a non-zero exit with guessed input.
 
 The model composes no brief, computes no vote, sets no status and writes no ledger field. The runner does all of
@@ -14,7 +14,7 @@ that; REVIEW_COMPLETE is only ever relayed from the CLI's `deriveStatus`.
 
 1. `prepare` with `{ repo, pr, repoRoot }` (optional keys: `runId`, `traceRunId`, `baseSha`, `lastReviewedSha`,
    `remediationShas`, `dryRun`, `skipPrecheck`, `testFiles`, `testCommand`, `baselineTimeoutMs`, `nodeModules`,
-   `stateRoot`). Unknown keys are refused.
+   `stateRoot`, `agentAuthored`). Unknown keys are refused.
 2. On `status: 'DISPATCH'` start exactly the agents in `agents[]`, no more and no fewer. Give each its `prompt`
    UNEDITED to a fresh-context, read-only subagent. Never run more at once than `maxConcurrentAgents`, and stop an
    agent that has not finished at its `deadlineAtIso`: the runner records deadlines but cannot stop an agent.

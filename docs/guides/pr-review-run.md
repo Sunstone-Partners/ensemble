@@ -34,7 +34,9 @@ unknown payload key are `{ok:false, error}`.
 
 `prepare`: `{ repo: "owner/name", pr, repoRoot, runId?, traceRunId?, baseSha?, lastReviewedSha?,
 remediationShas?, dryRun?, skipPrecheck?, testFiles?, testCommand?, baselineTimeoutMs?, nodeModules?,
-stateRoot? }`. `runId` defaults to `pr<N>-<head12>-<epoch seconds>` and must be file-name safe. `baseSha`
+stateRoot?, agentAuthored? }`. `agentAuthored` (boolean) feeds the description and approvals checks; absent keeps their
+strict default (an agent wrote it, so a missing `Directed by:` line blocks), and it never grants anything. `runId`
+defaults to `pr<N>-<head12>-<epoch seconds>` and must be file-name safe. `baseSha`
 overrides the merge base (needed to re-review an already merged PR). `dryRun` goes to the precheck;
 `skipPrecheck: true` skips it and records that. A precheck that fails is recorded, not fatal. A PR that is not
 open can be reviewed; the result records its state.
@@ -74,7 +76,17 @@ mode 0600 (directories 0700). `collect` on a finished run returns the stored res
 - `prepare` runs the precheck: it posts one PR comment and starts the local-CI gate in the background unless
   `dryRun` or `skipPrecheck` is set.
 - The baseline test run executes the head's own test code in a scratch directory. It is not a sandbox; see
-  `docs/guides/pr-review-prepare.md`.
+  `docs/guides/pr-review-prepare.md`. It runs the relevant test files only. When it produced no usable result (no
+  relevant test files, a timeout) the status fact is `tests skipped`, never a pass and never a failure it did not
+  have.
+- Light mode never calls a classifier or second-assessor agent. The tier comes from the changed paths alone: prose
+  files (`.md`, `.mdx`, `.markdown`, `.txt`, `.rst`, `.adoc`) are cited as `docs`, every other path as `product`.
+  That can raise a tier, never lower it, and the Low waiver is never applied. A path the repository declares
+  sensitive or high (in this repository `packages/development/lib/**` is a high path) selects full mode, so most
+  code changes here answer `NEEDS_FULL_MODE`.
+- Finding ids in the ledger are opaque (`f1`, `s1`); the id an agent wrote is kept as `reportedId`. A reviewer or
+  security-lane brief the renderer refuses (for example a path with a space in it) answers `NEEDS_FULL_MODE`; a
+  refused verifier brief keeps its candidate, unverified, and lists it under `notReviewed.unbriefable`.
 - Full mode (High tier, a sensitive path, an unreadable or contradictory tier) is the narrated procedure in the
   skill, unchanged.
 
@@ -83,11 +95,11 @@ mode 0600 (directories 0700). `collect` on a finished run returns the stored res
 ```bash
 echo '{"repo":"acme/app","pr":42,"repoRoot":"/work/app"}' | node review-run-cli.js prepare
 # {"ok":true,"status":"DISPATCH","runId":"pr42-3f2a9c1d7e04-1790000000","round":"review","wave":"1 of 1",
-#  "maxConcurrentAgents":8,"agents":[{"name":"reviewer-1","role":"reviewer","outPath":".../results/review/out-reviewer-1.json",
+#  "maxConcurrentAgents":8,"agents":[{"name":"reviewer-s1-a","role":"reviewer","outPath":".../results/review/out-reviewer-s1-a.json",
 #  "prompt":"...","deadlineAtIso":"..."}, ...], ...}
 ```
 
-Start `reviewer-1` and the other named agents with their `prompt` as given, then:
+Start `reviewer-s1-a` and the other named agents with their `prompt` as given, then:
 
 ```bash
 echo '{"repoRoot":"/work/app","runId":"pr42-3f2a9c1d7e04-1790000000"}' | node review-run-cli.js collect
@@ -95,5 +107,5 @@ echo '{"repoRoot":"/work/app","runId":"pr42-3f2a9c1d7e04-1790000000"}' | node re
 # {"ok":true,"status":"PENDING","waitingOn":["verifier-2"],"retryAfterMs":15000, ...}   -> wait, collect again
 # {"ok":true,"status":"ADJUDICATE","adjudicate":[{"id":"F3","why":"disputed"}], ...}
 echo '{"repoRoot":"/work/app","runId":"pr42-3f2a9c1d7e04-1790000000","adjudications":[{"id":"F3","disposition":"deferred","reason":"Nit in an opt-in path, bead filed"}]}' | node review-run-cli.js collect
-# {"ok":true,"status":"DONE","gate":{...},"reviewStatus":"REVIEW_PENDING", ...}
+# {"ok":true,"status":"DONE","gate":{...},"reviewStatus":{"status":"REVIEW_PENDING", ...}, ...}
 ```

@@ -5,7 +5,7 @@
  *
  * A script cannot dispatch model agents. It CAN do every mechanical step of a light review and hand the model exactly
  * two jobs: start the agents a manifest names, and call `collect` again. This module is those steps, over injected
- * `deps`; it has no `fs`, `child_process` or network of its own. `review-run-cli.js` supplies the real deps
+ * `deps`; it has no file system, process or network access of its own. `review-run-cli.js` supplies the real deps
  * (review-precheck-cli's `makeDeps` for `gh`/`git` reads, `prepareReview`, the result files, `writeState`, the tracer).
  *
  *   prepareRun(input, deps)   precheck -> prepare -> tier -> mode -> depth -> slices -> briefs -> DISPATCH (round review)
