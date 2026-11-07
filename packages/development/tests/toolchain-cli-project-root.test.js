@@ -16,7 +16,8 @@
  * without a user-level `trustedRepoAdapters` entry) must never run. The "trust model" block
  * proves that against shadow manifests that would drop a marker file if they ever ran, each
  * with a no-flag control showing the same manifest IS runnable (kata vsg4 review round 1; the
- * same round pins preflight health checks to the flagged tree).
+ * same round pins preflight health checks to the flagged tree and rejects the
+ * `--project-root=<path>` spelling).
  *
  * Fixture trees live under os.tmpdir() and are removed in `finally` blocks (the same convention
  * toolchain-cli.test.js uses); none of them holds work that needs to survive a reboot.
@@ -562,6 +563,59 @@ describe('toolchain-cli --project-root (kata vsg4)', () => {
         });
       }
       expect(fs.existsSync(path.join(tree, 'ran.marker'))).toBe(false);
+    });
+  });
+
+  // kata vsg4 review round 1, finding 3: `--project-root=<path>` used to fall through to the
+  // positionals and be silently ignored, so the subcommand ran against the cwd tree -- the
+  // wrong-tree outcome the flag exists to prevent.
+  describe('the --project-root=<path> spelling is rejected, never silently ignored', () => {
+    function expectEqualsFormRefused(res) {
+      const parsed = JSON.parse(res.stdout);
+      expect(res.status).toBe(1);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error.code).toBe('INVALID_ARG');
+      expect(parsed.error.message).toContain('--project-root <path>'); // names the supported form
+      return parsed;
+    }
+
+    test('resolve: INVALID_ARG and exit 1, for an existing repo and for a missing path alike', () => {
+      const cwdRepo = mkRepo(path.join(scratch, 'eq-resolve-cwd'));
+      const target = mkRepo(path.join(scratch, 'eq-resolve-target'));
+      for (const value of [target, path.join(scratch, 'does-not-exist')]) {
+        const parsed = expectEqualsFormRefused(cli(cwdRepo, ['resolve', `--project-root=${value}`, '--json']));
+        expect(parsed.data).toBeUndefined(); // nothing was resolved against the cwd
+      }
+    });
+
+    test('run: INVALID_ARG and exit 1, and the adapter runs in neither the cwd tree nor the named one', () => {
+      const cwdRepo = mkRepo(path.join(scratch, 'eq-run-cwd'));
+      const target = mkRepo(path.join(scratch, 'eq-run-target'));
+      installTracker(cwdRepo, 'beads-of-cwd');
+      installTracker(target, 'beads-of-target');
+
+      expectEqualsFormRefused(cli(cwdRepo, ['run', 'tracker.show', `--project-root=${target}`, '--json']));
+      const plain = cli(cwdRepo, ['run', 'tracker.show', `--project-root=${target}`]);
+      expect(plain.status).toBe(1);
+      expect(plain.stderr).toContain('INVALID_ARG');
+      expect(plain.stderr).toContain('--project-root <path>');
+
+      for (const tree of [cwdRepo, target]) {
+        expect(fs.existsSync(path.join(tree, 'ran.marker'))).toBe(false);
+        expect(fs.existsSync(path.join(tree, '.ensemble', 'state'))).toBe(false);
+      }
+    });
+
+    test('an empty value (--project-root=) is refused too, and trace stays non-failing but says so', () => {
+      const cwdRepo = mkRepo(path.join(scratch, 'eq-empty-cwd'));
+      expectEqualsFormRefused(cli(cwdRepo, ['resolve', '--project-root=', '--json']));
+
+      const start = cli(unrelated, ['trace', 'start', '--run-id', 'tr-eq', '--name', 'phase', `--project-root=${cwdRepo}`]);
+      expect(start.status).toBe(0);
+      expect(start.stderr).toContain('trace: unavailable');
+      expect(start.stderr).toContain('--project-root <path>');
+      expect(fs.existsSync(path.join(cwdRepo, '.ensemble'))).toBe(false);
+      expect(fs.readdirSync(unrelated)).toEqual([]);
     });
   });
 

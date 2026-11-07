@@ -128,6 +128,9 @@
  *   callers) > `process.cwd()`. There is deliberately NO environment-variable tier: the only
  *   related variable, `ENSEMBLE_PROJECT_ROOT`, is set only inside lifecycle-hook children and
  *   honouring it would silently change default behaviour. Without the flag nothing changes.
+ *   The value is the NEXT argument: the `--project-root=<path>` spelling is `INVALID_ARG` naming
+ *   the space form (it would otherwise fall through to the positionals, be ignored, and run
+ *   against the cwd tree -- the silent wrong-tree outcome this flag exists to prevent).
  *   The value must be an existing git repo root or linked-worktree root (`.git` dir or
  *   `gitdir:` file); it is realpath'd; anything else is `INVALID_ARG` and nothing runs (for
  *   `trace`, the usual non-failing `trace: unavailable (...)`).
@@ -1001,6 +1004,14 @@ function parseArgs(argv) {
       }
       projectRoot = value;
       i += 1;
+    } else if (token.startsWith('--project-root=')) {
+      // The value is the NEXT argument. Without this branch the `=` spelling would fall through
+      // to `positionals` below, be ignored, and run the subcommand against the cwd tree -- the
+      // silent wrong-tree outcome the flag exists to prevent -- so it is refused by name.
+      return invalidArg(
+        `--project-root=<path> is not supported (got ${JSON.stringify(token)}); pass the path as ` +
+          'the next argument: --project-root <path>'
+      );
     } else {
       positionals.push(token);
     }
