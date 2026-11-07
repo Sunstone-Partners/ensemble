@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const repo = require('../lib/pr-review-repo');
+const runtime = require('../lib/review-record-runtime');
 
 const roots = [];
 
@@ -41,7 +42,7 @@ function commit(dir, files, message) {
 const numbered = (n, replace = {}) =>
   Array.from({ length: n }, (_, i) => replace[i + 1] || `line ${i + 1}`).join('\n') + '\n';
 
-const git = repo.defaultGit();
+const git = runtime.defaultGit();
 let dir;
 let base;
 let p1;

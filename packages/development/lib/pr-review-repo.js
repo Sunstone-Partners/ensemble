@@ -6,8 +6,8 @@
  * Rules the next reader relies on:
  * - Every function takes an injected `git(args, { cwd }) -> { status, stdout, stderr }`
  *   (`status` is a number, 127 when git could not be spawned) and a `cwd`, so unit tests
- *   need no process. `defaultGit()` is the ONLY place in this module that touches
- *   `child_process`.
+ *   need no process. The real git is `defaultGit()` in `review-record-runtime.js`: no
+ *   `pr-review-*.js` module starts a process.
  * - Nothing here writes: no ref, no index, no file. Only plumbing that reads is run.
  * - A caller-supplied revision is never handed to git unless it is plain hex, so a ref
  *   name or an option-looking string can never reach the command line. Paths always come
@@ -21,26 +21,6 @@ const path = require('path');
 const { isObjectId } = require('./pr-review-scope');
 
 const HEX_REV = /^[0-9a-f]{7,64}$/i;
-
-/** The real git: no shell, no prompts, no optional locks (so it never writes even a stat cache). */
-function defaultGit() {
-  const { spawnSync } = require('child_process');
-  return (args, { cwd } = {}) => {
-    const result = spawnSync('git', args, {
-      cwd,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      shell: false,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' }
-    });
-    if (result.error) return { status: 127, stdout: '', stderr: String(result.error.message) };
-    return {
-      status: typeof result.status === 'number' ? result.status : 127,
-      stdout: result.stdout || '',
-      stderr: result.stderr || ''
-    };
-  };
-}
 
 const isHexRev = (value) => typeof value === 'string' && HEX_REV.test(value);
 
@@ -175,7 +155,6 @@ function changedOldLines(git, cwd, { from, to, file } = {}) {
 }
 
 module.exports = {
-  defaultGit,
   resolveCommit,
   isAncestor,
   commitOnPr,

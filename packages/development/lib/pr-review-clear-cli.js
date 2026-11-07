@@ -64,6 +64,7 @@ const { isObjectId } = require('./pr-review-scope');
 const { redact } = require('./pr-review-state');
 const { anchorOf, clearFixedFindings, fingerprintFinding, fingerprintPath } = require('./pr-review-ledger');
 const repo = require('./pr-review-repo');
+const runtime = require('./review-record-runtime');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -95,7 +96,7 @@ function reReported(entry, incoming) {
  */
 function deriveCleared(input) {
   const { cwd, baseSha, headSha, ledger } = input;
-  const git = input.git || repo.defaultGit();
+  const git = input.git || runtime.defaultGit();
   const incoming = input.incoming === undefined ? [] : input.incoming;
   const now = input.now || Date.now;
 
@@ -194,7 +195,7 @@ function main(io = {}) {
 
   return finish(
     deriveCleared({
-      git: io.git || repo.defaultGit(),
+      git: io.git || runtime.defaultGit(),
       cwd: resolved.projectRoot,
       baseSha,
       headSha,

@@ -534,25 +534,31 @@ describe('main(): the process entry point', () => {
   });
 
   test('repoRoot is required: it is never assumed to be the current directory, and nothing is read or written without it', () => {
-    // The test process runs inside a git repository: a default of the current directory would record there.
-    expect(fs.existsSync(path.join(process.cwd(), '.git'))).toBe(true);
-    const tracker = fakeTracker();
-    const git = jest.fn(() => {
-      throw new Error('git must not be run without a repoRoot');
-    });
-    const readPr = jest.fn(hostSays());
-    for (const repoRoot of [undefined, null, '', '   ', 7, {}]) {
-      const body = { ...mainPayload([finding()]) };
-      if (repoRoot === undefined) delete body.repoRoot;
-      else body.repoRoot = repoRoot;
-      const { code, out } = run(body, { deps: tracker, git, readPr });
-      expect(code).toBe(1);
-      expect(out).toMatchObject({ ok: false, status: 'FAILED', recorded: false });
-      expect(out.reason).toContain("'repoRoot' is required");
+    // Run from inside a git repository, wherever jest was started from: a default of the current directory would record there.
+    const previous = process.cwd();
+    process.chdir(fx.worktree);
+    try {
+      expect(fs.existsSync(path.join(process.cwd(), '.git'))).toBe(true);
+      const tracker = fakeTracker();
+      const git = jest.fn(() => {
+        throw new Error('git must not be run without a repoRoot');
+      });
+      const readPr = jest.fn(hostSays());
+      for (const repoRoot of [undefined, null, '', '   ', 7, {}]) {
+        const body = { ...mainPayload([finding()]) };
+        if (repoRoot === undefined) delete body.repoRoot;
+        else body.repoRoot = repoRoot;
+        const { code, out } = run(body, { deps: tracker, git, readPr });
+        expect(code).toBe(1);
+        expect(out).toMatchObject({ ok: false, status: 'FAILED', recorded: false });
+        expect(out.reason).toContain("'repoRoot' is required");
+      }
+      expect(tracker.calls).toEqual([]);
+      expect(git).not.toHaveBeenCalled();
+      expect(readPr).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(previous);
     }
-    expect(tracker.calls).toEqual([]);
-    expect(git).not.toHaveBeenCalled();
-    expect(readPr).not.toHaveBeenCalled();
   });
 
   test('baseSha is required and must be a full commit id: the tracker choice is read from it', () => {
@@ -687,7 +693,7 @@ describe('what the head under review cannot control: the recorder refuses, by na
   });
 
   test('makeReadPr asks gh for the fields the refusal needs and reads its answer strictly', () => {
-    const { makeReadPr } = require('../lib/pr-review-beads-cli');
+    const { makeReadPr } = require('../lib/review-record-runtime');
     const calls = [];
     const reply = (stdout, status = 0, stderr = '') => (command, argv) => (calls.push([command, argv]), { status, stdout, stderr });
     const ok = makeReadPr(reply(JSON.stringify({ isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' })))({ repo: 'Acme/Widgets', prNumber: 7 });

@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { main, deriveCleared } = require('../lib/pr-review-clear-cli');
-const { defaultGit } = require('../lib/pr-review-repo');
+const { defaultGit } = require('../lib/review-record-runtime');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-clear-cli.js');
 const roots = [];
