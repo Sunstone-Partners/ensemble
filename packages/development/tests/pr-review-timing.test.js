@@ -82,6 +82,11 @@ describe('the recorded #234 review (AC1, AC2, AC3)', () => {
     expect(timing.agents.byRole.classifier.slowest.ms).toBeLessThan(5000);
   });
 
+  test('the per-stage table reports the slowest span of each stage over all its spans (51 verifiers, 6 reviewers)', () => {
+    expect(timing.stages[STAGES.verifier]).toEqual({ count: 51, ms: 79441, missing: false });
+    expect(timing.stages[STAGES.reviewer]).toEqual({ count: 6, ms: 128928, missing: false });
+  });
+
   test('AC2: every agent in the fixture was closed at session_exit, 7 minutes after its last message, and is measured to the last message', () => {
     const lingers = trace.spans
       .filter((s) => s.name.startsWith('review.') && s.kind === 'agent')
@@ -99,6 +104,14 @@ describe('the recorded #234 review (AC1, AC2, AC3)', () => {
     );
     expect(minutes(lingering.orchestratorOnly.ms)).toBeLessThan(4);
     expect(minutes(timing.orchestratorOnly.ms)).toBeGreaterThan(13);
+  });
+
+  test('AC2: the idle linger that no figure counts is reported (61 agents, 7 minutes each) and is zero when no span was cut short', () => {
+    expect(Math.round(timing.agents.lingerMs / MIN)).toBe(427);
+    expect(formatReviewTiming(timing)).toContain("idle linger after the agents' last messages, not counted: 427m00s");
+    const closedAtLastMessage = computeReviewTiming([root(0, 100), agent('reviewer', 0, 50)]);
+    expect(closedAtLastMessage.agents.lingerMs).toBe(0);
+    expect(formatReviewTiming(closedAtLastMessage)).not.toContain('idle linger');
   });
 
   test('AC3: stages the old session never recorded are MISSING, never zero', () => {
@@ -300,6 +313,44 @@ describe('span lengths come from the recorder, never from a stepped wall clock (
     expect(criticalPath.reason).toContain('wall clock stepped');
     expect(criticalPath.rounds[0].steps.map((s) => s.ms)).toEqual([60000, 20000, 1000]);
   });
+
+  test('a step undone before the window ends is still seen through the span it crossed (the window alone shows nothing)', () => {
+    const { tracer, advance, read } = recorder('compensated');
+    const rootId = tracer.startSpan(STAGES.root);
+    advance(5);
+    const reviewer = tracer.startSpan(STAGES.reviewer, { kind: 'agent', parentId: rootId, attrs: { agent: 'RevA' } });
+    advance(90, 30); // +60 s on the wall clock only, inside the reviewer
+    tracer.endSpan(reviewer);
+    advance(-60, 0); // ...undone in a gap, so the window's own two lengths agree again
+    advance(5);
+    const verifier = tracer.startSpan(STAGES.verifier, { kind: 'agent', parentId: rootId, attrs: { agent: 'VerA' } });
+    advance(20);
+    tracer.endSpan(verifier);
+    const verdict = tracer.startSpan(STAGES.verdict, { parentId: rootId });
+    advance(1);
+    tracer.endSpan(verdict);
+    tracer.endSpan(rootId);
+    const trace = read();
+    const [window] = trace.spans;
+    expect(window.duration_ms).toBe(61000);
+    expect(Date.parse(window.end_ts) - Date.parse(window.start_ts)).toBe(61000); // the root alone shows no step
+    const t = computeReviewTiming(trace);
+    expect(t.wall.ms).toBe(61000);
+    for (const figure of [t.activeMs, t.orchestratorOnly, t.beforeFirstDispatch, t.criticalPath]) {
+      expect(figure).toMatchObject({ ms: null, missing: true });
+      expect(figure.reason).toContain('review.reviewer RevA lasted 1m30s on the wall clock but 30.0s by the recorder');
+    }
+  });
+
+  test('a window that ends at last_message_ts on a stepped clock has no length: wall is MISSING, the one exception to lengths still being reported', () => {
+    const stepped = { ...root(0, 700, { last_message_ts: at(650) }), duration_ms: 100000 };
+    const t = computeReviewTiming([stepped, agent('reviewer', 10, 40)]);
+    expect(t.wall).toMatchObject({ ms: null, missing: true });
+    expect(t.wall.reason).toContain('cannot be placed');
+    // The same root without last_message_ts keeps the recorder's length.
+    const plain = computeReviewTiming([{ ...root(0, 700), duration_ms: 100000 }, agent('reviewer', 10, 40)]);
+    expect(plain.wall.ms).toBe(100000);
+  });
 });
 
 describe('a span that ends before it starts is unusable, never a negative length (review round 1)', () => {
@@ -311,6 +362,14 @@ describe('a span that ends before it starts is unusable, never a negative length
     ['a recorded duration that looks fine', { duration_ms: 30000 }],
   ])('intervalOf refuses a span with %s, naming the reason', (_, patch) => {
     expect(intervalOf({ ...agent('reviewer', 50, 20), ...patch })).toEqual({ ok: false, reason: 'ends before it starts' });
+  });
+
+  test.each([
+    ['a missing end_ts on a span whose status is ok', { end_ts: null, status: 'ok' }],
+    ['an end_ts that is not a time', { end_ts: 'later', status: 'ok' }],
+  ])('%s is an unparseable end_ts, not an unfinished span', (_, patch) => {
+    expect(intervalOf({ ...agent('reviewer', 0, 10), ...patch })).toEqual({ ok: false, reason: 'unparseable end_ts' });
+    expect(intervalOf({ ...agent('reviewer', 0, null) })).toEqual({ ok: false, reason: 'unfinished' });
   });
 
   test('an agent that ends before it starts is reported unusable: no negative step, an upper bound for orchestrator-only time', () => {
@@ -378,6 +437,43 @@ describe('orchestrator-only time', () => {
     expect(t.activeMs).toMatchObject({ ms: null, missing: true });
     expect(t.beforeFirstDispatch).toMatchObject({ ms: null, missing: true });
     expect(t.wall.ms).toBe(600000);
+  });
+
+  test('before first dispatch: an unfinished agent that was dispatched first still counts as the first dispatch', () => {
+    const t = computeReviewTiming([root(0, 100), agent('verifier', 10, null), agent('reviewer', 40, 60)]);
+    expect(t.beforeFirstDispatch).toEqual({ ms: 10000, missing: false });
+  });
+
+  test('before first dispatch: a dispatch after the end of the window is MISSING, not a figure larger than the window', () => {
+    const t = computeReviewTiming([root(0, 100), agent('reviewer', 150, 160)]);
+    expect(t.beforeFirstDispatch).toMatchObject({ ms: null, missing: true });
+    expect(t.beforeFirstDispatch.reason).toContain('after the end of the orchestrator window');
+    // A dispatch exactly at the end of the window is still inside it.
+    expect(computeReviewTiming([root(0, 100), agent('reviewer', 100, 110)]).beforeFirstDispatch).toEqual({ ms: 100000, missing: false });
+  });
+
+  test.each([
+    ['negative', -1],
+    ['beyond the latest Date', 1e16],
+  ])('a reviewer whose duration_ms is %s is unusable for that reason, not blamed on the wall clock', (_, value) => {
+    const t = computeReviewTiming([root(0, 100), { ...agent('reviewer', 10, 40), duration_ms: value }]);
+    expect(t.agents.unusable).toEqual([{ stage: STAGES.reviewer, name: expect.any(String), reason: expect.stringContaining('duration_ms') }]);
+    expect(t.orchestratorOnly).toMatchObject({ missing: false, bound: 'upper', unusableAgents: 1 });
+  });
+
+  test('a window whose duration_ms would end it after the latest Date is MISSING and nothing throws', () => {
+    const spans = [{ ...root(0, 1), duration_ms: 1e16 }, agent('reviewer', 0, 0.5)];
+    const t = computeReviewTiming(spans);
+    expect(t.wall).toEqual({ ms: null, missing: true, reason: "the 'review' span is unusable: duration_ms puts the end of the span out of range" });
+    expect(t.orchestratorOnly).toMatchObject({ ms: null, missing: true });
+    expect(() => formatReviewTiming(t)).not.toThrow();
+  });
+
+  test('the per-stage table reports the slowest span of a stage, with its count and any unusable span as a bound', () => {
+    const t = computeReviewTiming([root(0, 500), agent('reviewer', 0, 100), agent('reviewer', 0, 130), agent('reviewer', 10, null)]);
+    expect(t.stages[STAGES.reviewer]).toEqual({ count: 3, ms: 130000, missing: false, lowerBound: true, unusable: 1 });
+    const two = computeReviewTiming([root(0, 500), agent('verifier', 0, 20), agent('verifier', 0, 60)]);
+    expect(two.stages[STAGES.verifier]).toEqual({ count: 2, ms: 60000, missing: false });
   });
 });
 
@@ -591,17 +687,31 @@ describe('the critical path never exceeds the window and counts the verdict once
     expect(t.criticalPath).toMatchObject({ ms: 270000, missing: false });
   });
 
-  test('a step that overruns the window is cut to it, so the critical path cannot exceed the window', () => {
+  test('a step that overruns the window is cut to it and says so: the critical path cannot exceed the window', () => {
     const t = computeReviewTiming([root(0, 400), agent('reviewer', 0, 300), agent('verifier', 300, 390), verdict(390, 500)]);
-    expect(t.criticalPath.rounds[0].steps[2]).toMatchObject({ stage: 'verdict', ms: 10000 });
-    expect(t.criticalPath.ms).toBe(400000);
+    expect(t.criticalPath.rounds[0].steps[2]).toEqual({ stage: 'verdict', ms: 10000, missing: false, lowerBound: true, clippedMs: 100000 });
+    expect(t.criticalPath).toMatchObject({ ms: 400000, lowerBound: true });
     expect(t.criticalPath.ms).toBeLessThanOrEqual(t.wall.ms);
+    expect(formatReviewTiming(t)).toContain('verdict 10.0s [lower bound] [cut to the window by 1m40s]');
   });
 
-  test('a step that begins before the window is cut to it', () => {
+  test('a step that begins before the window is cut to it and says so', () => {
     const { criticalPath } = computeReviewTiming([root(100, 400), agent('reviewer', 50, 200), agent('verifier', 200, 300), verdict(300, 310)]);
-    expect(criticalPath.rounds[0].steps[0]).toMatchObject({ stage: 'reviewer', ms: 100000 }); // 100..200, not 50..200
-    expect(criticalPath.ms).toBe(210000);
+    expect(criticalPath.rounds[0].steps[0]).toMatchObject({ stage: 'reviewer', ms: 100000, clippedMs: 50000, lowerBound: true }); // 100..200, not 50..200
+    expect(criticalPath).toMatchObject({ ms: 210000, lowerBound: true });
+  });
+
+  test('a span wholly outside the window changes nothing: an exact step stays exact', () => {
+    const { criticalPath } = computeReviewTiming([...sequential[0][1], agent('reviewer', 300, 400)]);
+    expect(criticalPath).toMatchObject({ ms: 150000, missing: false });
+    expect(criticalPath.lowerBound).toBeUndefined();
+    expect(criticalPath.rounds[0].steps[0].lowerBound).toBeUndefined();
+    expect(criticalPath.rounds[0].steps[0].unusable).toBeUndefined();
+  });
+
+  test('an unfinished span still makes the step a lower bound, even though a span outside the window does not', () => {
+    const { criticalPath } = computeReviewTiming([...sequential[0][1], agent('reviewer', 20, null)]);
+    expect(criticalPath.rounds[0].steps[0]).toMatchObject({ ms: 100000, lowerBound: true, unusable: 1 });
   });
 
   test('a step wholly outside the window is unusable: the step and the total are MISSING', () => {
@@ -618,10 +728,40 @@ describe('the critical path never exceeds the window and counts the verdict once
     expect(outside.criticalPath.rounds[0].steps[2]).toMatchObject({ stage: 'verdict', missing: true });
   });
 
-  test('without an orchestrator window there is nothing to cut to: the steps are summed as recorded', () => {
-    const t = computeReviewTiming([agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)]);
+  test.each([
+    ['no review span', [agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)], "no 'review' span recorded"],
+    ['an unfinished review span', [root(0, null), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)], "the 'review' span is unusable: unfinished"],
+    ['two review spans', [root(0, 200), root(0, 300), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)], "2 'review' spans recorded"],
+  ])('%s: the critical path is MISSING with the window\'s reason, its steps still measured', (_, spans, reason) => {
+    const t = computeReviewTiming(spans);
     expect(t.wall.missing).toBe(true);
-    expect(t.criticalPath).toMatchObject({ ms: 160000, missing: false });
+    expect(t.criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(t.criticalPath.reason).toContain(reason);
+    expect(t.criticalPath.rounds[0].steps.map((s) => s.ms)).toEqual([100000, 50000, 10000]);
+  });
+
+  test.each([
+    [
+      'one overlapping the verifier',
+      [root(0, 200), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(120, 125), verdict(150, 160)],
+    ],
+    [
+      'two overlapping each other',
+      [root(0, 200), agent('reviewer', 0, 50), agent('verifier', 50, 80), verdict(80, 90), verdict(85, 95)],
+    ],
+  ])('a round with two verdict spans, %s: the critical path is MISSING (which one ends the chain is not known)', (_, spans) => {
+    const { criticalPath } = computeReviewTiming(spans);
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.reason).toContain('2 verdict spans recorded in the round');
+  });
+
+  test('a second verdict that is unfinished, or wholly outside the window, is not a second verdict', () => {
+    const base = [root(0, 200), agent('reviewer', 0, 100), agent('verifier', 100, 150), verdict(150, 160)];
+    const unfinished = computeReviewTiming([...base, verdict(170, null)]).criticalPath;
+    expect(unfinished).toMatchObject({ ms: 160000, missing: false, lowerBound: true });
+    const outside = computeReviewTiming([...base, verdict(300, 310)]).criticalPath;
+    expect(outside).toMatchObject({ ms: 160000, missing: false });
+    expect(outside.lowerBound).toBeUndefined();
   });
 
   test('a review with no verifier span says so and names the Quick tier; an unusable verifier is not blamed on it', () => {

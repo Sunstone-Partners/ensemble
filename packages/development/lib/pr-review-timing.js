@@ -41,12 +41,18 @@
  * step is not counted; `attrs.clock_anomaly` marks a span whose clocks disagreed beyond repair). A span's LENGTH
  * is therefore its `duration_ms`, never `end_ts - start_ts`, and a span flagged `clock_anomaly` has no usable
  * length: it is UNUSABLE, with that reason. A span with no `duration_ms` at all (one `readTrace` did not produce)
- * is measured by its timestamps. Timestamps still PLACE spans against each other (who overlapped whom), but only
- * while they agree with the recorder: when a review span's wall-clock length differs from its `duration_ms` by
- * more than CLOCK_SKEW_TOLERANCE_MS, the wall clock stepped inside the window (a system sleep, a clock change),
- * and every figure that needs positions (agents active, orchestrator-only, before first dispatch, the critical
- * path) is MISSING with that reason while the lengths (window, per stage) are still reported. Timestamps are
- * ISO-8601 with a zone, as the recorder writes them; anything else is unparseable.
+ * is measured by its timestamps. The one exception is a span with `last_message_ts`: the last message is known
+ * only as a wall-clock time, so the span ends there and its length is a wall-clock difference, trusted only while
+ * the span's two clocks agree (below); past that the span is UNUSABLE ('cannot be placed'), and for the window
+ * `wall` is then MISSING. Timestamps still PLACE spans against each other (who overlapped whom), but only while
+ * they agree with the recorder: when a review span's wall-clock length differs from its `duration_ms` by more than
+ * CLOCK_SKEW_TOLERANCE_MS, the wall clock stepped inside the window (a system sleep, a clock change), and every
+ * figure that needs positions (agents active, orchestrator-only, before first dispatch, the critical path) is
+ * MISSING with that reason while the lengths (window, per stage) are still reported. HONEST LIMIT: a step is seen
+ * only through a span that was open across it. `readTrace` keeps no monotonic start, so a step undone before the
+ * window ends, with no span open at either moment (a forward and a backward step in the gaps), leaves every span's
+ * two lengths in agreement and is not detected. Timestamps are ISO-8601 with a zone, as the recorder writes them;
+ * anything else is unparseable.
  *
  * FAIL CLOSED (pattern: local-ci-timing.js). A figure this module cannot compute from what was
  * recorded is `{ ms: null, missing: true, reason }`, never 0 and never a guess: a stage nobody
@@ -58,9 +64,11 @@
  * critical path counts the verdict, so orchestrator time leaves it out: no minute is in both, and critical path
  * plus orchestrator-only never exceeds the window.
  * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval length cut to the
- * orchestrator window, summed over the rounds. The total is missing when ANY step is missing, and when the steps
- * overlap or run out of order (the reviewer must end before the verifier starts, the verifier before the verdict,
- * each round before the next): overlapping steps would count the same minutes twice, so they are never summed.
+ * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`), summed over the rounds. It needs a
+ * usable orchestrator window. The total is missing when ANY step is missing, when a round has more than one verdict
+ * span (which one ends the chain is not known), and when the steps overlap or run out of order (the reviewer must end
+ * before the verifier starts, the verifier before the verdict, each round before the next): overlapping steps would
+ * count the same minutes twice, so they are never summed.
  *
  * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
  * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
@@ -95,6 +103,8 @@ const isText = (value) => typeof value === 'string' && value.trim() !== '';
 /** How far a span's wall-clock length may differ from the recorder's duration before the wall clock is taken to have stepped (run-trace.js allows the same 5 s between its two clocks). */
 const CLOCK_SKEW_TOLERANCE_MS = 5000;
 const CLOCK_ANOMALY_REASON = 'the recorder flagged a clock anomaly: its wall-clock and monotonic readings disagree over this span';
+/** The latest time a Date can hold: a span that would end after it has no usable length. */
+const MAX_TIME_MS = 8.64e15;
 
 /** ISO-8601 with a zone, what the recorder writes: `Date.parse` alone also reads local-time and free-form text. */
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -114,17 +124,18 @@ function known(ms, extra) {
 /**
  * The usable interval of a materialized span, or why there is none.
  * It starts at `start_ts` and is as long as the recorder's `duration_ms` (see CLOCKS in the header), or, for a span
- * that carries none, as long as its timestamps say. A span flagged `clock_anomaly`, or whose `end_ts` precedes its
- * `start_ts`, is unusable. End = `attrs.last_message_ts` when the recorder supplied one (see the header), else the
- * start plus that length.
+ * that carries none, as long as its timestamps say. A span flagged `clock_anomaly`, whose `end_ts` precedes its
+ * `start_ts`, or whose length would end it after the latest time a Date can hold, is unusable. End =
+ * `attrs.last_message_ts` when the recorder supplied one (see the header), else the start plus that length.
  *
  * @returns {{ok: true, start: number, end: number, lingerMs: number}|{ok: false, reason: string}}
  */
 function intervalOf(span) {
   const start = parseMs(span.start_ts);
   if (!Number.isFinite(start)) return { ok: false, reason: 'unparseable start_ts' };
-  const wallEnd = span.status === 'unfinished' ? NaN : parseMs(span.end_ts);
-  if (!Number.isFinite(wallEnd)) return { ok: false, reason: 'unfinished' };
+  if (span.status === 'unfinished') return { ok: false, reason: 'unfinished' };
+  const wallEnd = parseMs(span.end_ts);
+  if (!Number.isFinite(wallEnd)) return { ok: false, reason: 'unparseable end_ts' };
   const attrs = isObject(span.attrs) ? span.attrs : {};
   if (attrs.clock_anomaly) return { ok: false, reason: CLOCK_ANOMALY_REASON };
   if (wallEnd < start) return { ok: false, reason: 'ends before it starts' };
@@ -134,6 +145,7 @@ function intervalOf(span) {
     return { ok: false, reason: 'duration_ms is not a non-negative number' };
   }
   const ms = hasDuration ? recorded : wallEnd - start;
+  if (start + ms > MAX_TIME_MS) return { ok: false, reason: 'duration_ms puts the end of the span out of range' };
   if (attrs.last_message_ts === undefined || attrs.last_message_ts === null) {
     return { ok: true, start, end: start + ms, lingerMs: 0 };
   }
@@ -156,9 +168,12 @@ function intervalOf(span) {
 function timelineOf(spans) {
   for (const span of spans) {
     if (span.name !== STAGES.root && !STAGE_NAMES.includes(span.name)) continue;
-    const wallMs = parseMs(span.end_ts) - parseMs(span.start_ts);
-    if (!Number.isFinite(wallMs) || !Number.isFinite(span.duration_ms)) continue;
-    if (Math.abs(wallMs - span.duration_ms) > CLOCK_SKEW_TOLERANCE_MS) {
+    const start = parseMs(span.start_ts);
+    const wallMs = parseMs(span.end_ts) - start;
+    const recorded = span.duration_ms;
+    // A span with no usable recorded duration is reported unusable by intervalOf; it is not blamed on the clock.
+    if (!Number.isFinite(wallMs) || !Number.isFinite(recorded) || recorded < 0 || start + recorded > MAX_TIME_MS) continue;
+    if (Math.abs(wallMs - recorded) > CLOCK_SKEW_TOLERANCE_MS) {
       const who = AGENT_NAMES.has(span.name) ? `${span.name} ${agentLabel(span)}` : span.name;
       return {
         ok: false,
@@ -227,7 +242,9 @@ function clipTo(interval, window) {
 
 /**
  * Slowest usable span of `spans` as a step figure, with the interval it occupies (cut to `window` when one is given);
- * a missing step when none was recorded or none is usable (a span wholly outside the window is not usable).
+ * a missing step when none was recorded or none is usable. A span that is unusable (unfinished, inconsistent) makes the
+ * step a lower bound; so does a cut (`clippedMs`: how much of the winning span lay outside the window). A span wholly
+ * outside the window is left out: it cannot change a figure measured inside it.
  */
 function slowestStep(stage, spans, window = null) {
   if (spans.length === 0) return { step: { stage, ...missing(`no ${stage} span recorded`) }, interval: null };
@@ -235,13 +252,14 @@ function slowestStep(stage, spans, window = null) {
   let unusable = 0;
   for (const span of spans) {
     const found = intervalOf(span);
-    const interval = found.ok ? clipTo(found, window) : null;
-    if (interval === null) {
+    if (!found.ok) {
       unusable += 1;
       continue;
     }
+    const interval = clipTo(found, window);
+    if (interval === null) continue;
     const ms = interval.end - interval.start;
-    if (best === null || ms > best.ms) best = { ms, span, interval };
+    if (best === null || ms > best.ms) best = { ms, span, interval, cutMs: found.end - found.start - ms };
   }
   if (best === null) {
     const reason = `every ${stage} span is unusable (unfinished, inconsistent or outside the window)`;
@@ -249,7 +267,9 @@ function slowestStep(stage, spans, window = null) {
   }
   const extra = {
     ...(best.span.name !== STAGES.verdict ? { name: agentLabel(best.span) } : {}),
-    ...(unusable > 0 ? { lowerBound: true, unusable } : {}),
+    ...(unusable > 0 ? { unusable } : {}),
+    ...(unusable > 0 || best.cutMs > 0 ? { lowerBound: true } : {}),
+    ...(best.cutMs > 0 ? { clippedMs: best.cutMs } : {}),
   };
   return { step: { stage, ...known(best.ms, extra) }, interval: best.interval };
 }
@@ -278,12 +298,13 @@ function gapReason(gaps) {
 
 /**
  * The critical path: per round the slowest reviewer, then the slowest verifier, then the verdict, summed over the rounds.
- * Each step is cut to the orchestrator window; the steps must follow one another (a step that starts before the one
- * before it ends, or a timeline the wall clock stepped through, has no total: summing overlapping steps would count
- * the same minutes twice and could exceed the window); the verdict is counted here once (orchestrator-only time
- * leaves it out).
+ * It needs a usable orchestrator window, and each step is cut to it (a cut is flagged on the step). The steps must follow
+ * one another: a step that starts before the one before it ends, a round with two verdict spans (which one ends the
+ * chain is not known) or a timeline the wall clock stepped through has no total, because summing overlapping steps
+ * would count the same minutes twice and could exceed the window. The verdict is counted here once (orchestrator-only
+ * time leaves it out).
  */
-function criticalPath(spans, warnings, { window, timeline }) {
+function criticalPath(spans, warnings, { window, windowReason, timeline }) {
   const byStage = Object.fromEntries(CHAIN.map((stage) => [stage, spans.filter((s) => s.name === STAGES[stage])]));
   const all = CHAIN.flatMap((stage) => byStage[stage]);
   if (all.length === 0) {
@@ -303,6 +324,14 @@ function criticalPath(spans, warnings, { window, timeline }) {
     const steps = picks.map((p) => p.step);
     const gaps = steps.filter((s) => s.missing);
     if (gaps.length > 0) return { round, steps, ...missing(gapReason(gaps)) };
+    const verdicts = byStage.verdict
+      .filter((s) => roundOf(s) === round)
+      .map(intervalOf)
+      .filter((found) => found.ok && clipTo(found, cutTo) !== null).length;
+    if (verdicts > 1) {
+      return { round, steps, ...missing(`${verdicts} verdict spans recorded in the round; which one ends the chain is not known`) };
+    }
+    if (window === null) return { round, steps, ...missing(windowReason) };
     if (!timeline.ok) return { round, steps, ...missing(timeline.reason) };
     const chain = picks.map((p, i) => ({ label: CHAIN[i], interval: p.interval }));
     const overlap = firstOverlap(chain);
@@ -404,6 +433,8 @@ function computeReviewTiming(input) {
   }
   const agents = {
     count: agentSpans.length,
+    // The idle time after each usable agent's last message that no figure counts (correction C01).
+    lingerMs: usable.reduce((n, u) => n + u.lingerMs, 0),
     unusable: unusable.map((u) => ({ stage: u.span.name, name: agentLabel(u.span), reason: u.reason })),
     byRole,
   };
@@ -448,9 +479,13 @@ function computeReviewTiming(input) {
       ...bound,
     });
     const firstStart = Math.min(...agentSpans.map((s) => parseMs(s.start_ts)).filter(Number.isFinite));
-    beforeFirstDispatch = Number.isFinite(firstStart)
-      ? known(Math.max(0, firstStart - window.start))
-      : missing('no dispatched-agent span has a readable start_ts');
+    if (!Number.isFinite(firstStart)) {
+      beforeFirstDispatch = missing('no dispatched-agent span has a readable start_ts');
+    } else if (firstStart > window.end) {
+      beforeFirstDispatch = missing('the first dispatch starts after the end of the orchestrator window');
+    } else {
+      beforeFirstDispatch = known(Math.max(0, firstStart - window.start));
+    }
   }
 
   return {
@@ -463,7 +498,7 @@ function computeReviewTiming(input) {
     activeMs,
     orchestratorOnly,
     beforeFirstDispatch,
-    criticalPath: criticalPath(spans, warnings, { window, timeline }),
+    criticalPath: criticalPath(spans, warnings, { window, windowReason: wall.reason, timeline }),
     stages: stageTable(spans),
     warnings,
   };
@@ -528,12 +563,13 @@ function formatReviewTiming(timing) {
   out.push(`  critical path:               ${fmtFigure(timing.criticalPath)}`);
   for (const round of timing.criticalPath.rounds) {
     const steps = round.steps
-      .map((s) => `${s.stage} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}`}`)
+      .map((s) => `${s.stage} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}${s.clippedMs ? ` [cut to the window by ${fmtMs(s.clippedMs)}]` : ''}`}`)
       .join(' -> ');
     const why = round.missing && round.steps.every((s) => !s.missing) ? `  [MISSING: ${round.reason}]` : '';
     out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}`);
   }
   out.push(`  dispatched agents: ${timing.agents.count} (${timing.agents.unusable.length} unusable)`);
+  if (timing.agents.lingerMs > 0) out.push(`  idle linger after the agents' last messages, not counted: ${fmtMs(timing.agents.lingerMs)}`);
   out.push('  slowest per stage:');
   for (const name of STAGE_NAMES) {
     const row = timing.stages[name];
