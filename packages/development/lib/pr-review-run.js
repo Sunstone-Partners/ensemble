@@ -296,6 +296,21 @@ async function prepareRun(input, deps) {
   const { headSha } = first;
   const baseRefName = first.pr.baseRefName;
 
+  // The baseline runs the head's own test code on this machine and the reviewers read (and may run) the head's snapshot,
+  // so a head from outside this repository is not reviewed here: the precheck refuses a fork for its gate the same way.
+  // A head whose repository GitHub did not state is not "this repository" either. Refused by name, before anything is
+  // fetched, prepared, posted or written.
+  if (first.pr.isCrossRepository !== false) {
+    const fork = first.pr.isCrossRepository === true;
+    return failure('RUN_FAILED', {
+      reason: fork ? 'cross-repository-head' : 'head-repository-unknown',
+      error: fork
+        ? 'the head of this pull request is on a fork, and the runner would run the head\'s own test code on this machine and hand its snapshot to agents, so it does not review a head from outside this repository; read the diff by hand'
+        : 'GitHub did not say whether the head of this pull request is on this repository, and the runner runs the head\'s own test code on this machine, so it does not review it',
+      headSha,
+    });
+  }
+
   const runId = input.runId !== undefined ? input.runId : `pr${input.pr}-${headSha.slice(0, 12)}-${Math.floor(startedAt / 1000)}`;
   if (!isValidRunId(runId)) return failure('RUN_FAILED', { reason: 'invalid-runId', error: `runId ${JSON.stringify(runId)} is not file-name safe (letters, digits, "_", "-"; no dots)` });
   const traceRunId = input.traceRunId !== undefined ? input.traceRunId : runId;

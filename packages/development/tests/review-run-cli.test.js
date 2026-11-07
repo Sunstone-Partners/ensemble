@@ -35,7 +35,11 @@ const state = JSON.parse(fs.readFileSync(process.env.STUB_GH_STATE, 'utf8'));
 const out = (value) => { process.stdout.write(JSON.stringify(value)); process.exit(0); };
 const fail = (stderr, stdout) => { process.stderr.write(stderr); if (stdout) process.stdout.write(stdout); process.exit(1); };
 const joined = args.join(' ');
-if (args[0] === 'pr' && args[1] === 'view') out({ headRefOid: state.head, baseRefName: 'main', state: state.prState || 'OPEN', body: state.body, author: { login: 'alice' }, isCrossRepository: false });
+if (args[0] === 'pr' && args[1] === 'view') {
+  const pr = { headRefOid: state.head, baseRefName: 'main', state: state.prState || 'OPEN', body: state.body, author: { login: 'alice' }, isCrossRepository: state.isCrossRepository === undefined ? false : state.isCrossRepository };
+  if (state.isCrossRepository === 'omit') delete pr.isCrossRepository;
+  out(pr);
+}
 if (args[0] !== 'api') fail('unexpected gh call: ' + joined);
 if (args[1] === 'user') out({ login: 'maintainer' });
 if (/\\/pulls\\/\\d+\\/reviews/.test(joined)) out([state.reviews || []]);
@@ -88,9 +92,16 @@ function buildFixture() {
   write(work, 'src/b.js', 'module.exports = () => 1;\n');
   git(work, 'add', '.');
   git(work, 'commit', '-q', '-m', 'feature');
+  // a head whose own test file writes a marker outside the repository: proof that its code ran (or did not)
+  const marker = path.join(root, 'MARKER');
+  git(work, 'checkout', '-q', '-b', 'exec');
+  write(work, 'src/b.test.js', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'the head code ran');\n`);
+  git(work, 'add', '.');
+  git(work, 'commit', '-q', '-m', 'a test that records that it ran');
+  git(work, 'checkout', '-q', 'feature');
   // the review state is gitignored in real repositories; the fixture does the same so `git status` can be exact
   fs.appendFileSync(path.join(work, '.git', 'info', 'exclude'), '.ensemble/\n');
-  return { root, origin, work, bin, head: git(work, 'rev-parse', 'feature'), high: git(work, 'rev-parse', 'high'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
+  return { root, origin, work, bin, marker, head: git(work, 'rev-parse', 'feature'), high: git(work, 'rev-parse', 'high'), exec: git(work, 'rev-parse', 'exec'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
 }
 
 beforeAll(() => {
@@ -314,6 +325,38 @@ describe('the real CLI process on a real git fixture', () => {
     expect(r.stdout).not.toContain(secret);
     expect(fs.readFileSync(path.join(runDir('secret'), 'final.json'), 'utf8')).not.toContain(secret);
     expect(fs.readFileSync(path.join(runDir('secret'), 'run.json'), 'utf8')).not.toContain(secret);
+  });
+});
+
+describe('a head from outside this repository is never run (review of PR 264, P0)', () => {
+  // `node` runs each related test file as a script: the head's own code, exactly what the baseline executes.
+  const withNode = { testCommand: [process.execPath] };
+  beforeEach(() => fs.rmSync(fx.marker, { force: true }));
+
+  test('control: a same-repository head is prepared and its baseline runs the head\'s own test code', () => {
+    setGh({ head: fx.exec });
+    const r = prep({ runId: 'exec-control', ...withNode });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatchObject({ ok: true, status: 'DISPATCH' });
+    expect(fs.readFileSync(fx.marker, 'utf8')).toBe('the head code ran');
+  });
+
+  test.each([
+    ['a fork head', true, 'cross-repository-head'],
+    ['a head whose repository GitHub did not state', 'omit', 'head-repository-unknown'],
+  ])('%s is refused by name: its code never runs, nothing is fetched, prepared or posted', (_label, isCrossRepository, reason) => {
+    setGh({ head: fx.exec, isCrossRepository });
+    const runId = `refused-${reason}`;
+    const r = prep({ runId, ...withNode });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason, headSha: fx.exec });
+    expect(fs.existsSync(fx.marker)).toBe(false);
+    expect(fs.existsSync(runDir(runId))).toBe(false);
+    expect(fs.existsSync(path.join(fx.work, '.ensemble', 'pr-review', 'prepare', runId))).toBe(false);
+    // the one read of the PR is the only host call: no precheck comment, no gate, no reviews read
+    const calls = ghLog();
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((a) => a[0] === 'pr' && a[1] === 'view')).toBe(true);
   });
 });
 

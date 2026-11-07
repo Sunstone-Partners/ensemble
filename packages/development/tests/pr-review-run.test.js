@@ -279,6 +279,46 @@ describe('prepare: the dispatch manifest', () => {
   });
 });
 
+describe('prepare: a head from outside this repository is refused before anything runs (review of PR 264, P0)', () => {
+  const refused = async (isCrossRepository, reason) => {
+    const h = harness();
+    h.pr.isCrossRepository = isCrossRepository;
+    let fetches = 0;
+    h.deps.fetchRefs = async () => {
+      fetches += 1;
+      return { ok: true };
+    };
+    const out = await h.prepare();
+    expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason, headSha: HEAD });
+    expect(out.error).toMatch(/head/);
+    // nothing was fetched, prepared (the baseline test run lives there), prechecked, classified or written
+    expect(fetches).toBe(0);
+    expect(h.prepareCalls).toEqual([]);
+    expect(h.precheckCalls).toEqual([]);
+    expect(h.gitCalls).toEqual([]);
+    expect(h.stateWrites).toEqual([]);
+    expect(h.ghReads).toEqual(['readPr']);
+    expect(fs.existsSync(path.join(h.repoRoot, '.ensemble'))).toBe(false);
+    return out;
+  };
+
+  test('a fork head', async () => {
+    const out = await refused(true, 'cross-repository-head');
+    expect(out.error).toMatch(/fork/);
+  });
+
+  test.each([[undefined], [null], ['false'], [0]])('a head whose repository is not stated as exactly `false` (%p) is not "this repository"', async (value) => {
+    await refused(value, 'head-repository-unknown');
+  });
+
+  test('a head stated to be on this repository is prepared as before', async () => {
+    const h = harness();
+    h.pr.isCrossRepository = false;
+    expect((await h.prepare()).status).toBe('DISPATCH');
+    expect(h.prepareCalls).toHaveLength(1);
+  });
+});
+
 describe('fail closed: the tier selects full mode and nothing is dispatched (AC4)', () => {
   const expectFull = async (h, reason) => {
     const out = await h.prepare();
