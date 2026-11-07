@@ -20,12 +20,7 @@ separate step composing `pr-review-remediation`. Every grading
 decision (scope, ledger validity, remote-review binding, terminal status) is
 computed by `pr-review-cli.js`, never guessed in prose.
 
-This skill owns the *editable* parts (Constitution Rule 8): review criteria,
-loop order, the 10-minute interactive wait, and Foreman-mode rules. It
-**composes** `packages/quality/skills/pr-review-remediation/SKILL.md` for
-every triage, regression-test and minimal-fix decision.
-
-Companion files hold each step's full detail; read the one a step names before running it. Their rules are normative.
+Companion files hold each step's full detail; read the one a step names. Their rules are normative.
 Template for the PR body `fix-issue` builds: `reference/fix-issue-pr-body.md`.
 
 ---
@@ -111,6 +106,14 @@ one JSON payload on stdin, one JSON object on stdout. A non-zero exit means
 malformed JSON on stdin, or a request key that is missing, misspelt or of the wrong
 type -- treat it as `REVIEW_BLOCKED` naming the CLI error and stop; never retry with
 guessed input.
+
+---
+
+## Light-mode runner
+
+When `selectMode` answers `light`, `MODE=local` and `MODE=gate` run `prepare`, `collect` of
+`lib/review-run-cli.js` (`$REVIEW_RUN_CLI`) per `reference/review-run.md`, not Steps below.
+`NEEDS_FULL_MODE`, a High tier or sensitive path: narrated Steps 1-10, unchanged.
 
 ---
 
