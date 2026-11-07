@@ -100,9 +100,13 @@
  *         A slice counts as reviewed only when EVERY reviewer assigned to it
  *         arrived and covered it, so one expired lens leaves the slice not
  *         reviewed (plan 3A crosses each slice with more than one lens). A
- *         reviewer given a `sliceId` must also be given its `paths`: a slice
- *         with no paths to check would count as reviewed by anyone, so such a
- *         request is refused.
+ *         reviewer given a `sliceId` must also be given its `paths` and its
+ *         `lens`: a slice with no paths to check would count as reviewed by
+ *         anyone, and a reviewer with no lens is not a distinct pass, so such a
+ *         request is refused. `reviewedBy` lists, apart from that all-or-nothing
+ *         slice rule, each reviewer that arrived and covered every path of its
+ *         slice as `{ sliceId, lens, reviewer }`: what `verifyCoverage` counts
+ *         distinct lenses from, so one expired lens costs only its own pass.
  *     `ok` is true only when the request was readable and every agent
  *     arrived; the lists are filled either way so a partial result is usable.
  *
@@ -120,7 +124,7 @@
  *     contains the earlier waits, so waiting cannot run past the deadline.
  *
  * Wiring: `collectResults` -> `toVotesInput` produces the exact payload of the
- * `votes` subcommand / `tallyVotes`; `reviewedSlices` is the `reviewed` array
+ * `votes` subcommand / `tallyVotes`; `reviewedBy` is the `reviewedBy` array
  * of the `slices` subcommand / `verifyCoverage`.
  *
  * FAIL CLOSED: an unreadable request returns `ok:false` with a reason and
@@ -466,6 +470,7 @@ function collectFailure(reason) {
     votes: [],
     incompleteVerifiers: [],
     reviewedSlices: [],
+    reviewedBy: [],
     unreviewedSlices: [],
     unreviewedDetail: [],
     warnings: [],
@@ -533,12 +538,22 @@ function readExpected(input) {
       if (!isText(entry.sliceId)) return { reason: `${label}.sliceId must be a non-empty string` };
       agent.sliceId = entry.sliceId.trim();
     }
+    if (entry.lens !== undefined) {
+      if (!isText(entry.lens)) return { reason: `${label}.lens must be a non-empty string` };
+      if (role === 'verifier' || agent.sliceId === undefined) {
+        return { reason: `${label}.lens belongs to a reviewer given a sliceId` };
+      }
+      agent.lens = entry.lens.trim().toLowerCase();
+    }
     if (entry.paths !== undefined) {
       if (!Array.isArray(entry.paths) || !entry.paths.every(isText)) return { reason: `${label}.paths must be an array of paths` };
       agent.paths = entry.paths.map((p) => p.trim().replace(/^\.\//, ''));
     }
     if (role !== 'verifier' && agent.sliceId !== undefined && (agent.paths === undefined || agent.paths.length === 0)) {
       return { reason: `${label}.paths must list the paths of slice ${JSON.stringify(agent.sliceId)}: a slice with no paths to check would count as reviewed by anyone` };
+    }
+    if (role !== 'verifier' && agent.sliceId !== undefined && agent.lens === undefined) {
+      return { reason: `${label}.lens must name the lens of the reviewer of slice ${JSON.stringify(agent.sliceId)}: a reviewer with no lens is not a distinct pass` };
     }
     if (entry.candidateIds !== undefined) {
       const ids = Array.isArray(entry.candidateIds) ? entry.candidateIds.map(identity) : [null];
@@ -576,11 +591,11 @@ function checkScratch(io, scratchDir, warnings) {
  * `tallyVotes` and `verifyCoverage` consume. See the module header.
  *
  * @param {Object} input
- * @param {Object[]} input.expected  `{name, role, dispatchedAt, deadlineAt, sliceId?, paths?, candidateIds?}` per
+ * @param {Object[]} input.expected  `{name, role, dispatchedAt, deadlineAt, sliceId?, lens?, paths?, candidateIds?}` per
  *   agent. `role` is reviewer|verifier|security; `dispatchedAt` and `deadlineAt` come from `reviewDeadlines` (a result
- *   that last changed before `dispatchedAt` is not this dispatch's); a reviewer's `sliceId` says which slice it owns and
- *   `paths` (required with `sliceId`) lists that slice's paths; a verifier's `candidateIds` say which candidates it was
- *   assigned.
+ *   that last changed before `dispatchedAt` is not this dispatch's); a reviewer's `sliceId` says which slice it owns,
+ *   `paths` (required with `sliceId`) lists that slice's paths and `lens` (required with `sliceId`) the emphasis it
+ *   reads them under; a verifier's `candidateIds` say which candidates it was assigned.
  * @param {string} input.dir         Where the agents write `out-<name>.json`.
  * @param {number|string} input.now  The moment of observation.
  * @param {string} [input.scratchDir]  Defaults to `defaultScratchDir(dir)`; never inside `dir`.
@@ -600,6 +615,7 @@ function collectResults(input, deps) {
     const kept = path.join(scratchDir, file);
     const record = { name: agent.name, role: agent.role, dispatchedAt: agent.dispatchedAt, deadlineAt: agent.deadlineAt };
     if (agent.sliceId !== undefined) record.sliceId = agent.sliceId;
+    if (agent.lens !== undefined) record.lens = agent.lens;
     if (agent.candidateIds !== undefined) record.candidateIds = agent.candidateIds.slice();
 
     const safeWrite = (target, text, mtimeMs) => {
@@ -666,6 +682,7 @@ function collectResults(input, deps) {
   const votes = [];
   const incompleteVerifiers = [];
   const slices = new Map(); // id -> {reasons: [], missingPaths: []}
+  const reviewedBy = [];
 
   for (const { agent, record } of records) {
     const arrived = record.state === 'arrived';
@@ -697,6 +714,8 @@ function collectResults(input, deps) {
       else if (missingPaths.length > 0) {
         slice.reasons.push({ agent: agent.name, reason: 'paths-not-reviewed' });
         for (const p of missingPaths) if (!slice.missingPaths.includes(p)) slice.missingPaths.push(p);
+      } else {
+        reviewedBy.push({ sliceId: agent.sliceId, lens: agent.lens, reviewer: agent.name });
       }
       slices.set(agent.sliceId, slice);
     }
@@ -721,6 +740,7 @@ function collectResults(input, deps) {
     votes,
     incompleteVerifiers,
     reviewedSlices,
+    reviewedBy,
     unreviewedSlices: unreviewedDetail.map((entry) => entry.sliceId),
     unreviewedDetail,
     warnings,
