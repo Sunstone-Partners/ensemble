@@ -19,7 +19,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { evaluateGate, BLOCKER_CODES } = require('../lib/pr-review-gate');
-const { recordResolution, recordOperatorResolution } = require('../lib/pr-review-ledger');
+const { recordResolution, recordOperatorResolution, isActionable } = require('../lib/pr-review-ledger');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const HEAD = 'a'.repeat(40);
@@ -204,6 +204,228 @@ describe('AC2: the gate honours a resolution only with a named login on THIS hea
   });
 });
 
+describe('AC5: the stopping-rule deferral is an agent claim, so it does not close an Important finding at the gate', () => {
+  // The stopping rule (top of the pr-review-cycle skill) lets the triager mark a non-blocking Major
+  // `blocking: false`, `disposition: 'deferred'` with a `reason`. The review cycle's `isActionable` reads
+  // that, and must keep doing so. The merge gate must not: it is the same text an agent writes for itself
+  // that a bare resolution reason was, and it needed no login, no timestamp and no head.
+  const deferred = (overrides = {}) =>
+    finding({ id: 'D-1', blocking: false, disposition: 'deferred', reason: 'opt-in component, tracked in a follow-up bead', ...overrides });
+
+  test('an Important finding deferred as non-blocking still blocks, and the blocker says the deferral does not count', () => {
+    const result = evaluateGate(gateInput({ ledger: [deferred()] }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.findings.open).toEqual(['D-1']);
+    const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
+    expect(blocker.findingId).toBe('D-1');
+    expect(blocker.deferralRejected).toEqual(expect.any(String));
+    expect(blocker.message).toContain('deferral');
+    expect(blocker.nextAction).toContain('ledger resolve');
+  });
+
+  test.each(['important', 'Important', 'major', 'Major', 'critical', 'Critical'])(
+    'severity %s is held the same way: the legacy words are Important too',
+    (severity) => {
+      const result = evaluateGate(gateInput({ ledger: [deferred({ severity })] }));
+
+      expect(result.mergeable).toBe(false);
+      expect(result.findings.open).toEqual(['D-1']);
+    }
+  );
+
+  test('an unrecognised-severity finding deferred the same way still blocks', () => {
+    const result = evaluateGate(gateInput({ ledger: [deferred({ severity: 'spicy' })] }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.blockers.map((entry) => entry.code)).toContain(BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING);
+  });
+
+  test('the operator closes it the one way the gate takes: a full-provenance resolution on this head, deferral and all', () => {
+    const result = evaluateGate(gateInput({ ledger: [{ ...deferred(), resolution: decision() }] }));
+
+    expect(result.mergeable).toBe(true);
+    expect(result.findings.open).toEqual([]);
+  });
+
+  test('a deferred finding whose resolution is also refused reports both refusals', () => {
+    const result = evaluateGate(gateInput({ ledger: [{ ...deferred(), resolution: decision({ headSha: OLD_HEAD }) }] }));
+
+    expect(result.mergeable).toBe(false);
+    const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
+    expect(blocker.resolutionRejected).toEqual(expect.any(String));
+    expect(blocker.deferralRejected).toEqual(expect.any(String));
+  });
+
+  test('a deferred Nit is still not a blocker: a Nit never needed an answer', () => {
+    const result = evaluateGate(gateInput({ ledger: [deferred({ id: 'N-1', severity: 'nit' })] }));
+
+    expect(result.mergeable).toBe(true);
+    expect(result.findings.open).toEqual([]);
+  });
+
+  test('the review cycle still reads the deferral: `isActionable` is unchanged, the change is in the gate alone', () => {
+    expect(isActionable(deferred())).toBe(false);
+    expect(isActionable(deferred({ severity: 'major' }))).toBe(false);
+  });
+});
+
+describe('AC6: every security-lane closure needs the operator decision, a Pre-existing lane entry included', () => {
+  const laneEntry = (overrides = {}) => finding({ id: 'S-9', severity: 'pre-existing', source: 'security-lane', ...overrides });
+  const lane = (entry) => ({ status: 'findings', findings: [entry] });
+
+  test('a Pre-existing lane finding nobody answered blocks: the lane holds every open entry whatever its severity', () => {
+    const result = evaluateGate(gateInput({ security: lane(laneEntry()) }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.securityLane.open).toEqual(['S-9']);
+  });
+
+  test('closed with a bare reason it still blocks, and the blocker says the resolution does not count', () => {
+    const bare = laneEntry({ disposition: 'resolved', resolution: { reason: 'accepted' } });
+    const result = evaluateGate(gateInput({ security: lane(bare) }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.securityLane.open).toEqual(['S-9']);
+    expect(result.securityLane.resolved).toEqual([]);
+    const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.SECURITY_FINDING_OPEN);
+    expect(blocker.resolutionRejected).toEqual(expect.any(String));
+    expect(blocker.message).toContain('does not count');
+  });
+
+  test.each([
+    ['no deciding login (by)', { by: undefined }],
+    ['a head that is not the current one', { headSha: OLD_HEAD }],
+    ['no timestamp (at)', { at: undefined }],
+  ])('a Pre-existing lane resolution with %s still blocks', (_name, bad) => {
+    const result = evaluateGate(gateInput({ security: lane(resolved(laneEntry(), bad)) }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.securityLane.open).toEqual(['S-9']);
+    expect(result.securityLane.resolved).toEqual([]);
+  });
+
+  test('with full provenance on this head a Pre-existing lane finding stops blocking and the reason is recorded', () => {
+    const result = evaluateGate(gateInput({ security: lane(resolved(laneEntry())) }));
+
+    expect(result.mergeable).toBe(true);
+    expect(result.securityLane.resolved).toEqual([{ id: 'S-9', reason: 'the caller validates it upstream' }]);
+  });
+
+  test('a Pre-existing finding in the LEDGER is still not held to provenance: it never blocks, so there is nothing to close', () => {
+    const result = evaluateGate(gateInput({ ledger: [resolved(finding({ id: 'P-1', severity: 'pre-existing' }), { by: undefined, headSha: undefined })] }));
+
+    expect(result.mergeable).toBe(true);
+  });
+});
+
+describe('AC7: a bot, or a login the repository policy does not name, is not the deciding login', () => {
+  // REVIEW.md: `botLogins` "A bot approval never satisfies a human-approval requirement"; `maintainerLogins` "Logins
+  // whose approval counts for this repository". The policy block reaches `ledger resolve` and `gate` as `policy`.
+  const POLICY = { botLogins: ['@coderabbitai', '@claude', '@github-actions'], maintainerLogins: ['@ldangelo'] };
+
+  test.each([
+    ['a listed bot', '@coderabbitai'],
+    ['a listed bot written without the @', 'claude'],
+    ['a listed bot in another letter case', 'GitHub-Actions'],
+  ])('%s cannot record a decision: ledger resolve refuses it and the finding stays unresolved', (_name, by) => {
+    const result = recordOperatorResolution(finding(), decision({ by }), POLICY);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bot/);
+    expect(result.finding.resolution).toBeUndefined();
+  });
+
+  test('a login the policy does not name as a maintainer cannot decide either', () => {
+    const result = recordOperatorResolution(finding(), decision({ by: 'random-user' }), POLICY);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/maintainerLogins/);
+  });
+
+  test.each(['ldangelo', '@ldangelo', 'LDangelo'])('the named maintainer %s can decide, whatever the @ or letter case', (by) => {
+    const result = recordOperatorResolution(finding(), decision({ by }), POLICY);
+
+    expect(result.ok).toBe(true);
+    expect(result.finding.resolution.by).toBe(by);
+  });
+
+  test('a bot login is refused even when the policy names no maintainers at all', () => {
+    const noMaintainers = { botLogins: ['@coderabbitai'], maintainerLogins: [] };
+
+    expect(recordOperatorResolution(finding(), decision({ by: 'coderabbitai' }), noMaintainers).ok).toBe(false);
+    expect(recordOperatorResolution(finding(), decision({ by: 'anyone-else' }), noMaintainers).ok).toBe(true);
+  });
+
+  test('with no policy handed over the login is checked for shape only: the honest limit', () => {
+    expect(recordOperatorResolution(finding(), decision({ by: '@coderabbitai' })).ok).toBe(true);
+    expect(recordOperatorResolution(finding(), decision({ by: 'random-user' })).ok).toBe(true);
+  });
+
+  test.each([
+    ['a policy that is not an object', 'strict'],
+    ['a policy that is an array', ['@ldangelo']],
+    ['botLogins that is not a list', { botLogins: '@coderabbitai' }],
+    ['maintainerLogins with a non-text entry', { maintainerLogins: ['@ldangelo', 7] }],
+  ])('%s is refused: a policy the check cannot read never means "no check"', (_name, policy) => {
+    const result = recordOperatorResolution(finding(), decision(), policy);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/policy/);
+  });
+
+  test('the gate ignores a resolution recorded by a listed bot or a stranger, in the ledger and in the security lane', () => {
+    for (const by of ['@coderabbitai', 'random-user']) {
+      const inLedger = evaluateGate(gateInput({ policy: POLICY, ledger: [resolved(finding(), { by })] }));
+      expect([by, inLedger.mergeable]).toEqual([by, false]);
+      const blocker = inLedger.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
+      expect(blocker.resolutionRejected).toEqual(expect.any(String));
+
+      const inLane = evaluateGate(gateInput({ policy: POLICY, security: { status: 'findings', findings: [resolved(finding({ id: 'S-1' }), { by })] } }));
+      expect([by, inLane.mergeable]).toEqual([by, false]);
+      expect(inLane.securityLane.open).toEqual(['S-1']);
+    }
+  });
+
+  test('the gate takes the same resolution from a named maintainer', () => {
+    const result = evaluateGate(gateInput({ policy: POLICY, ledger: [resolved(finding(), { by: '@ldangelo' })] }));
+
+    expect(result.mergeable).toBe(true);
+  });
+
+  test('a gate handed no policy keeps the shape-only check: the repository lists reach it only through `policy`', () => {
+    const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { by: '@coderabbitai' })] }));
+
+    expect(result.mergeable).toBe(true);
+  });
+
+  test('a gate handed a policy it cannot read ignores every resolution', () => {
+    const result = evaluateGate(gateInput({ policy: 'strict', ledger: [resolved(finding())] }));
+
+    expect(result.mergeable).toBe(false);
+  });
+});
+
+describe('a decision time must be an ISO-8601 timestamp with a zone, as the CLI documents', () => {
+  test.each(['1', 'Jan 1 2020', '2099-01-01', '2026-11-06 10:00:00', '2026-11-06T10:00:00'])(
+    'at: %s is refused by ledger resolve and ignored by the gate',
+    (at) => {
+      expect(recordOperatorResolution(finding(), decision({ at })).ok).toBe(false);
+
+      const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { at })] }));
+      expect(result.mergeable).toBe(false);
+    }
+  );
+
+  test.each(['2026-11-06T10:00:00Z', '2026-11-06T10:00Z', '2026-11-06T10:00:00.123Z', '2026-11-06T10:00:00+01:00'])(
+    'at: %s is accepted',
+    (at) => {
+      expect(recordOperatorResolution(finding(), decision({ at })).ok).toBe(true);
+      expect(evaluateGate(gateInput({ ledger: [resolved(finding(), { at })] })).mergeable).toBe(true);
+    }
+  );
+});
+
 describe('AC4: `ledger resolve` through the real CLI round-trips through state and the gate reads it', () => {
   function runCli(args, payload) {
     const run = spawnSync('node', [CLI, ...args], { input: JSON.stringify(payload), encoding: 'utf8' });
@@ -244,6 +466,41 @@ describe('AC4: `ledger resolve` through the real CLI round-trips through state a
     expect(run.status).toBe(1);
     expect(run.out.error).toContain("'by'");
     expect(run.out.finding).toBeUndefined();
+  });
+
+  test('resolve with the policy refuses a bot or a stranger with exit 1, and records a named maintainer', () => {
+    const policy = { botLogins: ['@coderabbitai'], maintainerLogins: ['@ldangelo'] };
+
+    const bot = runCli(['ledger'], { action: 'resolve', finding: finding(), resolution: decision({ by: '@coderabbitai' }), policy });
+    expect(bot.status).toBe(1);
+    expect(bot.out.error).toMatch(/bot login/);
+    expect(bot.out.finding).toBeUndefined();
+
+    const stranger = runCli(['ledger'], { action: 'resolve', finding: finding(), resolution: decision({ by: 'random-user' }), policy });
+    expect(stranger.status).toBe(1);
+    expect(stranger.out.error).toMatch(/maintainerLogins/);
+
+    const maintainer = runCli(['ledger'], { action: 'resolve', finding: finding(), resolution: decision({ by: '@ldangelo' }), policy });
+    expect(maintainer.status).toBe(0);
+    expect(maintainer.out.finding.resolution.by).toBe('@ldangelo');
+  });
+
+  test('a policy that is not an object is a CLI error, never read as no policy', () => {
+    for (const policy of ['strict', null, [], 7]) {
+      const run = runCli(['ledger'], { action: 'resolve', finding: finding(), resolution: decision(), policy });
+      expect([policy, run.status]).toEqual([policy, 1]);
+      expect(run.out.error).toContain("'policy'");
+    }
+  });
+
+  test('a decision `resolve` refuses is exactly one the gate ignores: both read the same policy', () => {
+    const policy = { botLogins: ['@coderabbitai'] };
+    const resolution = decision({ by: '@coderabbitai' });
+
+    expect(runCli(['ledger'], { action: 'resolve', finding: finding(), resolution, policy }).status).toBe(1);
+    const gate = runCli(['gate'], gateInput({ policy, ledger: [{ ...finding(), disposition: 'resolved', resolution }] }));
+    expect(gate.out.mergeable).toBe(false);
+    expect(gate.out.findings.open).toEqual(['F-1']);
   });
 
   test('the gate answers with the decision list next to its verdict, and the list never changes the verdict', () => {

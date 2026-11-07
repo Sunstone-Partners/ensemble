@@ -18,11 +18,14 @@
  * section is missing (AC-008-1, AC-017-1, AC-002-3). Nit and Pre-existing
  * findings never block (AC-008-4).
  *
- * An Important (or unrecognised-severity) or security finding is closed by a
- * recorded resolution only when that resolution has provenance: a reason, the
- * login that decided, a timestamp and the head commit it was decided against,
- * equal to this gate's `headSha` (see `applyProvenance`). That is attribution
- * and head-binding, not authentication: it cannot show a human typed it.
+ * An Important, unrecognised-severity or security-lane finding is closed only
+ * by a later head that cleared it or by the operator's recorded decision: a
+ * resolution with provenance -- a reason, the login that decided (one the
+ * policy lets decide), a timestamp and the head commit it was decided against,
+ * equal to this gate's `headSha` (see `applyProvenance`). The review's own
+ * deferral of a non-blocking Major, and a reason nobody put a login, a time
+ * and a head to, close nothing. That is attribution and head-binding, not
+ * authentication: it cannot show a human typed it.
  *
  * FAIL CLOSED, in both directions:
  *   - Missing, unreadable or unavailable review data is NEVER read as "nothing
@@ -109,40 +112,79 @@ function resolutionReason(finding) {
 }
 
 /**
- * The finding AS THE GATE READS IT. This is stricter than `isActionable` in
- * one place: an Important or security finding closed by a recorded resolution
- * stays blocking unless that resolution carries provenance -- a stated
- * reason, the login that decided (`by`), a timestamp (`at`) and the head
- * commit it was decided against, equal to the head this gate is asked about
- * (`resolutionProvenanceProblem`).
+ * Why the review's own deferral does not close an Important finding at the gate.
+ * The stopping rule lets the triager mark a non-blocking Major `blocking: false`
+ * and deferred with a `reason`; that is the review's classification, written by
+ * the agent that made the finding, and needs no login, timestamp or head.
+ */
+const DEFERRAL_NOT_AN_ANSWER = "a deferral is the review's own classification (the stopping rule), not an operator's decision";
+
+/** The clause a blocker adds when the gate refused a closure that would have ended it: what did not count, and why. */
+function refusalNote(rejectedBecause, deferralRejected) {
+  const notes = [];
+  if (rejectedBecause !== null) notes.push(`its recorded resolution does not count (${rejectedBecause})`);
+  if (deferralRejected !== null) notes.push(`its deferral as non-blocking does not count (${deferralRejected})`);
+  return notes.length === 0 ? '' : `: ${notes.join('; ')}`;
+}
+
+/**
+ * The finding AS THE GATE READS IT. This is stricter than `isActionable` where
+ * the finding needs the OPERATOR's answer: an Important or unrecognised-severity
+ * ledger finding, and every security-lane entry whatever its severity (the lane
+ * blocks while any entry is open). Of the closures an agent can write for
+ * itself the gate takes none:
  *
- * A resolution without that provenance is IGNORED, not half-honoured: the
- * returned entry has no resolution, so the finding is graded as though none
- * existed and every other way a finding stops blocking (cleared by a later
- * head, the triager's deferral of a non-blocking Major) is judged as before.
+ *   - a recorded resolution counts only with provenance: a stated reason, the
+ *     login that decided (`by`, one the policy lets decide), an ISO-8601
+ *     timestamp (`at`) and the head commit it was decided against, equal to
+ *     the head this gate is asked about (`resolutionProvenanceProblem`). One
+ *     without it is IGNORED, not half-honoured: the returned entry has no
+ *     resolution;
+ *   - the stopping rule's deferral of a non-blocking Major (`blocking: false`,
+ *     deferred, a `reason`) is the triager's word, so an Important finding is
+ *     read without its `blocking` flag and grades as open. `isActionable`
+ *     itself still reads the deferral: the review cycle's question is not the
+ *     gate's.
+ *
+ * What stays: `cleared: true` (a later head fixed it) is taken as written, and
+ * an open thread or an uncertain flag outranks every closure, as in
+ * `isActionable`. A Nit or Pre-existing LEDGER finding never needed an answer,
+ * so nothing it carries is held to this.
  *
  * What this does NOT do: prove a human typed the decision. A named login on
  * the current head is attribution, not authentication.
  *
- * Nits and Pre-existing findings never needed an answer, so their (optional)
- * resolutions are not held to this. `lane: true` marks a security-lane entry,
- * where every severity but Pre-existing blocks while open.
- *
- * @returns {{entry:Object, rejectedBecause:string|null}} `rejectedBecause` is
- *   set only when a resolution WAS recorded, would have closed the finding,
- *   and was refused.
+ * @param {Object} entry
+ * @param {string|null} headSha The commit the gate is asked about.
+ * @param {boolean} lane True for a security-lane entry.
+ * @param {Object} [policy] The policy block, to check who may decide.
+ * @returns {{entry:Object, rejectedBecause:string|null, deferralRejected:string|null}}
+ *   `rejectedBecause` is set only when a resolution WAS recorded, would have
+ *   closed the finding, and was refused (always, for a lane entry, so the
+ *   blocker can say why it is still open); `deferralRejected` only when the
+ *   deferral alone would have closed it, and was ignored.
  */
-function applyProvenance(entry, headSha, lane) {
+function applyProvenance(entry, headSha, lane, policy) {
   const severity = normalizeSeverity(entry.severity);
-  const needsProvenance = severity !== 'pre-existing' && (lane || severity !== 'nit');
-  if (!needsProvenance || entry.cleared === true || !isObject(entry.resolution)) return { entry, rejectedBecause: null };
-
-  const problem = resolutionProvenanceProblem(entry, headSha);
-  if (problem === null) return { entry, rejectedBecause: null };
+  const needsOperator = lane || (severity !== 'pre-existing' && severity !== 'nit');
+  if (!needsOperator || entry.cleared === true) return { entry, rejectedBecause: null, deferralRejected: null };
 
   const { resolution, ...withoutResolution } = entry;
-  const wouldHaveClosed = !isActionable(entry);
-  return { entry: withoutResolution, rejectedBecause: wouldHaveClosed && isActionable(withoutResolution) ? problem : null };
+  const withoutDeferral = (candidate) => {
+    const { blocking, ...rest } = candidate;
+    return rest;
+  };
+  const refusal = isObject(resolution) ? resolutionProvenanceProblem(entry, headSha, policy) : null;
+
+  let reading = refusal === null ? entry : withoutResolution;
+  if (severity === 'important') reading = withoutDeferral(reading);
+  const stillOpen = isActionable(reading);
+
+  const resolutionWouldHaveClosed = refusal !== null && !isActionable(severity === 'important' ? withoutDeferral(entry) : entry);
+  const rejectedBecause = refusal !== null && (lane || (resolutionWouldHaveClosed && stillOpen)) ? refusal : null;
+  const deferralWouldHaveClosed = !lane && severity === 'important' && entry.blocking !== undefined && !isActionable(withoutResolution);
+  const deferralRejected = deferralWouldHaveClosed && stillOpen ? DEFERRAL_NOT_AN_ANSWER : null;
+  return { entry: reading, rejectedBecause, deferralRejected };
 }
 
 /**
@@ -160,11 +202,12 @@ function readTier(tierResult, approvalsResult) {
 
 /**
  * Grade the security lane. Returns the lane record plus the blockers it adds.
- * An open lane finding blocks; one closed with a stated reason is recorded and
- * stops blocking (AC-017-3); one a later head fixed clears on its own
- * (AC-017-2); a lane that never ran blocks Medium and High (AC-017-1).
+ * An open lane finding blocks; one closed by the operator's recorded decision
+ * (a resolution with provenance) is recorded and stops blocking (AC-017-3);
+ * one a later head fixed clears on its own (AC-017-2); a lane that never ran
+ * blocks Medium and High (AC-017-1).
  */
-function gradeSecurityLane(lane, tier, headSha) {
+function gradeSecurityLane(lane, tier, headSha, policy) {
   const record = { status: 'unavailable', open: [], cleared: [], resolved: [] };
   const blockers = [];
   const warnings = [];
@@ -208,7 +251,7 @@ function gradeSecurityLane(lane, tier, headSha) {
   }
 
   for (const recorded of findings) {
-    const { entry, rejectedBecause } = applyProvenance(recorded, headSha, true);
+    const { entry, rejectedBecause } = applyProvenance(recorded, headSha, true, policy);
     const id = String(entry.id);
     if (entry.cleared === true && !isActionable(entry)) {
       record.cleared.push(id);
@@ -227,7 +270,7 @@ function gradeSecurityLane(lane, tier, headSha) {
           ? `the security review found ${nameOf(entry)} and it is still open`
           : `the security review found ${nameOf(entry)} and it is still open: its recorded resolution does not count (${rejectedBecause})`,
         rejectedBecause === null
-          ? 'fix it, or close it with a stated reason recorded on the finding'
+          ? 'fix it, or have the operator record the decision on the current head with their login, a timestamp and a reason (ledger resolve)'
           : 'fix it, or have the operator record the decision again on the current head with their login, a timestamp and a reason (ledger resolve)',
         {
           findingId: id,
@@ -250,7 +293,8 @@ function gradeSecurityLane(lane, tier, headSha) {
  * @param {Object}   [input.tier]        The `effectiveTier` result; falls back to `approvals.tier`.
  * @param {Object}   input.description   The `checkDescription` result.
  * @param {Object}   input.security      `{ status: 'clean'|'findings'|'not-run'|'unavailable', findings?, reason? }`.
- * @param {string}   [input.headSha]     The commit the gate was asked about; echoed back.
+ * @param {string}   [input.headSha]     The commit the gate was asked about; echoed back. A resolution counts only when it was decided against this commit.
+ * @param {Object}   [input.policy]      The policy block (`botLogins`, `maintainerLogins`): a resolution counts only from a login it lets decide. Without one the login is checked for shape alone.
  * @param {string[]} [input.unavailable] Data the caller could not collect (for example `gh-unreachable`).
  * @returns {{ok:boolean, mergeable:boolean, blockers:Object[], warnings:string[],
  *   findings:{important:number, nits:number, preExisting:number, unrecognised:number, open:string[]},
@@ -288,7 +332,7 @@ function evaluateGate(input) {
       } else {
         const open = [];
         for (const recorded of parts.findings) {
-          const { entry, rejectedBecause } = applyProvenance(recorded, input.headSha, false);
+          const { entry, rejectedBecause, deferralRejected } = applyProvenance(recorded, input.headSha, false, input.policy);
           if (!isActionable(entry)) continue;
           const severity = normalizeSeverity(entry.severity);
           if (severity === 'nit') continue; // AC-008-4: a Nit never blocks the merge.
@@ -300,18 +344,18 @@ function evaluateGate(input) {
               unrecognised ? BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING : BLOCKER_CODES.OPEN_IMPORTANT_FINDING,
               (unrecognised
                 ? `finding ${nameOf(entry)} carries a severity this gate cannot read ('${String(entry.severity)}'), so it is treated as Important and is still open`
-                : `Important finding ${nameOf(entry)} is still open`) +
-                (rejectedBecause === null ? '' : `: its recorded resolution does not count (${rejectedBecause})`),
+                : `Important finding ${nameOf(entry)} is still open`) + refusalNote(rejectedBecause, deferralRejected),
               rejectedBecause !== null
                 ? 'fix it, or have the operator record the decision again on the current head with their login, a timestamp and a reason (ledger resolve)'
                 : unrecognised
-                  ? 'retag it with Important, Nit or Pre-existing, then fix it or answer it with a recorded reason'
-                  : 'fix it, or answer it with a recorded reason on the finding',
+                  ? 'retag it with Important, Nit or Pre-existing, then fix it or have the operator record the decision (ledger resolve)'
+                  : 'fix it, or have the operator record the decision on the current head with their login, a timestamp and a reason (ledger resolve)',
               {
                 findingId: id,
                 locationOrLink: entry.locationOrLink || null,
                 severity: entry.severity,
                 ...(rejectedBecause === null ? {} : { resolutionRejected: rejectedBecause }),
+                ...(deferralRejected === null ? {} : { deferralRejected }),
               }
             )
           );
@@ -429,7 +473,7 @@ function evaluateGate(input) {
   if (!isObject(input.security)) {
     missing.push('security');
   } else {
-    const graded = gradeSecurityLane(input.security, tier, isText(input.headSha) ? input.headSha : null);
+    const graded = gradeSecurityLane(input.security, tier, isText(input.headSha) ? input.headSha : null, input.policy);
     securityLane = graded.record;
     blockers.push(...graded.blockers);
     warnings.push(...graded.warnings);
