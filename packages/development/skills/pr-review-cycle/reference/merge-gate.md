@@ -250,13 +250,32 @@ The list never changes `mergeable`.
 
 **The review never fixes -- record, ask, then record who decided.** A review run edits no
 tracked file, commits nothing and pushes nothing (it writes only the gitignored state
-report). **Recording every confirmed finding as a bead is not implemented yet.** The `beads`
-subcommand that would do it (kata `n350`) is not in `pr-review-cli.js`, and no
-`lib/pr-review-*.js` module creates a bead (the decision list only reads a finding's
-`beadId`), so a run does not record findings as beads: it says so, and shows the list with
-the `beadId` a ledger entry already carries, if any. When it lands, each finding becomes one
-bead through the tracker adapter (labelled `pr-review`; a repository with no tracker skips
-the beads, says so, and still shows the list). The caller shows the list,
+report). **Every presented finding is recorded as a bead** by `node "$PR_REVIEW_BEADS_CLI"`
+(kata `n350`; `PR_REVIEW_BEADS_CLI` is `pr-review-beads-cli.js` in the same directory as
+`PR_REVIEW_CLI`), run BEFORE `gate` so the
+list can show each finding's bead. Payload `{ repo, prNumber, headSha, ledger, security?,
+votes?, repoRoot?, followOnIds? }` (the keys are documented in that file's header):
+`repo` is `owner/name`, `ledger` the ledger as it stands (a finding a later head cleared carries
+`cleared` and `clearedBy`, from `ledger` `clearFixedFindings`), `votes` the Step 3b result,
+`repoRoot` the repository UNDER REVIEW (never assumed to be the current directory; it is used
+for its working directory and `.ensemble/toolchain.yaml` only, never for adapter code, so a PR
+head cannot supply the tracker that records its own findings). One bead per finding, labelled
+`pr-review`, keyed by repository + file + normalized claim (not the line, the head or the PR),
+holding severity, `file:line`, the claim, the verifier votes, the state report path, the PR and
+the head. A later head UPDATES the bead and appends a note (a finding that has not changed at
+the same head writes nothing); a finding the ledger marks `cleared` closes its bead with that
+commit; a finding that is merely missing from the next review leaves its bead open, so after a
+force-push no bead is orphaned (they are found by key, not by commit) and a person closes the
+ones whose finding is gone. More Nits (or Pre-existing findings) in one file than the decision
+list's collapse threshold become ONE bead for that file; Important and security findings are
+never collapsed. `followOnIds` carries the findings the OPERATOR chose to defer (their beads get
+the `follow-on` label, also after the beads exist); an agent never fills it. Put each
+`beads[<finding id>].beadId` from the answer on that ledger entry as `beadId` before `gate`.
+`status: UNAVAILABLE` (the repository has no tracker, or its adapter lacks a capability) means
+no bead was recorded: say so and still show the list. `PARTIAL` or `FAILED` (exit 1) means some
+findings have no bead: name them and still show the list. A bead failure never changes the
+gate. The recorder only records: it never writes a `resolution` or a `cleared` mark and never
+fixes, so it runs the same way under `--foreman`. The caller shows the list,
 asks about it, and only then asks the merge question (`mergeConfirmation` is what that
 question displays). Each finding's **Fix on this PR** option states that the head moves
 and any approvals reset. It is the operator's own answer that gets recorded; an agent never
@@ -275,7 +294,7 @@ chooses for the operator, applies a `default`, or types a login or reason.
   finding closes when that review no longer raises it, never because it was selected.
 * **`--foreman`**: the list is logged and nothing is recorded as decided: no `resolve`,
   no fix run, no waiver. A blocking finding keeps `mergeable:false` until a person
-  answers. No bead is recorded for the findings yet (see above).
+  answers. Beads are recorded exactly as in an interactive run (see above).
 * **Nothing here edits a file, commits or pushes.** `MODE=gate` and the review runs that
   feed it only read, grade and report.
 * **Pre-publication is not a PR review.** A `MODE=local` run with no `PR_URL`, no

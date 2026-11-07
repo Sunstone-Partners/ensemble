@@ -440,33 +440,12 @@ function changelogEntry(...parts) {
 const CHANGELOG_ROOT = changelogEntry('CHANGELOG.md');
 const CHANGELOG_DEV = changelogEntry('packages', 'development', 'CHANGELOG.md');
 
-describe('bead recording is stated as not implemented while nothing creates a bead', () => {
-  test('premise: no CLI subcommand and no pr-review module records a bead yet', () => {
-    const { HANDLERS } = require('../lib/pr-review-cli');
-    const libDir = path.join(__dirname, '..', 'lib');
-    const recorders = fs
-      .readdirSync(libDir)
-      .filter((file) => /^(?:pr-review-.*|review-precheck-cli)\.js$/.test(file))
-      .filter((file) => /tracker-findings|create-detailed|tracker\.create/.test(fs.readFileSync(path.join(libDir, file), 'utf8')));
-    if (Object.keys(HANDLERS).includes('beads') || fs.existsSync(path.join(libDir, 'pr-review-beads.js')) || recorders.length > 0) {
-      throw new Error(
-        'A bead recorder exists now (kata n350). Replace the "not implemented yet" notes in ' +
-          'reference/merge-gate.md, docs/guides/user-guide.md and the two CHANGELOG entries with its call and skip path, ' +
-          'then delete this premise check.'
-      );
-    }
-  });
-
-  test('merge-gate.md, the headline, the user guide and both changelogs say so instead of claiming the findings are recorded', () => {
-    expect(GATE_REF).toContain('**Recording every confirmed finding as a bead is not implemented yet.**');
-    expect(GATE_REF).toContain('The `beads` subcommand that would do it (kata `n350`) is not in `pr-review-cli.js`');
-    expect(GATE_REF).not.toContain('It records every confirmed finding as a bead');
-    expect(GATE_REF).not.toContain('Beads for the findings are recorded where the repository has a tracker');
-    expect(FLAT_MAIN).not.toMatch(/records findings as beads/);
-    expect(GUIDE_RULE).toContain('Recording each confirmed finding as a bead is not implemented yet');
-    expect(GUIDE_RULE).not.toContain('It records each confirmed finding as a bead');
-    expect(CHANGELOG_ROOT).toContain('Recording findings as beads awaits kata `n350`');
-    expect(CHANGELOG_DEV).toContain('Recording findings as beads is not implemented yet');
+describe('the bead recorder the skill names is a real entry point', () => {
+  test('merge-gate.md calls pr-review-beads-cli.js, and that file exists and exports the process entry point', () => {
+    expect(GATE_REF).toContain('pr-review-beads-cli.js');
+    const cli = path.join(__dirname, '..', 'lib', 'pr-review-beads-cli.js');
+    expect(fs.existsSync(cli)).toBe(true);
+    expect(typeof require(cli).main).toBe('function');
   });
 });
 
