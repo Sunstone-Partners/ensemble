@@ -17,7 +17,15 @@
  * default `deps` (`createToolchainDeps`) is the only part that touches the toolchain, and it
  * lives in its own function so tests inject a fake or a real manifest.
  *
- * Every function RETURNS a result and never throws for a missing tracker or capability:
+ * "Unavailable" is a verdict about RESOLUTION, never a guess from a failure: the repository has
+ * no usable tracker (no adapter, no initialised workspace, binary not installed) or its adapter
+ * does not declare the capability. `deps.run` reports that by RETURNING an envelope with
+ * `unavailable: true`. A tool that ran and failed is TOOL_FAILED whatever its message says (the
+ * message echoes the finding text), and an exception from `deps.run` is a bug and propagates:
+ * neither may read as "no tracker here", because callers skip the beads on unavailable and the
+ * findings would silently disappear.
+ *
+ * Every function RETURNS a result (it throws only for such a bug):
  *   - `{ok:true, ...}` success
  *   - `{ok:false, unavailable:true, fallback:'skip-finding-beads', error:{code:'UNAVAILABLE'}}`
  *     the repository has no usable tracker, or its adapter does not declare the capability
@@ -32,8 +40,8 @@ const LABEL_RE = /^[A-Za-z0-9_:-]+$/;
 const COMMIT_RE = /^[0-9a-f]{7,40}$/i;
 // Matches runner.js#lookupCapability's text for an adapter that omits a capability whose
 // category contract carries no `fallback` (an older vendored contract): still "unavailable".
+// That text is built from the capability and adapter ids only, never from the finding.
 const UNDECLARED_RE = /^capability '[^']+' is not declared by adapter '/;
-const SPAWN_ENOENT_RE = /\bspawn(?:Sync)? \S+ ENOENT\b/;
 // Adapter id -> directory that must exist under the project root for the tracker to be set up.
 const WORKSPACE_MARKERS = { beads: '.beads' };
 
@@ -61,22 +69,11 @@ function classify(envelope) {
   if (error.code === 'NOT_ALLOWED' && UNDECLARED_RE.test(String(error.message))) {
     return unavailable(error.message);
   }
-  // The tracker's binary is not installed (execFile ENOENT): no tracker here, not a tool failure.
-  if (error.code === 'TOOL_FAILED' && SPAWN_ENOENT_RE.test(String(error.message))) {
-    return unavailable(error.message);
-  }
   return envelope;
 }
 
 function call(deps, capability, args) {
-  let envelope;
-  try {
-    envelope = deps.run(capability, args);
-  } catch (error) {
-    // deps.run is allowed to throw only when the tracker itself cannot be resolved.
-    return unavailable(`tracker is unavailable: ${error && error.message ? error.message : error}`);
-  }
-  return classify(envelope);
+  return classify(deps.run(capability, args));
 }
 
 function nonEmpty(value) {
@@ -185,12 +182,75 @@ function closeFinding(deps, { id, reason, commit } = {}) {
   return call(deps, 'tracker.close-with-reason', { id, reason, commit });
 }
 
+/** True when `file` is a regular file the current user may execute. */
+function isExecutableFile(file) {
+  const fs = require('fs');
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+/**
+ * The binary `capability` would spawn when it is not an executable file the way the child's own
+ * PATH lookup would find it, else null. `searchPath` is the PATH the child will get; a relative
+ * entry (and an empty one, which means the working directory) and a relative binary resolve
+ * against `cwd`, the child's working directory. Null as well when the manifest does not declare
+ * the capability: the runner reports that itself, as a structured unavailable envelope.
+ */
+function missingBinary(manifest, capability, searchPath, cwd) {
+  const cap = manifest.capabilities && manifest.capabilities[capability];
+  const binary = cap && Array.isArray(cap.run) ? cap.run[0] : null;
+  if (typeof binary !== 'string') return null;
+  const path = require('path');
+  const candidates =
+    binary.includes('/') || binary.includes(path.sep)
+      ? [path.resolve(cwd, binary)]
+      : String(searchPath || '')
+          .split(path.delimiter)
+          .map((dir) => path.resolve(cwd, dir || '.', binary));
+  const suffixes = process.platform === 'win32' ? ['', '.exe', '.com'] : [''];
+  const found = candidates.some((candidate) => suffixes.some((suffix) => isExecutableFile(candidate + suffix)));
+  return found ? null : binary;
+}
+
+/**
+ * Resolve the repository's tracker adapter manifest: `{manifest}`, or `{reason}` when no usable
+ * tracker can be resolved (no config/detect match, adapter not installed, manifest invalid, the
+ * adapter's workspace not initialised here). Only failures to RESOLVE are reported; the requires
+ * stay outside the try so a broken install propagates instead of reading as "no tracker".
+ */
+function resolveManifest(projectRoot, env) {
+  const { resolveCategory } = require('./toolchain/config');
+  const { loadAdapter } = require('./toolchain/adapters');
+  const { detectAdapter } = require('./toolchain/detect');
+  let manifest;
+  try {
+    const resolved = resolveCategory('tracker', { projectRoot, env, detect: detectAdapter });
+    manifest = loadAdapter(resolved.value, { projectRoot, env, interactive: false }).manifest;
+  } catch (error) {
+    return { reason: error && error.message ? error.message : String(error) };
+  }
+  // A tracker whose workspace is not initialised in this repository is "no tracker": br reports
+  // that only on stdout, which the runner's TOOL_FAILED detail drops, so it cannot be recognised
+  // from the envelope.
+  const marker = WORKSPACE_MARKERS[manifest.adapter];
+  if (marker && !require('fs').existsSync(require('path').join(projectRoot, marker))) {
+    return { reason: `no '${marker}' workspace in ${projectRoot} for the '${manifest.adapter}' tracker` };
+  }
+  return { manifest };
+}
+
 /**
  * Default deps: resolve the repository's tracker adapter through the toolchain and run
- * capabilities against it with `cwd` set to `projectRoot`. When no tracker can be resolved
- * (no config/detect match, adapter not installed, manifest invalid) `run` throws, which
- * `call` reports as the defined unavailable result. Requires are lazy so the pure functions
- * above load without the toolchain.
+ * capabilities against it with `cwd` set to `projectRoot`. When no usable tracker can be
+ * resolved (see `resolveManifest`), or the capability's binary is not an executable on the
+ * `PATH` the child will get, `run` RETURNS the unavailable envelope without spawning anything.
+ * Everything the runner itself throws is a bug and propagates. Requires are lazy so the pure
+ * functions above load without the toolchain.
  *
  * @param {{projectRoot: string, env?: NodeJS.ProcessEnv, timeoutMs?: number}} options
  * @returns {{run: (capability: string, args: object) => object}}
@@ -199,22 +259,14 @@ function createToolchainDeps({ projectRoot, env = process.env, timeoutMs } = {})
   let manifest;
   return {
     run(capability, args) {
+      const { runCapabilitySync, buildChildEnv } = require('./toolchain/runner');
       if (!manifest) {
-        const { resolveCategory } = require('./toolchain/config');
-        const { loadAdapter } = require('./toolchain/adapters');
-        const { detectAdapter } = require('./toolchain/detect');
-        const resolved = resolveCategory('tracker', { projectRoot, env, detect: detectAdapter });
-        const loaded = loadAdapter(resolved.value, { projectRoot, env, interactive: false }).manifest;
-        // A tracker whose workspace is not initialised in this repository is "no tracker":
-        // br reports that only on stdout, which the runner's TOOL_FAILED detail drops, so it
-        // cannot be recognised from the envelope.
-        const marker = WORKSPACE_MARKERS[loaded.adapter];
-        if (marker && !require('fs').existsSync(require('path').join(projectRoot, marker))) {
-          throw new Error(`no '${marker}' workspace in ${projectRoot} for the '${loaded.adapter}' tracker`);
-        }
-        manifest = loaded;
+        const resolved = resolveManifest(projectRoot, env);
+        if (!resolved.manifest) return unavailable(`tracker is unavailable: ${resolved.reason}`);
+        manifest = resolved.manifest;
       }
-      const { runCapabilitySync } = require('./toolchain/runner');
+      const missing = missingBinary(manifest, capability, buildChildEnv(manifest.env, env).PATH, projectRoot);
+      if (missing) return unavailable(`tracker is unavailable: '${missing}' is not installed (no executable on PATH)`);
       return runCapabilitySync(manifest, capability, args, {
         parentEnv: env,
         timeoutMs,

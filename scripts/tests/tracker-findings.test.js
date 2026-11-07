@@ -41,6 +41,12 @@ afterEach(() => {
   while (tempDirs.length) fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
 });
 
+function mkTempDir(prefix) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  tempDirs.push(dir);
+  return dir;
+}
+
 /**
  * @param {Record<string, string | [string, number]>} replay first-argv-word (or "dep add") ->
  *   fixture file name, or `[file name, exit code]` for a command that fails (br prints its error
@@ -281,7 +287,7 @@ describe('findByKey (AC3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// AC4: no tracker / capability absent -> defined unavailable result, never a throw
+// AC4: no tracker / capability absent -> defined unavailable result, never an exception
 // ---------------------------------------------------------------------------
 
 describe('unavailable result (AC4)', () => {
@@ -307,23 +313,69 @@ describe('unavailable result (AC4)', () => {
   });
 
   test.each(Object.keys(ARGS))('%s: an older contract with no fallback (NOT_ALLOWED undeclared) is also unavailable', (fn) => {
-    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-findings-contract-')));
-    tempDirs.push(dir);
+    const dir = mkTempDir('tracker-findings-contract-');
     fs.writeFileSync(path.join(dir, 'tracker.yaml'), 'category: tracker\nversion: "1.0"\ncapabilities: {}\n');
     const run = (capability, args) => runCapabilitySync(BARE_ADAPTER, capability, args, { categoriesDir: dir });
     expect(findings[fn]({ run }, ...ARGS[fn])).toEqual(UNAVAILABLE);
   });
 
-  test.each(Object.keys(ARGS))('%s: a tracker that cannot be resolved (run throws) is unavailable, not an exception', (fn) => {
-    const run = () => { throw new Error('no tracker adapter configured'); };
-    expect(() => findings[fn]({ run }, ...ARGS[fn])).not.toThrow();
-    expect(findings[fn]({ run }, ...ARGS[fn])).toEqual(UNAVAILABLE);
+  // Reason: this replaces "a tracker that cannot be resolved (run throws) is unavailable". Only
+  // the default deps resolve a tracker, and they now RETURN the unavailable envelope for a
+  // resolution failure; an exception from `run` is a bug (next test) and must not read as
+  // "no tracker here".
+  test.each(Object.keys(ARGS))('%s: an explicit tracker setting naming an adapter that is not installed is unavailable, not thrown', (fn) => {
+    const repo = mkTempDir('tracker-findings-repo-');
+    fs.mkdirSync(path.join(repo, '.ensemble'));
+    fs.writeFileSync(path.join(repo, '.ensemble', 'toolchain.yaml'), 'tracker: no-such-tracker-adapter\n');
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const result = findings[fn](findings.createToolchainDeps({ projectRoot: repo, env: br.env }), ...ARGS[fn]);
+    expect(result).toEqual(UNAVAILABLE);
+    expect(result.error.message).toContain('no-such-tracker-adapter');
+    expect(br.calls()).toEqual([]);
   });
 
-  test.each(Object.keys(ARGS))('%s: tracker binary not installed (real ENOENT) is unavailable', (fn) => {
-    const run = (capability, args) =>
-      runCapabilitySync(BEADS, capability, args, { parentEnv: { PATH: fs.mkdtempSync(path.join(os.tmpdir(), 'tf-empty-')) } });
-    expect(findings[fn]({ run }, ...ARGS[fn])).toEqual(UNAVAILABLE);
+  test.each(Object.keys(ARGS))('%s: an exception thrown by the runner propagates and is never reported as unavailable', (fn) => {
+    const run = () => {
+      throw new TypeError("Cannot read properties of undefined (reading 'x')");
+    };
+    expect(() => findings[fn]({ run }, ...ARGS[fn])).toThrow(TypeError);
+  });
+
+  // Reason: this replaces "tracker binary not installed (real ENOENT) is unavailable", which
+  // asserted that the wrapper recognises a missing binary by the text of the runner's
+  // TOOL_FAILED message. That text echoes the finding, so finding text could flip the verdict;
+  // absence is now established before anything is spawned (the next two tests pin the text).
+  test.each(Object.keys(ARGS))('%s: tracker binary not installed is unavailable, established before anything is spawned', (fn) => {
+    const repo = mkTempDir('tracker-findings-repo-');
+    fs.mkdirSync(path.join(repo, '.beads'));
+    const emptyBin = mkTempDir('tf-empty-');
+    const result = findings[fn](
+      findings.createToolchainDeps({ projectRoot: repo, env: { ...process.env, PATH: emptyBin } }),
+      ...ARGS[fn]
+    );
+    expect(result).toEqual(UNAVAILABLE);
+    expect(result.error.message).toContain("'br' is not installed");
+  });
+
+  test('a TOOL_FAILED envelope whose text looks like a missing binary is an error: no verdict from message text', () => {
+    const run = () => ({
+      ok: false,
+      error: { code: 'TOOL_FAILED', message: "beads: capability 'tracker.create-detailed' failed: spawnSync br ENOENT" }
+    });
+    const result = findings.createFinding({ run }, ...ARGS.createFinding);
+    expect(result.unavailable).toBeUndefined();
+    expect(result.error.code).toBe('TOOL_FAILED');
+  });
+
+  test('finding text that looks like a spawn failure cannot make a real br failure unavailable', () => {
+    // br fails (exit 3, ISSUE_NOT_FOUND on stdout); the runner's TOOL_FAILED message echoes the
+    // argv, which carries the reason text.
+    const { run } = deps({ close: ['br-close-missing.error.json', 3] });
+    for (const reason of ['fixed', 'spawnSync br ENOENT']) {
+      const result = findings.closeFinding({ run }, { id: 'ws-nope', reason, commit: 'abc1234' });
+      expect(result.unavailable).toBeUndefined();
+      expect(result.error.code).toBe('TOOL_FAILED');
+    }
   });
 
   test('a genuine tool failure is NOT swallowed as unavailable', () => {
