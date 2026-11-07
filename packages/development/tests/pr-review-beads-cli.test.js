@@ -14,6 +14,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync, spawnSync } = require('child_process');
 
 const { main, recordBeads } = require('../lib/pr-review-beads-cli');
 const { evaluateGate } = require('../lib/pr-review-gate');
@@ -44,7 +45,7 @@ function payload(ledger, extra = {}) {
   return { repo: 'Acme/Widgets', prNumber: 7, headSha: HEAD, ledger, ...extra };
 }
 
-const WRITES = ['tracker.create-detailed', 'tracker.update-detailed', 'tracker.close-with-reason', 'tracker.label'];
+const WRITES = ['tracker.create-detailed', 'tracker.update-detailed', 'tracker.close-with-reason', 'tracker.label', 'tracker.set-status'];
 
 /** An in-memory `br`: the deps `recordBeads` runs against. */
 function fakeTracker({ fail = () => null } = {}) {
@@ -98,6 +99,16 @@ function fakeTracker({ fail = () => null } = {}) {
           for (const label of args.labels.split(',')) if (!issue.labels.includes(label)) issue.labels.push(label);
           return { ok: true, data: {} };
         }
+        case 'tracker.set-status': {
+          // What `br update --status open` does to a closed bead: it is open again and its close reason is gone.
+          const issue = byId(args.id);
+          issue.status = args.status;
+          if (args.status === 'open') {
+            delete issue.close_reason;
+            delete issue.close_comment;
+          }
+          return { ok: true, data: { id: issue.id, status: issue.status } };
+        }
         default:
           throw new Error(`unexpected capability ${capability}`);
       }
@@ -126,15 +137,27 @@ describe('re-review updates beads and creates none for an unchanged finding (acc
     expect(again.beads['F-1'].beadId).toBe('bd-1');
   });
 
-  test('a later head updates the same beads, appends one note each, and creates none', () => {
+  test('a later head of the same PR updates the same beads, appends one note each, and creates none', () => {
     const tracker = fakeTracker();
     recordBeads(payload(ledger), tracker);
-    const later = recordBeads(payload(ledger, { headSha: NEXT_HEAD, prNumber: 8 }), tracker);
+    const later = recordBeads(payload(ledger, { headSha: NEXT_HEAD }), tracker);
     expect(later).toMatchObject({ ok: true, counts: { create: 0, update: 2 } });
     expect(tracker.issues).toHaveLength(2);
     expect(tracker.issues[0].description).toContain(`at head ${NEXT_HEAD}`);
-    expect(tracker.issues[0].notes).toBe(`Re-confirmed at head ${NEXT_HEAD} (PR #8): 1 location.\n`);
+    expect(tracker.issues[0].notes).toBe(`Re-confirmed at head ${NEXT_HEAD} (PR #7): 1 location.\n`);
     expect(tracker.calls.filter((c) => c.capability === 'tracker.create-detailed')).toHaveLength(2);
+  });
+
+  test('another PR raising the same claim in the same file updates that bead, and the note names the record it replaced', () => {
+    const tracker = fakeTracker();
+    recordBeads(payload(ledger), tracker);
+    const other = recordBeads(payload(ledger, { headSha: NEXT_HEAD, prNumber: 8 }), tracker);
+    expect(other).toMatchObject({ ok: true, counts: { create: 0, update: 2 } });
+    expect(tracker.issues).toHaveLength(2);
+    expect(tracker.issues[0].description).toContain(`PR #8 at head ${NEXT_HEAD}`);
+    expect(tracker.issues[0].notes).toBe(
+      `Re-confirmed at head ${NEXT_HEAD} (PR #8): 1 location. Replaces the description's earlier record: acme/widgets PR #7 at head ${HEAD}.\n`
+    );
   });
 
   test('the tracker is asked once for every key, however many findings there are', () => {
@@ -162,20 +185,32 @@ describe('re-review updates beads and creates none for an unchanged finding (acc
 });
 
 describe('a finding verified fixed at a later head closes its bead with the commit (AC2)', () => {
-  test('the bead is closed with a reason and the clearing commit; an already closed bead is not touched again', () => {
+  test('the bead is closed with a reason and the verified commit; an already closed bead is not touched again', () => {
     const tracker = fakeTracker();
     recordBeads(payload([finding()]), tracker);
 
-    const fixed = payload([finding({ cleared: true, clearedBy: FIX_COMMIT })], { headSha: NEXT_HEAD });
+    const fixed = payload([finding({ cleared: true, clearedBy: FIX_COMMIT })], { headSha: NEXT_HEAD, commitsOnPr: [FIX_COMMIT] });
     const result = recordBeads(fixed, tracker);
     expect(result).toMatchObject({ ok: true, status: 'RECORDED', counts: { close: 1, create: 0 } });
     expect(tracker.issues[0]).toMatchObject({ status: 'closed', close_comment: `closed at commit ${FIX_COMMIT}` });
     expect(tracker.issues[0].close_reason).toContain('PR #7');
-    expect(result.beads['F-1']).toMatchObject({ action: 'close', beadId: 'bd-1' });
+    // The bead is closed now, so it is reported as closed and never as an open bead.
+    expect(result.beads['F-1']).toMatchObject({ action: 'close', closedBeadId: 'bd-1' });
+    expect(result.beads['F-1'].beadId).toBeUndefined();
+    expect(result.actions[0]).toMatchObject({ action: 'close', closedBeadId: 'bd-1' });
 
     const writes = tracker.writes().length;
     expect(recordBeads(fixed, tracker).counts).toMatchObject({ close: 0, skip: 1 });
     expect(tracker.writes()).toHaveLength(writes);
+  });
+
+  test('a cleared mark whose commit nobody verified closes nothing', () => {
+    const tracker = fakeTracker();
+    recordBeads(payload([finding()]), tracker);
+    const result = recordBeads(payload([finding({ cleared: true, clearedBy: FIX_COMMIT })], { headSha: NEXT_HEAD }), tracker);
+    expect(result).toMatchObject({ ok: true, counts: { close: 0 } });
+    expect(result.beads['F-1']).toMatchObject({ action: 'skip', reason: 'cleared-unverified' });
+    expect(tracker.issues[0].status).toBe('open');
   });
 
   test('a finding that is only missing from the next review leaves its bead open', () => {
@@ -183,6 +218,38 @@ describe('a finding verified fixed at a later head closes its bead with the comm
     recordBeads(payload([finding()]), tracker);
     recordBeads(payload([finding({ id: 'F-9', failureMode: 'something unrelated' })], { headSha: NEXT_HEAD }), tracker);
     expect(tracker.issues[0].status).toBe('open');
+  });
+
+  test('a bead this recorder closed as fixed is reopened, rewritten and noted when the finding comes back', () => {
+    const tracker = fakeTracker();
+    recordBeads(payload([finding()]), tracker);
+    recordBeads(payload([finding({ cleared: true, clearedBy: FIX_COMMIT })], { headSha: NEXT_HEAD, commitsOnPr: [FIX_COMMIT] }), tracker);
+    expect(tracker.issues[0].status).toBe('closed');
+
+    const third = 'd'.repeat(40);
+    const back = recordBeads(payload([finding({ id: 'F-9', locationOrLink: 'src/widget.js:40' })], { headSha: third }), tracker);
+    expect(back).toMatchObject({ ok: true, status: 'RECORDED', counts: { update: 1, create: 0 } });
+    expect(tracker.issues).toHaveLength(1);
+    expect(tracker.issues[0]).toMatchObject({ status: 'open' });
+    expect(tracker.issues[0].description).toContain('src/widget.js:40');
+    expect(tracker.issues[0].notes).toContain(`Reopened at head ${third}`);
+    expect(back.beads['F-9']).toMatchObject({ action: 'update', reason: 'reopened', beadId: 'bd-1' });
+    expect(back.beads['F-9'].closedBeadId).toBeUndefined();
+    expect(tracker.calls.filter((c) => c.capability === 'tracker.set-status')).toEqual([{ capability: 'tracker.set-status', args: { id: 'bd-1', status: 'open' } }]);
+  });
+
+  test('a bead a person closed stays closed and is reported as closed, never as an open bead', () => {
+    const tracker = fakeTracker();
+    recordBeads(payload([finding()]), tracker);
+    tracker.issues[0].status = 'closed';
+    tracker.issues[0].close_reason = 'wontfix: by design';
+    const result = recordBeads(payload([finding()], { headSha: NEXT_HEAD }), tracker);
+    expect(result).toMatchObject({ ok: true, status: 'RECORDED', counts: { create: 0, update: 0, close: 0, skip: 1 } });
+    expect(result.beads['F-1']).toMatchObject({ action: 'skip', reason: 'bead-closed', closedBeadId: 'bd-1' });
+    expect(result.beads['F-1'].beadId).toBeUndefined();
+    expect(result.actions[0].beadId).toBeUndefined();
+    expect(tracker.issues[0].status).toBe('closed');
+    expect(tracker.calls.some((c) => c.capability === 'tracker.set-status')).toBe(false);
   });
 });
 
@@ -330,46 +397,125 @@ describe('dryRun', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// A REAL repository: what the trust checks and the fix verification read
+// ---------------------------------------------------------------------------
+
+const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
+const numbered = (n) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
+const CLEAR_CLI = path.join(__dirname, '..', 'lib', 'pr-review-clear-cli.js');
+const sandboxes = [];
+
+afterAll(() => {
+  while (sandboxes.length) fs.rmSync(sandboxes.pop(), { recursive: true, force: true });
+});
+
+function tempDir(prefix) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  sandboxes.push(dir);
+  return dir;
+}
+
+function writeFile(root, rel, text) {
+  const file = path.join(root, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+}
+
+function commitAll(cwd, message) {
+  gitIn(cwd, 'add', '-A');
+  gitIn(cwd, 'commit', '-q', '-m', message);
+  return gitIn(cwd, 'rev-parse', 'HEAD');
+}
+
+/**
+ * A repository the recorder reads for real. The PRIMARY checkout is on `main`: `root` is a commit with
+ * no toolchain config, `base` adds the config (`tracker: beads`) and a `.beads` directory. The PR branch
+ * `pr` is checked out in a LINKED worktree (the head under review) with three commits: `p1` adds
+ * src/widget.js, `p2` edits its line 12 (the fix), and `p3` is a hostile head that commits a toolchain
+ * config naming a tracker that does not exist.
+ */
+function makeRepo() {
+  const sandbox = tempDir('pr-review-beads-repo-');
+  const primary = path.join(sandbox, 'primary');
+  fs.mkdirSync(primary);
+  gitIn(primary, 'init', '-q', '-b', 'main');
+  gitIn(primary, 'config', 'user.name', 'ci');
+  gitIn(primary, 'config', 'user.email', 'ci@example.invalid');
+  gitIn(primary, 'config', 'commit.gpgsign', 'false');
+  writeFile(primary, 'README.md', 'root\n');
+  const root = commitAll(primary, 'root');
+  writeFile(primary, '.ensemble/toolchain.yaml', 'tracker: beads\n');
+  writeFile(primary, '.beads/config.yaml', 'prefix: bd\n');
+  const base = commitAll(primary, 'base');
+  const worktree = path.join(sandbox, 'pr-worktree');
+  gitIn(primary, 'worktree', 'add', '-q', '-b', 'pr', worktree, base);
+  writeFile(worktree, 'src/widget.js', numbered(30));
+  const p1 = commitAll(worktree, 'p1');
+  writeFile(worktree, 'src/widget.js', numbered(30).replace('line 12\n', 'line 12 fixed\n'));
+  const p2 = commitAll(worktree, 'p2');
+  writeFile(worktree, '.ensemble/toolchain.yaml', 'tracker: no-such-tracker\n');
+  const p3 = commitAll(worktree, 'p3');
+  return { sandbox, primary, worktree, root, base, p1, p2, p3 };
+}
+
+/** A `br` on the PATH that logs the directory every call ran in and answers the two calls a first record needs. */
+function fakeBr() {
+  const dir = tempDir('pr-review-beads-br-');
+  const log = path.join(dir, 'calls.log');
+  const script = `#!/usr/bin/env node
+const fs = require('fs');
+const argv = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv, cwd: process.cwd() }) + '\\n');
+if (argv[0] === 'list') process.stdout.write(JSON.stringify({ issues: [] }));
+else if (argv[0] === 'create') process.stdout.write(JSON.stringify({ id: 'bd-1', title: 't', status: 'open' }));
+else { process.stderr.write('fake br: unexpected ' + argv[0]); process.exit(2); }
+`;
+  fs.writeFileSync(path.join(dir, 'br'), script, { mode: 0o755 });
+  return {
+    calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []),
+    env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+  };
+}
+
 describe('main(): the process entry point', () => {
-  const tempDirs = [];
-  afterEach(() => {
-    while (tempDirs.length) fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  let fx;
+  beforeAll(() => {
+    fx = makeRepo();
   });
-  /** A directory `resolveProjectRootFlag` accepts as a repository root. */
-  function fakeRepo() {
-    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-beads-')));
-    tempDirs.push(dir);
-    fs.mkdirSync(path.join(dir, '.git'));
-    fs.writeFileSync(path.join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-    return dir;
-  }
+
+  const mainPayload = (ledger, extra = {}) => ({ ...payload(ledger, { headSha: fx.p3 }), baseSha: fx.base, repoRoot: fx.worktree, ...extra });
+  /** What the host says about the PR: a head on this repository. */
+  const hostSays = (over = {}) => () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN', ...over });
 
   function run(body, io = {}) {
     const out = [];
-    const code = main({ readJson: () => body, emit: (value) => out.push(value), now: () => 0, ...io });
+    const code = main({ readJson: () => body, emit: (value) => out.push(value), now: () => 0, readPr: hostSays(), ...io });
     return { code, out: out[0] };
   }
 
-  test('records through the injected tracker, exits 0, and fills the state report link from the repo root', () => {
-    const repo = fakeRepo();
+  test('records through the injected tracker, exits 0, and stores the state report as a repository-relative path', () => {
     const tracker = fakeTracker();
-    const { code, out } = run({ ...payload([finding()]), repoRoot: repo }, { deps: tracker });
+    const { code, out } = run(mainPayload([finding()]), { deps: tracker });
     expect(code).toBe(0);
     expect(out).toMatchObject({ ok: true, status: 'RECORDED', wallMs: 0 });
-    expect(tracker.issues[0].description).toContain(`State report: ${path.join(repo, '.ensemble', 'pr-review', 'pr-7.json')}`);
+    const { description } = tracker.issues[0];
+    expect(description).toContain('State report: .ensemble/pr-review/pr-7.json');
+    // Nothing of this machine goes into the bead: no home directory, no checkout path.
+    expect(description).not.toContain(fx.sandbox);
+    expect(description).not.toContain(os.homedir());
   });
 
-  test('a PARTIAL run and a FAILED run exit 1; an UNAVAILABLE run exits 0', () => {
-    const repo = fakeRepo();
-    expect(run({ ...payload([finding()]), repoRoot: repo }, { deps: { run: () => UNAVAILABLE } }).code).toBe(0);
-    expect(run({ ...payload([finding()]), repoRoot: repo }, { deps: fakeTracker({ fail: (c) => (c === 'tracker.create-detailed' ? { ok: false, error: { code: 'TOOL_FAILED', message: 'x' } } : null) }) }).code).toBe(1);
-    expect(run({ ...payload([finding()]), repo: 'no good', repoRoot: repo }, { deps: fakeTracker() }).code).toBe(1);
+  test('a PARTIAL run and a FAILED run exit 1; an UNAVAILABLE run and a REFUSED run exit 0', () => {
+    expect(run(mainPayload([finding()]), { deps: { run: () => UNAVAILABLE } }).code).toBe(0);
+    expect(run(mainPayload([finding()]), { deps: fakeTracker({ fail: (c) => (c === 'tracker.create-detailed' ? { ok: false, error: { code: 'TOOL_FAILED', message: 'x' } } : null) }) }).code).toBe(1);
+    expect(run(mainPayload([finding()], { repo: 'no good' }), { deps: fakeTracker() }).code).toBe(1);
+    expect(run(mainPayload([finding()]), { deps: fakeTracker(), readPr: hostSays({ isCrossRepository: true }) }).code).toBe(0);
   });
 
   test('a repoRoot that is not a git repository is refused before any tracker is resolved', () => {
-    const notRepo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-beads-')));
-    tempDirs.push(notRepo);
-    const { code, out } = run({ ...payload([finding()]), repoRoot: notRepo });
+    const notRepo = tempDir('pr-review-beads-notrepo-');
+    const { code, out } = run(mainPayload([finding()], { repoRoot: notRepo }));
     expect(code).toBe(1);
     expect(out).toMatchObject({ ok: false, status: 'FAILED' });
     expect(out.reason).toContain('not a git repository');
@@ -383,32 +529,89 @@ describe('main(): the process entry point', () => {
     expect(main({ readJson: readFail, emit: (v) => bad.push(v), now: () => 0 })).toBe(1);
     expect(bad[0].reason).toContain('invalid JSON on stdin');
     expect(run([1, 2]).code).toBe(1);
-    expect(run({ ...payload([finding()]), dryRun: 'yes' }, { deps: fakeTracker() }).code).toBe(1);
-    expect(run({ ...payload([finding()]), repoRoot: '' }, { deps: fakeTracker() }).code).toBe(1);
+    expect(run({ ...mainPayload([finding()]), dryRun: 'yes' }, { deps: fakeTracker() }).code).toBe(1);
+    expect(run({ ...mainPayload([finding()]), repoRoot: '' }, { deps: fakeTracker() }).code).toBe(1);
   });
 
-  test('without injected deps the tracker is resolved for the repository UNDER REVIEW and never from its own adapters', () => {
-    const repo = fakeRepo();
+  test('repoRoot is required: it is never assumed to be the current directory, and nothing is read or written without it', () => {
+    // The test process runs inside a git repository: a default of the current directory would record there.
+    expect(fs.existsSync(path.join(process.cwd(), '.git'))).toBe(true);
+    const tracker = fakeTracker();
+    const git = jest.fn(() => {
+      throw new Error('git must not be run without a repoRoot');
+    });
+    const readPr = jest.fn(hostSays());
+    for (const repoRoot of [undefined, null, '', '   ', 7, {}]) {
+      const body = { ...mainPayload([finding()]) };
+      if (repoRoot === undefined) delete body.repoRoot;
+      else body.repoRoot = repoRoot;
+      const { code, out } = run(body, { deps: tracker, git, readPr });
+      expect(code).toBe(1);
+      expect(out).toMatchObject({ ok: false, status: 'FAILED', recorded: false });
+      expect(out.reason).toContain("'repoRoot' is required");
+    }
+    expect(tracker.calls).toEqual([]);
+    expect(git).not.toHaveBeenCalled();
+    expect(readPr).not.toHaveBeenCalled();
+  });
+
+  test('baseSha is required and must be a full commit id: the tracker choice is read from it', () => {
+    const tracker = fakeTracker();
+    for (const baseSha of [undefined, null, '', 'main', fx.base.slice(0, 10), 7]) {
+      const body = mainPayload([finding()]);
+      if (baseSha === undefined) delete body.baseSha;
+      else body.baseSha = baseSha;
+      const { code, out } = run(body, { deps: tracker });
+      expect(code).toBe(1);
+      expect(out).toMatchObject({ ok: false, status: 'FAILED', recorded: false });
+      expect(out.reason).toContain("'baseSha' is required");
+    }
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('without injected deps the tracker is resolved for the repository\'s PRIMARY checkout with the config as committed at the base, and never from the head\'s own adapters', () => {
     const trackerModule = require('../lib/tracker-findings');
     const tracker = fakeTracker();
     const spy = jest.spyOn(trackerModule, 'createToolchainDeps').mockReturnValue(tracker);
     try {
-      const { code } = run({ ...payload([finding()]), repoRoot: repo, timeoutMs: 1234 });
+      // The head's worktree is named, but the tracker runs in the primary checkout, and its configuration is
+      // what the BASE commit holds (`tracker: beads`), not what the head committed (`no-such-tracker`).
+      const { code } = run(mainPayload([finding()], { timeoutMs: 1234 }));
       expect(code).toBe(0);
-      // The tree is named explicitly (so it is not the current directory) and is untrusted: it supplies
-      // config and a working directory, never the adapter that records its own findings.
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy.mock.calls[0][0]).toMatchObject({ projectRoot: repo, untrustedProjectRoot: true, timeoutMs: 1234 });
+      expect(spy.mock.calls[0][0]).toMatchObject({ projectRoot: fx.primary, untrustedProjectRoot: true, timeoutMs: 1234 });
+      expect(spy.mock.calls[0][0].baseConfig.text).toBe('tracker: beads\n');
+      expect(fs.readFileSync(path.join(fx.worktree, '.ensemble', 'toolchain.yaml'), 'utf8')).toBe('tracker: no-such-tracker\n');
       expect(tracker.issues).toHaveLength(1);
+
+      // A base with no config at all is a null config, not the head's.
+      spy.mockClear();
+      run(mainPayload([finding()], { baseSha: fx.root }));
+      expect(spy.mock.calls[0][0].baseConfig).toMatchObject({ text: null });
     } finally {
       spy.mockRestore();
     }
   });
 
+  test('a head that names another tracker cannot switch its own findings\' recording off, and the tracker never runs in the head\'s tree', () => {
+    const trackerModule = require('../lib/tracker-findings');
+    const br = fakeBr();
+    // CONTROL: resolving from the head's tree, the way the recorder used to, makes the head's own findings unrecordable.
+    const fromTree = trackerModule.createToolchainDeps({ projectRoot: fx.worktree, env: br.env, untrustedProjectRoot: true });
+    expect(trackerModule.findByKeys(fromTree, { keys: ['k'] })).toMatchObject({ ok: false, unavailable: true });
+
+    const { code, out } = run(mainPayload([finding()]), { env: br.env });
+    expect(code).toBe(0);
+    expect(out).toMatchObject({ ok: true, status: 'RECORDED', counts: { create: 1 } });
+    const calls = br.calls();
+    expect(calls.map((c) => c.argv[0])).toEqual(['list', 'create']);
+    // Every br call ran in the primary checkout: the head's worktree (and its .beads) was never the store.
+    expect(calls.every((c) => c.cwd === fx.primary)).toBe(true);
+  });
+
   test('dryRun through main changes nothing', () => {
-    const repo = fakeRepo();
     const tracker = fakeTracker();
-    const { code, out } = run({ ...payload([finding()]), repoRoot: repo, dryRun: true }, { deps: tracker });
+    const { code, out } = run(mainPayload([finding()], { dryRun: true }), { deps: tracker });
     expect(code).toBe(0);
     expect(out.status).toBe('PLANNED');
     expect(tracker.writes()).toEqual([]);
@@ -416,15 +619,289 @@ describe('main(): the process entry point', () => {
 
   test('credential-shaped text in the result is redacted on the way out', () => {
     const secret = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
-    const repo = fakeRepo();
     const written = [];
     const spy = jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => (written.push(String(chunk)), true));
     try {
-      main({ readJson: () => ({ ...payload([finding({ failureMode: `leaks ${secret}` })]), repoRoot: repo, dryRun: true }), deps: fakeTracker(), now: () => 0 });
+      main({ readJson: () => mainPayload([finding({ failureMode: `leaks ${secret}` })], { dryRun: true }), deps: fakeTracker(), now: () => 0, readPr: hostSays() });
     } finally {
       spy.mockRestore();
     }
     expect(written.join('')).not.toContain(secret);
     expect(written.join('')).toContain('[REDACTED]');
+  });
+});
+
+describe('what the head under review cannot control: the recorder refuses, by name, and writes nothing', () => {
+  let fx;
+  beforeAll(() => {
+    fx = makeRepo();
+  });
+
+  const mainPayload = (ledger, extra = {}) => ({ ...payload(ledger, { headSha: fx.p3 }), baseSha: fx.base, repoRoot: fx.worktree, ...extra });
+  const hostSays = (over = {}) => () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN', ...over });
+  function run(body, io = {}) {
+    const out = [];
+    const code = main({ readJson: () => body, emit: (value) => out.push(value), now: () => 0, readPr: hostSays(), ...io });
+    return { code, out: out[0] };
+  }
+  const REFUSAL = { ok: true, status: 'REFUSED', recorded: false, fallback: 'skip-finding-beads', actions: [], beads: {} };
+
+  test('a head on a fork is refused as cross-repository-head, before the tracker is touched', () => {
+    const tracker = fakeTracker();
+    const { code, out } = run(mainPayload([finding()]), { deps: tracker, readPr: hostSays({ isCrossRepository: true }) });
+    expect(code).toBe(0);
+    expect(out).toMatchObject({ ...REFUSAL, code: 'cross-repository-head' });
+    expect(out.reason).toMatch(/fork/);
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('a head whose repository the host did not state is refused as head-repository-unknown (only an explicit false passes)', () => {
+    for (const isCrossRepository of [undefined, null, 'false', 0, 'no', {}]) {
+      const tracker = fakeTracker();
+      const { out } = run(mainPayload([finding()]), { deps: tracker, readPr: hostSays({ isCrossRepository }) });
+      expect(out).toMatchObject({ ...REFUSAL, code: 'head-repository-unknown' });
+      expect(tracker.calls).toEqual([]);
+    }
+  });
+
+  test('a pull request the host could not be asked about is refused as pr-unreadable', () => {
+    for (const readPr of [() => ({ ok: false, error: 'gh: not logged in' }), () => undefined, () => null]) {
+      const tracker = fakeTracker();
+      const { out } = run(mainPayload([finding()]), { deps: tracker, readPr });
+      expect(out).toMatchObject({ ...REFUSAL, code: 'pr-unreadable' });
+      expect(tracker.calls).toEqual([]);
+    }
+  });
+
+  test('a dry run is refused too: even reading the tracker for a fork head is not done', () => {
+    const tracker = fakeTracker();
+    const { out } = run(mainPayload([finding()], { dryRun: true }), { deps: tracker, readPr: hostSays({ isCrossRepository: true }) });
+    expect(out.status).toBe('REFUSED');
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('the host is asked about the repository and the PR the payload names', () => {
+    const readPr = jest.fn(hostSays());
+    run(mainPayload([finding()]), { deps: fakeTracker(), readPr });
+    expect(readPr).toHaveBeenCalledWith({ repo: 'Acme/Widgets', prNumber: 7 });
+  });
+
+  test('makeReadPr asks gh for the fields the refusal needs and reads its answer strictly', () => {
+    const { makeReadPr } = require('../lib/pr-review-beads-cli');
+    const calls = [];
+    const reply = (stdout, status = 0, stderr = '') => (command, argv) => (calls.push([command, argv]), { status, stdout, stderr });
+    const ok = makeReadPr(reply(JSON.stringify({ isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' })))({ repo: 'Acme/Widgets', prNumber: 7 });
+    expect(ok).toEqual({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' });
+    expect(calls[0]).toEqual(['gh', ['pr', 'view', '7', '--repo', 'Acme/Widgets', '--json', 'isCrossRepository,headRefOid,baseRefName,state']]);
+    expect(makeReadPr(reply('', 1, 'gh: not found\nHTTP 404'))({ repo: 'a/b', prNumber: 1 })).toEqual({ ok: false, error: 'gh pr view failed: HTTP 404' });
+    expect(makeReadPr(reply('not json'))({ repo: 'a/b', prNumber: 1 }).ok).toBe(false);
+    expect(makeReadPr(reply('[]'))({ repo: 'a/b', prNumber: 1 }).ok).toBe(false);
+    expect(makeReadPr(() => undefined)({ repo: 'a/b', prNumber: 1 }).ok).toBe(false);
+  });
+
+  test('a primary checkout that holds the head (or work built on it) is refused as head-checked-out, from the primary and from the linked worktree alike', () => {
+    const held = makeRepo();
+    gitIn(held.primary, 'checkout', '-q', '--detach', held.p3);
+    for (const repoRoot of [held.primary, held.worktree]) {
+      const tracker = fakeTracker();
+      const { out } = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot }, { deps: tracker });
+      expect(out).toMatchObject({ ...REFUSAL, code: 'head-checked-out' });
+      expect(out.reason).toContain(held.primary);
+      expect(tracker.calls).toEqual([]);
+    }
+    // Work BUILT ON the head counts as holding it.
+    writeFile(held.primary, 'later.txt', 'later\n');
+    commitAll(held.primary, 'later');
+    const tracker = fakeTracker();
+    const { out } = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot: held.primary }, { deps: tracker });
+    expect(out.code).toBe('head-checked-out');
+
+    // And the same repository is fine once the primary is back on the base's branch.
+    gitIn(held.primary, 'checkout', '-q', 'main');
+    const ok = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot: held.worktree }, { deps: fakeTracker() });
+    expect(ok.out.status).toBe('RECORDED');
+  });
+
+  test('a repository with no primary checkout (a bare repository\'s worktree) is refused as no-primary-worktree', () => {
+    const bare = path.join(fx.sandbox, 'bare.git');
+    gitIn(fx.sandbox, 'clone', '-q', '--bare', fx.primary, bare);
+    const wt = path.join(fx.sandbox, 'bare-wt');
+    gitIn(bare, 'worktree', 'add', '-q', '--detach', wt, fx.p3);
+    const tracker = fakeTracker();
+    const { out } = run(mainPayload([finding()], { repoRoot: wt }), { deps: tracker });
+    expect(out).toMatchObject({ ...REFUSAL, code: 'no-primary-worktree' });
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('a base commit this repository does not hold is refused as base-unavailable: the tracker choice cannot be read from it', () => {
+    const tracker = fakeTracker();
+    const { out } = run(mainPayload([finding()], { baseSha: '1'.repeat(40) }), { deps: tracker });
+    expect(out).toMatchObject({ ...REFUSAL, code: 'base-unavailable' });
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('a git that cannot answer is a refusal, never a pass', () => {
+    const tracker = fakeTracker();
+    const broken = () => ({ status: 128, stdout: '', stderr: 'fatal: boom' });
+    const { out } = run(mainPayload([finding()]), { deps: tracker, git: broken });
+    expect(out.status).toBe('REFUSED');
+    expect(tracker.calls).toEqual([]);
+  });
+});
+
+describe('a fix closes a bead only with a commit git says is on the PR', () => {
+  let fx;
+  beforeAll(() => {
+    fx = makeRepo();
+  });
+
+  const body = (ledger, extra = {}) => ({ ...payload(ledger, { headSha: fx.p3 }), baseSha: fx.base, repoRoot: fx.worktree, ...extra });
+  const hostSays = () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' });
+  function run(request, io = {}) {
+    const out = [];
+    const code = main({ readJson: () => request, emit: (value) => out.push(value), now: () => 0, readPr: hostSays, ...io });
+    return { code, out: out[0] };
+  }
+
+  /** A tracker that already holds the open bead of the default finding. */
+  function withOpenBead() {
+    const tracker = fakeTracker();
+    expect(run(body([finding()]), { deps: tracker }).out.status).toBe('RECORDED');
+    expect(tracker.issues).toHaveLength(1);
+    return tracker;
+  }
+
+  test('a commit on the PR closes the bead, and the close names the full commit even when it was written short', () => {
+    for (const clearedBy of [fx.p2, fx.p2.slice(0, 10), fx.p2.toUpperCase()]) {
+      const tracker = withOpenBead();
+      const { out } = run(body([finding({ cleared: true, clearedBy })]), { deps: tracker });
+      expect(out).toMatchObject({ ok: true, status: 'RECORDED', counts: { close: 1 } });
+      expect(out.unverifiedFixes).toBeUndefined();
+      expect(tracker.issues[0]).toMatchObject({ status: 'closed', close_comment: `closed at commit ${fx.p2}` });
+    }
+  });
+
+  test.each([
+    ['a commit in the base\'s history', () => fx.base, 'in-base-history'],
+    ['the base\'s own ancestor', () => fx.root, 'in-base-history'],
+    ['a commit that does not exist', () => 'e'.repeat(40), 'commit-not-found'],
+    ['an abbreviation that names nothing', () => 'e'.repeat(9), 'commit-not-found'],
+  ])('%s is not a fix: the bead stays open and the refusal is reported', (_label, commit, reason) => {
+    const tracker = withOpenBead();
+    const clearedBy = commit();
+    const { out } = run(body([finding({ cleared: true, clearedBy })]), { deps: tracker });
+    expect(out).toMatchObject({ ok: true, status: 'RECORDED', counts: { close: 0 } });
+    expect(out.beads['F-1']).toMatchObject({ action: 'skip', reason: 'cleared-unverified' });
+    expect(out.unverifiedFixes).toEqual([{ commit: clearedBy, reason }]);
+    expect(tracker.issues[0].status).toBe('open');
+    expect(tracker.calls.some((c) => c.capability === 'tracker.close-with-reason')).toBe(false);
+  });
+
+  test('a commit on the PR that is newer than the head the request names is not a fix either', () => {
+    const tracker = withOpenBead();
+    const { out } = run(body([finding({ cleared: true, clearedBy: fx.p3 })], { headSha: fx.p2 }), { deps: tracker });
+    expect(out.unverifiedFixes).toEqual([{ commit: fx.p3, reason: 'not-an-ancestor-of-head' }]);
+    expect(tracker.issues[0].status).toBe('open');
+  });
+
+  test('a commitsOnPr list in the payload is ignored: only git can say a commit is on the PR', () => {
+    const tracker = withOpenBead();
+    const forged = fx.base;
+    const { out } = run(body([finding({ cleared: true, clearedBy: forged })], { commitsOnPr: [forged] }), { deps: tracker });
+    expect(out.counts.close).toBe(0);
+    expect(out.unverifiedFixes).toEqual([{ commit: forged, reason: 'in-base-history' }]);
+    expect(tracker.issues[0].status).toBe('open');
+  });
+
+  test('the verification covers the security lane\'s findings too', () => {
+    const tracker = fakeTracker();
+    const lane = finding({ id: 'S-1', failureMode: 'lane claim', severity: 'important' });
+    expect(run(body([], { security: { status: 'findings', findings: [lane] } }), { deps: tracker }).out.counts.create).toBe(1);
+    const { out } = run(body([], { security: { status: 'findings', findings: [{ ...lane, cleared: true, clearedBy: fx.base }] } }), { deps: tracker });
+    expect(out.unverifiedFixes).toEqual([{ commit: fx.base, reason: 'in-base-history' }]);
+    expect(tracker.issues[0].status).toBe('open');
+  });
+});
+
+describe('end to end: a real diff, the clear CLI, then the recorder (acceptance test AC2)', () => {
+  let fx;
+  beforeAll(() => {
+    fx = makeRepo();
+  });
+
+  const hostSays = () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' });
+  const record = (ledger, headSha, tracker, extra = {}) => {
+    const out = [];
+    main({
+      readJson: () => ({ ...payload(ledger, { headSha }), baseSha: fx.base, repoRoot: fx.worktree, ...extra }),
+      emit: (value) => out.push(value),
+      now: () => 0,
+      readPr: hostSays,
+      deps: tracker,
+    });
+    return out[0];
+  };
+  /** The CLI as a process: JSON on stdin, JSON on stdout. */
+  const derive = (request) => {
+    const child = spawnSync(process.execPath, [CLEAR_CLI], { input: JSON.stringify(request), encoding: 'utf8' });
+    return { status: child.status, result: JSON.parse(child.stdout) };
+  };
+  const atP1 = () => finding({ headSha: fx.p1, locationOrLink: 'src/widget.js:12' });
+
+  test('the finding recorded at p1 is cleared by the p2 edit of its line, and the recorder closes its bead with a commit on the PR', () => {
+    const tracker = fakeTracker();
+    expect(record([atP1()], fx.p1, tracker)).toMatchObject({ status: 'RECORDED', counts: { create: 1 } });
+
+    const derived = derive({ repoRoot: fx.worktree, baseSha: fx.base, headSha: fx.p3, ledger: [atP1()], incoming: [] });
+    expect(derived.status).toBe(0);
+    expect(derived.result).toMatchObject({ ok: true, status: 'DERIVED', headSha: fx.p3, cleared: [{ id: 'F-1', clearedBy: fx.p3 }] });
+    const [mark] = derived.result.ledger;
+    expect(mark).toMatchObject({ id: 'F-1', cleared: true, clearedBy: fx.p3, clearedReason: 'location-changed' });
+
+    const closed = record(derived.result.ledger, fx.p3, tracker);
+    expect(closed).toMatchObject({ ok: true, status: 'RECORDED', counts: { close: 1 } });
+    expect(closed.unverifiedFixes).toBeUndefined();
+    expect(tracker.issues[0]).toMatchObject({ status: 'closed', close_comment: `closed at commit ${fx.p3}` });
+    expect(closed.beads['F-1']).toMatchObject({ action: 'close', closedBeadId: 'bd-1' });
+  });
+
+  test('the documented payload: the carried entry has no head of its own and the prior round\'s reviewed head is lastReviewedSha', () => {
+    const tracker = fakeTracker();
+    record([finding({ locationOrLink: 'src/widget.js:12' })], fx.p1, tracker);
+
+    const carried = finding({ locationOrLink: 'src/widget.js:12' });
+    expect(carried.headSha).toBeUndefined();
+    const kept = derive({ repoRoot: fx.worktree, baseSha: fx.base, headSha: fx.p3, ledger: [carried], incoming: [] });
+    expect(kept.result).toMatchObject({ ok: true, cleared: [], kept: [{ id: 'F-1', reason: 'no-recorded-head' }] });
+
+    const derived = derive({ repoRoot: fx.worktree, baseSha: fx.base, headSha: fx.p3, lastReviewedSha: fx.p1, ledger: [carried], incoming: [] });
+    expect(derived.result).toMatchObject({ ok: true, cleared: [{ id: 'F-1', clearedBy: fx.p3 }] });
+    const closed = record(derived.result.ledger, fx.p3, tracker);
+    expect(closed).toMatchObject({ ok: true, status: 'RECORDED', counts: { close: 1 } });
+    expect(tracker.issues[0].status).toBe('closed');
+  });
+
+  test('a finding the next review raised again is not cleared, so its bead stays open and is updated', () => {
+    const tracker = fakeTracker();
+    record([atP1()], fx.p1, tracker);
+    // The review of p3 re-reports the defect two lines lower: the same defect, so not fixed.
+    const reRaised = { ...atP1(), id: 'N-9', locationOrLink: 'src/widget.js:14', headSha: fx.p3 };
+    const derived = derive({ repoRoot: fx.worktree, baseSha: fx.base, headSha: fx.p3, ledger: [atP1()], incoming: [reRaised] });
+    expect(derived.result.cleared).toEqual([]);
+    expect(derived.result.kept).toEqual([{ id: 'F-1', reason: 're-reported' }]);
+
+    const result = record(derived.result.ledger, fx.p3, tracker);
+    expect(result).toMatchObject({ ok: true, counts: { close: 0, update: 1 } });
+    expect(tracker.issues[0].status).toBe('open');
+  });
+
+  test('a hand-written cleared mark naming the base closes no bead', () => {
+    const tracker = fakeTracker();
+    record([atP1()], fx.p1, tracker);
+    const handWritten = { ...atP1(), cleared: true, clearedBy: fx.base, clearedReason: 'location-changed' };
+    const result = record([handWritten], fx.p3, tracker);
+    expect(result.counts.close).toBe(0);
+    expect(result.unverifiedFixes).toEqual([{ commit: fx.base, reason: 'in-base-history' }]);
+    expect(tracker.issues[0].status).toBe('open');
   });
 });

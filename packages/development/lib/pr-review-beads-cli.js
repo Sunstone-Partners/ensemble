@@ -7,52 +7,93 @@
  * JSON in on stdin, one JSON object out on stdout.
  *
  * It is NOT a subcommand of pr-review-cli.js: that CLI's modules are pure (no shell, no file
- * reads), and this one runs the tracker (`br`) through the toolchain. What to do is decided by
- * the pure `pr-review-beads.js`; this file asks the tracker what it already holds, runs the plan
- * and reports what happened. It never edits a file, commits, pushes, spawns a fix agent or asks a
- * question, so it behaves the same under `--foreman` and interactively: it only RECORDS. It does
- * not decide or resolve anything either: a finding's `resolution`, `cleared` mark and the gate's
- * verdict are untouched, so a blocking finding still blocks after its bead is recorded.
+ * reads), and this one runs the tracker (`br`) through the toolchain and reads git. What to do is
+ * decided by the pure `pr-review-beads.js`; this file asks the tracker what it already holds, runs
+ * the plan and reports what happened. It never edits a file, commits, pushes, spawns a fix agent or
+ * asks a question, so it behaves the same under `--foreman` and interactively: it only RECORDS. It
+ * does not decide or resolve anything either: a finding's `resolution`, `cleared` mark and the
+ * gate's verdict are untouched, so a blocking finding still blocks after its bead is recorded. The
+ * `cleared` marks it acts on come from `pr-review-clear-cli.js`, which derives them from git.
  *
  * Usage: node pr-review-beads-cli.js < payload.json
  *
- *   payload  { repo, prNumber, headSha, ledger[], security?{findings[]}, votes?, followOnIds?[],
- *              reportLink?, repoRoot?, dryRun?, timeoutMs? }
- *     repo         `owner/name`, the repository identity half of every dedupe key
- *     ledger       the ledger's findings; `cleared`/`clearedBy` (from `ledger` `clearFixedFindings`)
- *                  mark a finding fixed at a later head and close its bead with that commit
+ *   payload  { repoRoot, baseSha, repo, prNumber, headSha, ledger[], security?{findings[]}, votes?,
+ *              followOnIds?[], reportLink?, dryRun?, timeoutMs? }
+ *     repoRoot     REQUIRED, the repository under review: a git repository or linked-worktree root,
+ *                  exactly as `toolchain-cli --project-root` requires. It is never assumed to be the
+ *                  current directory (a missing one is FAILED: beads must not land in whichever
+ *                  repository the shell happens to be in). It names the repository only: the tracker
+ *                  is NOT taken from this tree (see "What the head under review controls").
+ *     baseSha      REQUIRED, the full commit id of the base the review resolved (`BASE_SHA`, Step 1).
+ *                  The tracker's configuration is read as committed there, and a fix is a commit on
+ *                  the PR: in `baseSha..headSha`.
+ *     repo         `owner/name`, the repository identity half of every dedupe key, and the repository
+ *                  the host is asked about
+ *     ledger       the ledger's findings; `cleared`/`clearedBy` (from `pr-review-clear-cli.js`) mark a
+ *                  finding fixed at a later head. A bead is closed only when `clearedBy` is a commit
+ *                  this process verified with git is on the PR (an ancestor of `headSha`, not of
+ *                  `baseSha`); the payload cannot supply that fact (a `commitsOnPr` key is ignored)
  *     votes        the `votes` result (each finding's tally and whether it is presented)
  *     followOnIds  the findings the OPERATOR chose to defer; they get the `follow-on` label. Never
  *                  fill this from an agent's own judgement
- *     repoRoot     the repository under review (default: the current directory). It must be a git
- *                  repository or linked-worktree root, exactly as `toolchain-cli --project-root`
- *                  requires, and is treated the same way: a source of working directory and
- *                  `.ensemble/toolchain.yaml` only, never of adapter code (a PR head must not
- *                  supply the tracker that records its own findings)
+ *     reportLink   the state report; default: its path relative to the repository (never an
+ *                  absolute path: the bead lives in git history)
  *     dryRun       plan only: look the keys up, print the actions, change nothing
  *
- *   result   { ok, status, recorded, counts, actions[], beads{ <findingId>: { action, reason, key, beadId? } } }
+ *   WHAT THE HEAD UNDER REVIEW CONTROLS: nothing about whether or where its own findings are
+ *   recorded. Before anything is read from or written to the tracker this process
+ *     1. asks the HOST (`gh pr view`) about the pull request and refuses, by name, a head on a fork
+ *        (`cross-repository-head`), a head whose repository the host did not state
+ *        (`head-repository-unknown`) and a pull request it could not read (`pr-unreadable`), the way
+ *        the precheck and the review runner refuse them (the head's own files must not steer what
+ *        is written for it);
+ *     2. runs the tracker in the repository's PRIMARY checkout, never in a linked worktree or clone
+ *        of the head (`git rev-parse --git-common-dir`), and refuses that checkout when it holds the
+ *        head or anything built on it (`head-checked-out`: its `.beads` would be the head's own);
+ *     3. reads the tracker choice from `.ensemble/toolchain.yaml` AS COMMITTED AT `baseSha`, never
+ *        from the tree and never by detection against it (a head that names another tracker, or no
+ *        tracker, cannot switch its own findings' recording off).
+ *   Any other repository state it cannot establish is a refusal too, never a guess.
+ *
+ *   result   { ok, status, recorded, counts, actions[], beads{ <findingId>: { action, reason, key, beadId?, closedBeadId? } } }
  *     status   RECORDED     every action ran (exit 0)
  *              PLANNED      `dryRun` (exit 0)
  *              UNAVAILABLE  the repository has no usable tracker, or its adapter lacks a capability
  *                           the plan needs: NO bead was recorded, `fallback` is `skip-finding-beads`;
  *                           the caller says so and still shows the findings list (exit 0)
+ *              REFUSED      a trust check above failed (`code` names it, `reason` says why): NO bead
+ *                           was recorded and nothing was written, same fallback (exit 0)
  *              PARTIAL      some actions failed, each `actions[i].error` says which (exit 1)
- *              FAILED       the plan could not be made: bad input or the tracker could not be read (exit 1)
- *   Put `beads[id].beadId` on each ledger entry as `beadId` before calling `gate`: the operator's
- *   decision list shows it.
+ *              FAILED       the plan could not be made: bad input, a missing `repoRoot` or `baseSha`,
+ *                           or the tracker could not be read (exit 1)
+ *   `unverifiedFixes[]` (when any) names each `clearedBy` commit that is not on the PR and why: that
+ *   finding's bead was NOT closed.
+ *   Put `beads[id].beadId` on each ledger entry as `beadId` and `beads[id].closedBeadId` as
+ *   `closedBeadId` before calling `gate`: the operator's decision list shows them. `beadId` is only
+ *   ever an OPEN bead; a live finding whose bead is closed carries `closedBeadId` instead.
  */
 
 const fs = require('fs');
+const path = require('path');
 
 const tracker = require('./tracker-findings');
 const { beadKeys, planBeads } = require('./pr-review-beads');
 const { redact, statePath } = require('./pr-review-state');
+const repoFacts = require('./pr-review-repo');
+const { isObjectId } = require('./pr-review-scope');
+
+const GH_TIMEOUT_MS = 60 * 1000;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isText = (value) => typeof value === 'string' && value.trim() !== '';
 
 function failed(reason, extra) {
   return { ok: false, status: 'FAILED', recorded: false, reason, ...extra };
+}
+
+/** A trust check said no: nothing was read from or written to the tracker. Same fallback as no tracker. */
+function refused(code, reason) {
+  return { ok: true, status: 'REFUSED', recorded: false, fallback: tracker.SKIP_FALLBACK, code, reason, actions: [], beads: {} };
 }
 
 function unavailableResult(envelope, plan) {
@@ -77,6 +118,11 @@ function execute(deps, action) {
     return { ok: true, beadId: result.data && result.data.id };
   }
   if (action.action === 'update') {
+    // A bead this recorder closed as a fix, whose finding is back: open it first, then rewrite it.
+    if (action.reopen) {
+      const reopened = tracker.reopenFinding(deps, { id: action.beadId });
+      if (!reopened.ok) return reopened;
+    }
     if (action.update) {
       const updated = tracker.updateFinding(deps, action.update);
       if (!updated.ok) return updated;
@@ -97,7 +143,8 @@ function execute(deps, action) {
 /**
  * Look up every key, plan, and run the plan.
  *
- * @param {object} input  the payload (see the file header), minus the CLI-only keys
+ * @param {object} input  the payload (see the file header), minus the CLI-only keys; `commitsOnPr`
+ *   (full commit ids verified to be on the PR) is what lets a cleared finding close its bead
  * @param {{run: Function}} deps  tracker deps (`createToolchainDeps`, or a fake in tests)
  * @param {{dryRun?: boolean}} [options]
  */
@@ -137,8 +184,11 @@ function recordBeads(input, deps, options = {}) {
       return { ...summary, ok: false, error: outcome.error, ...(outcome.unavailable ? { unavailable: true } : {}) };
     }
     if (outcome.beadId !== undefined) {
-      summary.beadId = outcome.beadId;
-      for (const id of action.findingIds) beads[id] = { ...beads[id], beadId: outcome.beadId };
+      // A close leaves a CLOSED bead: `beadId` only ever names an open one.
+      const field = action.action === 'close' ? 'closedBeadId' : 'beadId';
+      delete summary.beadId;
+      summary[field] = outcome.beadId;
+      for (const id of action.findingIds) beads[id] = { ...beads[id], [field]: outcome.beadId };
     }
     return { ...summary, ok: true };
   });
@@ -158,9 +208,121 @@ function recordBeads(input, deps, options = {}) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// What the head under review must not control
+// ---------------------------------------------------------------------------
+
+/** The real `gh` (and any tool): no shell, a deadline, a failure to start reads as status 127. */
+function defaultRun(command, argv) {
+  const { spawnSync } = require('child_process');
+  const result = spawnSync(command, argv, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, shell: false, maxBuffer: 8 * 1024 * 1024 });
+  if (result.error) return { status: 127, stdout: '', stderr: String(result.error.message) };
+  return { status: typeof result.status === 'number' ? result.status : 127, stdout: result.stdout || '', stderr: result.stderr || '' };
+}
+
 /**
- * @param {Object} [io]  `{ readJson, emit, deps, env, now }`, replaced by tests. `deps` are the
- *   tracker deps: when absent they are built for the repository under review.
+ * The host's own answer about the pull request (`gh pr view`): what the head's files cannot
+ * supply. `run(command, argv) -> {status, stdout, stderr}` is replaced by tests.
+ *
+ * @returns {(request: {repo: string, prNumber: number}) => {ok:true, isCrossRepository:*, headRefOid:*, baseRefName:*, state:*}|{ok:false, error:string}}
+ */
+function makeReadPr(run = defaultRun) {
+  return ({ repo, prNumber }) => {
+    const fields = 'isCrossRepository,headRefOid,baseRefName,state';
+    const result = run('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', fields]);
+    if (!isObject(result) || result.status !== 0) {
+      const detail = isObject(result) ? String(result.stderr || '').trim().split('\n').pop() : '';
+      return { ok: false, error: `gh pr view failed${detail ? `: ${detail}` : ''}` };
+    }
+    let data;
+    try {
+      data = JSON.parse(result.stdout);
+    } catch (error) {
+      return { ok: false, error: 'gh pr view answered with output that is not JSON' };
+    }
+    if (!isObject(data)) return { ok: false, error: 'gh pr view answered with something that is not an object' };
+    return { ok: true, isCrossRepository: data.isCrossRepository, headRefOid: data.headRefOid, baseRefName: data.baseRefName, state: data.state };
+  };
+}
+
+const TOOLCHAIN_CONFIG = path.posix.join('.ensemble', 'toolchain.yaml');
+
+/**
+ * The trust checks. `{ok:true, trackerRoot, baseConfig}` or `{ok:false, result}` (a REFUSED result).
+ * See the file header, "What the head under review controls".
+ */
+function checkTrust({ input, repoRoot, baseSha, git, readPr }) {
+  const refuse = (code, reason) => ({ ok: false, result: refused(code, reason) });
+
+  const pr = readPr({ repo: input.repo.trim(), prNumber: input.prNumber });
+  if (!isObject(pr) || pr.ok !== true) {
+    const why = isObject(pr) && pr.error ? pr.error : 'no answer';
+    return refuse('pr-unreadable', `the pull request could not be read from the host (${why}), so its head is not known to be on this repository: nothing was recorded`);
+  }
+  if (pr.isCrossRepository !== false) {
+    return pr.isCrossRepository === true
+      ? refuse('cross-repository-head', 'the head of this pull request is on a fork: its files must not decide what is recorded in this repository\'s tracker, so no bead was recorded; read the findings from the list')
+      : refuse('head-repository-unknown', 'the host did not say whether the head of this pull request is on this repository, so no bead was recorded');
+  }
+
+  const primary = repoFacts.primaryWorktree(git, repoRoot);
+  if (!primary.ok) {
+    return refuse('no-primary-worktree', `the repository's primary checkout, which holds its tracker, could not be found from ${repoRoot} (${primary.reason}): nothing was recorded`);
+  }
+  const headSha = input.headSha.trim();
+  const holds = repoFacts.holdsHead(git, primary.path, headSha);
+  if (holds !== false) {
+    return refuse(
+      holds === true ? 'head-checked-out' : 'head-checkout-unknown',
+      holds === true
+        ? `the checkout at ${primary.path} holds the head under review (${headSha}) or work built on it, so its .beads would be the head's own: review from a checkout of the base (a linked worktree of it is fine), nothing was recorded`
+        : `whether the checkout at ${primary.path} holds the head under review could not be established, so nothing was recorded`
+    );
+  }
+
+  const base = repoFacts.resolveCommit(git, repoRoot, baseSha);
+  if (base === null) {
+    return refuse('base-unavailable', `baseSha ${baseSha} is not a commit of the repository at ${repoRoot} (fetch it), so the tracker's configuration cannot be read from the base: nothing was recorded`);
+  }
+  const config = repoFacts.readBlobAt(git, repoRoot, base, TOOLCHAIN_CONFIG);
+  if (!config.ok) {
+    return refuse('base-config-unreadable', `${TOOLCHAIN_CONFIG} could not be read as committed at ${base} (${config.reason}): nothing was recorded`);
+  }
+  return { ok: true, trackerRoot: primary.path, baseConfig: { text: config.text, label: `${base.slice(0, 12)}:${TOOLCHAIN_CONFIG}` } };
+}
+
+/**
+ * The commits the ledger says fixed something that git says are ON THE PR. The shape of a hex string
+ * proves nothing: a close needs a commit that exists, is an ancestor of the head and is not in the
+ * base's history.
+ *
+ * @returns {{verified: string[], refused: Array<{commit: string, reason: string}>}}
+ */
+function verifyFixes(input, { git, repoRoot, baseSha }) {
+  const findings = [...(Array.isArray(input.ledger) ? input.ledger : []), ...(isObject(input.security) && Array.isArray(input.security.findings) ? input.security.findings : [])];
+  const written = new Set();
+  for (const finding of findings) {
+    if (isObject(finding) && finding.cleared === true && isText(finding.clearedBy)) written.add(finding.clearedBy.trim());
+  }
+  const verified = [];
+  const refusedCommits = [];
+  for (const commit of written) {
+    const result = repoFacts.commitOnPr(git, repoRoot, { commit, headSha: input.headSha.trim(), baseSha });
+    if (result.ok) verified.push(result.commit);
+    else refusedCommits.push({ commit, reason: result.reason });
+  }
+  return { verified: [...new Set(verified)], refused: refusedCommits };
+}
+
+/** The state report's path relative to the repository, with `/` separators. */
+function relativeReportLink(prNumber, projectRoot) {
+  return path.relative(projectRoot, statePath(prNumber, projectRoot)).split(path.sep).join('/');
+}
+
+/**
+ * @param {Object} [io]  `{ readJson, emit, deps, env, now, git, readPr }`, replaced by tests. `deps` are
+ *   the tracker deps: when absent they are built for the repository's primary checkout. `git` is
+ *   `pr-review-repo.js`'s injected git, `readPr` the host read (`makeReadPr`).
  */
 function main(io = {}) {
   const readJson = io.readJson || (() => JSON.parse(fs.readFileSync(0, 'utf8')));
@@ -180,38 +342,53 @@ function main(io = {}) {
   }
   if (!isObject(payload)) return finish(failed('payload must be a JSON object'));
 
-  const { repoRoot, dryRun, timeoutMs, ...input } = payload;
+  // A `commitsOnPr` in the payload is dropped: that fact comes from git here, never from the caller.
+  const { repoRoot, baseSha, dryRun, timeoutMs, commitsOnPr: ignoredCommitsOnPr, ...input } = payload;
   if (dryRun !== undefined && typeof dryRun !== 'boolean') return finish(failed("'dryRun' must be true or false when given"));
+  if (!isText(repoRoot)) {
+    return finish(failed("'repoRoot' is required: the repository under review (a git repository or linked-worktree root); it is never assumed to be the current directory"));
+  }
+  if (!isText(baseSha) || !isObjectId(baseSha.trim())) {
+    return finish(failed("'baseSha' is required: the full commit id of the base the review resolved (the tracker's configuration is read as committed there, never from the head)"));
+  }
 
-  let deps = io.deps;
-  let projectRoot = typeof repoRoot === 'string' ? repoRoot : process.cwd();
-  if (repoRoot !== undefined && (typeof repoRoot !== 'string' || repoRoot.trim() === '')) {
-    return finish(failed("'repoRoot' must be a non-empty path when given"));
-  }
-  if (deps === undefined || input.reportLink === undefined) {
-    const { resolveProjectRootFlag } = require('./toolchain-cli');
-    const resolved = resolveProjectRootFlag(projectRoot);
-    if (resolved.error) return finish(failed(resolved.error.message));
-    projectRoot = resolved.projectRoot;
-  }
-  if (deps === undefined) {
-    deps = tracker.createToolchainDeps({
-      projectRoot,
+  const wanted = beadKeys(input);
+  if (!wanted.ok) return finish(failed(wanted.reason));
+
+  const { resolveProjectRootFlag } = require('./toolchain-cli');
+  const resolved = resolveProjectRootFlag(repoRoot);
+  if (resolved.error) return finish(failed(resolved.error.message));
+  const projectRoot = resolved.projectRoot;
+
+  const git = io.git || repoFacts.defaultGit();
+  const readPr = io.readPr || makeReadPr();
+  const trust = checkTrust({ input, repoRoot: projectRoot, baseSha: baseSha.trim(), git, readPr });
+  if (!trust.ok) return finish(trust.result);
+
+  const deps =
+    io.deps ||
+    tracker.createToolchainDeps({
+      projectRoot: trust.trackerRoot,
       env: io.env || process.env,
       timeoutMs,
-      // The reviewed tree is a source of cwd and config only, never of the adapter that records
-      // its own findings (see the file header).
+      // The head under review is never a source of the adapter, of the tracker choice or of the
+      // tracker's state (see the file header).
       untrustedProjectRoot: true,
+      baseConfig: trust.baseConfig,
     });
-  }
-  if (input.reportLink === undefined && Number.isInteger(input.prNumber) && input.prNumber >= 1) {
-    input.reportLink = statePath(input.prNumber, projectRoot);
+
+  const fixes = verifyFixes(input, { git, repoRoot: projectRoot, baseSha: baseSha.trim() });
+  const request = { ...input, commitsOnPr: fixes.verified };
+  if (request.reportLink === undefined && Number.isInteger(request.prNumber) && request.prNumber >= 1) {
+    request.reportLink = relativeReportLink(request.prNumber, projectRoot);
   }
 
-  return finish(recordBeads(input, deps, { dryRun: dryRun === true }));
+  const result = recordBeads(request, deps, { dryRun: dryRun === true });
+  if (fixes.refused.length > 0) result.unverifiedFixes = fixes.refused;
+  return finish(result);
 }
 
-module.exports = { main, recordBeads };
+module.exports = { main, recordBeads, makeReadPr, checkTrust, verifyFixes };
 
 if (require.main === module) {
   process.exit(main());
