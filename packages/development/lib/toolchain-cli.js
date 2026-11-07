@@ -130,7 +130,20 @@
  *   honouring it would silently change default behaviour. Without the flag nothing changes.
  *   The value must be an existing git repo root or linked-worktree root (`.git` dir or
  *   `gitdir:` file); it is realpath'd; anything else is `INVALID_ARG` and nothing runs (for
- *   `trace`, the usual non-failing `trace: unavailable (...)`). A linked worktree is accepted
+ *   `trace`, the usual non-failing `trace: unavailable (...)`).
+ *   TRUST MODEL (kata vsg4 review round 1): the named tree is a source of cwd, config
+ *   (`.ensemble/toolchain.yaml`) and state ONLY -- never of code to run. `main()` sets
+ *   `ctx.untrustedProjectRoot`, so `./toolchain/adapters.js` does not search the tree's
+ *   `packages/*\/skills/` (a PR head would otherwise supply the code of the tracker that
+ *   records and dedupes its own findings) and runs a repo-local adapter from its
+ *   `.ensemble/adapters/` only when the user-level `trustedRepoAdapters` lists its id, in
+ *   interactive runs too. Adapters therefore come from this library's own install, the user
+ *   tier and that trusted list. The tree still chooses WHICH of them runs (its
+ *   `.ensemble/toolchain.yaml`) and is where they run, so the tool an adapter invokes reads
+ *   the tree's own files; preflight/confirm records it carries are consent/health gates, not a
+ *   security boundary (`./toolchain/confirm.js`). Without the flag a project root the process
+ *   was started in keeps its `packages/*\/skills/` tier, unchanged.
+ *   A linked worktree is accepted
  *   and used VERBATIM (never mapped back to the main checkout): it is the adapter's `cwd` and
  *   the root of `.ensemble/` config and state. Which tracker DATA the adapter then reads is the
  *   adapter's own business: observed with br 0.6.0, `br` run from a linked worktree uses the
@@ -179,9 +192,12 @@
  * `installedRoots` is `./toolchain/adapters.js#discoverAdapters`'s own extra installed-tier
  * search-root override (PR 5 independent review: the shipped default adapter for a category
  * was unreachable from any consumer outside this monorepo -- see that module's header doc),
- * never wired by `main()`'s own default `ctx` (no CLI flag, no environment variable). A caller
- * that supplies its own `ctx` (including every existing test) gets exactly what it passes --
- * no detect/installedRoots, or stubbed ones -- unaffected by any of this.
+ * never wired by `main()`'s own default `ctx` (no CLI flag, no environment variable).
+ * `untrustedProjectRoot` (same module) is the one field `main()` itself adds, and only when
+ * `--project-root` is given (see the TRUST MODEL above); every handler passes it through with
+ * the rest of `ctx`. A caller that supplies its own `ctx` (including every existing test) gets
+ * exactly what it passes -- no detect/installedRoots, or stubbed ones -- unaffected by any of
+ * this.
  *
  * `main(argv, ctx)` takes an optional second `ctx` argument purely so callers (tests) can
  * exercise the full argv-parsing/JSON/table-rendering path against an injected
@@ -1261,7 +1277,9 @@ function main(argv, ctx = { projectRoot: process.cwd(), env: process.env, detect
     if (resolved.error) {
       parsed.error = resolved.error;
     } else {
-      ctx = { ...ctx, projectRoot: resolved.projectRoot };
+      // `untrustedProjectRoot`: the named tree supplies cwd, config and state, never adapter code
+      // (see this file's header, "TRUST MODEL", and `./toolchain/adapters.js`).
+      ctx = { ...ctx, projectRoot: resolved.projectRoot, untrustedProjectRoot: true };
     }
   }
 

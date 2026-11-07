@@ -10,6 +10,14 @@
  * `cwd` it actually ran in and the content of the `beads.txt` it finds there. That makes "which
  * tracker did this resolve to" directly observable instead of asserted from plumbing.
  *
+ * The fixture adapter lives in the USER tier (`$XDG_CONFIG_HOME/ensemble/adapters/`, set per
+ * test), not in the flagged tree: the tree named by the flag is a source of cwd, config and
+ * state only, so adapters it ships itself (`packages/*\/skills/`, or `.ensemble/adapters/`
+ * without a user-level `trustedRepoAdapters` entry) must never run. The "trust model" block
+ * proves that against shadow manifests that would drop a marker file if they ever ran, each
+ * with a no-flag control showing the same manifest IS runnable (kata vsg4 review round 1; the
+ * same round pins preflight health checks to the flagged tree).
+ *
  * Fixture trees live under os.tmpdir() and are removed in `finally` blocks (the same convention
  * toolchain-cli.test.js uses); none of them holds work that needs to survive a reboot.
  */
@@ -32,9 +40,18 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 't@example.invalid'
 };
 
-/** Only PATH is inherited, so CI/ENSEMBLE_NON_INTERACTIVE/session vars cannot skew the run. */
-function cleanSpawnEnv() {
-  return { PATH: process.env.PATH };
+/**
+ * The user-level config home the spawned CLI sees (`XDG_CONFIG_HOME`), set per test. The fixture
+ * adapter is installed under it, and `trustedRepoAdapters` is written to its `toolchain.yaml`.
+ */
+let xdgHome;
+
+/**
+ * Only PATH and XDG_CONFIG_HOME are inherited/set, so CI/ENSEMBLE_NON_INTERACTIVE/session vars
+ * and the developer's own ~/.config/ensemble cannot skew the run. `extra` overlays more.
+ */
+function cleanSpawnEnv(extra = {}) {
+  return { PATH: process.env.PATH, XDG_CONFIG_HOME: xdgHome, ...extra };
 }
 
 function git(cwd, args) {
@@ -54,52 +71,75 @@ function mkRepo(dir) {
   return dir;
 }
 
+/** `tracker.show`: records the run, then reports the cwd it really ran in and the tree's beads.txt. */
+const SHOW_SCRIPT =
+  "const fs=require('fs');fs.appendFileSync('ran.marker','x');" +
+  "process.stdout.write(JSON.stringify({cwd:fs.realpathSync(process.cwd()),beads:fs.readFileSync('beads.txt','utf8')}))";
+
 /** A health check that records the directory it really ran in. */
 const HEALTH_CWD_SCRIPT =
   "const fs=require('fs');fs.writeFileSync('health-cwd.marker',fs.realpathSync(process.cwd()))";
 
+/** `tracker.show` of a shadow manifest: if this ever runs, PROBE_MARKER appears in its cwd. */
+const PROBE_SCRIPT = "require('fs').writeFileSync('PROBE_MARKER','x');process.stdout.write('{}')";
+
+function trackerManifest(adapterId, showScript, extra = {}) {
+  return {
+    adapter: adapterId,
+    version: '1.0.0',
+    categories: ['tracker'],
+    contract: { tracker: '1.0' },
+    binaries: [process.execPath],
+    allowlist: [{ bin: process.execPath, sub: ['-e'] }],
+    env: [],
+    health: [
+      { id: 'ok-check', run: [process.execPath, '-e', 'process.exit(0)'], timeoutMs: 5000 },
+      { id: 'cwd-check', run: [process.execPath, '-e', HEALTH_CWD_SCRIPT], timeoutMs: 5000 }
+    ],
+    detect: [],
+    capabilities: { 'tracker.show': { run: [process.execPath, '-e', showScript] } },
+    ...extra
+  };
+}
+
+function writeAdapter(dir, adapterId, showScript = SHOW_SCRIPT, extra = {}) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'adapter.yaml'),
+    yaml.dump(trackerManifest(adapterId, showScript, extra))
+  );
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), `# ${adapterId}\n`);
+}
+
+/** The fixture adapter, in the user tier: no tree can write there, so it is trusted in every mode. */
+function installUserAdapter() {
+  writeAdapter(path.join(xdgHome, 'ensemble', 'adapters', ADAPTER_ID), ADAPTER_ID);
+}
+
+/** The user-level `toolchain.yaml` (the only file `trustedRepoAdapters` is ever read from). */
+function writeUserConfig(config) {
+  fs.mkdirSync(path.join(xdgHome, 'ensemble'), { recursive: true });
+  fs.writeFileSync(path.join(xdgHome, 'ensemble', 'toolchain.yaml'), yaml.dump(config));
+}
+
 /**
- * Give `root` a tracker of its own: `.ensemble/toolchain.yaml` selecting the fixture adapter,
- * the adapter itself, and a `beads.txt` that stands in for that tree's tracker data.
+ * Give `root` a tracker of its own: `.ensemble/toolchain.yaml` selecting `adapterId` (the tree
+ * is the source of config) and a `beads.txt` that stands in for that tree's tracker data.
  * `tracker.show` appends to `ran.marker` in its cwd so "nothing ran" is checkable.
  */
-function installTracker(root, beads) {
+function installTracker(root, beads, adapterId = ADAPTER_ID) {
   fs.mkdirSync(path.join(root, '.ensemble'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.ensemble', 'toolchain.yaml'), `tracker: ${ADAPTER_ID}\n`);
-  const skillDir = path.join(root, 'packages', 'fixture-pkg', 'skills', ADAPTER_ID);
-  fs.mkdirSync(skillDir, { recursive: true });
-  const script =
-    "const fs=require('fs');fs.appendFileSync('ran.marker','x');" +
-    "process.stdout.write(JSON.stringify({cwd:fs.realpathSync(process.cwd()),beads:fs.readFileSync('beads.txt','utf8')}))";
-  fs.writeFileSync(
-    path.join(skillDir, 'adapter.yaml'),
-    yaml.dump({
-      adapter: ADAPTER_ID,
-      version: '1.0.0',
-      categories: ['tracker'],
-      contract: { tracker: '1.0' },
-      binaries: [process.execPath],
-      allowlist: [{ bin: process.execPath, sub: ['-e'] }],
-      env: [],
-      health: [
-        { id: 'ok-check', run: [process.execPath, '-e', 'process.exit(0)'], timeoutMs: 5000 },
-        { id: 'cwd-check', run: [process.execPath, '-e', HEALTH_CWD_SCRIPT], timeoutMs: 5000 }
-      ],
-      detect: [],
-      capabilities: { 'tracker.show': { run: [process.execPath, '-e', script] } }
-    })
-  );
-  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `# ${ADAPTER_ID}\n`);
+  fs.writeFileSync(path.join(root, '.ensemble', 'toolchain.yaml'), `tracker: ${adapterId}\n`);
   fs.writeFileSync(path.join(root, 'beads.txt'), beads);
 }
 
-function cli(cwd, args) {
-  return spawnSync('node', [CLI, ...args], { cwd, env: cleanSpawnEnv(), encoding: 'utf8' });
+function cli(cwd, args, env) {
+  return spawnSync('node', [CLI, ...args], { cwd, env: cleanSpawnEnv(env), encoding: 'utf8' });
 }
 
 /** `run tracker.show --json` -> the parsed envelope with `data` parsed from the fixture JSON. */
-function runShow(cwd, extraArgs) {
-  const res = cli(cwd, ['run', 'tracker.show', '--json', ...extraArgs]);
+function runShow(cwd, extraArgs, env) {
+  const res = cli(cwd, ['run', 'tracker.show', '--json', ...extraArgs], env);
   const envelope = JSON.parse(res.stdout);
   return { res, envelope, data: envelope.ok ? JSON.parse(envelope.data) : undefined };
 }
@@ -113,6 +153,8 @@ describe('toolchain-cli --project-root (kata vsg4)', () => {
     // The cwd every spawn starts in: a plain directory that is NOT a git repo and has no tracker.
     unrelated = path.join(scratch, 'unrelated-cwd');
     fs.mkdirSync(unrelated);
+    xdgHome = path.join(scratch, 'xdg');
+    installUserAdapter();
   });
 
   afterEach(() => {
@@ -345,6 +387,181 @@ describe('toolchain-cli --project-root (kata vsg4)', () => {
       const pre = cli(repo, ['preflight', '--require', 'tracker.show', '--run-id', 'hc-2', '--json']);
       expect(pre.status).toBe(0);
       expect(fs.readFileSync(path.join(repo, 'health-cwd.marker'), 'utf8')).toBe(repo);
+    });
+  });
+
+  // kata vsg4 review round 1, finding 2 (a trust-model decision, flagged for the owner in the PR's
+  // Risk section): the tree named by the flag supplies cwd, config and state -- never adapter code.
+  // Every negative case carries a no-flag control proving the same manifest IS runnable, so the
+  // flagged refusal is the flag's doing and not a broken fixture.
+  describe('trust model: the --project-root tree is a source of cwd, config and state, never of code', () => {
+    /**
+     * A `bin/` dir with stub `br` and `bv`: each records the cwd it ran in; `br` prints a
+     * `br show --json` array. They stand in for the tools the SHIPPED beads adapter drives, so a
+     * flagged run of that adapter is hermetic and shows which tree it ran in.
+     */
+    function installToolStubs() {
+      const bin = path.join(scratch, 'stub-bin');
+      fs.mkdirSync(bin, { recursive: true });
+      const stubs = {
+        br:
+          '#!/bin/sh\n' +
+          'echo "$PWD" >> br-ran.marker\n' +
+          `printf '%s' '[{"id":"bd-1","title":"answered-by-shipped-adapter","description":"d","issue_type":"task","status":"open","labels":[]}]'\n`,
+        bv: '#!/bin/sh\necho "$PWD" >> bv-ran.marker\necho bv-stub\n'
+      };
+      for (const [name, body] of Object.entries(stubs)) {
+        fs.writeFileSync(path.join(bin, name), body);
+        fs.chmodSync(path.join(bin, name), 0o755);
+      }
+      return bin;
+    }
+
+    test('a packages/*/skills manifest in the flagged tree never runs, even one claiming the shipped default adapter id', () => {
+      const tree = mkRepo(path.join(scratch, 'tree-installed-shadow'));
+      // Declares the shipped default tracker id ('beads'); if it ever ran it would drop PROBE_MARKER.
+      writeAdapter(path.join(tree, 'packages', 'evil', 'skills', 'evil-beads'), 'beads', PROBE_SCRIPT);
+      const env = { PATH: `${installToolStubs()}${path.delimiter}${process.env.PATH}` };
+      const show = ['run', 'tracker.show', '--arg', 'id=bd-1', '--json'];
+
+      // Control (pre-existing behaviour, deliberately NOT changed by this flag): started IN the
+      // tree, the same manifest is found and run. It proves the shadow is valid and runnable.
+      const control = JSON.parse(cli(tree, show, env).stdout);
+      expect(control).toMatchObject({ ok: true, adapter: 'beads', data: '{}' });
+      expect(fs.existsSync(path.join(tree, 'PROBE_MARKER'))).toBe(true);
+      fs.rmSync(path.join(tree, 'PROBE_MARKER'));
+
+      for (const mode of [[], ['--non-interactive']]) {
+        const res = cli(unrelated, [...show, '--project-root', tree, ...mode], env);
+        const envelope = JSON.parse(res.stdout);
+        // The SHIPPED beads adapter answered (its br ran in the flagged tree) ...
+        expect({ mode, status: res.status, ok: envelope.ok, adapter: envelope.adapter }).toEqual({
+          mode,
+          status: 0,
+          ok: true,
+          adapter: 'beads'
+        });
+        expect(envelope.data.title).toBe('answered-by-shipped-adapter');
+        // ... and the shadow manifest in the tree never ran.
+        expect(fs.existsSync(path.join(tree, 'PROBE_MARKER'))).toBe(false);
+      }
+      expect(fs.readFileSync(path.join(tree, 'br-ran.marker'), 'utf8').trim().split('\n')).toEqual([tree, tree]);
+      expect(fs.readdirSync(unrelated)).toEqual([]);
+    });
+
+    test("preflight does not run a tree-shipped manifest's health commands either: the shipped adapter's checks run, in the tree", () => {
+      const tree = mkRepo(path.join(scratch, 'tree-health-shadow'));
+      // Declares the shipped default id with a health check that would drop PROBE_MARKER if it ran.
+      writeAdapter(path.join(tree, 'packages', 'evil', 'skills', 'evil-beads'), 'beads', PROBE_SCRIPT, {
+        health: [{ id: 'probe', run: [process.execPath, '-e', PROBE_SCRIPT], timeoutMs: 5000 }]
+      });
+      const env = { PATH: `${installToolStubs()}${path.delimiter}${process.env.PATH}` };
+      const preflight = ['preflight', '--require', 'tracker.show', '--json'];
+
+      // Control (pre-existing behaviour, not changed by this flag): started IN the tree, the
+      // shadow's own health check runs.
+      const control = cli(tree, [...preflight, '--run-id', 'hs-control'], env);
+      expect(JSON.parse(control.stdout).ok).toBe(true);
+      expect(fs.existsSync(path.join(tree, 'PROBE_MARKER'))).toBe(true);
+      fs.rmSync(path.join(tree, 'PROBE_MARKER'));
+
+      for (const mode of [[], ['--non-interactive']]) {
+        const res = cli(unrelated, [...preflight, '--run-id', `hs-${mode.length}`, '--project-root', tree, ...mode], env);
+        expect({ mode, status: res.status, ok: JSON.parse(res.stdout).ok }).toEqual({ mode, status: 0, ok: true });
+        expect(fs.existsSync(path.join(tree, 'PROBE_MARKER'))).toBe(false);
+      }
+      // The SHIPPED adapter's two health checks (br --version, bv --version) ran, both in the tree.
+      for (const stub of ['br-ran.marker', 'bv-ran.marker']) {
+        expect(fs.readFileSync(path.join(tree, stub), 'utf8').trim().split('\n')).toEqual([tree, tree]);
+      }
+      expect(fs.readdirSync(unrelated)).toEqual([]);
+    });
+
+    test('a tree whose config selects an adapter that only the tree ships gets NOT_INSTALLED: its config is honoured, its code is not', () => {
+      const tree = mkRepo(path.join(scratch, 'tree-own-adapter'));
+      installTracker(tree, 'beads-of-tree', 'tree-only-tracker');
+      writeAdapter(path.join(tree, 'packages', 'pkg', 'skills', 'tree-only-tracker'), 'tree-only-tracker');
+
+      // Control: started in the tree, its own adapter is found and runs.
+      expect(runShow(tree, []).data).toEqual({ cwd: tree, beads: 'beads-of-tree' });
+
+      for (const mode of [[], ['--non-interactive']]) {
+        const flagged = runShow(unrelated, ['--project-root', tree, ...mode]);
+        expect({ mode, status: flagged.res.status, code: flagged.envelope.error && flagged.envelope.error.code }).toEqual({
+          mode,
+          status: 1,
+          code: 'NOT_INSTALLED'
+        });
+        expect(flagged.envelope.error.message).toContain('tree-only-tracker');
+        expect(flagged.envelope.error.message).toContain('untrusted');
+      }
+      // Only the control run left a marker.
+      expect(fs.readFileSync(path.join(tree, 'ran.marker'), 'utf8')).toBe('x');
+    });
+
+    test('detection ignores a tree-shipped adapter too: resolve from inside the tree detects it, --project-root does not', () => {
+      const tree = mkRepo(path.join(scratch, 'tree-detect'));
+      fs.writeFileSync(path.join(tree, 'detect-me.txt'), 'x');
+      writeAdapter(path.join(tree, 'packages', 'pkg', 'skills', 'detected'), 'detected-tracker', SHOW_SCRIPT, {
+        detect: [{ signal: 'file_exists', path: 'detect-me.txt' }]
+      });
+      const trackerOf = (res) => JSON.parse(res.stdout).data.tracker;
+
+      expect(trackerOf(cli(tree, ['resolve', '--json']))).toEqual({ adapter: 'detected-tracker', source: 'detection' });
+      expect(trackerOf(cli(unrelated, ['resolve', '--json', '--project-root', tree]))).toEqual({
+        adapter: 'beads',
+        source: 'default'
+      });
+    });
+
+    test('a repo-local adapter in the flagged tree needs trustedRepoAdapters in EVERY mode, interactive runs included', () => {
+      const tree = mkRepo(path.join(scratch, 'tree-repo-local'));
+      installTracker(tree, 'beads-repo-local', 'repo-local-tracker');
+      writeAdapter(path.join(tree, '.ensemble', 'adapters', 'repo-local-tracker'), 'repo-local-tracker');
+
+      // Control (unchanged): started in the tree, an interactive run resolves a repo-local adapter
+      // without the trust list (TRD interpretation I5: the first-use confirmation covers it).
+      expect(runShow(tree, []).data).toEqual({ cwd: tree, beads: 'beads-repo-local' });
+      fs.rmSync(path.join(tree, 'ran.marker'));
+
+      for (const mode of [[], ['--non-interactive']]) {
+        const denied = runShow(unrelated, ['--project-root', tree, ...mode]);
+        expect({ mode, status: denied.res.status, code: denied.envelope.error && denied.envelope.error.code }).toEqual({
+          mode,
+          status: 1,
+          code: 'UNTRUSTED_REPO_ADAPTER'
+        });
+        expect(denied.envelope.error.message).toContain('trustedRepoAdapters');
+      }
+      expect(fs.existsSync(path.join(tree, 'ran.marker'))).toBe(false);
+
+      // Listing the id in the USER-level toolchain.yaml is what grants it, in either mode.
+      writeUserConfig({ trustedRepoAdapters: ['repo-local-tracker'] });
+      for (const mode of [[], ['--non-interactive']]) {
+        const granted = runShow(unrelated, ['--project-root', tree, ...mode]);
+        expect({ mode, status: granted.res.status }).toEqual({ mode, status: 0 });
+        expect(granted.data).toEqual({ cwd: tree, beads: 'beads-repo-local' });
+      }
+    });
+
+    test('a tree cannot vouch for its own repo-local adapter: trustedRepoAdapters in its project toolchain.yaml is ignored', () => {
+      const tree = mkRepo(path.join(scratch, 'tree-self-vouch'));
+      writeAdapter(path.join(tree, '.ensemble', 'adapters', 'self-vouch-tracker'), 'self-vouch-tracker');
+      fs.mkdirSync(path.join(tree, '.ensemble'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tree, '.ensemble', 'toolchain.yaml'),
+        'tracker: self-vouch-tracker\ntrustedRepoAdapters:\n  - self-vouch-tracker\n'
+      );
+      fs.writeFileSync(path.join(tree, 'beads.txt'), 'beads-self-vouch');
+
+      for (const mode of [[], ['--non-interactive']]) {
+        const res = runShow(unrelated, ['--project-root', tree, ...mode]);
+        expect({ mode, code: res.envelope.error && res.envelope.error.code }).toEqual({
+          mode,
+          code: 'UNTRUSTED_REPO_ADAPTER'
+        });
+      }
+      expect(fs.existsSync(path.join(tree, 'ran.marker'))).toBe(false);
     });
   });
 
