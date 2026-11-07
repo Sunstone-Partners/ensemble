@@ -63,6 +63,7 @@ const fs = require('fs');
 const path = require('path');
 const argv = process.argv.slice(2);
 fs.appendFileSync(path.join(__dirname, 'argv.log'), JSON.stringify(argv) + '\\n');
+fs.appendFileSync(path.join(__dirname, 'cwd.log'), process.cwd() + '\\n');
 const replay = JSON.parse(fs.readFileSync(path.join(__dirname, 'replay.json'), 'utf8'));
 const key = argv[0] === 'dep' ? 'dep ' + argv[1] : argv[0];
 if (!(key in replay)) { process.stderr.write('replay br: no fixture for ' + key + '\\n'); process.exit(2); }
@@ -92,7 +93,11 @@ process.exitCode = replay[key].exit;
       ? fs.readFileSync(path.join(dir, 'argv.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
       : [];
   const env = { ...process.env, PATH: `${dir}:${process.env.PATH}` };
-  return { dir, calls, env };
+  const cwds = () =>
+    fs.existsSync(path.join(dir, 'cwd.log'))
+      ? fs.readFileSync(path.join(dir, 'cwd.log'), 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+  return { dir, calls, cwds, env };
 }
 
 function deps(replay, manifest = BEADS, categoriesDir) {
@@ -660,5 +665,84 @@ describe('createToolchainDeps: a tree under review never supplies the tracker ad
     const result = findings.findByKey(findings.createToolchainDeps({ projectRoot: repo, env: br.env, untrustedProjectRoot: true }), { key: 'k' });
     expect(result).toMatchObject({ ok: false, unavailable: true, fallback: 'skip-finding-beads' });
     expect(br.calls()).toEqual([]);
+  });
+});
+
+describe('createToolchainDeps: the tracker choice can be the PR base\'s, never the tree under review\'s', () => {
+  /** A tree whose own config names a tracker that does not exist: resolving from the tree makes its findings unrecordable. */
+  function hostileTree() {
+    const repo = mkTempDir('tracker-findings-hostile-');
+    fs.mkdirSync(path.join(repo, '.beads'));
+    fs.mkdirSync(path.join(repo, '.ensemble'));
+    fs.writeFileSync(path.join(repo, '.ensemble', 'toolchain.yaml'), 'tracker: no-such-tracker\n');
+    return repo;
+  }
+  const envFor = (br) => ({ ...br.env, XDG_CONFIG_HOME: mkTempDir('tracker-findings-xdg-') });
+
+  test('control: without baseConfig the tree\'s own config selects the tracker, so a head can switch its findings\' recording off', () => {
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const result = findings.findByKey(findings.createToolchainDeps({ projectRoot: hostileTree(), env: envFor(br), untrustedProjectRoot: true }), { key: 'k' });
+    expect(result).toMatchObject({ ok: false, unavailable: true, fallback: 'skip-finding-beads' });
+    expect(result.error.message).toContain('no-such-tracker');
+    expect(br.calls()).toEqual([]);
+  });
+
+  test('with baseConfig the tracker is the one the base committed, and the tree\'s own config is never read', () => {
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const deps = findings.createToolchainDeps({
+      projectRoot: hostileTree(),
+      env: envFor(br),
+      untrustedProjectRoot: true,
+      baseConfig: { text: 'tracker: beads\n', label: 'abc123:.ensemble/toolchain.yaml' }
+    });
+    expect(findings.findByKey(deps, { key: 'k' }).ok).toBe(true);
+    expect(br.calls()).toHaveLength(1);
+  });
+
+  test('a base with no config is a null config: the user config and the shipped default decide, not the tree', () => {
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const deps = findings.createToolchainDeps({ projectRoot: hostileTree(), env: envFor(br), untrustedProjectRoot: true, baseConfig: { text: null } });
+    expect(findings.findByKey(deps, { key: 'k' }).ok).toBe(true);
+    expect(br.calls()).toHaveLength(1);
+  });
+
+  test('a base config that names no installed tracker, or is invalid, is unavailable and runs nothing (it is the maintainers\' own choice, not a fallback to the tree)', () => {
+    for (const text of ['tracker: no-such-tracker\n', 'not-a-category: x\n']) {
+      const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+      const repo = hostileTree();
+      fs.writeFileSync(path.join(repo, '.ensemble', 'toolchain.yaml'), 'tracker: beads\n');
+      const deps = findings.createToolchainDeps({ projectRoot: repo, env: envFor(br), untrustedProjectRoot: true, baseConfig: { text, label: 'abc123:.ensemble/toolchain.yaml' } });
+      expect(findings.findByKey(deps, { key: 'k' })).toMatchObject({ ok: false, unavailable: true });
+      expect(br.calls()).toEqual([]);
+    }
+  });
+
+  test('the tracker runs in the directory it is given: the primary checkout, not a tree under review', () => {
+    const br = replayBr({ list: 'br-list-unscoped.sample.json' });
+    const primary = mkTempDir('tracker-findings-primary-');
+    fs.mkdirSync(path.join(primary, '.beads'));
+    const head = hostileTree();
+    const deps = findings.createToolchainDeps({ projectRoot: primary, env: envFor(br), untrustedProjectRoot: true, baseConfig: { text: 'tracker: beads\n' } });
+    expect(findings.findByKey(deps, { key: 'k' }).ok).toBe(true);
+    expect(br.cwds()).toEqual([primary]);
+    expect(br.cwds()).not.toContain(head);
+  });
+});
+
+describe('reopenFinding: reopens a closed bead through the real beads adapter', () => {
+  test('runs `br update <id> --status open --json` and refuses a bad id before br is run', () => {
+    const update = deps({ update: 'br-update-notes.sample.json' });
+    const result = findings.reopenFinding({ run: update.run }, { id: 'ws-17y' });
+    expect(result).toMatchObject({ ok: true, data: { id: 'ws-17y', status: 'open' } });
+    expect(update.br.calls()).toEqual([['update', 'ws-17y', '--status', 'open', '--json']]);
+    for (const bad of [{ id: '' }, { id: '   ' }, {}, undefined]) {
+      expect(findings.reopenFinding({ run: update.run }, bad)).toMatchObject({ ok: false, error: { code: 'INVALID_ARG' } });
+    }
+    expect(update.br.calls()).toHaveLength(1);
+  });
+
+  test('an adapter without tracker.set-status is unavailable, like every other capability', () => {
+    const run = (capability, args) => runCapabilitySync(BARE_ADAPTER_FOR_LABEL, capability, args, {});
+    expect(findings.reopenFinding({ run }, { id: 'x' })).toMatchObject({ ok: false, unavailable: true, fallback: 'skip-finding-beads' });
   });
 });
