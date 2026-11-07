@@ -38,7 +38,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const cli = require('../lib/pr-review-cli');
-const { recordResolution, clearFixedFindings } = require('../lib/pr-review-ledger');
+const { recordResolution, recordOperatorResolution, clearFixedFindings } = require('../lib/pr-review-ledger');
 
 const CLI_PATH = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 
@@ -133,6 +133,7 @@ function attempt(run, pr) {
   const description = run('description', { body: pr.body, agentAuthored: false });
   const gate = run('gate', {
     headSha: pr.head,
+    policy: pr.policy,
     ledger: pr.ledger,
     approvals,
     tier,
@@ -170,6 +171,19 @@ const securityFinding = (overrides = {}) =>
 
 /** A review record from `who` on `commitSha`. */
 const approve = (who, commitSha = HEAD_A, extra = {}) => ({ author: who, state: 'APPROVED', commitSha, ...extra });
+
+const DECIDED_AT = '2026-11-07T10:00:00Z';
+
+/**
+ * The operator's recorded decision on `target`, as the gate honours one: a stated reason, a login the policy lets
+ * decide, a time, and the head it was decided against (`headSha`, which must be the head the gate is asked about).
+ */
+function decide(target, headSha = HEAD_A, overrides = {}) {
+  const decision = { reason: 'accepted: the caller validates', by: 'maintainer-m', headSha, at: DECIDED_AT, ...overrides };
+  const recorded = recordOperatorResolution(target, decision, POLICY);
+  expect(recorded.ok).toBe(true);
+  return recorded.finding;
+}
 
 // --- Chains. Each step is graded after its `apply` runs on the SAME evolving PR. -----------------
 
@@ -390,26 +404,50 @@ const CHAINS = [
         mergeable: false,
         codes: ['open-important-finding'],
       },
-      { label: 'answered with a recorded reason', apply: (pr) => { pr.ledger = [recordResolution(finding({ headSha: HEAD_B }), { reason: 'intentional', by: 'author-a' }).finding]; }, mergeable: true, codes: [] },
+      { label: 'the operator records the decision on head B', apply: (pr) => { pr.ledger = [decide(finding({ headSha: HEAD_B }), HEAD_B)]; }, mergeable: true, codes: [] },
     ],
   },
   {
-    name: '18 closing a finding with a stated reason merges; closing it with a blank reason records nothing and still blocks',
+    name: "18 an Important finding is closed by the operator's recorded decision only: a reason, a login the policy lets decide, a time and THIS head",
     pr: () => makePr({ ledger: [finding()] }),
     steps: [
       {
-        label: 'blank reason',
+        label: 'open Important; a blank reason records nothing',
         mergeable: false,
         codes: ['open-important-finding'],
-        check: () => expect(recordResolution(finding(), { reason: '   ', by: 'author-a' }).ok).toBe(false),
+        check: () => expect(recordOperatorResolution(finding(), { reason: '   ', by: 'maintainer-m', headSha: HEAD_A, at: DECIDED_AT }, POLICY).ok).toBe(false),
       },
       {
-        label: 'stated reason',
-        apply: (pr) => {
-          const closed = recordResolution(finding(), { reason: 'intentional: caller validates', by: 'author-a' });
-          expect(closed.ok).toBe(true);
-          pr.ledger = [closed.finding];
-        },
+        label: 'a reason and a login, but no time and no head',
+        apply: (pr) => { pr.ledger = [recordResolution(finding(), { reason: 'intentional: caller validates', by: 'maintainer-m' }).finding]; },
+        mergeable: false,
+        codes: ['open-important-finding'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('timestamp'),
+      },
+      {
+        label: 'complete, but decided against another head',
+        apply: (pr) => { pr.ledger = [recordResolution(finding(), { reason: 'intentional: caller validates', by: 'maintainer-m', at: DECIDED_AT, headSha: HEAD_B }).finding]; },
+        mergeable: false,
+        codes: ['open-important-finding'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('not the current head'),
+      },
+      {
+        label: 'complete, but by a login the policy does not let decide',
+        apply: (pr) => { pr.ledger = [recordResolution(finding(), { reason: 'intentional: caller validates', by: 'author-a', at: DECIDED_AT, headSha: HEAD_A }).finding]; },
+        mergeable: false,
+        codes: ['open-important-finding'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('maintainerLogins'),
+      },
+      {
+        label: 'complete, but by a bot login',
+        apply: (pr) => { pr.ledger = [recordResolution(finding(), { reason: 'intentional: caller validates', by: 'coderabbitai', at: DECIDED_AT, headSha: HEAD_A }).finding]; },
+        mergeable: false,
+        codes: ['open-important-finding'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('bot login'),
+      },
+      {
+        label: "the operator's decision on this head",
+        apply: (pr) => { pr.ledger = [decide(finding())]; },
         mergeable: true,
         codes: [],
       },
@@ -432,17 +470,27 @@ const CHAINS = [
     ],
   },
   {
-    name: '21 only a non-blocking Important with a text reason may be deferred',
+    name: "21 the review's own deferral of a non-blocking Important closes nothing at the gate; the operator's decision does",
     pr: () => makePr({ ledger: [finding({ disposition: 'deferred', blocking: false, reason: 'tracked in #12' })] }),
     steps: [
-      { label: 'deferred non-blocking Important with reason', mergeable: true, codes: [] },
-      { label: 'same, but no reason', apply: (pr) => { pr.ledger = [finding({ disposition: 'deferred', blocking: false })]; }, mergeable: false, codes: ['open-important-finding'] },
-      { label: 'same, reason, but blocking not false', apply: (pr) => { pr.ledger = [finding({ disposition: 'deferred', reason: 'tracked in #12' })]; }, mergeable: false, codes: ['open-important-finding'] },
+      {
+        label: "deferred non-blocking Important with a reason (the triager's own word)",
+        mergeable: false,
+        codes: ['open-important-finding'],
+        check: ({ gate }) => expect(gate.blockers[0].deferralRejected).toContain('not an operator'),
+      },
+      { label: 'the same, with no reason', apply: (pr) => { pr.ledger = [finding({ disposition: 'deferred', blocking: false })]; }, mergeable: false, codes: ['open-important-finding'] },
+      {
+        label: 'the operator records the decision on this head',
+        apply: (pr) => { pr.ledger = [decide(finding({ disposition: 'deferred', blocking: false, reason: 'tracked in #12' }))]; },
+        mergeable: true,
+        codes: [],
+      },
     ],
   },
   {
     name: '22 a resolved finding whose review thread was reopened blocks again; settling the thread lets it merge',
-    pr: () => makePr({ ledger: [recordResolution(finding(), { reason: 'fixed in review', by: 'author-a' }).finding] }),
+    pr: () => makePr({ ledger: [decide(finding())] }),
     steps: [
       { label: 'resolved', mergeable: true, codes: [] },
       { label: 'thread reopened', apply: (pr) => { pr.ledger[0] = { ...pr.ledger[0], unresolvedThread: true }; }, mergeable: false, codes: ['open-important-finding'] },
@@ -468,13 +516,13 @@ const CHAINS = [
 
   // ---- 3b. Security lane -----------------------------------------------------------------------
   {
-    name: '24 an open security finding blocks and is named; closing it with a stated reason records the reason and merges',
+    name: '24 an open security finding blocks and is named; the operator closing it with a stated reason records the reason and merges',
     pr: () => makePr({ security: { status: 'findings', findings: [securityFinding()] } }),
     steps: [
       { label: 'open security finding', mergeable: false, codes: ['security-finding-open'], check: ({ gate }) => { expect(gate.securityLane.open).toEqual(['S-1']); expect(gate.blockers[0].message).toContain('widget.js:44'); } },
       {
         label: 'closed with a reason',
-        apply: (pr) => { pr.security = { status: 'findings', findings: [recordResolution(securityFinding(), { reason: 'false positive: redacted upstream', by: 'author-a' }).finding] }; },
+        apply: (pr) => { pr.security = { status: 'findings', findings: [decide(securityFinding(), HEAD_A, { reason: 'false positive: redacted upstream' })] }; },
         mergeable: true,
         codes: [],
         check: ({ gate }) => expect(gate.securityLane.resolved).toEqual([{ id: 'S-1', reason: 'false positive: redacted upstream' }]),
@@ -482,12 +530,38 @@ const CHAINS = [
     ],
   },
   {
-    name: '25 a security finding "closed" with no reason (blank, or resolved-disposition without a reason record) stays blocked',
+    name: '25 a security finding "closed" with no reason, or with a reason nobody put a login, a time and a head to, stays blocked',
     pr: () => makePr({ security: { status: 'findings', findings: [securityFinding({ disposition: 'resolved' })] } }),
     steps: [
       { label: 'resolved disposition, no reason', mergeable: false, codes: ['security-finding-open'], check: ({ gate }) => expect(gate.securityLane.resolved).toEqual([]) },
       { label: 'blank reason object', apply: (pr) => { pr.security = { status: 'findings', findings: [securityFinding({ resolution: { reason: '  ' } })] }; }, mergeable: false, codes: ['security-finding-open'] },
-      { label: 'real reason', apply: (pr) => { pr.security = { status: 'findings', findings: [securityFinding({ resolution: { reason: 'accepted risk, see ADR-4' } })] }; }, mergeable: true, codes: [] },
+      {
+        label: 'a real reason, but no deciding login, time or head',
+        apply: (pr) => { pr.security = { status: 'findings', findings: [securityFinding({ resolution: { reason: 'accepted risk, see ADR-4' } })] }; },
+        mergeable: false,
+        codes: ['security-finding-open'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('deciding login'),
+      },
+      {
+        label: 'complete, but by a login the policy does not let decide',
+        apply: (pr) => { pr.security = { status: 'findings', findings: [securityFinding({ resolution: { reason: 'accepted risk, see ADR-4', by: 'author-a', at: DECIDED_AT, headSha: HEAD_A } })] }; },
+        mergeable: false,
+        codes: ['security-finding-open'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('maintainerLogins'),
+      },
+      {
+        label: 'complete, but decided against another head',
+        apply: (pr) => { pr.security = { status: 'findings', findings: [securityFinding({ resolution: { reason: 'accepted risk, see ADR-4', by: 'maintainer-m', at: DECIDED_AT, headSha: HEAD_B } })] }; },
+        mergeable: false,
+        codes: ['security-finding-open'],
+        check: ({ gate }) => expect(gate.blockers[0].resolutionRejected).toContain('not the current head'),
+      },
+      {
+        label: 'the operator records it on this head',
+        apply: (pr) => { pr.security = { status: 'findings', findings: [decide(securityFinding(), HEAD_A, { reason: 'accepted risk, see ADR-4' })] }; },
+        mergeable: true,
+        codes: [],
+      },
     ],
   },
   {
@@ -605,6 +679,7 @@ function attemptWithTamper(run, pr) {
   const real = attempt(run, pr);
   const gate = run('gate', {
     headSha: pr.head,
+    policy: pr.policy,
     ledger: pr.ledger,
     approvals: pr.tamper(real.approvals),
     tier: real.tier,
