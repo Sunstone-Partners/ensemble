@@ -105,10 +105,25 @@ describe('the dedupe key: repository, file and normalized claim', () => {
     expect(reviewGroupKey({ repo: 'acme/widgets', file: 'src/a.js', group: 'nit' })).not.toBe(reviewFindingKey(base));
   });
 
-  test('the key ignores the line, the wording of the claim and the PR: a defect that moved is the same bead', () => {
+  test('the key ignores the line and the PR, and flattens the case, punctuation and spacing of the claim: a defect that moved is the same bead', () => {
     const a = beadKeys(input([finding({ locationOrLink: 'src/widget.js:12', failureMode: 'Unchecked path join' })])).keys;
     const b = beadKeys({ ...input([finding({ locationOrLink: 'src/widget.js:91', failureMode: '  unchecked   PATH join. ' })]), prNumber: 99, headSha: NEXT_HEAD }).keys;
     expect(a).toEqual(b);
+  });
+
+  test('STATED LIMIT: a reworded claim in the same file is another key, so a paraphrase makes a second bead (a person closes the stale one)', () => {
+    const first = input([finding({ failureMode: 'Unchecked path join' })]);
+    const reworded = input([finding({ failureMode: 'Path join with unvalidated user input' })], { headSha: NEXT_HEAD });
+    const [a] = beadKeys(first).keys;
+    const [b] = beadKeys(reworded).keys;
+    expect(a).not.toBe(b);
+
+    const created = planBeads(first, empty(first));
+    const held = afterCreate(created, first);
+    const second = planBeads(reworded, { ...held, [b]: { ok: true, found: false } });
+    expect(second.counts).toMatchObject({ create: 1, update: 0 });
+    // The first bead is left exactly as it is: absence is not a fix.
+    expect(second.actions.map((action) => action.key)).toEqual([b]);
   });
 
   test('one claim reported at different severities is one bead at the WORST severity, never split by severity', () => {
@@ -198,13 +213,32 @@ describe('re-review updates beads and never duplicates them (acceptance test b)'
     expect(plan.actions[0]).toMatchObject({ action: 'update', reason: 'labels', addLabels: [BEAD_LABEL] });
     expect(plan.actions[0].update).toBeUndefined();
   });
+
+  test('a second PR raising the same claim in the same file updates the first PR\'s bead, and the note names the record it replaced', () => {
+    const first = planBeads(input(ledger), empty(input(ledger)));
+    const held = afterCreate(first, input(ledger));
+    // The footer the first review wrote is what the tracker holds; hand it back as the item description.
+    const key = first.actions[0].key;
+    held[key].item.description = first.actions[0].create.description;
+    const otherPr = planBeads(input(ledger, { prNumber: 99, headSha: NEXT_HEAD }), held);
+    const update = one(otherPr, 'F-1').update;
+    expect(update.description).toContain(`PR #99 at head ${NEXT_HEAD}`);
+    expect(update.note).toContain(`Re-confirmed at head ${NEXT_HEAD} (PR #99)`);
+    expect(update.note).toContain(`Replaces the description's earlier record: acme/widgets PR #7 at head ${HEAD}`);
+
+    // A later head of the SAME PR names no earlier record: nothing was replaced but its own last head.
+    const samePr = planBeads(input(ledger, { prNumber: 7, headSha: NEXT_HEAD }), held);
+    expect(one(samePr, 'F-1').update.note).toBe(`Re-confirmed at head ${NEXT_HEAD} (PR #7): 1 location.`);
+  });
 });
 
 describe('a fix closes the bead, and only a fix does', () => {
   const fixed = (overrides = {}) => finding({ cleared: true, clearedBy: FIX_COMMIT, clearedReason: 'location-changed', ...overrides });
+  /** The commits the executor verified are on the PR. */
+  const onPr = { commitsOnPr: [FIX_COMMIT] };
 
-  test('a cleared finding closes its open bead with the clearing commit and a reason that names the PR', () => {
-    const inp = input([fixed()]);
+  test('a cleared finding closes its open bead with the verified commit and a reason that names the PR', () => {
+    const inp = input([fixed()], onPr);
     const key = beadKeys(inp).keys[0];
     const plan = planBeads(inp, { [key]: bead('bd-1') });
     expect(plan.actions).toHaveLength(1);
@@ -212,17 +246,50 @@ describe('a fix closes the bead, and only a fix does', () => {
     expect(plan.actions[0].close.reason).toContain(FIX_COMMIT);
     expect(plan.actions[0].close.reason).toContain('Acme/Widgets'.toLowerCase());
     expect(plan.actions[0].close.reason).toContain('PR #7');
+    // The bead is closed once this runs: the finding reports it as closed, never as an open bead.
+    expect(plan.byFinding['F-1']).toMatchObject({ action: 'close', closedBeadId: 'bd-1' });
+    expect(plan.byFinding['F-1'].beadId).toBeUndefined();
   });
 
   test('no commit, no close: a cleared mark without a commit id never closes a bead', () => {
     for (const clearedBy of [undefined, '', 'not-a-sha', 'main']) {
-      const inp = input([finding({ cleared: true, clearedBy })]);
+      const inp = input([finding({ cleared: true, clearedBy })], onPr);
       // Nothing about this finding can be matched to a bead, so there is nothing to look up either.
       expect(beadKeys(inp).keys).toEqual([]);
       const plan = planBeads(inp, {});
       expect(plan.ok).toBe(true);
       expect(plan.counts.close).toBe(0);
       expect(plan.actions[0]).toMatchObject({ action: 'skip', reason: 'cleared-without-commit' });
+    }
+  });
+
+  test('a commit nobody verified closes nothing: the shape of a hex string proves nothing', () => {
+    const other = 'd'.repeat(40);
+    for (const extra of [{}, { commitsOnPr: [] }, { commitsOnPr: [other] }]) {
+      const inp = input([fixed()], extra);
+      expect(beadKeys(inp).keys).toEqual([]);
+      const plan = planBeads(inp, {});
+      expect(plan.ok).toBe(true);
+      expect(plan.counts.close).toBe(0);
+      expect(plan.actions[0]).toMatchObject({ action: 'skip', reason: 'cleared-unverified' });
+    }
+  });
+
+  test('a short commit id resolves to the one verified commit it abbreviates; an ambiguous abbreviation closes nothing', () => {
+    const short = input([fixed({ clearedBy: FIX_COMMIT.slice(0, 9).toUpperCase() })], onPr);
+    const key = beadKeys(short).keys[0];
+    expect(planBeads(short, { [key]: bead('bd-1') }).actions[0].close.commit).toBe(FIX_COMMIT);
+
+    const twin = 'c'.repeat(12) + 'd'.repeat(28);
+    const ambiguous = input([fixed({ clearedBy: 'c'.repeat(9) })], { commitsOnPr: [FIX_COMMIT, twin] });
+    expect(planBeads(ambiguous, {}).actions[0]).toMatchObject({ action: 'skip', reason: 'cleared-unverified' });
+  });
+
+  test('commitsOnPr must be an array of full commit ids: anything else refuses the request', () => {
+    for (const bad of ['abc', [FIX_COMMIT.slice(0, 12)], [7], [{}], 'c'.repeat(40)]) {
+      const inp = input([fixed()], { commitsOnPr: bad });
+      expect(beadKeys(inp)).toMatchObject({ ok: false, keys: [] });
+      expect(planBeads(inp, {})).toMatchObject({ ok: false, actions: [] });
     }
   });
 
@@ -233,14 +300,16 @@ describe('a fix closes the bead, and only a fix does', () => {
   });
 
   test('an already closed bead and a fix with no bead are skipped, not closed again or created', () => {
-    const inp = input([fixed()]);
+    const inp = input([fixed()], onPr);
     const key = beadKeys(inp).keys[0];
-    expect(planBeads(inp, { [key]: bead('bd-1', { status: 'closed' }) }).actions[0]).toMatchObject({ action: 'skip', reason: 'already-closed', beadId: 'bd-1' });
+    const closed = planBeads(inp, { [key]: bead('bd-1', { status: 'closed' }) });
+    expect(closed.actions[0]).toMatchObject({ action: 'skip', reason: 'already-closed', closedBeadId: 'bd-1' });
+    expect(closed.byFinding['F-1'].beadId).toBeUndefined();
     expect(planBeads(inp, { [key]: { ok: true, found: false } }).actions[0]).toMatchObject({ action: 'skip', reason: 'fixed-without-bead' });
   });
 
   test('a claim that is still live at another location does not close the bead', () => {
-    const inp = input([fixed({ id: 'A' }), finding({ id: 'B', locationOrLink: 'src/widget.js:70' })]);
+    const inp = input([fixed({ id: 'A' }), finding({ id: 'B', locationOrLink: 'src/widget.js:70' })], onPr);
     const key = beadKeys(inp).keys[0];
     const plan = planBeads(inp, { [key]: bead('bd-1') });
     expect(plan.counts.close).toBe(0);
@@ -248,13 +317,66 @@ describe('a fix closes the bead, and only a fix does', () => {
     expect(plan.actions[0].update.description).not.toContain('src/widget.js:12');
     expect(plan.actions[0].update.description).toContain('src/widget.js:70');
   });
+});
 
-  test('a live finding whose bead a person closed is reported, never re-created and never silently dropped', () => {
+describe('a closed bead on a live finding is reported as closed, and reopened only when this recorder closed it as a fix', () => {
+  const fixed = (overrides = {}) => finding({ cleared: true, clearedBy: FIX_COMMIT, clearedReason: 'location-changed', ...overrides });
+
+  test('a bead anyone else closed is reported as CLOSED (never as an open bead), is not reopened and is not re-created', () => {
     const inp = input([finding()]);
     const key = beadKeys(inp).keys[0];
-    const plan = planBeads(inp, { [key]: bead('bd-1', { status: 'closed' }) });
-    expect(plan.counts.create).toBe(0);
-    expect(plan.byFinding['F-1']).toMatchObject({ action: 'skip', reason: 'bead-closed', beadId: 'bd-1' });
+    const lookalike = 'Fixed: x changed at nothex and was not reported again at nothex (a/b PR #1).';
+    for (const close_reason of [undefined, 'wontfix', 'Fixed: by hand in PR 12', lookalike]) {
+      const plan = planBeads(inp, { [key]: bead('bd-1', { status: 'closed', close_reason }) });
+      expect(plan.counts).toMatchObject({ create: 0, update: 0, close: 0, skip: 1 });
+      expect(plan.actions[0]).toMatchObject({ action: 'skip', reason: 'bead-closed', closedBeadId: 'bd-1', status: 'closed' });
+      expect(plan.actions[0].beadId).toBeUndefined();
+      expect(plan.byFinding['F-1']).toMatchObject({ action: 'skip', reason: 'bead-closed', closedBeadId: 'bd-1' });
+      expect(plan.byFinding['F-1'].beadId).toBeUndefined();
+    }
+  });
+
+  test('a bead this recorder closed as a fix is REOPENED when the finding is back: fields rewritten, one note, labels kept', () => {
+    const fixedInput = input([fixed()], { commitsOnPr: [FIX_COMMIT] });
+    const key = beadKeys(fixedInput).keys[0];
+    const { close } = planBeads(fixedInput, { [key]: bead('bd-1') }).actions[0];
+
+    const back = input([finding({ id: 'F-9', locationOrLink: 'src/widget.js:40' })], { headSha: NEXT_HEAD, followOnIds: ['F-9'] });
+    const plan = planBeads(back, { [key]: bead('bd-1', { status: 'closed', close_reason: close.reason }) });
+    expect(plan.counts).toMatchObject({ create: 0, update: 1, close: 0, skip: 0 });
+    expect(plan.actions[0]).toMatchObject({ action: 'update', reason: 'reopened', reopen: true, beadId: 'bd-1', addLabels: [FOLLOW_ON_LABEL] });
+    expect(plan.actions[0].update.note).toContain(`Reopened at head ${NEXT_HEAD} (PR #7)`);
+    expect(plan.actions[0].update.description).toContain('src/widget.js:40');
+    // Once reopened it is an open bead again.
+    expect(plan.byFinding['F-9']).toMatchObject({ action: 'update', beadId: 'bd-1' });
+    expect(plan.byFinding['F-9'].closedBeadId).toBeUndefined();
+  });
+
+  test('a collapsed bead this recorder closed is reopened the same way when a finding joins it again', () => {
+    const big = input(nits(COLLAPSE_THRESHOLD + 1));
+    const bucketKey = beadKeys(big).keys.find((key) => key.includes(':group:'));
+    const fixedAll = input(nits(COLLAPSE_THRESHOLD + 1).map((f) => ({ ...f, cleared: true, clearedBy: FIX_COMMIT })), { commitsOnPr: [FIX_COMMIT] });
+    const lookups = Object.fromEntries(beadKeys(fixedAll).keys.map((key) => [key, key === bucketKey ? bead('bd-9') : { ok: true, found: false }]));
+    const { close } = planBeads(fixedAll, lookups).actions[0];
+
+    const again = input(nits(1), { headSha: NEXT_HEAD });
+    const closedBucket = bead('bd-9', { status: 'closed', close_reason: close.reason });
+    const lookupsAgain = Object.fromEntries(beadKeys(again).keys.map((key) => [key, key === bucketKey ? closedBucket : { ok: true, found: false }]));
+    const plan = planBeads(again, lookupsAgain);
+    expect(plan.actions[0]).toMatchObject({ action: 'update', reason: 'reopened', reopen: true, beadId: 'bd-9', key: bucketKey });
+  });
+
+  test('the reason a fix close writes is the one the recorder recognises as its own, and nothing looser is', () => {
+    const fixedInput = input([fixed()], { commitsOnPr: [FIX_COMMIT] });
+    const key = beadKeys(fixedInput).keys[0];
+    const { close } = planBeads(fixedInput, { [key]: bead('bd-1') }).actions[0];
+    const live = input([finding()]);
+    const reopens = (close_reason) => planBeads(live, { [key]: bead('bd-1', { status: 'closed', close_reason }) }).actions[0].reason === 'reopened';
+    expect(reopens(close.reason)).toBe(true);
+    expect(reopens(`  ${close.reason}  `)).toBe(true);
+    expect(reopens(close.reason.replace('Fixed:', 'fixed:'))).toBe(false);
+    expect(reopens(close.reason.replace(/ \(.*$/, '.'))).toBe(false);
+    expect(reopens(`${close.reason} Reopen it.`)).toBe(false);
   });
 });
 
@@ -314,6 +436,49 @@ describe('which findings are recorded', () => {
     expect(created.description).not.toContain(secret);
     expect(created.description).toContain('[REDACTED]');
   });
+
+  // Built from parts so the repository's own secret scanner does not flag this file.
+  const AWS_KEY_ID = 'AKIA' + 'IOSFODNN7EXAMPLE';
+  const AWS_TEMP_KEY_ID = 'ASIA' + 'IOSFODNN7EXAMPLE';
+  const FINE_GRAINED = 'github_pat_' + '11ABCDEFG0abcdefghij12' + '_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0u1V2w3X4y5Z6a7B8c9D0';
+
+  test.each([
+    ['an AWS access key id', AWS_KEY_ID],
+    ['an AWS temporary access key id', AWS_TEMP_KEY_ID],
+    ['a github_pat_ fine-grained token', FINE_GRAINED],
+  ])('%s in the claim and the evidence never reaches the bead title or description', (_label, secret) => {
+    const inp = input([finding({ failureMode: `hardcoded ${secret} in config`, evidence: `line 12 has ${secret}` })]);
+    const created = planBeads(inp, empty(inp)).actions[0].create;
+    expect(created.title).not.toContain(secret);
+    expect(created.description).not.toContain(secret);
+    expect(created.description).toContain('[REDACTED]');
+  });
+
+  test('a secret in a file name or in a vote outcome is redacted too, and a file name never breaks the title into lines', () => {
+    const named = input([finding({ locationOrLink: `src/${AWS_KEY_ID}.js:3`, failureMode: 'named after a key' })]);
+    const { title, description } = planBeads(named, empty(named)).actions[0].create;
+    expect(`${title}\n${description}`).not.toContain(AWS_KEY_ID);
+
+    const votes = { ok: true, findings: [{ id: 'F-1', outcome: `present ${FINE_GRAINED}`, presented: true, tally: { real: 2, notReal: 0, abstain: 0, expected: 3 } }] };
+    const voted = input([finding()], { votes });
+    expect(planBeads(voted, empty(voted)).actions[0].create.description).not.toContain(FINE_GRAINED);
+
+    const multiline = input([finding({ locationOrLink: 'src/a\nb.js:3', failureMode: 'odd name' })]);
+    expect(planBeads(multiline, empty(multiline)).actions[0].create.title).not.toMatch(/[\r\n]/);
+  });
+
+  test('a collapsed bead title and its close reason are redacted as well', () => {
+    const file = `src/${AWS_KEY_ID}.js`;
+    const many = input(nits(COLLAPSE_THRESHOLD + 1, file));
+    const created = planBeads(many, empty(many)).actions[0].create;
+    expect(`${created.title}\n${created.description}`).not.toContain(AWS_KEY_ID);
+
+    const key = beadKeys(many).keys.find((k) => k.includes(':group:'));
+    const fixedAll = input(nits(COLLAPSE_THRESHOLD + 1, file).map((f) => ({ ...f, cleared: true, clearedBy: FIX_COMMIT })), { commitsOnPr: [FIX_COMMIT] });
+    const lookups = Object.fromEntries(beadKeys(fixedAll).keys.map((k) => [k, k === key ? bead('bd-1') : { ok: true, found: false }]));
+    const { close } = planBeads(fixedAll, lookups).actions[0];
+    expect(close.reason).not.toContain(AWS_KEY_ID);
+  });
 });
 
 describe('Nits and Pre-existing findings collapse per file (threshold shared with the operator list)', () => {
@@ -352,7 +517,8 @@ describe('Nits and Pre-existing findings collapse per file (threshold shared wit
   });
 
   test('a finding that already has its own bead keeps it: it is updated, never folded into the collapsed bead', () => {
-    const ledger = nits(COLLAPSE_THRESHOLD + 1);
+    // N-1 holds its own bead; the other four have none and are more than the threshold on their own.
+    const ledger = nits(COLLAPSE_THRESHOLD + 2);
     const lookups = empty(input(ledger));
     const ownKey = reviewFindingKey({ repo: 'acme/widgets', file: 'src/same.js', claim: 'nit number 1::' });
     lookups[ownKey] = bead('bd-own');
@@ -361,6 +527,30 @@ describe('Nits and Pre-existing findings collapse per file (threshold shared wit
     expect(plan.byFinding['N-2'].action).toBe('create');
     expect(plan.byFinding['N-2'].key).toMatch(/:group:/);
     expect(plan.actions.filter((a) => a.action === 'create')).toHaveLength(1);
+    expect(plan.actions.find((a) => a.action === 'create').findingIds).toHaveLength(COLLAPSE_THRESHOLD + 1);
+  });
+
+  test('3 Nits with their own beads and a 4th arriving later: the 4th gets its own bead, never a one-member collapsed bead', () => {
+    const ledger = nits(COLLAPSE_THRESHOLD + 1);
+    const lookups = empty(input(ledger));
+    for (let i = 1; i <= COLLAPSE_THRESHOLD; i += 1) {
+      lookups[reviewFindingKey({ repo: 'acme/widgets', file: 'src/same.js', claim: `nit number ${i}::` })] = bead(`bd-${i}`);
+    }
+    const plan = planBeads(input(ledger), lookups);
+    expect(plan.counts).toMatchObject({ create: 1, update: COLLAPSE_THRESHOLD });
+    const created = plan.actions.find((a) => a.action === 'create');
+    expect(created.findingIds).toEqual([`N-${COLLAPSE_THRESHOLD + 1}`]);
+    expect(created.key).not.toMatch(/:group:/);
+    expect(created.create.title).toBe(`[nit] src/same.js: nit number ${COLLAPSE_THRESHOLD + 1}`);
+    expect(plan.actions.every((a) => !/collapsed/.test(a.create ? a.create.title : ''))).toBe(true);
+  });
+
+  test('the title of a collapsed bead that is down to one member reads as one finding', () => {
+    const big = input(nits(COLLAPSE_THRESHOLD + 1));
+    const held = afterCreate(planBeads(big, empty(big)), big);
+    const one = input(nits(1), { headSha: NEXT_HEAD });
+    const plan = planBeads(one, Object.fromEntries(beadKeys(one).keys.map((key) => [key, held[key] || { ok: true, found: false }])));
+    expect(plan.actions[0].update.title).toBe('[nit] src/same.js: 1 Nit finding (collapsed)');
   });
 
   test('once a file has a collapsed bead the choice is sticky: fewer findings still join it, none get their own bead', () => {
@@ -391,14 +581,15 @@ describe('Nits and Pre-existing findings collapse per file (threshold shared wit
     const held = afterCreate(first, big);
     const fixedAll = nits(COLLAPSE_THRESHOLD + 1).map((f) => ({ ...f, cleared: true, clearedBy: FIX_COMMIT }));
     const lookupsFor = (inp) => Object.fromEntries(beadKeys(inp).keys.map((key) => [key, held[key] || { ok: true, found: false }]));
+    const onPr = { headSha: NEXT_HEAD, commitsOnPr: [FIX_COMMIT] };
 
-    const all = input(fixedAll, { headSha: NEXT_HEAD });
+    const all = input(fixedAll, onPr);
     const closed = planBeads(all, lookupsFor(all));
     expect(closed.counts).toMatchObject({ close: 1, create: 0 });
     expect(closed.actions[0].close).toMatchObject({ commit: FIX_COMMIT, id: 'bd-0' });
     expect(closed.actions[0].findingIds).toHaveLength(COLLAPSE_THRESHOLD + 1);
 
-    const some = input([...fixedAll.slice(0, 2), ...nits(COLLAPSE_THRESHOLD + 1).slice(2)], { headSha: NEXT_HEAD });
+    const some = input([...fixedAll.slice(0, 2), ...nits(COLLAPSE_THRESHOLD + 1).slice(2)], onPr);
     const partial = planBeads(some, lookupsFor(some));
     expect(partial.counts.close).toBe(0);
     expect(partial.byFinding['N-1']).toMatchObject({ action: 'skip', reason: 'collapsed-member-fixed', beadId: 'bd-0' });

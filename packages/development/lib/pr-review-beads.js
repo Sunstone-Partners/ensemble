@@ -16,37 +16,58 @@
  * THE RULES (the operator and the next reviewer rely on every one of them):
  *
  *   - IDENTITY. A bead's key is the repository, the file and the NORMALIZED claim (the same
- *     normalization the ledger's repeat suppression uses, `normalizeFailureMode`). The line, the
- *     head and the PR number are deliberately NOT in it: the same defect at a later head, after
- *     the file shifted, is the same bead. Two findings in one file with one claim share a bead.
+ *     normalization the ledger's repeat suppression uses, `normalizeFailureMode`: case, punctuation
+ *     and spacing only). The line, the head and the PR number are deliberately NOT in it: the same
+ *     defect at a later head, after the file shifted, is the same bead. Two findings in one file
+ *     with one claim share a bead. THE LIMITS, stated rather than hidden: a REWORDED claim is a
+ *     different key and so a second bead (the planner does not guess that two sentences mean one
+ *     defect; a person closes the stale one); a second PR that raises the same claim in the same
+ *     file updates the first PR's bead (the description then names the latest PR and the update
+ *     note names the record it replaced), and a bead already labelled `follow-on` stays so.
  *   - RE-REVIEW UPDATES. A finding whose bead exists is updated (title, description, priority,
  *     one appended note) when anything about it changed, and left alone when nothing did. It is
- *     never created twice: `br` refuses a second bead with a key, and the lookup is made first.
- *   - A FIX CLOSES. A finding the ledger marks `cleared` (a later head changed the cited
- *     location and no reviewer reported it again) closes its open bead with that commit. A
- *     cleared mark without a commit, or a bead that is already closed, closes nothing.
- *     ABSENCE IS NOT A FIX: a finding that simply is not in this ledger leaves its bead open.
+ *     never created twice: `br` refuses a second bead with a key, and the lookup is made first. A
+ *     later head therefore rewrites the title, description and priority from the review (a manual
+ *     re-prioritisation of a recorded bead is overwritten) and appends ONE note per head; the
+ *     same head again writes nothing.
+ *   - A FIX CLOSES. A finding the ledger marks `cleared` with a `clearedBy` commit the CALLER
+ *     verified is on the PR (`input.commitsOnPr`, full commit ids: the executor checks them with
+ *     git, this module never trusts the shape of a hex string) closes its open bead with that
+ *     commit. A cleared mark with no commit id, with a commit nobody verified, or on a bead that
+ *     is already closed, closes nothing. ABSENCE IS NOT A FIX: a finding that simply is not in
+ *     this ledger leaves its bead open.
+ *   - A CLOSED BEAD ON A LIVE FINDING. If the closed bead is one this recorder closed as a fix
+ *     (its reason is the one `fixedReason` writes) the finding is a regression: the bead is
+ *     REOPENED, updated and noted. If anyone else closed it, their decision stands and it is NOT
+ *     reopened, but it is reported as what it is: `closedBeadId`, never `beadId`, because it is not
+ *     an open bead. The operator list then shows a live finding whose bead is closed as its own
+ *     state instead of counting it among the open beads.
  *   - FORCE-PUSH. Nothing is keyed to a commit, so a rewritten history orphans no bead: the next
  *     review of the new head finds each by key and rewrites its head and line. A bead whose
  *     finding is gone from the new head's ledger stays open, naming the last head that confirmed
- *     it; a person closes it. The commit a close names is the one the ledger recorded; after a
- *     force-push it may no longer exist upstream, which is why the close reason also names the PR.
+ *     it; a person closes it. The commit a close names is one the executor verified is on the PR;
+ *     after a force-push it is no longer there, which is why a rewritten history closes nothing
+ *     and the close reason also names the PR.
  *   - COLLAPSE. More than `COLLAPSE_THRESHOLD` (the operator list's own threshold) Nit, or
- *     Pre-existing, findings in one file become ONE bead for that file and group, per finding
- *     group and not per PR: the list and the tracker then say the same thing. Important findings
- *     and security findings are never collapsed. A finding that already has its own bead keeps
- *     it (never a duplicate), and once a file has a collapsed bead new findings join it even
- *     if the count later drops: the choice is sticky, so a count that moves around the
- *     threshold cannot flip a file between one bead and many.
+ *     Pre-existing, findings in one file WITHOUT a bead of their own become ONE bead for that file
+ *     and group, per finding group and not per PR. Important findings and security findings are
+ *     never collapsed. A finding that already has its own bead keeps it, is never folded into
+ *     another bead (only a fix closes a bead) and so does not count toward the threshold: Nits
+ *     that arrive a few reviews at a time can leave a file with more beads than the threshold, and
+ *     a collapsed bead is never created for the one new finding of a file whose others hold their
+ *     own beads. Once a file has a collapsed bead new findings join it even if the count later
+ *     drops: the choice is sticky, so a count that moves around the threshold cannot flip a file
+ *     between one bead and many.
  *   - WHAT IS RECORDED. Every finding that is presented to the operator: confirmed by the
  *     verifier majority, but also unverified or disputed ones (the list shows them, each with its
  *     bead id, and the description says which). Filtered findings, duplicates and
  *     not-applicable ones are not recorded and their bead, if any, is left as it is.
- *   - A bead that was closed by a person while its finding is still live is NOT reopened here:
- *     the plan reports `bead-closed` and the finding is shown with that bead id.
  *   - LABELS. Every bead carries `pr-review`. `follow-on` is added only when the caller names
  *     the finding in `followOnIds` (the operator's own choice, never an agent's); a label is
  *     only ever added, never removed.
+ *   - REDACTION. Every piece of finding text that reaches a bead (title, description, close
+ *     reason) is redacted: the file names and the vote outcomes too, and each finished text is
+ *     redacted once more as a whole, because the store is tracked by git.
  *   - FAIL CLOSED. Input this module cannot read yields `{ok:false, reason}` and no action. A
  *     finding that cannot be keyed (no claim) is reported as skipped, never dropped silently.
  */
@@ -62,6 +83,12 @@ const FOLLOW_ON_LABEL = 'follow-on';
 const KEY_PREFIX = 'pr-review:v1:';
 /** A commit id as `closeFinding` accepts one. */
 const COMMIT_RE = /^[0-9a-f]{7,40}$/i;
+/** A full commit id: the form `commitsOnPr` carries. */
+const FULL_COMMIT_RE = /^[0-9a-f]{40}$/i;
+/** The dedupe-footer line every bead description ends with (see `footer`). */
+const LAST_CONFIRMED_RE = /^Last confirmed: (\S+) PR #(\d+) at head ([0-9a-f]{7,40})$/m;
+/** A close reason as `fixedReason` writes it: how a bead this recorder closed is recognised later. */
+const FIXED_REASON_RE = /^Fixed: .+ changed at [0-9a-f]{7,40} and was not reported again at [0-9a-f]{7,40} \(.+ PR #\d+\)\.$/;
 /** A repository identity with no whitespace, usable inside a bead's external reference. */
 const REPO_RE = /^[A-Za-z0-9._~@-]+(?:\/[A-Za-z0-9._~@-]+)*$/;
 const TITLE_CLAIM_MAX = 80;
@@ -85,6 +112,9 @@ function flat(value, max) {
     .trim();
   return line.length > max ? `${line.slice(0, max - 1)}\u2026` : line;
 }
+
+/** A finished title, description or reason, redacted once more as a whole: the last stop before the git-tracked store. */
+const clean = (text) => redact(text);
 
 function normalizeRepo(repo) {
   return isText(repo) && REPO_RE.test(repo.trim()) ? repo.trim().toLowerCase() : null;
@@ -140,11 +170,12 @@ function claimOf(finding) {
 
 function votesLine(vote) {
   if (!isObject(vote)) return 'not recorded';
-  const outcome = isText(vote.outcome) ? vote.outcome : 'unknown';
+  const outcome = isText(vote.outcome) ? flat(vote.outcome, 40) : 'unknown';
   const tally = vote.tally;
   if (!isObject(tally)) return `no tally (${outcome})`;
-  const abstain = Number(tally.abstain) > 0 ? ` / ${tally.abstain} abstain` : '';
-  return `${tally.real} real / ${tally.notReal} not-real${abstain} of ${tally.expected} expected (${outcome})`;
+  const n = (value) => flat(value, 12);
+  const abstain = Number(tally.abstain) > 0 ? ` / ${n(tally.abstain)} abstain` : '';
+  return `${n(tally.real)} real / ${n(tally.notReal)} not-real${abstain} of ${n(tally.expected)} expected (${outcome})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +228,13 @@ function readInput(input) {
   if (input.reportLink !== undefined && input.reportLink !== null && !isText(input.reportLink)) {
     return { reason: "input 'reportLink' must be a non-empty string when given" };
   }
+  let commitsOnPr = [];
+  if (input.commitsOnPr !== undefined && input.commitsOnPr !== null) {
+    if (!Array.isArray(input.commitsOnPr) || !input.commitsOnPr.every((commit) => isText(commit) && FULL_COMMIT_RE.test(commit.trim()))) {
+      return { reason: "input 'commitsOnPr' must be an array of full 40-character commit ids" };
+    }
+    commitsOnPr = input.commitsOnPr.map((commit) => commit.trim().toLowerCase());
+  }
 
   const byId = new Map();
   for (const [list, fromLane] of [
@@ -244,20 +282,23 @@ function readInput(input) {
       prNumber: input.prNumber,
       headSha: input.headSha.trim().toLowerCase(),
       reportLink: isText(input.reportLink) ? input.reportLink.trim() : null,
+      commitsOnPr,
     },
     entries,
   };
 }
 
-/** What a finding is to the planner: skip (with why), fixed (with the commit) or live. */
-function stateOf(entry) {
+/** What a finding is to the planner: skip (with why), fixed (with the verified commit) or live. */
+function stateOf(entry, commitsOnPr) {
   const { finding } = entry;
   if (entry.key === null) return { kind: 'skip', reason: 'unkeyable' };
   if (finding.cleared === true) {
-    if (isText(finding.clearedBy) && COMMIT_RE.test(finding.clearedBy.trim())) {
-      return { kind: 'fixed', commit: finding.clearedBy.trim().toLowerCase() };
-    }
-    return { kind: 'skip', reason: 'cleared-without-commit' };
+    const written = isText(finding.clearedBy) ? finding.clearedBy.trim().toLowerCase() : '';
+    if (!COMMIT_RE.test(written)) return { kind: 'skip', reason: 'cleared-without-commit' };
+    // The shape proves nothing: only a commit the caller verified is on the PR closes a bead.
+    const verified = commitsOnPr.filter((commit) => commit.startsWith(written));
+    if (verified.length !== 1) return { kind: 'skip', reason: 'cleared-unverified' };
+    return { kind: 'fixed', commit: verified[0] };
   }
   if (finding.disposition === 'duplicate' || finding.disposition === 'not-applicable') {
     return { kind: 'skip', reason: `not-recorded:${finding.disposition}` };
@@ -296,15 +337,16 @@ function renderUnit(unit, context) {
   const { entries } = unit;
   const first = entries[0];
   const security = unit.security ? ', security' : '';
-  const head = `PR review finding (${unit.severityWord}${security}) in ${context.repo}, PR #${context.prNumber}`;
+  const word = flat(unit.severityWord, 40);
+  const head = `PR review finding (${word}${security}) in ${context.repo}, PR #${context.prNumber}`;
   const lines = [head, '', 'Claim: ' + flat(first.finding.failureMode, CLAIM_MAX), '', 'Locations and verifier votes:'];
   entries.slice(0, MEMBERS_LISTED_MAX).forEach((entry) => lines.push(memberLine(entry)));
   if (entries.length > MEMBERS_LISTED_MAX) lines.push(`- ... and ${entries.length - MEMBERS_LISTED_MAX} more`);
   if (isText(first.finding.evidence)) lines.push('', 'Evidence: ' + flat(first.finding.evidence, EVIDENCE_MAX));
   lines.push('', ...footer(context));
   return {
-    title: `[${unit.severityWord}${security}] ${first.file === null ? '(no file)' : first.file}: ${flat(first.finding.failureMode, TITLE_CLAIM_MAX)}`,
-    description: lines.join('\n'),
+    title: clean(`[${word}${security}] ${first.file === null ? '(no file)' : flat(first.file, 200)}: ${flat(first.finding.failureMode, TITLE_CLAIM_MAX)}`),
+    description: clean(lines.join('\n')),
     priority: unit.security ? PRIORITY.important : PRIORITY[unit.group],
     type: unit.security ? ISSUE_TYPE.important : ISSUE_TYPE[unit.group],
   };
@@ -313,8 +355,9 @@ function renderUnit(unit, context) {
 /** The collapsed bead of one file and group. */
 function renderBucket(bucket, entries, context) {
   const word = GROUP_WORD[bucket.group];
+  const count = entries.length;
   const lines = [
-    `PR review findings (${word}, collapsed: ${entries.length} in one file) in ${context.repo}, PR #${context.prNumber}`,
+    `PR review findings (${word}, collapsed: ${count} in one file) in ${context.repo}, PR #${context.prNumber}`,
     '',
     `File: ${flat(bucket.file, 300)}`,
     '',
@@ -324,8 +367,8 @@ function renderBucket(bucket, entries, context) {
   if (entries.length > MEMBERS_LISTED_MAX) lines.push(`- ... and ${entries.length - MEMBERS_LISTED_MAX} more`);
   lines.push('', ...footer(context));
   return {
-    title: `[${bucket.group}] ${bucket.file}: ${entries.length} ${word} findings (collapsed)`,
-    description: lines.join('\n'),
+    title: clean(`[${bucket.group}] ${flat(bucket.file, 200)}: ${count} ${word} finding${count === 1 ? '' : 's'} (collapsed)`),
+    description: clean(lines.join('\n')),
     priority: PRIORITY[bucket.group],
     type: ISSUE_TYPE[bucket.group],
   };
@@ -383,8 +426,32 @@ function missingLabels(item, wanted) {
 }
 
 /**
+ * The note a re-confirmation appends. When the description it replaces was last confirmed by
+ * ANOTHER PR (the key carries no PR: a second PR raising the same claim in the same file updates
+ * the first one's bead) the note names that earlier record, so rewriting the description loses
+ * nothing.
+ */
+function reconfirmNote(item, context, count) {
+  const note = `Re-confirmed at head ${context.headSha} (PR #${context.prNumber}): ${count} location${count === 1 ? '' : 's'}.`;
+  const earlier = typeof item.description === 'string' ? LAST_CONFIRMED_RE.exec(item.description) : null;
+  if (earlier === null) return note;
+  const [, repo, pr, head] = earlier;
+  if (repo.toLowerCase() === context.repo && Number(pr) === context.prNumber) return note;
+  return `${note} Replaces the description's earlier record: ${repo} PR #${pr} at head ${head}.`;
+}
+
+/** The reason of a fix close. `closedByRecorder` recognises exactly this shape later. */
+function fixedReason({ what, commit, context }) {
+  return clean(`Fixed: ${what} changed at ${commit} and was not reported again at ${context.headSha} (${context.repo} PR #${context.prNumber}).`);
+}
+
+/** True when the closed bead was closed by this recorder as a fix (a person's close never reads like one). */
+const closedByRecorder = (item) => typeof item.close_reason === 'string' && FIXED_REASON_RE.test(item.close_reason.trim());
+
+/**
  * The action for one bead the findings map onto, given what the tracker holds for its key.
- * `lookup` is a `findByKey` result.
+ * `lookup` is a `findByKey` result. A skip carries `beadId` only for an OPEN bead and
+ * `closedBeadId` for a closed one, so no caller can read a closed bead as an open one.
  */
 function actionFor({ key, findingIds, desired, followOn, lookup, context, count }) {
   const base = { key, findingIds };
@@ -402,9 +469,29 @@ function actionFor({ key, findingIds, desired, followOn, lookup, context, count 
   }
   const item = lookup.item;
   const beadId = item.id;
-  if (item.status === 'closed') return { ...base, action: 'skip', reason: 'bead-closed', beadId, status: 'closed' };
-  const fields = !sameFields(item, desired);
   const addLabels = missingLabels(item, labelsFor(followOn));
+  if (item.status === 'closed') {
+    // The finding is live. A bead this recorder closed as a fix means the defect is back: reopen it.
+    // Anyone else's close stands, and is reported as closed.
+    if (!closedByRecorder(item)) return { ...base, action: 'skip', reason: 'bead-closed', closedBeadId: beadId, status: 'closed' };
+    const reopened = {
+      ...base,
+      action: 'update',
+      reason: 'reopened',
+      beadId,
+      reopen: true,
+      update: {
+        id: beadId,
+        title: desired.title,
+        description: desired.description,
+        priority: desired.priority,
+        note: `Reopened at head ${context.headSha} (PR #${context.prNumber}): the finding this bead was closed as fixed for is back, ${count} location${count === 1 ? '' : 's'}.`,
+      },
+    };
+    if (addLabels.length > 0) reopened.addLabels = addLabels;
+    return reopened;
+  }
+  const fields = !sameFields(item, desired);
   if (!fields && addLabels.length === 0) return { ...base, action: 'skip', reason: 'unchanged', beadId };
   const action = { ...base, action: 'update', reason: fields ? 'changed' : 'labels', beadId };
   if (fields) {
@@ -413,7 +500,7 @@ function actionFor({ key, findingIds, desired, followOn, lookup, context, count 
       title: desired.title,
       description: desired.description,
       priority: desired.priority,
-      note: `Re-confirmed at head ${context.headSha} (PR #${context.prNumber}): ${count} location${count === 1 ? '' : 's'}.`,
+      note: reconfirmNote(item, context, count),
     };
   }
   if (addLabels.length > 0) action.addLabels = addLabels;
@@ -428,20 +515,14 @@ function closeActionFor({ key, findingIds, lookup, commits, context, what }) {
   }
   if (!lookup.found) return { ...base, action: 'skip', reason: 'fixed-without-bead' };
   const beadId = lookup.item.id;
-  if (lookup.item.status === 'closed') return { ...base, action: 'skip', reason: 'already-closed', beadId, status: 'closed' };
+  if (lookup.item.status === 'closed') return { ...base, action: 'skip', reason: 'already-closed', closedBeadId: beadId, status: 'closed' };
   const commit = commits[commits.length - 1];
   return {
     ...base,
     action: 'close',
     reason: 'fixed',
     beadId,
-    close: {
-      id: beadId,
-      commit,
-      reason:
-        `Fixed: ${what} changed at ${commit} and was not reported again at ${context.headSha} ` +
-        `(${context.repo} PR #${context.prNumber}).`,
-    },
+    close: { id: beadId, commit, reason: fixedReason({ what, commit, context }) },
   };
 }
 
@@ -472,7 +553,7 @@ function groupBuckets(units, repo) {
 function beadKeys(input) {
   const read = readInput(input);
   if (read.reason !== undefined) return { ok: false, reason: read.reason, keys: [] };
-  const states = new Map(read.entries.map((entry) => [entry.id, stateOf(entry)]));
+  const states = new Map(read.entries.map((entry) => [entry.id, stateOf(entry, read.context.commitsOnPr)]));
   const units = buildUnits(read.entries, states);
   const keys = [...units.keys()];
   for (const bucket of groupBuckets(units, read.context.repo).values()) keys.push(bucket.key);
@@ -483,8 +564,9 @@ function beadKeys(input) {
  * Plan what to do in the tracker.
  *
  * @param {{repo: string, prNumber: number, headSha: string, ledger: object[], security?: {findings?: object[]},
- *   votes?: object, followOnIds?: Array<string|number>, reportLink?: string}} input
- *   `ledger` entries are the ledger's findings; `cleared`/`clearedBy` (from `clearFixedFindings`) mark a fix.
+ *   votes?: object, followOnIds?: Array<string|number>, reportLink?: string, commitsOnPr?: string[]}} input
+ *   `ledger` entries are the ledger's findings; `cleared`/`clearedBy` (from `pr-review-clear-cli.js`) mark a fix,
+ *   and close a bead only when `clearedBy` is a commit named in `commitsOnPr` (full ids the caller verified are on the PR).
  *   `votes` is the `votes` subcommand's result; `followOnIds` the findings the operator chose to defer.
  * @param {Object<string, object>} lookups  `findByKey`'s result for every key `beadKeys` named
  * @returns {{ok:true, actions:object[], byFinding:Object<string, object>, counts:object}|{ok:false, reason:string}}
@@ -497,7 +579,7 @@ function planBeads(input, lookups) {
   if (!isObject(lookups)) return fail("'lookups' must be an object keyed by dedupe key");
   const { context, entries } = read;
 
-  const states = new Map(entries.map((entry) => [entry.id, stateOf(entry)]));
+  const states = new Map(entries.map((entry) => [entry.id, stateOf(entry, context.commitsOnPr)]));
   const units = buildUnits(entries, states);
   const buckets = groupBuckets(units, context.repo);
   for (const key of [...units.keys(), ...[...buckets.values()].map((b) => b.key)]) {
@@ -505,17 +587,20 @@ function planBeads(input, lookups) {
   }
 
   // Which live units join their file's collapsed bead: the ones with no bead of their own, once the
-  // file has a collapsed bead or more than the threshold of live findings.
+  // file has a collapsed bead or more than the threshold of such findings. A finding that has its
+  // own bead is never folded in (only a fix closes a bead), so it does not count toward the
+  // threshold either: a collapsed bead is never made for the one new finding of a file whose
+  // others hold their own beads.
   const hasOwnBead = (unit) => isObject(lookups[unit.key]) && lookups[unit.key].ok === true && lookups[unit.key].found === true;
   const collapsedOf = new Map(); // unit key -> bucket
   const bucketInfo = new Map();
   for (const bucket of buckets.values()) {
-    const liveUnits = bucket.units.filter((u) => u.isLive);
-    const liveCount = liveUnits.reduce((n, u) => n + u.live.length, 0);
+    const joinable = bucket.units.filter((u) => u.isLive && !hasOwnBead(u));
+    const joinableCount = joinable.reduce((n, u) => n + u.live.length, 0);
     const lookup = lookups[bucket.key];
     const exists = isObject(lookup) && lookup.ok === true && lookup.found === true;
-    const collapse = exists || liveCount > COLLAPSE_THRESHOLD;
-    const joiners = collapse ? liveUnits.filter((u) => !hasOwnBead(u)) : [];
+    const collapse = exists || joinableCount > COLLAPSE_THRESHOLD;
+    const joiners = collapse ? joinable : [];
     const fixedWithoutBead = collapse ? bucket.units.filter((u) => !u.isLive && !hasOwnBead(u)) : [];
     joiners.forEach((u) => collapsedOf.set(u.key, bucket));
     fixedWithoutBead.forEach((u) => collapsedOf.set(u.key, bucket));
@@ -528,7 +613,9 @@ function planBeads(input, lookups) {
     actions.push(action);
     for (const id of action.findingIds) {
       byFinding[id] = { action: action.action, reason: action.reason, key: action.key };
-      if (action.beadId !== undefined) byFinding[id].beadId = action.beadId;
+      // `beadId` only ever names an OPEN bead. A close leaves a closed one.
+      if (action.closedBeadId !== undefined) byFinding[id].closedBeadId = action.closedBeadId;
+      else if (action.beadId !== undefined) byFinding[id][action.action === 'close' ? 'closedBeadId' : 'beadId'] = action.beadId;
     }
   };
   const emitted = new Set();
@@ -550,7 +637,9 @@ function planBeads(input, lookups) {
           emitted.add(unit.key);
           const lookup = info.lookup;
           const action = { key: unit.key, findingIds: unit.fixed.map((e) => e.id), action: 'skip', reason: 'collapsed-member-fixed' };
-          if (isObject(lookup) && lookup.ok === true && lookup.found === true) action.beadId = lookup.item.id;
+          if (isObject(lookup) && lookup.ok === true && lookup.found === true) {
+            action[lookup.item.status === 'closed' ? 'closedBeadId' : 'beadId'] = lookup.item.id;
+          }
           record(action);
         }
         continue;
