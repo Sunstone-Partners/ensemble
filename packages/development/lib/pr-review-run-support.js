@@ -279,13 +279,16 @@ function citedPlace(location, snapshotDir) {
  * outside every hunk of the diff (or in a file the pull request does not touch). Anything this cannot place is NOT borne out.
  *
  * @param {string} location  the finding's `file:line`
- * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string}} diff
+ * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string, exists:function(string):boolean}} diff
  * @returns {{honoured:boolean, why?:string}}
  */
 function preExistingVerdict(location, diff) {
   const place = citedPlace(location, diff.snapshotDir);
   if (place === null) return { honoured: false, why: 'its location is not a plain `file:line` the diff can be checked against' };
   if (diff.index === null) return { honoured: false, why: 'the diff of this range could not be read to check it' };
+  // A citation that names no file of the head (a truncated, mis-spelled or invented path) places the defect nowhere: that is
+  // not "outside the diff", so nothing bears the claim out. Only an exact path that exists in the head snapshot is checked.
+  if (typeof diff.exists !== 'function' || diff.exists(place.file) !== true) return { honoured: false, why: `${place.file} is not a file at this head, so the cited location names nothing the diff can be checked against` };
   const key = place.file.toLowerCase();
   const changedFile = Array.isArray(diff.changedPaths) && diff.changedPaths.some((p) => String(p).toLowerCase() === key);
   const entry = diff.index.files.get(key);
@@ -304,7 +307,7 @@ function preExistingVerdict(location, diff) {
  * no right to set. Any other severity, and any finding that is not an object, comes back untouched.
  *
  * @param {Object} entry  a completed finding (`completeFinding`)
- * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string}} diff
+ * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string, exists:function(string):boolean}} diff
  */
 function gradePreExisting(entry, diff) {
   if (!isObject(entry) || normalizeSeverity(entry.severity) !== 'pre-existing') return entry;
@@ -372,7 +375,7 @@ function reviewerContract(agent) {
     '- No findings is `"findings": []`. Never invent a finding to fill the list.',
     '- Set `"uncertain": true` on a finding you cannot settle yourself; a person then decides it.',
     '- Do not write `resolution`, `cleared` or `blocking`: they are ignored.',
-    '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff: a pre-existing finding whose cited lines are inside a hunk of the diff, or whose location it cannot place, is graded Important.',
+    '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff and the head: a pre-existing finding whose cited lines are inside a hunk of the diff, whose location it cannot place, or whose path is not a file at the head (cite the full repository-relative path, spelled exactly) is graded Important.',
     `- Write the file atomically: a temp file in the same directory, then rename it to \`${agent.outPath}\`. Finish before ${agent.deadlineAtIso || 'your deadline'}; a result that arrives later is not read.`,
     '',
   ].join('\n');

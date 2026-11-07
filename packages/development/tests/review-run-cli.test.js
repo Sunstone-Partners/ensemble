@@ -397,6 +397,27 @@ describe('a head from outside this repository is never run (review of PR 264, P0
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((a) => a[0] === 'pr' && a[1] === 'view')).toBe(true);
   });
+
+  // review of PR 264, round 2 (P2): the guard sits before the precheck/fetch/prepare split, so no option that skips one of those steps may skip it
+  test.each([
+    ['a fork head', true, 'cross-repository-head', { skipPrecheck: true }],
+    ['a fork head', true, 'cross-repository-head', { dryRun: true }],
+    ['a fork head', true, 'cross-repository-head', { skipPrecheck: true, dryRun: true }],
+    ['a head whose repository GitHub did not state', 'omit', 'head-repository-unknown', { skipPrecheck: true }],
+    ['a head whose repository GitHub did not state', 'omit', 'head-repository-unknown', { dryRun: true }],
+  ])('%s is refused by name under %j too: its code never runs, nothing is fetched, prepared or posted', (_label, isCrossRepository, reason, options) => {
+    setGh({ head: fx.exec, isCrossRepository });
+    const runId = `refused-${reason}-${Object.keys(options).join('-')}`;
+    const r = prep({ runId, ...withNode, ...options });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason, headSha: fx.exec });
+    expect(fs.existsSync(fx.marker)).toBe(false);
+    expect(fs.existsSync(runDir(runId))).toBe(false);
+    expect(fs.existsSync(path.join(fx.work, '.ensemble', 'pr-review', 'prepare', runId))).toBe(false);
+    const calls = ghLog();
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((a) => a[0] === 'pr' && a[1] === 'view')).toBe(true);
+  });
 });
 
 describe('the PR and its base are read from the host, not taken from the caller (review of PR 264, P2)', () => {

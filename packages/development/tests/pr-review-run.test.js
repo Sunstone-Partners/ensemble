@@ -304,7 +304,7 @@ describe('prepare: the dispatch manifest', () => {
 });
 
 describe('prepare: a head from outside this repository is refused before anything runs (review of PR 264, P0)', () => {
-  const refused = async (isCrossRepository, reason) => {
+  const refused = async (isCrossRepository, reason, options = {}) => {
     const h = harness();
     h.pr.isCrossRepository = isCrossRepository;
     let fetches = 0;
@@ -312,7 +312,7 @@ describe('prepare: a head from outside this repository is refused before anythin
       fetches += 1;
       return { ok: true };
     };
-    const out = await h.prepare();
+    const out = await h.prepare(options);
     expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason, headSha: HEAD });
     expect(out.error).toMatch(/head/);
     // nothing was fetched, prepared (the baseline test run lives there), prechecked, classified or written
@@ -333,6 +333,24 @@ describe('prepare: a head from outside this repository is refused before anythin
 
   test.each([[undefined], [null], ['false'], [0]])('a head whose repository is not stated as exactly `false` (%p) is not "this repository"', async (value) => {
     await refused(value, 'head-repository-unknown');
+  });
+
+  // review of PR 264, round 2 (P2): the guard sits before the precheck/fetch/prepare split, so an option that skips one of those steps must not skip it
+  test.each([
+    ['skipPrecheck', { skipPrecheck: true }],
+    ['dryRun', { dryRun: true }],
+    ['skipPrecheck and dryRun', { skipPrecheck: true, dryRun: true }],
+  ])('a fork head is refused under %s too: no option set skips the guard', async (_label, options) => {
+    const out = await refused(true, 'cross-repository-head', options);
+    expect(out.error).toMatch(/fork/);
+  });
+
+  test.each([
+    ['skipPrecheck', { skipPrecheck: true }],
+    ['dryRun', { dryRun: true }],
+  ])('a head whose repository is not stated as exactly `false` is refused under %s too', async (_label, options) => {
+    await refused(undefined, 'head-repository-unknown', options);
+    await refused('false', 'head-repository-unknown', options);
   });
 
   test('a head stated to be on this repository is prepared as before', async () => {
@@ -475,6 +493,23 @@ describe('fail closed: a PR that is no longer open gets no verdict (review of PR
     expect(h.readRun().waves[0].status).toBe('dispatched');
     h.pr.state = 'OPEN';
     expect((await h.collect()).status).toBe('DONE');
+  });
+
+  test('closed while the preparation ran: prepare refuses at the second head read, before any agent is dispatched or anything is recorded; the same call on the reopened PR proceeds (review of PR 264, round 2 nit)', async () => {
+    const h = harness();
+    const prepared = h.deps.prepareReview;
+    h.deps.prepareReview = async (options) => {
+      const result = await prepared(options);
+      h.pr.state = 'CLOSED';
+      return result;
+    };
+    const out = await h.prepare();
+    expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'pr-not-open', prState: 'CLOSED', runId: 'run1', headSha: HEAD });
+    expect(h.stateWrites).toEqual([]);
+    expect(fs.existsSync(path.join(h.runDir(), 'run.json'))).toBe(false);
+    h.pr.state = 'OPEN';
+    h.deps.prepareReview = prepared;
+    expect(await h.prepare()).toMatchObject({ status: 'DISPATCH' });
   });
 
   test('merged between the last wave and the gate: no verdict, no state report, no final.json; the phase is unchanged', async () => {
@@ -702,7 +737,9 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     'index 5555555..6666666 100644',
     'Binary files a/img.png and b/img.png differ',
   ].join('\n')}\n`;
-  const diffOf = (over = {}) => ({ index: S.parseDiffHunks(DIFF), changedPaths: ['src/a.js', 'src/new.js', 'old.js', 'img.png'], snapshotDir: '/snap/dir', ...over });
+  // the files of the head the fake tree holds (the run reads the real snapshot directory); the deleted old.js is not one of them
+  const HEAD_FILES = new Set(['src/a.js', 'src/new.js', 'src/other.js', 'src/c.js', 'img.png', 'README.md']);
+  const diffOf = (over = {}) => ({ index: S.parseDiffHunks(DIFF), changedPaths: ['src/a.js', 'src/new.js', 'old.js', 'img.png'], snapshotDir: '/snap/dir', exists: (rel) => HEAD_FILES.has(rel), ...over });
   const claim = (location, over = {}) => S.completeFinding(finding({ severity: 'pre-existing', locationOrLink: location, ...over }), 'reviewer-s1-a', 'f1');
 
   test('parseDiffHunks: the new-side range of every hunk, per file; a deleted and a binary file have none', () => {
@@ -760,7 +797,8 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     ['README.md:1', true],
     ['./src/a.js:2', false],
     ['SRC/A.JS:2', false],
-    ['SRC/A.JS:20', true],
+    // the path is looked up exactly: a mis-cased spelling names no file of a case-sensitive head (review of PR 264, round 2, finding 1)
+    ['SRC/A.JS:20', false],
     ['/snap/dir/src/a.js:2', false],
     ['/snap/dir/src/a.js:20', true],
     ['src/new.js:1', false],
@@ -796,7 +834,29 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     }
   });
 
-  async function claimsRun(h, locations) {
+  test('a citation that names no file at the head is never honoured: truncated, prefixed, snapshot-relative and invented spellings of a changed file (review of PR 264, round 2, finding 1)', () => {
+    const real = 'packages/development/lib/a.js';
+    const other = 'packages/development/lib/other.js';
+    const hunk = ['@@ -10,3 +10,3 @@', ' keep', '-old', '+new', ' keep'];
+    const diff = { index: S.parseDiffHunks(`${[`diff --git a/${real} b/${real}`, 'index 1111111..2222222 100644', `--- a/${real}`, `+++ b/${real}`, ...hunk].join('\n')}\n`), changedPaths: [real], snapshotDir: '/snap/dir', exists: (rel) => rel === real || rel === other };
+    // controls: the exact path of a file the diff does not touch, or a line of the changed file outside its hunk, is honoured; a line inside the hunk is not
+    expect(S.gradePreExisting(claim(`${other}:3`), diff).severity).toBe('pre-existing');
+    expect(S.gradePreExisting(claim(`${real}:30`), diff).severity).toBe('pre-existing');
+    expect(S.gradePreExisting(claim(`${real}:11`), diff).severity).toBe('important');
+    for (const spelling of ['lib/a.js:30', 'development/lib/a.js:30', `a/${real}:30`, `b/${real}:30`, `.ensemble/pr-review/run/run1/snapshot/${real}:30`, 'packages/development/lib/nope.js:5', 'packages/development/lib:5']) {
+      expect(S.gradePreExisting(claim(spelling), diff)).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('is not a file at this head'), strippedFields: ['severity'] });
+    }
+    // nothing to tell what exists: fail closed
+    expect(S.gradePreExisting(claim(`${real}:30`), { ...diff, exists: undefined }).severity).toBe('important');
+  });
+
+  async function claimsRun(h, locations, files = ['src/a.js', 'src/c.js']) {
+    // the cited files exist at the head: a citation of a file that does not is never honoured as pre-existing
+    for (const file of files) {
+      const target = path.join(h.root, 'prepared', 'snapshot', file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, 'line\n');
+    }
     h.reviews = { ok: true, reviews: [{ login: 'bob', authorType: 'User', state: 'APPROVED', commitSha: HEAD, submittedAt: '2026-01-01T00:00:00Z' }] };
     const m = await h.prepare();
     answerReview(m, {
@@ -830,6 +890,22 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     expect(out.gate.findings).toMatchObject({ open: [], important: 0, preExisting: 2 });
     expect(out.gate.mergeable).toBe(true);
     expect(out.reducedReview).not.toMatch(/graded Important, not pre-existing/);
+  });
+
+  test('through a run: a truncated, prefixed or invented citation stays blocking even though no hunk holds it; the exact path of a file the diff does not touch does not (review of PR 264, round 2, finding 1)', async () => {
+    const real = 'pkg/lib/a.js';
+    const diff = `${[`diff --git a/${real} b/${real}`, 'index 1111111..2222222 100644', `--- a/${real}`, `+++ b/${real}`, '@@ -10,3 +10,3 @@', ' keep', '-old', '+new', ' keep'].join('\n')}\n`;
+    const h = harness({ changedPaths: [real], rangeDiff: diff });
+    const out = await claimsRun(h, ['lib/a.js:30', 'a/pkg/lib/a.js:30', 'pkg/lib/nope.js:5', 'pkg/lib/other.js:3'], [real, 'pkg/lib/other.js']);
+    expect(out.status).toBe('DONE');
+    const byId = Object.fromEntries(out.ledger.map((entry) => [entry.id, entry]));
+    for (const id of ['f1', 'f2', 'f3']) {
+      expect(byId[id]).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('is not a file at this head') });
+    }
+    expect(byId.f4.severity).toBe('pre-existing');
+    expect(out.gate.findings).toMatchObject({ open: ['f1', 'f2', 'f3'], important: 3, preExisting: 1 });
+    expect(out.gate.blockers.map((b) => b.code)).toContain('open-important-finding');
+    expect(out.gate.mergeable).toBe(false);
   });
 
   test('a diff that cannot be read bears nothing out: every pre-existing claim is graded Important', async () => {
