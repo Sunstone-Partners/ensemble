@@ -386,4 +386,4 @@ function buildDispositionChoices(input) {
   return { ok: true, dispositionChoices: entries, groups, mergeConfirmation };
 }
 
-module.exports = { buildDispositionChoices, GROUPS, CHOICE_IDS, COLLAPSE_THRESHOLD };
+module.exports = { buildDispositionChoices, isSecurity, GROUPS, CHOICE_IDS, COLLAPSE_THRESHOLD };
