@@ -153,7 +153,9 @@ answer of `node "$PR_REVIEW_CLI" timing` with `{ runId }` (or `{ runId, cwd }`),
 computed from the run's span trace (`toolchain-cli trace`,
 `.ensemble/state/toolchain/trace-<runId>.jsonl`, `lib/run-trace.js`), never from
 agent session files. The stage spans are `review` (the orchestrator's whole
-window; attrs `turns` and `tool_calls`), `review.head-read`, `review.gate`,
+window; attrs `turns` and `tool_calls`), `review.head-read`, `review.gate` (one run
+of the Step 10 gate: the `review-gate` span of `/ensemble-pr-merge`'s own trace
+wraps that command's whole review step and is a different span, never read here),
 `review.classifier`, `review.second-assessor`, `review.security-lane`,
 `review.reviewer`, `review.verifier` and `review.verdict`, each optionally with a
 `round` attr (delta re-reviews are round 2 and later) and agents with an `agent`
@@ -174,9 +176,10 @@ with that reason. And a figure nobody recorded is `{ ms: null, missing: true,
 reason }`, never zero: a critical path with no verdict span has no total, steps that
 overlap or run out of order are never summed (the total is missing and names the
 pair), and an unfinished agent makes the orchestrator-only time an upper bound
-(`bound: 'upper'`).
-Copy the answer into `state.timing` verbatim; do
-not round, fill in or drop a missing figure. HONEST LIMIT: nothing in this
-procedure records the stage spans yet (the `review-run` runner is the intended
-recorder), so until it does a run without a hand-written trace has no `timing`, and
-the report says nothing about timing rather than a made-up figure.
+(`bound: 'upper'`). Copy the answer into `state.timing` verbatim; do not round, fill
+in or drop a missing figure. Timing is observational only: a `timing` call that
+fails or answers `ok: false` is recorded as it answered, or left out, and never
+blocks the review, the gate or a merge. HONEST LIMIT: nothing in this procedure
+records the stage spans yet (the `review-run` runner is the intended recorder), so
+until it does a run without a hand-written trace has no `timing`, and the report
+says nothing about timing rather than a made-up figure.
