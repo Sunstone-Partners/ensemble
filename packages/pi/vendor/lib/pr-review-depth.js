@@ -462,7 +462,8 @@ function sizeSplit(bases, targetLines, maxSlices) {
  * Crosses every slice with the lenses it is read under: `perSlice` distinct lenses each, the first lens on every
  * slice and the rest taken from the others in rotation (slice i starts at the i-th of the others), so within one
  * slice no lens repeats. One reviewer is one (slice, lens) pass, named `s<slice number>-<lens>`. A Quick review is
- * ONE reviewer for the whole plan (the ceiling), under the first lens.
+ * ONE reviewer under the first lens, and `planSlices` hands it ONE slice: a reviewer is briefed with one slice and
+ * writes one result file, so one name over two slices could not be dispatched or collected.
  */
 function assignReviewers(slices, lenses, perSlice, quick) {
   if (quick) return slices.map((slice) => ({ reviewer: `r1-${lenses[0]}`, sliceId: slice.id, lens: lenses[0] }));
@@ -484,7 +485,8 @@ function assignReviewers(slices, lenses, perSlice, quick) {
  * containing area wins, and everything else falls to the repository root
  * slice). With `targetLines` every slice is then cut by SIZE, below the threshold too, because a
  * PR that is one area (or one slice under the threshold) is still too much for one agent to read. Either way every
- * changed path appears in EXACTLY one slice.
+ * changed path appears in EXACTLY one slice. At Quick the PR is always ONE slice, whatever its size: the threshold
+ * and the size cut exist to share a large PR between reviewers, and Quick is one reviewer.
  *
  * Slicing alone breaks the depth contract: disjoint slices give each path ONE pass where Standard and Deep need
  * at least two independent ones. So every slice is also crossed with at least two DIFFERENT lenses
@@ -495,14 +497,15 @@ function assignReviewers(slices, lenses, perSlice, quick) {
  *   caller's `changedPaths` spells it (`git diff --numstat -z --no-renames`: a move is two entries, the deleted
  *   name and the added one), because `verifyCoverage` matches them name for name.
  * @param {string[]} [input.areas]    Area roots: the directories holding REVIEW.md files and sensitive areas.
- * @param {number} [input.threshold]  Changed lines above which the PR is sliced by area; defaults to 1500.
+ * @param {number} [input.threshold]  Changed lines above which the PR is sliced by area; defaults to 1500. Ignored at
+ *   Quick.
  * @param {number} [input.targetLines]  Lines per slice to aim for; absent means no size-driven split. Ignored at Quick.
  * @param {number} [input.maxSlices]  Most slices a size-driven split may produce (default 4 once `targetLines` is
  *   given); smaller bases are merged into `mixed~N` slices to hold it. It applies ONLY together with `targetLines`:
  *   without one the slices are one per area above the threshold, with no cap, and each is read under at least two
  *   lenses at Standard and Deep (ten areas are ten slices and twenty reviewers). Ignored at Quick.
- * @param {string} [input.mode]       `quick`, `standard` or `deep`: Quick is one reviewer, one lens, no size split;
- *   absent means the stricter two lenses.
+ * @param {string} [input.mode]       `quick`, `standard` or `deep`: Quick is one reviewer, one lens, one slice (never
+ *   cut by area or size); absent means the stricter two lenses.
  * @param {string[]} [input.lenses]   The lens pool, first = on every slice; defaults to `DEFAULT_LENSES`.
  * @param {number} [input.lensesPerSlice]  Distinct lenses per slice, at least the mode's floor (two at Standard and
  *   Deep) and at most the pool; how a larger reviewer count (`REVIEWER_COUNT`) is spent.
@@ -567,7 +570,10 @@ function planSlices(input) {
   }
 
   const totalLines = entries.reduce((sum, entry) => sum + entry.lines, 0);
-  const overThreshold = totalLines > threshold;
+  // Quick is ONE reviewer, and a reviewer is briefed with ONE slice and writes ONE result file, so a Quick plan is
+  // one slice however large the PR is. Cut by area it would hand one reviewer name to several slices, which `collect`
+  // refuses (a name listed twice): a documented mode could not finish on a PR over the threshold.
+  const overThreshold = !quick && totalLines > threshold;
 
   let bases;
   if (!overThreshold) {

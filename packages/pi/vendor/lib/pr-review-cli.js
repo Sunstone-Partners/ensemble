@@ -129,7 +129,7 @@
  *             reviewedBy?[{ sliceId, lens, reviewer, paths }], changedPaths? }
  *           -- plans the areas (cut by size when `targetLines` is given) and the reviewer assignments
  *           (`reviewerAssignments[{ reviewer, sliceId, lens }]`: every slice crossed with at least two distinct
- *           lenses at Standard and Deep); when
+ *           lenses at Standard and Deep; at Quick ONE slice, however large the PR, and one reviewer); when
  *           `reviewedBy` is given, names every changed path that was not read under enough distinct lenses
  *           (`uncovered` when nobody read it, `underReviewed` when too few lenses did, or when no reviewer's `paths`
  *           names it: a lens counts for the paths it read, never for the rest of its slice)

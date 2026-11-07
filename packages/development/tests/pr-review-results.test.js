@@ -561,6 +561,39 @@ describe('AC1: expired agents become not-reviewed automatically', () => {
       });
     });
 
+    describe('Quick over the slice threshold: one reviewer, so one slice (review of #263, F1)', () => {
+      const quickRequest = { paths, areas: ['a', 'b'], threshold: 1000, mode: 'quick' };
+      const quickPlan = runSlices(quickRequest);
+
+      test('the plan names one slice and one reviewer, which collect accepts, and the coverage check then answers covered', () => {
+        expect(paths.reduce((sum, entry) => sum + entry.lines, 0)).toBeGreaterThan(quickRequest.threshold);
+        expect(quickPlan.sliced).toBe(false);
+        expect(quickPlan.slices.map((slice) => slice.id)).toEqual(['whole-pr']);
+        expect(quickPlan.reviewerAssignments).toHaveLength(1);
+
+        const [only] = quickPlan.reviewerAssignments;
+        const sliceHoldingAll = quickPlan.slices[0].paths;
+        write(only.reviewer, review([], sliceHoldingAll));
+        const collected = collect([reviewer(only.reviewer, { sliceId: only.sliceId, lens: only.lens, paths: sliceHoldingAll })]);
+        expect(collected.ok).toBe(true);
+        expect(collected.reviewedSlices).toEqual(['whole-pr']);
+
+        const coverage = runSlices({ ...quickRequest, reviewedBy: collected.reviewedBy, changedPaths: paths.map((entry) => entry.path) });
+        expect(coverage).toMatchObject({ ok: true, covered: true, requiredLenses: 1, uncovered: [], underReviewed: [] });
+      });
+
+      test('the single reviewer that reads only part of the PR leaves the rest named, never covered', () => {
+        const [only] = quickPlan.reviewerAssignments;
+        write(only.reviewer, review([], ['a/one.js']));
+        const collected = collect([reviewer(only.reviewer, { sliceId: only.sliceId, lens: only.lens, paths: quickPlan.slices[0].paths })]);
+        expect(collected.reviewedBy).toEqual([]);
+        expect(collected.unreviewedSlices).toEqual(['whole-pr']);
+        const coverage = runSlices({ ...quickRequest, reviewedBy: collected.reviewedBy, changedPaths: paths.map((entry) => entry.path) });
+        expect(coverage.covered).toBe(false);
+        expect(coverage.uncovered).toEqual(['a/one.js', 'a/two.js', 'b/three.js']);
+      });
+    });
+
     describe('a reviewer given a sliceId must name its lens', () => {
       test('no lens at all is refused and nothing is collected', () => {
         write('rev1', review([], sliceA.paths));

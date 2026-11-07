@@ -141,8 +141,9 @@ describe('TRD-019 AC: a PR above the slice threshold is reviewed by area and the
     expect(section).not.toMatch(/more reviewers are more independent passes over the same/);
   });
 
-  test('the skill states what the default slicing costs and that reviewedBy names the paths read', () => {
+  test('the skill states what Quick does to slicing, what the default costs, and that reviewedBy names the paths read', () => {
     const section = sliceSection();
+    expect(section).toMatch(/At Quick the PR is never sliced: the result is the one slice `whole-pr` whatever the size/);
     expect(section).toMatch(/Without `targetLines` nothing caps the number of slices/);
     expect(section).toMatch(/`maxSlices` \(default 4\) caps the count only together with `targetLines`/);
     expect(section).toMatch(/a lens counts for those paths only/);

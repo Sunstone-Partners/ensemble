@@ -244,7 +244,9 @@ threshold too, into contiguous chunks by size, at most `maxSlices` of them, so
 an id can be `whole-pr~2`), and leave out `lenses` and `lensesPerSlice` unless
 `REVIEWER_COUNT` is set. Below the threshold with no `targetLines` the result
 is one slice, `whole-pr`. Above it, `sliced` is true and `slices` partitions
-every changed path into exactly one slice. Without `targetLines` nothing
+every changed path into exactly one slice. At Quick the PR is never sliced: the
+result is the one slice `whole-pr` whatever the size, because Quick is one
+reviewer and a reviewer is briefed with one slice. Without `targetLines` nothing
 caps the number of slices: each area above the threshold is its own slice and
 Standard and Deep read each slice under two lenses, so ten areas are ten slices
 and twenty reviewers (the runtime runs 32 agents at once and the rest wait);
@@ -258,7 +260,7 @@ Every slice is crossed with at least two DISTINCT lenses (`correctness`,
 never `covered`. The `planned.reviewers` of the `depth` call is that list (or
 its count): call `depth` first for the `mode`, then `slices`, then `depth` again
 with the assignments, so `violations` stays binding. At Quick one reviewer,
-`r1-correctness`, owns every slice.
+`r1-correctness`, owns the one slice.
 
 `paths` is produced exactly one way, like `changedPaths`: git's numstat of the
 `range`, run as git diff with the flags `--numstat -z --no-renames` over

@@ -617,15 +617,24 @@ describe('plan 3A: planSlices cuts by size and crosses every slice with >= 2 dis
     expect(lensesOf(result, 'whole-pr')).toEqual(['perf', 'api-compat']);
   });
 
-  test('Quick is ONE reviewer under one lens for the whole plan: it never shards by size', () => {
+  test('Quick is ONE reviewer, one lens and ONE slice, whatever the size: it is never cut by size or by area', () => {
     const result = planSlices({ paths: files(20, 100), targetLines: 100, mode: 'quick' });
     expect(result.slices).toHaveLength(1);
     expect(new Set(result.reviewerAssignments.map((a) => a.reviewer)).size).toBe(1);
     expect(checkBounds({ mode: 'quick', planned: { reviewers: result.reviewerAssignments, verifiers: 0 } }).ok).toBe(true);
-    const areaSliced = planSlices({ paths: [...files(5, 400, 'a'), ...files(5, 400, 'b')], areas: ['a', 'b'], mode: 'quick' });
-    expect(areaSliced.slices).toHaveLength(2);
-    expect(new Set(areaSliced.reviewerAssignments.map((a) => a.reviewer)).size).toBe(1);
-    expect(areaSliced.reviewerAssignments.every((a) => a.lens === 'correctness')).toBe(true);
+
+    // Over the threshold and cut by area it would be one reviewer name on several slices: `collect` refuses a name
+    // listed twice and a reviewer is briefed with one slice, so a documented mode could not finish. At Standard the
+    // same PR IS cut by area, which is what makes the Quick answer a rule and not a plan that happens to be small.
+    const paths = [...files(5, 400, 'a'), ...files(5, 400, 'b')];
+    const big = planSlices({ paths, areas: ['a', 'b'], mode: 'quick' });
+    expect(big.totalLines).toBeGreaterThan(big.threshold);
+    expect(big.sliced).toBe(false);
+    expect(big.slices.map((slice) => slice.id)).toEqual(['whole-pr']);
+    expect(big.slices[0].paths).toHaveLength(10);
+    expect(big.reviewerAssignments).toEqual([{ reviewer: 'r1-correctness', sliceId: 'whole-pr', lens: 'correctness' }]);
+    expect(checkBounds({ mode: 'quick', planned: { reviewers: big.reviewerAssignments, verifiers: 0 } }).ok).toBe(true);
+    expect(planSlices({ paths, areas: ['a', 'b'], mode: 'standard' }).slices.map((slice) => slice.id)).toEqual(['a', 'b']);
   });
 
   test('fail closed: a lens floor the pool cannot meet, or a deeper Quick, is refused, never planned with fewer lenses', () => {

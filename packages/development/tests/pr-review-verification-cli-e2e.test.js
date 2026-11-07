@@ -322,6 +322,20 @@ describe('Scenario AC-018-1: a PR too large for one pass is reviewed by area, th
     expect(skipped.result.unreviewedSlices).toEqual([sliceIds[0]]);
   });
 
+  test('at Quick the same large PR is ONE slice for ONE reviewer, graded covered by the real process once it read every path', () => {
+    const request = { paths: bigPaths, areas: AREAS, mode: 'quick' };
+    const plan = runCli('slices', request);
+    expectCleanProcess(plan);
+    expect(plan.result.sliced).toBe(false);
+    expect(plan.result.slices.map((slice) => slice.id)).toEqual(['whole-pr']);
+    expect(plan.result.reviewerAssignments).toHaveLength(1);
+
+    const changedPaths = bigPaths.map((entry) => entry.path);
+    const graded = runCli('slices', { ...request, reviewedBy: reviewedByOf(plan.result), changedPaths });
+    expectCleanProcess(graded);
+    expect(graded.result).toMatchObject({ ok: true, covered: true, requiredLenses: 1, uncovered: [], underReviewed: [] });
+  });
+
   test('a slice id nobody planned is never coverage: it is named and the PR stays uncovered', () => {
     const run = runCli('slices', {
       paths: bigPaths,

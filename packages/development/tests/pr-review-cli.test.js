@@ -1347,11 +1347,14 @@ describe('pr-review-cli: slices plans the areas and verifies the coverage (TRD-0
     expect(result.underReviewed).toHaveLength(PATHS.length);
   });
 
-  test('at quick one lens per slice is coverage', () => {
+  test('at quick the PR is ONE slice, whatever its size, and one lens is coverage', () => {
     const quick = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'quick' });
     expect(quick.ok).toBe(true);
-    expect(quick.reviewerAssignments.every((entry) => entry.reviewer === 'r1-correctness')).toBe(true);
-    const reviewedBy = quick.slices.map((slice) => ({ sliceId: slice.id, lens: 'correctness', reviewer: 'r1-correctness', paths: slice.paths }));
+    expect(quick.totalLines).toBeGreaterThan(1500); // over the threshold, and still not cut by area
+    expect(quick.sliced).toBe(false);
+    expect(quick.slices.map((slice) => slice.id)).toEqual(['whole-pr']);
+    expect(quick.reviewerAssignments).toEqual([{ reviewer: 'r1-correctness', sliceId: 'whole-pr', lens: 'correctness' }]);
+    const reviewedBy = reviewedByOf(quick);
 
     const result = runSlices({ paths: PATHS, areas: AREAS, threshold: 1500, mode: 'quick', reviewedBy });
     expect(result).toMatchObject({ ok: true, covered: true, requiredLenses: 1, underReviewed: [], uncovered: [] });
