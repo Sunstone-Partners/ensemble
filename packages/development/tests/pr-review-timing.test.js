@@ -154,6 +154,134 @@ describe('an agent interval ends at its last message, never at session_exit (AC2
   });
 });
 
+describe('span lengths come from the recorder, never from a stepped wall clock (review round 1)', () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-timing-clock-'));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  /** A real tracer whose wall clock and monotonic clock are moved independently, and a reader of what it wrote. */
+  function recorder(runId) {
+    let wall = T0;
+    let mono = 5000000;
+    const tracer = createTracer({ runId, projectRoot: dir, clock: { now: () => wall, mono: () => mono } });
+    return {
+      tracer,
+      advance: (wallSec, monoSec = wallSec) => {
+        wall += wallSec * 1000;
+        mono += monoSec * 1000;
+      },
+      read: () => readTrace(path.join(dir, '.ensemble', 'state', 'toolchain', `trace-${runId}.jsonl`)),
+    };
+  }
+
+  /** One review of one reviewer; the clocks move `wallSec` and `monoSec` while the reviewer runs. */
+  function reviewerSpanningAStep(runId, wallSec, monoSec) {
+    const { tracer, advance, read } = recorder(runId);
+    const rootId = tracer.startSpan(STAGES.root);
+    advance(1);
+    const reviewer = tracer.startSpan(STAGES.reviewer, { kind: 'agent', parentId: rootId, attrs: { agent: 'RevA' } });
+    advance(wallSec, monoSec);
+    tracer.endSpan(reviewer);
+    advance(1);
+    tracer.endSpan(rootId);
+    return read();
+  }
+
+  test('a forward wall-clock step (a system sleep) is not counted: the recorder says 60 s, so the reviewer took 60 s', () => {
+    const trace = reviewerSpanningAStep('sleep', 540, 60);
+    // What the recorder itself reports: monotonic-first durations and no anomaly. This is what must be honoured.
+    expect(trace.spans.map((s) => [s.name, s.duration_ms, s.attrs.clock_anomaly])).toEqual([
+      [STAGES.root, 62000, undefined],
+      [STAGES.reviewer, 60000, undefined],
+    ]);
+    const t = computeReviewTiming(trace);
+    expect(t.wall.ms).toBe(62000);
+    expect(t.agents.byRole.reviewer.slowest.ms).toBe(60000);
+    expect(t.stages[STAGES.reviewer]).toMatchObject({ ms: 60000, missing: false });
+  });
+
+  test('...and every figure that needs positions is MISSING and says the wall clock stepped, not a number built on it', () => {
+    const t = computeReviewTiming(reviewerSpanningAStep('sleep', 540, 60));
+    for (const figure of [t.activeMs, t.orchestratorOnly, t.beforeFirstDispatch]) {
+      expect(figure).toMatchObject({ ms: null, missing: true });
+      expect(figure.reason).toContain('wall clock stepped');
+      expect(figure.reason).toContain('review spans 9m02s on the wall clock but 1m02s by the recorder');
+    }
+  });
+
+  test.each([
+    ['a wall clock 5 s ahead of the recorder', 95000, 'computed'],
+    ['a wall clock 5.001 s ahead of the recorder', 94999, 'MISSING'],
+    ['a wall clock 5 s behind the recorder', 105000, 'computed'],
+    ['a wall clock 5.001 s behind the recorder', 105001, 'MISSING'],
+  ])('%s: orchestrator-only time is %s', (_, durationMs, outcome) => {
+    // The review's wall-clock window is 100 s; the recorder says `durationMs`.
+    const t = computeReviewTiming([{ ...root(0, 100), duration_ms: durationMs }, agent('reviewer', 10, 60)]);
+    expect(t.orchestratorOnly.missing).toBe(outcome === 'MISSING');
+    expect(t.wall.ms).toBe(durationMs); // the length is the recorder's either way
+  });
+
+  test('a backward wall-clock step is a clock anomaly the recorder flags: the spans are UNUSABLE and the reason names it', () => {
+    const trace = reviewerSpanningAStep('anomaly', -540, 60);
+    expect(trace.spans.map((s) => s.attrs.clock_anomaly)).toEqual([true, true]); // the recorder's own flag
+    const t = computeReviewTiming(trace);
+    expect(t.wall).toMatchObject({ ms: null, missing: true });
+    expect(t.wall.reason).toContain('clock anomaly');
+    expect(t.agents.unusable).toEqual([
+      { stage: STAGES.reviewer, name: expect.any(String), reason: expect.stringContaining('clock anomaly') },
+    ]);
+  });
+
+  test('a span the recorder flagged clock_anomaly is not measured even when its timestamps look fine', () => {
+    const flagged = { ...agent('reviewer', 10, 40), attrs: { clock_anomaly: true } };
+    expect(intervalOf(flagged)).toEqual({ ok: false, reason: expect.stringContaining('clock anomaly') });
+    const t = computeReviewTiming([root(0, 100), flagged]);
+    expect(t.agents.unusable).toHaveLength(1);
+    expect(t.agents.byRole.reviewer.slowest).toMatchObject({ ms: null, missing: true });
+    expect(t.orchestratorOnly).toMatchObject({ ms: 100000, bound: 'upper', unusableAgents: 1 });
+  });
+
+  test('the length is the recorded duration_ms, which wins over the timestamps within the tolerance', () => {
+    expect(intervalOf({ ...agent('reviewer', 0, 100), duration_ms: 98000 })).toEqual({
+      ok: true,
+      start: T0,
+      end: T0 + 98000,
+      lingerMs: 0,
+    });
+  });
+
+  test.each([['undefined', undefined], ['null', null]])('a span whose duration_ms is %s (not produced by readTrace) is measured by its timestamps', (_, value) => {
+    expect(intervalOf({ ...agent('reviewer', 0, 100), duration_ms: value })).toMatchObject({ ok: true, start: T0, end: T0 + 100000 });
+  });
+
+  test.each([['negative', -1], ['NaN', NaN], ['infinite', Infinity], ['a string', '60000']])('a duration_ms that is %s is not a duration: the span is UNUSABLE', (_, value) => {
+    expect(intervalOf({ ...agent('reviewer', 0, 100), duration_ms: value })).toEqual({
+      ok: false,
+      reason: 'duration_ms is not a non-negative number',
+    });
+  });
+
+  test('last_message_ts cannot be placed on a span whose clocks disagree: UNUSABLE, not trusted', () => {
+    // 500 s on the wall clock, 60 s by the recorder, the last message somewhere inside the span.
+    const stepped = { ...agent('reviewer', 0, 500, { last_message_ts: at(100) }), duration_ms: 60000 };
+    expect(intervalOf(stepped)).toEqual({ ok: false, reason: expect.stringContaining('cannot be placed') });
+  });
+
+  test.each([
+    ['a space instead of T', '2026-11-05 10:00:00'],
+    ['no zone (it would read as local time)', '2026-11-05T10:00:00'],
+    ['prose', 'Nov 5 2026 10:00'],
+  ])('a start_ts with %s is unparseable, not read leniently', (_, ts) => {
+    expect(intervalOf({ ...agent('reviewer', 0, 10), start_ts: ts })).toEqual({ ok: false, reason: 'unparseable start_ts' });
+  });
+
+  test('an ISO-8601 offset is the same instant as its Z form', () => {
+    expect(intervalOf({ ...agent('reviewer', 0, 10), start_ts: '2026-11-05T11:00:00.000+01:00' })).toMatchObject({ ok: true, start: T0 });
+  });
+});
+
 describe('orchestrator-only time', () => {
   test('overlapping agents are one interval, and an agent outside the window is clipped to it', () => {
     const t = computeReviewTiming([

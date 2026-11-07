@@ -34,6 +34,18 @@
  * `last_message_ts` outside the span's own [start, end] is a recorder error: that agent's
  * interval is UNUSABLE, never silently trusted and never replaced by the span end.
  *
+ * CLOCKS. The recorder stamps every span with two clocks: wall-clock ISO strings (`start_ts`, `end_ts`) and a
+ * monotonic reading that `readTrace` folds into `duration_ms` (monotonic first, so a system sleep or a wall-clock
+ * step is not counted; `attrs.clock_anomaly` marks a span whose clocks disagreed beyond repair). A span's LENGTH
+ * is therefore its `duration_ms`, never `end_ts - start_ts`, and a span flagged `clock_anomaly` has no usable
+ * length: it is UNUSABLE, with that reason. A span with no `duration_ms` at all (one `readTrace` did not produce)
+ * is measured by its timestamps. Timestamps still PLACE spans against each other (who overlapped whom), but only
+ * while they agree with the recorder: when a review span's wall-clock length differs from its `duration_ms` by
+ * more than CLOCK_SKEW_TOLERANCE_MS, the wall clock stepped inside the window (a system sleep, a clock change),
+ * and every figure that needs positions (agents active, orchestrator-only, before first dispatch) is MISSING
+ * with that reason while the lengths (window, per stage) are still reported. Timestamps are ISO-8601 with a
+ * zone, as the recorder writes them; anything else is unparseable.
+ *
  * FAIL CLOSED (pattern: local-ci-timing.js). A figure this module cannot compute from what was
  * recorded is `{ ms: null, missing: true, reason }`, never 0 and never a guess: a stage nobody
  * recorded, an unfinished span, a trace without an orchestrator window. A figure that is
@@ -74,8 +86,15 @@ const STAGE_NAMES = Object.freeze(Object.values(STAGES).filter((name) => name !=
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 
+/** How far a span's wall-clock length may differ from the recorder's duration before the wall clock is taken to have stepped (run-trace.js allows the same 5 s between its two clocks). */
+const CLOCK_SKEW_TOLERANCE_MS = 5000;
+const CLOCK_ANOMALY_REASON = 'the recorder flagged a clock anomaly: its wall-clock and monotonic readings disagree over this span';
+
+/** ISO-8601 with a zone, what the recorder writes: `Date.parse` alone also reads local-time and free-form text. */
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
 function parseMs(ts) {
-  return typeof ts === 'string' ? Date.parse(ts) : NaN;
+  return typeof ts === 'string' && ISO_8601.test(ts) ? Date.parse(ts) : NaN;
 }
 
 function missing(reason) {
@@ -88,25 +107,61 @@ function known(ms, extra) {
 
 /**
  * The usable interval of a materialized span, or why there is none.
- * End = `attrs.last_message_ts` when the recorder supplied one (see the header), else `end_ts`.
+ * It starts at `start_ts` and is as long as the recorder's `duration_ms` (see CLOCKS in the header), or, for a span
+ * that carries none, as long as its timestamps say. A span flagged `clock_anomaly`, or whose `end_ts` precedes its
+ * `start_ts`, is unusable. End = `attrs.last_message_ts` when the recorder supplied one (see the header), else the
+ * start plus that length.
  *
  * @returns {{ok: true, start: number, end: number, lingerMs: number}|{ok: false, reason: string}}
  */
 function intervalOf(span) {
   const start = parseMs(span.start_ts);
   if (!Number.isFinite(start)) return { ok: false, reason: 'unparseable start_ts' };
-  const end = span.status === 'unfinished' ? NaN : parseMs(span.end_ts);
-  if (!Number.isFinite(end)) return { ok: false, reason: 'unfinished' };
-  if (end < start) return { ok: false, reason: 'ends before it starts' };
+  const wallEnd = span.status === 'unfinished' ? NaN : parseMs(span.end_ts);
+  if (!Number.isFinite(wallEnd)) return { ok: false, reason: 'unfinished' };
   const attrs = isObject(span.attrs) ? span.attrs : {};
+  if (attrs.clock_anomaly) return { ok: false, reason: CLOCK_ANOMALY_REASON };
+  if (wallEnd < start) return { ok: false, reason: 'ends before it starts' };
+  const recorded = span.duration_ms;
+  const hasDuration = recorded !== undefined && recorded !== null;
+  if (hasDuration && !(Number.isFinite(recorded) && recorded >= 0)) {
+    return { ok: false, reason: 'duration_ms is not a non-negative number' };
+  }
+  const ms = hasDuration ? recorded : wallEnd - start;
   if (attrs.last_message_ts === undefined || attrs.last_message_ts === null) {
-    return { ok: true, start, end, lingerMs: 0 };
+    return { ok: true, start, end: start + ms, lingerMs: 0 };
   }
   const lastMessage = parseMs(attrs.last_message_ts);
-  if (!Number.isFinite(lastMessage) || lastMessage < start || lastMessage > end) {
+  if (!Number.isFinite(lastMessage) || lastMessage < start || lastMessage > wallEnd) {
     return { ok: false, reason: 'last_message_ts is not a time within the span' };
   }
-  return { ok: true, start, end: lastMessage, lingerMs: end - lastMessage };
+  // A wall-clock time can only be placed on a span whose two clocks agree.
+  if (Math.abs(wallEnd - start - ms) > CLOCK_SKEW_TOLERANCE_MS) {
+    return { ok: false, reason: 'last_message_ts cannot be placed: the span\'s wall-clock length and its recorded duration disagree' };
+  }
+  return { ok: true, start, end: lastMessage, lingerMs: wallEnd - lastMessage };
+}
+
+/**
+ * Whether the wall-clock timestamps of the review's own spans still agree with the recorder's durations, so spans can
+ * be placed against each other. `{ok: false, reason}` names the first span whose wall-clock length differs from its
+ * `duration_ms` by more than CLOCK_SKEW_TOLERANCE_MS; a span flagged `clock_anomaly` is unusable already and not counted.
+ */
+function timelineOf(spans) {
+  for (const span of spans) {
+    if (span.name !== STAGES.root && !STAGE_NAMES.includes(span.name)) continue;
+    if (isObject(span.attrs) && span.attrs.clock_anomaly) continue;
+    const wallMs = parseMs(span.end_ts) - parseMs(span.start_ts);
+    if (!Number.isFinite(wallMs) || !Number.isFinite(span.duration_ms)) continue;
+    if (Math.abs(wallMs - span.duration_ms) > CLOCK_SKEW_TOLERANCE_MS) {
+      const who = AGENT_NAMES.has(span.name) ? `${span.name} ${agentLabel(span)}` : span.name;
+      return {
+        ok: false,
+        reason: `the wall clock stepped against the recorder's monotonic clock: ${who} spans ${fmtMs(wallMs)} on the wall clock but ${fmtMs(span.duration_ms)} by the recorder, so its timestamps cannot place spans against each other`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 /**
@@ -301,6 +356,7 @@ function computeReviewTiming(input) {
   let activeMs;
   let orchestratorOnly;
   let beforeFirstDispatch;
+  const timeline = timelineOf(spans);
   if (agentSpans.length === 0) {
     activeMs = missing('no dispatched-agent span recorded');
     orchestratorOnly = missing('no dispatched-agent span recorded');
@@ -309,6 +365,10 @@ function computeReviewTiming(input) {
     activeMs = missing(wall.reason);
     orchestratorOnly = missing(wall.reason);
     beforeFirstDispatch = missing(wall.reason);
+  } else if (!timeline.ok) {
+    activeMs = missing(timeline.reason);
+    orchestratorOnly = missing(timeline.reason);
+    beforeFirstDispatch = missing(timeline.reason);
   } else {
     const active = unionLength(usable, window.start, window.end);
     const bound = unusable.length > 0 ? { bound: 'upper', unusableAgents: unusable.length } : {};
