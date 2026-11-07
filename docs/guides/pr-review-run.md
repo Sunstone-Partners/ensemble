@@ -96,8 +96,9 @@ answer is not returned; nothing is recorded, so it is that commit's answer again
   refused verifier brief keeps its candidate, unverified, and lists it under `notReviewed.unbriefable`.
 - Full mode (High tier, a sensitive path, an unreadable or contradictory tier) is the narrated procedure in the
   skill, unchanged.
-- A head from outside this repository is never reviewed (`cross-repository-head`, `head-repository-unknown`): the
-  baseline would run the fork's test code on this machine and the agents would be handed its snapshot. Read the diff by
+- A head from outside this repository is never reviewed (`cross-repository-head`, `head-repository-unknown`), whatever
+  the options: `skipPrecheck` and `dryRun` do not skip the check. The baseline would run the fork's test code on this
+  machine and the agents would be handed its snapshot. Read the diff by
   hand. A same-repository head's code does run (in the baseline and, unless `skipPrecheck` is set, in the precheck's
   gate), so this guards against code from outside the repository, not against a hostile branch inside it. The baseline
   also still runs before the tier and mode are known, so a same-repository PR that answers `NEEDS_FULL_MODE` has already
@@ -106,13 +107,17 @@ answer is not returned; nothing is recorded, so it is that commit's answer again
   runner cannot tell a read from a claim. Read-only access for agents is an instruction in the prompt that the runner
   cannot enforce.
 - A reviewer's `pre-existing` severity is checked against the diff, not taken on its word. It stands only when the
-  cited `file:line` lies outside every hunk of the PR's diff (hunks include their context lines) or in a file the PR
-  does not touch. A claim on a changed line, a location that is not a plain `file:line` (`file:12:5`, `file#L12`, no
-  line), a changed file with no hunk to place it against, and an unreadable diff are graded Important: the agent's word
-  is kept as `claimedSeverity`, `severity` is named in `strippedFields`, and the reduced-review notice lists them. That
-  checks lines, not cause: a defect this change causes in an untouched caller is outside the diff, and Important versus
-  Nit is the reviewer's classification, which nothing verifies. Security-lane findings block whatever their label.
+  cited `file:line` names a file that exists at the head and lies outside every hunk of the PR's diff (hunks include
+  their context lines), or names such a file the PR does not touch. A claim on a changed line, a location that is not a
+  plain `file:line` (`file:12:5`, `file#L12`, no line), a path that names no file at the head (truncated, mis-spelled,
+  carrying a git `a/` or `b/` prefix or a relative snapshot path, or invented), a changed file with no hunk to place it
+  against, and an unreadable diff are graded Important: the agent's word is kept as `claimedSeverity`, `severity` is
+  named in `strippedFields`, and the reduced-review notice lists them. That checks lines, not cause: a defect this
+  change causes in an untouched caller is outside the diff, and Important versus Nit is the reviewer's classification,
+  which nothing verifies. Security-lane findings block whatever their label.
 - `collect` takes no lock: call it one at a time per run. Two overlapping calls can each emit the next wave.
+- A finished run's stored answer is as of its finalise: replaying it re-reads only the head and the PR's open state, so
+  the approvals, branch protection and `mergeable` it holds can be out of date. Start a new run for a current verdict.
 
 ## Metrics
 
