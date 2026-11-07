@@ -15,7 +15,9 @@ that; REVIEW_COMPLETE is only ever relayed from the CLI's `deriveStatus`.
 
 1. `prepare` with `{ repo, pr, repoRoot }` (optional keys: `runId`, `traceRunId`, `baseSha`, `lastReviewedSha`,
    `remediationShas`, `dryRun`, `skipPrecheck`, `testFiles`, `testCommand`, `baselineTimeoutMs`, `nodeModules`,
-   `stateRoot`, `agentAuthored`). Unknown keys are refused.
+   `stateRoot`, `agentAuthored`). Unknown keys are refused. `baseSha` is a check, not an override: the runner takes the
+   merge base itself and refuses any other value (`base-not-merge-base`). It also refuses, before anything is
+   fetched, run or posted, a head on a fork or whose repository GitHub did not state, and a PR that is not OPEN.
 2. On `status: 'DISPATCH'` start exactly the agents in `agents[]`, no more and no fewer. Give each its `prompt`
    UNEDITED to a fresh-context, read-only subagent. Never run more at once than `maxConcurrentAgents`, and stop an
    agent that has not finished at its `deadlineAtIso`: the runner records deadlines but cannot stop an agent.
@@ -28,7 +30,9 @@ that; REVIEW_COMPLETE is only ever relayed from the CLI's `deriveStatus`.
    `collect` with `adjudications:[{id, disposition, reason}]`. An item not listed cannot be adjudicated, and an
    Important or security finding cannot be cleared this way.
 6. `DONE` (ok:true): stop. Report `gate`, `reviewStatus`, `ledger`, `votes` and `notReviewed` as given; the
-   `notReviewed` list is part of the report, not noise. `collect` on a finished run returns the stored result.
+   `notReviewed` list is part of the report, not noise. `collect` on a finished run re-reads the PR first and returns
+   the stored result only while the head is still the reviewed one on an open PR: a head that moved after `DONE` is
+   `RUN_INVALIDATED`, and the old answer is not repeated.
 
 ## Statuses
 
@@ -39,8 +43,8 @@ that; REVIEW_COMPLETE is only ever relayed from the CLI's `deriveStatus`.
 | `ADJUDICATE` | true | decide the listed items only, `collect` with `adjudications` |
 | `DONE` | true | stop and report |
 | `NEEDS_FULL_MODE` | false | nothing was dispatched: run the narrated Steps 1-10 (full mode) from the start |
-| `RUN_INVALIDATED` | false | the head moved: the run is over and nothing it produced is usable; start a new run on the new head |
-| `RUN_FAILED` | false | report the `reason`; when it is `head-unreadable` a later `collect` may be retried, anything else is `REVIEW_BLOCKED` naming the error |
+| `RUN_INVALIDATED` | false | the head moved (at any `collect`, a finished run's included): the run is over and nothing it produced is usable; start a new run on the new head |
+| `RUN_FAILED` | false | report the `reason` and the error: the review did not run to a verdict, so treat it as blocked. `head-unreadable` and `pr-not-open` leave a started run retryable by a later `collect`; at `prepare` the refusals `cross-repository-head`, `head-repository-unknown`, `pr-not-open` and `base-not-merge-base` mean nothing was fetched, run or posted |
 
 `NEEDS_FULL_MODE` is the fallback, not an error to work around: tier High, a sensitive path, or a tier that
 cannot be read or is contradictory selects full mode, and the narrated procedure is unchanged. Never pass a
@@ -56,5 +60,28 @@ light-mode verdict off for a full-mode one.
 * The baseline test run executes the head's own test code in a scratch directory; it is not a sandbox
   (`docs/guides/pr-review-prepare.md`).
 * The runner never edits the reviewed tree and never pushes.
+* A head from outside this repository is never reviewed (`cross-repository-head`, `head-repository-unknown`): the
+  baseline would run the fork's test code on this machine and the agents would be handed its snapshot. Read the diff
+  by hand. A same-repository head's code does run (in the baseline and, unless `skipPrecheck` is set, in the precheck's
+  gate): this guards against code from outside the repository, not against a hostile branch inside it. The baseline
+  also runs before the tier and mode are known, so a same-repository PR that answers `NEEDS_FULL_MODE` has already had
+  its related tests run.
+* Coverage is self-reported: a slice counts as reviewed when the agent lists its paths in `pathsReviewed`, and the
+  runner cannot tell a read from a claim. Read-only access for agents is an instruction in the prompt that the runner
+  cannot enforce: the dispatcher must.
+* A reviewer's `pre-existing` severity is checked against the diff, not taken on its word: it stands only when the
+  cited `file:line` is outside every hunk of the PR's diff; otherwise the finding is graded Important and the
+  reviewer's word is kept as `claimedSeverity`. That checks lines, not cause: a defect this change causes in an
+  untouched caller is outside the diff. Important versus Nit is the reviewer's classification and is not verified.
+* `agentAuthored` is the caller's statement and cannot be checked (an agent PR is committed under the maintainer's own
+  login, so the author cannot say): `true` lets a `Directed by:` line credit one approval, `false` waives that line,
+  absent is the strictest reading. A stated value is named in the answer's `warnings`.
+* Trace: spans go to `.ensemble/state/toolchain/trace-<traceRunId>.jsonl`. `traceRunId` defaults to the review's own
+  `runId`, so a review has a trace file of its own; its spans join a `/ensemble-pr-merge` run's trace only when the
+  caller passes that run's id as `traceRunId`. Nothing passes it for you, and `/ensemble-pr-merge` does not today.
+* `metrics.orchestratorTurns.atLeast` counts the model turns the protocol itself requires (runner calls plus dispatch
+  rounds): a lower bound, not a transcript count. No before/after comparison against the narrated flow has been run
+  on a live PR, so no speedup and no turn target is claimed.
+* Call `collect` one at a time per run: the run file has no lock, and two overlapping calls can each emit the next wave.
 
 Guide with a worked example: `docs/guides/pr-review-run.md`.

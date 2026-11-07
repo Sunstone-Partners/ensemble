@@ -24,6 +24,11 @@
  *     stripped. An adjudication (`fix` | `deferred` | `not-applicable`) is applied only to findings listed for adjudication
  *     and can never close an Important or security finding beyond what `isActionable` and the gate allow.
  *   - A head that moved is never reviewed on: RUN_INVALIDATED, nothing written to the ledger, the gate or the state report.
+ *     That holds for a FINISHED run too: its stored answer is returned only while the live head is the reviewed one on an
+ *     OPEN PR (collect re-reads the PR first), and a PR that is not OPEN gets no run and no verdict at all.
+ *   - A head from outside this repository (a fork, or a repository GitHub did not state) is refused by name before anything
+ *     is fetched, prepared, run or posted; a baseSha other than the merge base is refused (RUN_FAILED, no run).
+ *   - A reviewer's `pre-existing` severity is a claim, borne out only by the diff: on a changed line it is graded Important.
  *   - An agent that did not arrive is never read as reviewed: its slice is in `notReviewed`, a verifier's candidates are
  *     `unverified`, a missing security lane is not `clean`.
  *   - An unreadable, ambiguous, raised, High or sensitive tier is NEEDS_FULL_MODE with nothing dispatched.
@@ -31,6 +36,8 @@
  * HONEST LIMITS: the runner computes and records agent deadlines and the concurrency cap, and cannot enforce either;
  * whoever dispatches must stop an agent at `deadlineAtIso` and keep to `maxConcurrentAgents`. The tier comes from the
  * changed paths alone (no classifier or second assessor), so a path-only reading can raise a tier but never lower one.
+ * Coverage is the agents' own report (`pathsReviewed`) and their read-only access an instruction nobody here enforces. The
+ * baseline test run (head code) happens inside prepare, before the tier is known. `agentAuthored` is the caller's word.
  *
  * deps (every function may be async):
  *   now()                                    epoch ms
@@ -55,7 +62,7 @@ const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
 const { planSlices, verifyCoverage } = require('./pr-review-depth');
 const { reviewDeadlines, toVotesInput } = require('./pr-review-results');
-const { dedupeFindings, isActionable, validateLedger } = require('./pr-review-ledger');
+const { dedupeFindings, isActionable, normalizeSeverity, validateLedger } = require('./pr-review-ledger');
 const { tallyVotes } = require('./pr-review-votes');
 const { evaluateApprovals } = require('./pr-review-approvals');
 const { checkDescription } = require('./pr-review-description');
@@ -84,6 +91,7 @@ const RULES = Object.freeze([
   'Stop every agent at its `deadlineAtIso`. The runner records the deadline and cannot stop an agent: the dispatcher must. A result written later is not read.',
   'When the agents are done (or their deadlines have passed), call `collect`. Never read a result file, tally votes or decide a gate yourself.',
   'On ADJUDICATE decide only the findings listed, with a reason, and call `collect` with `adjudications`.',
+  'Coverage is self-reported: the runner counts a slice as reviewed when the agent lists its paths in `pathsReviewed`, and cannot tell a read from a claim. Read-only access is an instruction in the prompt that the runner cannot enforce: the dispatcher must.',
 ]);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -94,6 +102,9 @@ const msg = (error) => (error && error.message ? error.message : String(error));
 
 const failure = (status, fields) => ({ ok: false, status, ...fields });
 const redactor = (deps) => (typeof deps.redact === 'function' ? deps.redact : (value) => value);
+
+/** A PR the host does not state as exactly OPEN gets no review and no verdict. */
+const notOpen = (state, runId, headSha) => failure('RUN_FAILED', { reason: 'pr-not-open', error: `the pull request is ${JSON.stringify(state)}, not OPEN`, prState: state, ...(runId === undefined ? {} : { runId }), ...(headSha === undefined ? {} : { headSha }) });
 
 const runDirOf = (repoRoot, runId) => path.join(repoRoot, RUN_SUBDIR, runId);
 
@@ -162,9 +173,19 @@ function loadRun(deps, repoRoot, runId) {
   }
 }
 
-function logCall(run, call, startedAt, deps) {
+/** The hunks of the prepared range diff, or null when it cannot be read (a claim that needs it is then not borne out). */
+function readDiffIndex(deps, file) {
+  try {
+    const text = typeof file === 'string' ? deps.fs.readText(file) : null;
+    return text === null ? null : S.parseDiffHunks(text);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function logCall(run, call, startedAt, deps, adjudication = false) {
   run.calls = Array.isArray(run.calls) ? run.calls : [];
-  run.calls.push({ call, startedAt, endedAt: deps.now() });
+  run.calls.push({ call, startedAt, endedAt: deps.now(), ...(adjudication ? { adjudication: true } : {}) });
 }
 
 /** Records a terminal phase with its answer, so every later call repeats it. */
@@ -296,6 +317,25 @@ async function prepareRun(input, deps) {
   const { headSha } = first;
   const baseRefName = first.pr.baseRefName;
 
+  // The baseline runs the head's own test code on this machine and the reviewers read (and may run) the head's snapshot,
+  // so a head from outside this repository is not reviewed here: the precheck refuses a fork for its gate the same way.
+  // A head whose repository GitHub did not state is not "this repository" either. Refused by name, before anything is
+  // fetched, prepared, posted or written.
+  if (first.pr.isCrossRepository !== false) {
+    const fork = first.pr.isCrossRepository === true;
+    return failure('RUN_FAILED', {
+      reason: fork ? 'cross-repository-head' : 'head-repository-unknown',
+      error: fork
+        ? 'the head of this pull request is on a fork, and the runner would run the head\'s own test code on this machine and hand its snapshot to agents, so it does not review a head from outside this repository; read the diff by hand'
+        : 'GitHub did not say whether the head of this pull request is on this repository, and the runner runs the head\'s own test code on this machine, so it does not review it',
+      headSha,
+    });
+  }
+
+  // Only an open PR is reviewed: a merged or closed one gets no agents and no answer that could read as mergeable (the
+  // precheck refuses it too, but its refusal is advisory here).
+  if (first.pr.state !== 'OPEN') return notOpen(first.pr.state, undefined, headSha);
+
   const runId = input.runId !== undefined ? input.runId : `pr${input.pr}-${headSha.slice(0, 12)}-${Math.floor(startedAt / 1000)}`;
   if (!isValidRunId(runId)) return failure('RUN_FAILED', { reason: 'invalid-runId', error: `runId ${JSON.stringify(runId)} is not file-name safe (letters, digits, "_", "-"; no dots)` });
   const traceRunId = input.traceRunId !== undefined ? input.traceRunId : runId;
@@ -314,14 +354,16 @@ async function prepareRun(input, deps) {
     tracer.end(span, precheck.ok ? 'ok' : 'error', { ok: precheck.ok });
   }
 
-  // base: the caller's, or the merge base with the freshly fetched base branch
+  // base: always the merge base of the freshly fetched base branch and the head. A caller-stated baseSha is checked
+  // against it, never trusted: a commit inside the PR would narrow the changed paths, tier, slices and coverage to the
+  // suffix, and the gate would grade only that suffix with no sign that the earlier commits went unreviewed.
   const refs = await settle(() => deps.fetchRefs({ headSha, baseRefName }));
-  let baseSha = input.baseSha;
-  if (baseSha === undefined) {
-    if (!isObject(refs) || refs.ok !== true) return failure('RUN_FAILED', { reason: 'refs-unavailable', error: isObject(refs) && refs.error ? refs.error : 'the base and head could not be fetched', precheck });
-    const mb = await settle(() => deps.git(['merge-base', `refs/remotes/origin/${baseRefName}`, headSha]));
-    baseSha = isObject(mb) && mb.status === 0 ? String(mb.stdout).trim().toLowerCase() : '';
-    if (!SHA.test(baseSha)) return failure('RUN_FAILED', { reason: 'base-unresolved', error: `no merge base of origin/${baseRefName} and ${headSha}`, precheck });
+  if (!isObject(refs) || refs.ok !== true) return failure('RUN_FAILED', { reason: 'refs-unavailable', error: isObject(refs) && refs.error ? refs.error : 'the base and head could not be fetched', precheck });
+  const mb = await settle(() => deps.git(['merge-base', `refs/remotes/origin/${baseRefName}`, headSha]));
+  const baseSha = isObject(mb) && mb.status === 0 ? String(mb.stdout).trim().toLowerCase() : '';
+  if (!SHA.test(baseSha)) return failure('RUN_FAILED', { reason: 'base-unresolved', error: `no merge base of origin/${baseRefName} and ${headSha}`, precheck });
+  if (input.baseSha !== undefined && input.baseSha !== baseSha) {
+    return failure('RUN_FAILED', { reason: 'base-not-merge-base', error: `baseSha ${input.baseSha} is not the merge base of origin/${baseRefName} and ${headSha} (${baseSha}); any other base reviews a different range than this pull request's own changes (a later one leaves earlier commits unreviewed and unreported), so the runner takes the merge base itself and accepts a stated baseSha only when it is that commit`, precheck });
   }
 
   // 3. prepare (snapshot, diffs, facts, baseline)
@@ -475,6 +517,11 @@ function processReview(run, deps) {
   const agents = reviewWaves.flatMap((w) => w.agents);
   const raw = reviewWaves.flatMap((w) => w.result.findings);
 
+  // A finding labelled `pre-existing` never blocks, and the label is the agent's own word about provenance: it stands only
+  // when the cited lines lie outside the PR's diff (S.gradePreExisting). The diff is read once, and only when a claim needs it.
+  const claimsPreExisting = raw.some((finding) => finding.reviewer !== LANE_NAME && normalizeSeverity(finding.severity) === 'pre-existing');
+  const diff = claimsPreExisting ? { index: readDiffIndex(deps, run.prepared.rangeDiff), changedPaths: run.changedPaths, snapshotDir: run.prepared.snapshotDir } : null;
+
   const completed = [];
   const laneFindings = [];
   let nextId = 0;
@@ -483,7 +530,8 @@ function processReview(run, deps) {
     const name = finding.reviewer;
     const { reviewer, ...own } = finding;
     const entry = S.completeFinding(own, name, name === LANE_NAME ? `s${(nextLaneId += 1)}` : `f${(nextId += 1)}`);
-    (name === LANE_NAME ? laneFindings : completed).push(entry);
+    if (name === LANE_NAME) laneFindings.push(entry);
+    else completed.push(diff === null ? entry : S.gradePreExisting(entry, diff));
   }
   const deduped = dedupeFindings(completed);
   if (!Array.isArray(deduped)) return failure('RUN_FAILED', { reason: 'dedupe-refused', error: deduped.reason });
@@ -609,6 +657,7 @@ async function gateStage(run, built, deps, tracer) {
   const head = await readHead(deps);
   if (!head.ok) return { invalid: failure('RUN_FAILED', { reason: 'head-unreadable', error: head.error, runId: run.runId }) };
   if (head.headSha !== run.headSha) return { invalid: failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), moved: true };
+  if (head.pr.state !== 'OPEN') return { invalid: notOpen(head.pr.state, run.runId), moved: false };
 
   const headTreeSha = await treeOf(deps, run.headSha);
   if (headTreeSha === undefined) warnings.push('head-tree-unreadable: only approvals given on the head commit itself are counted');
@@ -621,6 +670,11 @@ async function gateStage(run, built, deps, tracer) {
     reviews.push({ ...review, ...(commit !== null && trees.get(commit) ? { treeSha: trees.get(commit) } : {}) });
   }
 
+  // Who wrote the PR is not something the runner can read: the author's login cannot say it (an agent PR is committed under
+  // the maintainer's own login), so `agentAuthored` is the caller's statement, passed on as given. The answer says so, so a
+  // relaxation (or a credit) that rests on that word is visible instead of silent. Absent is the strictest reading.
+  if (run.agentAuthored === true) warnings.push('agent-authored-unverified: the caller stated agentAuthored:true, so a "Directed by:" line in the PR body credits the person it names as one approval; the runner cannot verify who wrote this pull request');
+  else if (run.agentAuthored === false) warnings.push('agent-authored-unverified: the caller stated agentAuthored:false, so no "Directed by:" line was required and nobody was credited as the director; the runner cannot verify who wrote this pull request');
   const description = checkDescription({ body: head.pr.body, agentAuthored: run.agentAuthored });
   const policy = run.policy === null ? undefined : run.policy;
   const approvals = evaluateApprovals({ reviews, headSha: run.headSha, headTreeSha, tier: run.tier, policy, author: run.author, directedBy: description.directedBy || undefined, agentAuthored: run.agentAuthored });
@@ -655,6 +709,8 @@ function reducedReviewNotice(run, built, notReviewed, stage) {
   if (run.security.status !== 'clean') lines.push(`security lane ${run.security.status}${run.security.reason ? `: ${run.security.reason}` : ''}`);
   if (built.tally.verification !== 'performed') lines.push(`verification ${built.tally.verification}${built.tally.reason ? `: ${built.tally.reason}` : ''}`);
   if (notReviewed.unbriefable.length > 0) lines.push(`unbriefable candidate(s) kept, unverified: ${notReviewed.unbriefable.map((u) => u.id).join(', ')}`);
+  const regraded = built.ledger.filter((entry) => entry.claimedSeverity !== undefined);
+  if (regraded.length > 0) lines.push(`graded Important, not pre-existing as the reviewer called them, because the diff does not bear the label out: ${regraded.map((entry) => `${entry.id} (${entry.locationOrLink})`).join(', ')}`);
   if (stage.tests === undefined) lines.push('tests not shown: no baseline run, a timed-out one, or no relevant test files');
   else lines.push(`tests: the baseline ran the relevant test files only (exit ${stage.tests.exitCode}), not the full suite`);
   return lines.join('\n');
@@ -700,7 +756,7 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     return { invalid: failure('RUN_FAILED', { reason: 'state-write-failed', error: isObject(written) ? written.reason || written.error : 'no answer', runId: run.runId }), moved: false };
   }
 
-  logCall(run, extra.call, startedAt, deps);
+  logCall(run, extra.call, startedAt, deps, extra.adjudications !== undefined);
   const metrics = S.computeMetrics(run, deps.now());
   const answer = {
     ok: true,
@@ -783,6 +839,15 @@ async function collectRun(input, deps) {
 
   // ---- a finished run: the stored answer, or an adjudication of what it listed
   if (run.phase === 'done') {
+    // The stored answer is for the head the run reviewed. It is returned (or adjudicated) only while the host still states
+    // that head on an OPEN PR: a head that moved invalidates it whatever it said (AC4). Nothing is recorded here, so if
+    // the head comes back to the reviewed commit the stored answer is that commit's answer again.
+    const live = await readHead(deps);
+    if (!live.ok) return failure('RUN_FAILED', { reason: 'head-unreadable', error: live.error, runId: run.runId });
+    if (live.headSha !== run.headSha) {
+      return failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: live.headSha, error: 'the head moved after this run finished: its stored answer is for the old head and is not returned' });
+    }
+    if (live.pr.state !== 'OPEN') return notOpen(live.pr.state, run.runId);
     const stored = deps.fs.readText(path.join(runDirOf(run.repoRoot, run.runId), 'final.json'));
     let final = null;
     try {
@@ -807,6 +872,7 @@ async function collectRun(input, deps) {
   if (head.headSha !== run.headSha) {
     return terminate(run, 'invalidated', failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), 'collect', startedAt, deps);
   }
+  if (head.pr.state !== 'OPEN') return notOpen(head.pr.state, run.runId);
 
   // ---- 2. the outstanding wave
   const wave = run.waves.find((w) => w.status === 'dispatched');

@@ -9,6 +9,7 @@
  *   - `deriveKinds`        the change kinds the runner may cite from the changed PATHS alone (never lowers a tier);
  *   - `planDepth`          resolveDepth + checkBounds, re-planned until no bound is violated or refused;
  *   - `completeFinding`    a reviewer's finding -> a ledger entry, completing (never dropping) what is missing;
+ *   - `parseDiffHunks`, `gradePreExisting`  a `pre-existing` label is a claim about provenance, checked against the diff;
  *   - `planVerifierPool`   planVerification with a pool sized so no verifier holds more than 3 candidates;
  *   - `chunk`              agents -> waves of at most `maxConcurrentAgents`;
  *   - `reviewerContract`, `verifierContract`, `agentPrompt`  the text an agent is given;
@@ -16,7 +17,10 @@
  *   - `computeMetrics`     the AC5 timing record, from the run's own call log and agent times.
  */
 
+const path = require('path');
+
 const { resolveDepth, checkBounds } = require('./pr-review-depth');
+const { normalizeSeverity } = require('./pr-review-ledger');
 const { planVerification } = require('./pr-review-verify-assign');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -162,6 +166,160 @@ function completeFinding(raw, agentName, id) {
   return entry;
 }
 
+/* ------------------------------------------------- a `pre-existing` label is a claim, checked against the diff */
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+const GIT_ESCAPES = Object.freeze({ a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 });
+
+/** A path as git writes it inside quotes (C escapes, octal bytes for non-ASCII). Null for an escape it does not know. */
+function unquoteGitPath(text) {
+  if (!(text.length >= 2 && text.startsWith('"') && text.endsWith('"'))) return text;
+  const inner = text.slice(1, -1);
+  const bytes = [];
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i];
+    if (ch !== '\\') {
+      bytes.push(...Buffer.from(ch, 'utf8'));
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(inner.slice(i + 1));
+    if (octal !== null) {
+      bytes.push(parseInt(octal[0], 8) & 0xff);
+      i += octal[0].length;
+    } else if (Object.prototype.hasOwnProperty.call(GIT_ESCAPES, inner[i + 1])) {
+      bytes.push(GIT_ESCAPES[inner[i + 1]]);
+      i += 1;
+    } else {
+      return null;
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * Where a unified diff (`git diff`, prefixes a/ and b/) puts the pull request's own changes on the head: for every file
+ * that still exists after the change, the new-side line range of each hunk (context lines included, so a line within a
+ * hunk's reach counts as touched, and a pure deletion still marks the lines around it). Hunk bodies are COUNTED, not
+ * scanned for headers: an added line `++ x` reads `+++ x` and a removed line `-- x` reads `--- x`, and neither starts a
+ * file. A deleted file, a binary file and a mode-only change have no hunk and no entry. Keys are lower-cased paths.
+ *
+ * @returns {{files: Map<string, {path:string, hunks:Array<[number, number]>}>}|null}  null when `text` is not a string
+ */
+function parseDiffHunks(text) {
+  if (typeof text !== 'string') return null;
+  const files = new Map();
+  let current = null;
+  let oldLeft = 0;
+  let newLeft = 0;
+  for (const line of text.split('\n')) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('\\')) continue; // "\ No newline at end of file" is no line of either side
+      const mark = line.charAt(0);
+      if (mark === ' ' || line === '') {
+        oldLeft -= 1;
+        newLeft -= 1;
+        continue;
+      }
+      if (mark === '-') {
+        oldLeft -= 1;
+        continue;
+      }
+      if (mark === '+') {
+        newLeft -= 1;
+        continue;
+      }
+      oldLeft = 0; // not a hunk line: the hunk ended earlier than its header said, so this line is read as a header
+      newLeft = 0;
+    }
+    if (line.startsWith('diff --git ')) {
+      current = null;
+    } else if (line.startsWith('+++ ')) {
+      current = null;
+      const target = unquoteGitPath(line.slice(4).replace(/\t.*$/, ''));
+      if (target !== null && target.startsWith('b/')) {
+        const file = target.slice(2);
+        current = files.get(file.toLowerCase()) || { path: file, hunks: [] };
+        files.set(file.toLowerCase(), current);
+      }
+    } else {
+      const hunk = HUNK_HEADER.exec(line);
+      if (hunk !== null) {
+        oldLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+        newLeft = hunk[4] === undefined ? 1 : Number(hunk[4]);
+        const start = Number(hunk[3]);
+        if (current !== null) current.hunks.push([start, start + Math.max(newLeft, 1) - 1]);
+      }
+    }
+  }
+  return { files };
+}
+
+/** `file:line` or `file:start-end`. The file part holds no colon, so `file:12:5` is not read as a file named `file:12`. */
+const CITED_LOCATION = /^([^:]+):(\d+)(?:-(\d+))?$/;
+
+/** The repository-relative file and line range a finding cites, or null when it cannot be placed. */
+function citedPlace(location, snapshotDir) {
+  const match = isText(location) ? CITED_LOCATION.exec(location.trim()) : null;
+  if (match === null) return null;
+  let file = match[1];
+  if (isText(snapshotDir)) {
+    const prefix = `${snapshotDir.replace(/\/+$/, '')}/`;
+    if (file.startsWith(prefix)) file = file.slice(prefix.length);
+  }
+  file = path.posix.normalize(file);
+  if (file === '.' || file === '..' || file.startsWith('/') || file.startsWith('../')) return null;
+  const first = Number(match[2]);
+  const last = match[3] === undefined ? first : Number(match[3]);
+  if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first < 1 || last < 1) return null;
+  return { file, start: Math.min(first, last), end: Math.max(first, last) };
+}
+
+/**
+ * Is the claim "this defect is not in code the pull request introduced" borne out by the diff? Only when the cited lines lie
+ * outside every hunk of the diff (or in a file the pull request does not touch). Anything this cannot place is NOT borne out.
+ *
+ * @param {string} location  the finding's `file:line`
+ * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string}} diff
+ * @returns {{honoured:boolean, why?:string}}
+ */
+function preExistingVerdict(location, diff) {
+  const place = citedPlace(location, diff.snapshotDir);
+  if (place === null) return { honoured: false, why: 'its location is not a plain `file:line` the diff can be checked against' };
+  if (diff.index === null) return { honoured: false, why: 'the diff of this range could not be read to check it' };
+  const key = place.file.toLowerCase();
+  const changedFile = Array.isArray(diff.changedPaths) && diff.changedPaths.some((p) => String(p).toLowerCase() === key);
+  const entry = diff.index.files.get(key);
+  if (entry === undefined) {
+    return changedFile ? { honoured: false, why: `this pull request changes ${place.file} but the diff holds no hunk to place line ${place.start} against` } : { honoured: true };
+  }
+  const hit = entry.hunks.find(([start, end]) => place.start <= end && place.end >= start);
+  return hit === undefined ? { honoured: true } : { honoured: false, why: `lines ${place.start}-${place.end} of ${place.file} are inside a hunk this pull request changes (${hit[0]}-${hit[1]})` };
+}
+
+/**
+ * An agent's `pre-existing` severity is a claim about provenance (code this PR did not introduce), and the gate takes it at
+ * its word: a pre-existing finding never blocks, and nothing else in a run would ever question the label. So the runner
+ * does: the claim stands only when `preExistingVerdict` bears it out. Otherwise the finding is graded Important, the
+ * agent's word kept beside it as `claimedSeverity`, and `severity` is named in `strippedFields` like any field an agent had
+ * no right to set. Any other severity, and any finding that is not an object, comes back untouched.
+ *
+ * @param {Object} entry  a completed finding (`completeFinding`)
+ * @param {{index:Object|null, changedPaths:string[], snapshotDir?:string}} diff
+ */
+function gradePreExisting(entry, diff) {
+  if (!isObject(entry) || normalizeSeverity(entry.severity) !== 'pre-existing') return entry;
+  const verdict = preExistingVerdict(entry.locationOrLink, diff);
+  if (verdict.honoured) return entry;
+  const { preExisting: _flag, ...rest } = entry;
+  return {
+    ...rest,
+    severity: 'important',
+    claimedSeverity: entry.severity,
+    severityNote: `the reviewer called this pre-existing, but ${verdict.why}; it is graded Important until a person decides`,
+    strippedFields: [...(Array.isArray(entry.strippedFields) ? entry.strippedFields : []), 'severity'],
+  };
+}
+
 /**
  * Plans which verifiers settle which candidate. The pool is sized so that, spread evenly, no verifier holds more than
  * `MAX_CANDIDATES_PER_VERIFIER` candidates, and grown while the planner says it is too small or overloaded.
@@ -214,6 +372,7 @@ function reviewerContract(agent) {
     '- No findings is `"findings": []`. Never invent a finding to fill the list.',
     '- Set `"uncertain": true` on a finding you cannot settle yourself; a person then decides it.',
     '- Do not write `resolution`, `cleared` or `blocking`: they are ignored.',
+    '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff: a pre-existing finding whose cited lines are inside a hunk of the diff, or whose location it cannot place, is graded Important.',
     `- Write the file atomically: a temp file in the same directory, then rename it to \`${agent.outPath}\`. Finish before ${agent.deadlineAtIso || 'your deadline'}; a result that arrives later is not read.`,
     '',
   ].join('\n');
@@ -280,11 +439,16 @@ function unionMs(intervals) {
   return total + (curEnd - curStart);
 }
 
+/** What `orchestratorTurns.atLeast` counts, said in the record itself so a reader of final.json cannot take it for a transcript count. */
+const ORCHESTRATOR_TURNS_BASIS = 'one model turn per runner call plus one per dispatch round (the model starts that round\'s agents): the turns this protocol itself requires. A lower bound, not a measurement of the model: the runner cannot see the dispatcher\'s transcript, so turns spent outside the protocol (reading the skill, retries, the final report) are not counted, and re-reading a finished run is not counted either.';
+
 /**
- * The AC5 timing record, from the run's own call log and agent times (nothing else is measured):
+ * The timing and turn record of a run (AC1, AC5), from the run's own call log and agent times (nothing else is measured):
  *   wallMs              first runner call start -> `endAt`
  *   runnerCalls/runnerMs   the prepare/collect calls and the time spent inside them
- *   dispatchRounds / agentsDispatched
+ *   dispatchRounds / agentsDispatched / agentsByRole   the waves emitted and who was in them (reviewer, security, verifier)
+ *   adjudicationCalls   the collect calls that carried an adjudication, the one place the model decides something
+ *   orchestratorTurns   `atLeast`: the model turns the protocol requires (runner calls + dispatch rounds), with its `basis`
  *   agentActiveMs       union of [dispatchedAt, arrival or deadline-or-now] over every agent
  *   orchestratorOnlyMs  wall - runner - agent time: the time nobody but the orchestrating model was running
  */
@@ -297,11 +461,16 @@ function computeMetrics(run, endAt) {
   const agents = waves.flatMap((w) => w.agents);
   const intervals = agents.map((a) => [a.dispatchedAt, Number.isFinite(a.arrivedAt) ? a.arrivedAt : Math.min(a.deadlineAt, endAt)]);
   const agentActiveMs = unionMs(intervals);
+  const agentsByRole = {};
+  for (const agent of agents) agentsByRole[agent.role] = (agentsByRole[agent.role] || 0) + 1;
   return {
     wallMs,
     runnerCalls: calls.length,
     dispatchRounds: waves.length,
     agentsDispatched: agents.length,
+    agentsByRole,
+    adjudicationCalls: calls.filter((c) => c.adjudication === true).length,
+    orchestratorTurns: { atLeast: calls.length + waves.length, basis: ORCHESTRATOR_TURNS_BASIS },
     runnerMs,
     agentActiveMs,
     orchestratorOnlyMs: Math.max(0, wallMs - runnerMs - agentActiveMs),
@@ -312,6 +481,8 @@ module.exports = {
   deriveKinds,
   planDepth,
   completeFinding,
+  parseDiffHunks,
+  gradePreExisting,
   planVerifierPool,
   chunk,
   locationFile,
