@@ -1,0 +1,401 @@
+'use strict';
+
+/**
+ * qw98 AC4, the safety property, over REAL git history: a carry round must report exactly what a full re-review would.
+ *
+ * Every scenario builds a real git repository, settles verdicts at a first head, pushes a fix and runs the second round
+ * through the real pieces (the hash step over git, `votes`, `carry` record / plan / reconcile, the state report on disk,
+ * `ledger merge`, `planDeltaReview` over the repository's real import graph). The "verifiers" are an ORACLE that reads
+ * the repository at a head and says whether the claimed defect is real there: it is what a full re-review would find, so
+ * a carried verdict that disagrees with it is a stale carry, which is the failure this feature must never produce.
+ *
+ * Each scenario seeds a verdict that the push makes stale (the oracle flips) and asserts both that the flip happened
+ * (so the scenario is not vacuous) and that the carry round did not keep the old answer. Remove the guard that covers
+ * the scenario and its test fails; tests/pr-review-carry.test.js pins each guard on its own.
+ *
+ * Fixtures live under ~/.omp/pr-review-speedup/qw98/fixtures (never os.tmpdir()), as pr-review-carry-hash.test.js does.
+ */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { hashCitations } = require('../lib/pr-review-carry-hash');
+const { HANDLERS } = require('../lib/pr-review-cli');
+const { planDeltaReview } = require('../lib/pr-review-delta');
+const { buildImportGraph } = require('../lib/pr-review-import-graph');
+const { parseLsTreeZ, scanReferenceLines, scanNameLines } = require('../lib/pr-review-prepare');
+const { REASONS } = require('../lib/pr-review-carry');
+
+const FIXTURE_ROOT = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'qw98', 'fixtures');
+const BASE = 'e'.repeat(40);
+const PR = '268';
+const dirs = [];
+
+const realGit = require('../lib/review-prepare-runtime').defaultDeps().git;
+
+function git(cwd, args) {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  }).trim();
+}
+
+function scratch(prefix) {
+  fs.mkdirSync(FIXTURE_ROOT, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(FIXTURE_ROOT, prefix));
+  dirs.push(dir);
+  return dir;
+}
+
+/** A repo with a first commit holding `files` (a value `{ link }` is a symlink); `commit(changes)` -> new head sha. */
+function makeRepo(files) {
+  const root = scratch('real-');
+  git(root, ['init', '-q', '-b', 'main']);
+  const commit = (changes) => {
+    for (const [rel, content] of Object.entries(changes)) {
+      const abs = path.join(root, rel);
+      fs.rmSync(abs, { force: true });
+      if (content === null) continue;
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      if (typeof content === 'object') fs.symlinkSync(content.link, abs);
+      else fs.writeFileSync(abs, content);
+    }
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '--allow-empty', '-m', 'c']);
+    return git(root, ['rev-parse', 'HEAD']);
+  };
+  return { root, commit, head: commit(files) };
+}
+
+afterAll(() => {
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const pad = (n, marks = {}) => Array.from({ length: n }, (_, i) => marks[i + 1] || `// filler ${i + 1}`).join('\n') + '\n';
+
+/** What the oracle reads: the file at a head (null when absent), through git, never the working tree. */
+const reader = (repo, head) => (file) => {
+  try {
+    return execFileSync('git', ['show', `${head}:${file}`], { cwd: repo.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (err) {
+    return null;
+  }
+};
+const has = (text, needle) => typeof text === 'string' && text.includes(needle);
+const lineOf = (text, n) => (typeof text === 'string' ? text.split('\n')[n - 1] || '' : '');
+
+/** Votes of K verifiers for what the oracle says: `real`, `not-real`, or `borderline` (2 real: a majority of 3, not of 5). */
+function votesFor(verdict, K) {
+  const names = Array.from({ length: K }, (_, i) => `verifier-${i + 1}`);
+  if (verdict === 'real') return names.map((verifier) => ({ verifier, verdict: 'real' }));
+  if (verdict === 'not-real') return names.map((verifier) => ({ verifier, verdict: 'not-real' }));
+  return names.map((verifier, i) => ({ verifier, verdict: i < 2 ? 'real' : 'not-real' }));
+}
+const K_OF = { standard: 3, deep: 5 };
+
+const finding = (id, file, line, claim, truth) => ({ id, file, line, claim, truth });
+const ledgerOf = (f, head) => ({
+  id: f.id, source: 'reviewer-a', locationOrLink: `${f.file}:${f.line}`, failureMode: f.claim, severity: 'Important', headSha: head,
+  evidence: `evidence ${f.id}`, originalTextOrLink: `https://example.test/${f.id}`,
+});
+
+/** The delta plan the prepare step would write: the real import graph of the new head and the planner over it. */
+function deltaFacts(repo, lastHead, head) {
+  const deltaPaths = git(repo.root, ['diff', '--name-only', lastHead, head]).split('\n').filter(Boolean).sort();
+  const filePaths = parseLsTreeZ(execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', head], { cwd: repo.root, encoding: 'utf8' })).map((entry) => entry.path);
+  const lines = scanReferenceLines({ git: realGit }, repo.root, head);
+  const importGraph = buildImportGraph({ filePaths, lines });
+  const nameLines = importGraph.computed.length > 0 ? scanNameLines({ git: realGit }, repo.root, head, importGraph.computed, deltaPaths) : undefined;
+  const deltaPlan = planDeltaReview({
+    delta: { ok: true, mode: 'delta', baseSha: BASE, lastReviewedSha: lastHead, headSha: head, reason: 'delta' },
+    changedPaths: deltaPaths,
+    pathsClassification: { ok: true, paths: deltaPaths.map((file) => ({ path: file, high: false, sensitive: false })) },
+    reviewed: { headSha: lastHead, baseSha: BASE },
+    importGraph,
+    nameLines,
+  });
+  expect(deltaPlan.mode).toBe('delta');
+  return { deltaPaths, deltaPlan };
+}
+
+/** `votes` over fresh verification of `findings` at `head`: what a full re-review reports for them. */
+function verify(repo, head, findings, depth, ledgerHead) {
+  const read = reader(repo, head);
+  const K = K_OF[depth];
+  const result = HANDLERS.votes({
+    depth,
+    findings: findings.map((f) => ({ ...ledgerOf(f, ledgerHead), votes: votesFor(f.truth(read, K), K) })),
+  });
+  expect(result.ok).toBe(true);
+  return result.findings;
+}
+
+/**
+ * One round at `head` through the real pipeline. `prior` is the previous round (null for the first). `findings` are the
+ * candidates this round presents (every open finding, re-presented, plus any new one).
+ */
+function round({ repo, state, head, prior, findings, depth = 'standard', prId = PR, baseSha = BASE, mutatePlan = (p) => p }) {
+  const citations = findings.map((f) => ({ id: f.id, file: f.file, line: f.line, claim: f.claim }));
+  const hashed = hashCitations({ repoRoot: repo.root, headSha: head, citations });
+  expect(hashed.ok).toBe(true);
+  const candidates = hashed.candidates;
+
+  let plan = null;
+  let toVerify = findings;
+  let existingLedger = [];
+  let carriedVerdicts = [];
+  const outcomes = {};
+  if (prior !== null) {
+    const facts = deltaFacts(repo, prior.head, head);
+    plan = HANDLERS.carry(mutatePlan({
+      action: 'plan', prId, cwd: state, headSha: head, lastReviewedSha: prior.head, baseSha, depth,
+      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates,
+    }));
+    expect(plan.ok).toBe(true);
+    const carriedIds = new Set(plan.carried.map((record) => String(record.id)));
+    for (const record of plan.carried) outcomes[record.id] = record.outcome;
+    toVerify = findings.filter((f) => !carriedIds.has(f.id));
+    existingLedger = plan.ledger;
+    carriedVerdicts = plan.carried;
+  }
+
+  const verified = verify(repo, head, toVerify, depth, head);
+  for (const entry of verified) outcomes[entry.id] = entry.outcome;
+  const recorded = HANDLERS.carry({ action: 'record', prId, baseSha, headSha: head, depth, findings: verified, candidates });
+  expect(recorded.ok).toBe(true);
+
+  const merged = HANDLERS.ledger({ action: 'merge', existingLedger, incomingFindings: verified.map((entry) => ({ ...entry, headSha: head })), headSha: head }).ledger;
+  const reconciled = HANDLERS.carry({ action: 'reconcile', ledger: merged, changedLocations: [], headSha: head, observations: verified });
+  expect(reconciled.cleared).toEqual([]);
+  const verdicts = [...carriedVerdicts, ...recorded.verdicts];
+  expect(HANDLERS['state-write']({ prId, cwd: state, state: { headSha: head, reviewedHeadSha: head, baseSha, ledger: reconciled.ledger, verdicts } }).ok).toBe(true);
+  return { head, plan, outcomes, verdicts, recorded, ledger: reconciled.ledger, candidates };
+}
+
+/** What a full re-review reports at `head`: every finding verified fresh. */
+function fullReview(repo, head, findings, depth = 'standard') {
+  return Object.fromEntries(verify(repo, head, findings, depth, head).map((entry) => [entry.id, entry.outcome]));
+}
+
+/** Runs a scenario: round 1 at the first head, the fix push, round 2; returns what the tests assert on. */
+function scenario({ files, findings, push, depth1 = 'standard', depth2 = 'standard', findings2 = findings, mutatePlan }) {
+  const repo = makeRepo(files);
+  const state = scratch('state-');
+  const first = round({ repo, state, head: repo.head, prior: null, findings, depth: depth1 });
+  const h2 = repo.commit(push);
+  const second = round({ repo, state, head: h2, prior: first, findings: findings2, depth: depth2, mutatePlan });
+  const full1 = fullReview(repo, first.head, findings, depth1);
+  const full2 = fullReview(repo, h2, findings2, depth2);
+  return { repo, state, first, second, h2, full1, full2 };
+}
+
+const flippedIds = (before, after) => Object.keys(after).filter((id) => before[id] !== after[id]).sort();
+const carriedIds = (result) => result.second.plan.carried.map((record) => String(record.id)).sort();
+const reasonsOf = (result, id) => (result.second.plan.reverify.find((entry) => String(entry.id) === id) || { reasons: [] }).reasons;
+
+describe('a stale verdict is never carried: each push below flips the oracle, and the carry round still equals a full re-review', () => {
+  test('a changed DEPENDENCY: the cited file is untouched, a file it imports lost its validation', () => {
+    const f = finding('F-dep', 'src/a.js', 10, 'a.js hands unvalidated input to helper', (read) => (has(read('src/helper.js'), 'validate(') ? 'not-real' : 'real'));
+    const r = scenario({
+      files: { 'src/a.js': pad(20, { 1: "const helper = require('./helper');", 10: 'module.exports = (x) => helper(x);' }), 'src/helper.js': pad(5, { 1: 'module.exports = (x) => { validate(x); return x; };' }) },
+      findings: [f],
+      push: { 'src/helper.js': pad(5, { 1: 'module.exports = (x) => x;' }) },
+    });
+    expect(r.full1).toEqual({ 'F-dep': 'filtered' });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-dep']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-dep')).toContain(REASONS.DEPENDENCY_CHANGED);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('a changed CALLER: the cited file is untouched, a file that calls it dropped its guard (reverse edge)', () => {
+    const guarded = (read) => ['lib/caller.js', 'lib/other-caller.js'].every((file) => has(read(file), 'if (!i)'));
+    const f = finding('F-callee', 'lib/callee.js', 10, 'callee reads input.value with no null check', (read) => (guarded(read) ? 'not-real' : 'real'));
+    const caller = (guard) => pad(8, { 1: "const callee = require('./callee');", 5: `module.exports = (i) => { ${guard}return callee(i); };` });
+    const r = scenario({
+      files: { 'lib/callee.js': pad(20, { 10: 'module.exports = (input) => input.value;' }), 'lib/caller.js': caller('if (!i) return null; '), 'lib/other-caller.js': caller('if (!i) return null; ') },
+      findings: [f],
+      push: { 'lib/caller.js': caller('') },
+    });
+    expect(r.full1).toEqual({ 'F-callee': 'filtered' });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-callee']);
+    // the planner's own read set does NOT list the callee (it lists callers of changed files), so only the reverse edge catches it
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-callee')).toContain(REASONS.DEPENDENT_CHANGED);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('a TEST named after a changed file with no import edge: the planner reads it (test-of), so its verdict is verified again', () => {
+    const f = finding('F-test', 'tests/foo.test.js', 10, 'foo.test.js never exercises the empty-input branch of foo', (read) => (has(read('lib/foo.js'), 'branch: empty-input') && !has(read('tests/foo.test.js'), 'empty-input') ? 'real' : 'not-real'));
+    const r = scenario({
+      files: { 'lib/foo.js': pad(20, { 10: '// branch: empty-input' }), 'tests/foo.test.js': pad(20, { 10: "test('foo handles typical input', () => {});" }) },
+      findings: [f],
+      push: { 'lib/foo.js': pad(20) },
+    });
+    expect(r.full1).toEqual({ 'F-test': 'present' });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-test']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-test')).toEqual([REASONS.BLAST_RADIUS]);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('a changed CITED HUNK: the defect is edited away', () => {
+    const f = finding('F-hunk', 'src/c.js', 10, 'c.js evals user input', (read) => (has(lineOf(read('src/c.js'), 10), 'eval(') ? 'real' : 'not-real'));
+    const r = scenario({
+      files: { 'src/c.js': pad(20, { 10: 'const out = eval(userInput);' }) },
+      findings: [f],
+      push: { 'src/c.js': pad(20, { 10: 'const out = JSON.parse(userInput);' }) },
+    });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-hunk']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-hunk')).toEqual(expect.arrayContaining([REASONS.CITED_FILE_IN_DELTA, REASONS.HUNK_CHANGED]));
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('a SYMLINK whose target changed: the link text never changes, so the citation is never hashed and never carried', () => {
+    const f = finding('F-link', 'full/lib/x.js', 1, 'x exports a shared mutable singleton', (read) => (has(read('development/lib/x.js'), 'singleton = {}') ? 'real' : 'not-real'));
+    const r = scenario({
+      files: { 'development/lib/x.js': pad(10, { 1: 'const singleton = {};' }), 'full/lib/x.js': { link: '../../development/lib/x.js' } },
+      findings: [f],
+      push: { 'development/lib/x.js': pad(10, { 1: 'const fresh = () => ({});' }) },
+    });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-link']);
+    // the producer refused it at both heads: nothing was recorded, so nothing can be carried
+    expect(r.first.recorded.skipped).toEqual([{ id: 'F-link', reason: 'no-hash' }]);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('an OPPOSITE claim on the same hunk is a new finding: it is verified, it does not inherit the filtered verdict of its opposite', () => {
+    const lt = finding('F-lt', 'src/cmp.js', 10, 'x < y should be x > y', (read) => (has(lineOf(read('src/cmp.js'), 10), 'x < y') ? 'real' : 'not-real'));
+    const gt = finding('F-gt', 'src/cmp.js', 10, 'x > y should be x < y', (read) => (has(lineOf(read('src/cmp.js'), 10), 'x > y') ? 'real' : 'not-real'));
+    // round 1 reports only `gt` (the code has `x < y`, so it is not real); round 2 reports `lt`, the OPPOSITE claim, and it is real
+    const r = scenario({
+      files: { 'src/cmp.js': pad(20, { 10: 'if (x < y) retry();' }) },
+      findings: [gt],
+      findings2: [lt],
+      push: { 'docs/note.md': 'unrelated\n' },
+    });
+    expect(r.full1).toEqual({ 'F-gt': 'filtered' });
+    expect(r.full2).toEqual({ 'F-lt': 'present' });
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-lt')).toEqual([REASONS.NEW_CANDIDATE]);
+    expect(r.second.outcomes).toEqual({ 'F-lt': 'present' });
+    expect(r.second.plan.unmatched.map((entry) => entry.id)).toEqual(['F-gt']);
+  });
+
+  test.each([
+    ['Standard into Deep', 'standard', 'deep'],
+    ['Deep into Standard', 'deep', 'standard'],
+  ])('a verifier DEPTH that changed across the push (%s): nothing carries although no file moved', (_name, depth1, depth2) => {
+    const f = finding('F-border', 'src/d.js', 10, 'd.js borderline defect', () => 'borderline');
+    const r = scenario({ files: { 'src/d.js': pad(20) }, findings: [f], push: { 'docs/note.md': 'unrelated\n' }, depth1, depth2 });
+    // a borderline defect is `present` at 2 of 3 verifiers and `filtered` at 2 of 5: the answer depends on the depth
+    expect(r.full1).toEqual({ 'F-border': depth1 === 'standard' ? 'present' : 'filtered' });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-border']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-border')).toContain(REASONS.VERDICT_OTHER_DEPTH);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+});
+
+describe('what may carry does carry: a push that cannot change a finding saves its verification, and the answer is still the full re-review\'s', () => {
+  const real = (file, n) => (read) => (has(lineOf(read(file), n), 'eval(') ? 'real' : 'not-real');
+  const FILES = {
+    'src/ctl.js': pad(20, { 10: "const x = eval('1');" }),
+    'src/dep-user.js': pad(20, { 1: "const dep = require('./dep');", 10: 'const y = eval(dep);' }),
+    'src/dep.js': 'module.exports = 1;\n',
+    'docs/readme.md': '# doc\n',
+  };
+  const findings = [finding('F-ctl', 'src/ctl.js', 10, 'ctl evals', real('src/ctl.js', 10)), finding('F-dep-user', 'src/dep-user.js', 10, 'dep-user evals', real('src/dep-user.js', 10))];
+
+  test('a documentation-only push carries both findings (carriedFrom is the head they were settled on), and nothing is verified again', () => {
+    const r = scenario({ files: FILES, findings, push: { 'docs/readme.md': '# doc, edited\n' } });
+    expect(carriedIds(r)).toEqual(['F-ctl', 'F-dep-user']);
+    expect(r.second.plan.reverify).toEqual([]);
+    for (const record of r.second.plan.carried) expect(record).toMatchObject({ head: r.h2, carriedFrom: r.first.head, outcome: 'present' });
+    expect(flippedIds(r.full1, r.full2)).toEqual([]);
+    expect(r.second.outcomes).toEqual(r.full2);
+    // the ledger the answer returned has exactly those findings stamped, and the state written for the new head keeps the verdicts
+    expect(r.second.ledger.map((entry) => [entry.id, entry.headSha, entry.carriedFrom])).toEqual([['F-ctl', r.h2, r.first.head], ['F-dep-user', r.h2, r.first.head]]);
+    expect(r.second.verdicts.map((record) => record.carriedFrom)).toEqual([r.first.head, r.first.head]);
+  });
+
+  test('a push that changes one finding\'s dependency verifies only that finding; the other carries; both equal the full re-review', () => {
+    const r = scenario({ files: FILES, findings, push: { 'src/dep.js': 'module.exports = 2;\n' } });
+    expect(carriedIds(r)).toEqual(['F-ctl']);
+    expect(r.second.plan.reverify.map((entry) => entry.id)).toEqual(['F-dep-user']);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('a carried verdict stays carried through a second push, keeps its ORIGINAL head, and a third round still equals the full re-review', () => {
+    const repo = makeRepo(FILES);
+    const state = scratch('state-');
+    const r1 = round({ repo, state, head: repo.head, prior: null, findings });
+    const h2 = repo.commit({ 'docs/readme.md': '# doc 2\n' });
+    const r2 = round({ repo, state, head: h2, prior: r1, findings });
+    const h3 = repo.commit({ 'docs/readme.md': '# doc 3\n' });
+    const r3 = round({ repo, state, head: h3, prior: r2, findings });
+    expect(r3.plan.carried.map((record) => record.carriedFrom)).toEqual([r1.head, r1.head]);
+    expect(r3.plan.carried.map((record) => record.head)).toEqual([h3, h3]);
+    expect(r3.outcomes).toEqual(fullReview(repo, h3, findings));
+    expect(r3.ledger.map((entry) => entry.carriedFrom)).toEqual([r1.head, r1.head]);
+  });
+
+  test('a push that ADDS a new finding verifies it (new candidate) and still carries the settled ones', () => {
+    const extra = finding('F-new', 'src/ctl.js', 12, 'ctl evals again', () => 'real');
+    const r = scenario({ files: FILES, findings, findings2: [...findings, extra], push: { 'docs/readme.md': '# doc, edited\n' } });
+    expect(carriedIds(r)).toEqual(['F-ctl', 'F-dep-user']);
+    expect(reasonsOf(r, 'F-new')).toEqual([REASONS.NEW_CANDIDATE]);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+});
+
+describe('a verdict is bound to its PR, base and report: nothing carries across them even though no file moved', () => {
+  const f = finding('F-ctl', 'src/ctl.js', 10, 'ctl evals', () => 'real');
+  const files = { 'src/ctl.js': pad(20, { 10: "const x = eval('1');" }), 'docs/readme.md': '# doc\n' };
+
+  test('the unmodified control carries (so the three cases below are not carrying nothing for another reason)', () => {
+    const r = scenario({ files, findings: [f], push: { 'docs/readme.md': '# doc 2\n' } });
+    expect(carriedIds(r)).toEqual(['F-ctl']);
+  });
+
+  test('a round that reviews ANOTHER BASE does not inherit the verdicts of the base they were settled against', () => {
+    const r = scenario({ files, findings: [f], push: { 'docs/readme.md': '# doc 2\n' }, mutatePlan: (plan) => ({ ...plan, baseSha: 'f'.repeat(40) }) });
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-ctl')).toEqual([REASONS.VERDICT_OTHER_BASE]);
+  });
+
+  test('a report written for ANOTHER PR that sits where this PR\'s is read is not carried from', () => {
+    const repo = makeRepo(files);
+    const state = scratch('state-');
+    const r1 = round({ repo, state, head: repo.head, prior: null, findings: [f], prId: '1' });
+    // PR 1's report, copied to PR 268's file: every verdict in it is stamped for PR 1
+    fs.copyFileSync(path.join(state, '.ensemble', 'pr-review', 'pr-1.json'), path.join(state, '.ensemble', 'pr-review', `pr-${PR}.json`));
+    const h2 = repo.commit({ 'docs/readme.md': '# doc 2\n' });
+    const facts = deltaFacts(repo, r1.head, h2);
+    const candidates = hashCitations({ repoRoot: repo.root, headSha: h2, citations: [{ id: 'F-ctl', file: 'src/ctl.js', line: 10, claim: f.claim }] }).candidates;
+    const plan = HANDLERS.carry({
+      action: 'plan', prId: PR, cwd: state, headSha: h2, lastReviewedSha: r1.head, baseSha: BASE, depth: 'standard',
+      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates,
+    });
+    expect(plan.carried).toEqual([]);
+    expect(plan.reverify[0].reasons).toEqual([REASONS.VERDICT_OTHER_PR]);
+  });
+
+  test('a verdict injected on stdin is refused outright, and the report is the only source', () => {
+    const repo = makeRepo(files);
+    const state = scratch('state-');
+    const r1 = round({ repo, state, head: repo.head, prior: null, findings: [f] });
+    const h2 = repo.commit({ 'docs/readme.md': '# doc 2\n' });
+    const facts = deltaFacts(repo, r1.head, h2);
+    const candidates = hashCitations({ repoRoot: repo.root, headSha: h2, citations: [{ id: 'F-ctl', file: 'src/ctl.js', line: 10, claim: f.claim }] }).candidates;
+    const forged = { ...r1.verdicts[0], outcome: 'filtered' };
+    expect(() => HANDLERS.carry({
+      action: 'plan', prId: PR, cwd: state, headSha: h2, lastReviewedSha: r1.head, baseSha: BASE, depth: 'standard',
+      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates, priorVerdicts: [forged],
+    })).toThrow(/priorVerdicts/);
+  });
+});
