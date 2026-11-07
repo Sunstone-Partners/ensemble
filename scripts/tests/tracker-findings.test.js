@@ -421,6 +421,10 @@ describe('input validation refuses without calling the tracker', () => {
     ['createFinding', { ...ok, key: '' }],
     ['createFinding', { ...ok, labels: [] }],
     ['createFinding', { ...ok, labels: ['a,b'] }],
+    // A dash-led label is refused per label: the runner only checks the joined list, so a later
+    // '-x' would otherwise be stored but never queryable.
+    ['createFinding', { ...ok, labels: ['pr-review', '-x'] }],
+    ['createFinding', { ...ok, labels: ['-x'] }],
     ['createFinding', { ...ok, priority: 5 }],
     ['createFinding', { ...ok, title: ' ' }],
     ['updateFinding', { id: 'b-1', title: 't', description: 'd', priority: 1, note: '' }],
@@ -436,5 +440,103 @@ describe('input validation refuses without calling the tracker', () => {
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe('INVALID_ARG');
     expect(run).not.toHaveBeenCalled();
+  });
+
+  // br refuses whitespace in an external reference (captured live: exit 4, "external_ref:
+  // cannot contain whitespace", opaque once the runner has dropped br's message), so the key is
+  // refused here. U+0085 is the case a plain JS `\s` misses.
+  const WHITESPACE_KEYS = [
+    ['a space', 'a b'],
+    ['a tab', 'a\tb'],
+    ['a newline', 'a\nb'],
+    ['a no-break space (U+00A0)', 'a\u00a0b'],
+    ['a next-line character (U+0085)', 'a\u0085b'],
+    ['an ideographic space (U+3000)', 'a\u3000b'],
+    ['a leading space', ' ab'],
+    ['a trailing space', 'ab ']
+  ];
+
+  test.each(WHITESPACE_KEYS)('createFinding refuses a key with %s', (_name, key) => {
+    const run = jest.fn();
+    const result = findings.createFinding({ run }, { ...ok, key });
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe('INVALID_ARG');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test.each(WHITESPACE_KEYS)('findByKey refuses a key with %s', (_name, key) => {
+    const run = jest.fn();
+    const result = findings.findByKey({ run }, { key });
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe('INVALID_ARG');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test('a key with characters br does not treat as whitespace (U+200B, U+FEFF) is not refused', () => {
+    const run = jest.fn(() => ({ ok: true, data: { id: 'b-1' } }));
+    for (const key of ['dk:zero\u200bwidth', 'dk:bom\ufeffkey']) {
+      expect(findings.createFinding({ run }, { ...ok, key }).ok).toBe(true);
+    }
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Injection safety through the REAL runner: argv only, no shell, no re-expansion
+// ---------------------------------------------------------------------------
+
+describe('values reach br as literal argv entries, and a dash-led value never reaches br', () => {
+  // Shell metacharacters, command substitution, quotes, a newline, and text that looks like the
+  // manifest's own placeholders (naming the OTHER field's placeholder, so a second substitution
+  // pass would visibly rewrite it). Every payload is INERT even if a shell did run it (`echo`,
+  // `id`, redirection to /dev/null): a regression to a shell must fail this test, not act on it.
+  const TITLE = 'T; echo injected && echo $(echo sub) `echo bt` | cat > /dev/null $HOME "q" \'r\' {description} ${description} {type}';
+  const DESCRIPTION = 'D \\ * ? ~\nsecond line {title} ${title} {id} ${label} {labels}';
+  const KEY = 'dk:`id`;$(id)|${label}{id}&&x>/dev/null';
+  const at = (argv, flag) => argv[argv.indexOf(flag) + 1];
+
+  test('createFinding: title, description and key round-trip unchanged', () => {
+    const { run, br } = deps({ create: 'br-create-detailed.sample.json' });
+    const result = findings.createFinding(
+      { run },
+      { title: TITLE, description: DESCRIPTION, labels: ['pr-review'], priority: 1, key: KEY }
+    );
+    expect(result.ok).toBe(true);
+    const argv = br.calls()[0];
+    expect(at(argv, '--title')).toBe(TITLE);
+    expect(at(argv, '-d')).toBe(DESCRIPTION);
+    expect(at(argv, '--external-ref')).toBe(KEY);
+  });
+
+  test('updateFinding and closeFinding: free text round-trips unchanged', () => {
+    const update = deps({ update: 'br-update-detailed.sample.json' });
+    expect(
+      findings.updateFinding(
+        { run: update.run },
+        { id: 'ws-17y', title: TITLE, description: DESCRIPTION, priority: 0, note: DESCRIPTION }
+      ).ok
+    ).toBe(true);
+    const updateArgv = update.br.calls()[0];
+    expect(at(updateArgv, '--title')).toBe(TITLE);
+    expect(at(updateArgv, '--description')).toBe(DESCRIPTION);
+    expect(at(updateArgv, '--append-notes')).toBe(DESCRIPTION);
+
+    const close = deps({ close: 'br-close-with-reason.sample.json' });
+    expect(findings.closeFinding({ run: close.run }, { id: 'ws-17y', reason: DESCRIPTION, commit: 'def5678' }).ok).toBe(true);
+    expect(at(close.br.calls()[0], '--reason')).toBe(DESCRIPTION);
+  });
+
+  test.each([
+    ['key', { key: '-x' }],
+    ['title', { title: '--help' }]
+  ])('a dash-led %s is refused (INVALID_ARG) and br is never called', (_name, override) => {
+    const { run, br } = deps({ create: 'br-create-detailed.sample.json' });
+    const result = findings.createFinding(
+      { run },
+      { title: 't', description: 'd', labels: ['pr-review'], priority: 1, key: 'k', ...override }
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe('INVALID_ARG');
+    expect(br.calls()).toEqual([]);
   });
 });

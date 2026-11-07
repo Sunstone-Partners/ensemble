@@ -35,9 +35,15 @@
  */
 
 const SKIP_FALLBACK = 'skip-finding-beads';
-// br accepts only these characters in a label (captured live: VALIDATION_FAILED otherwise).
-const LABEL_RE = /^[A-Za-z0-9_:-]+$/;
+// br accepts only these characters in a label (captured live: VALIDATION_FAILED otherwise). A
+// leading '-' is refused: the runner refuses a dash-led value only for the JOINED label list, so
+// a later '-x' label would be stored but could never be passed to the runner on its own.
+const LABEL_RE = /^[A-Za-z0-9_:][A-Za-z0-9_:-]*$/;
 const COMMIT_RE = /^[0-9a-f]{7,40}$/i;
+// br refuses whitespace anywhere in an external reference (captured live: VALIDATION_FAILED
+// `external_ref: cannot contain whitespace`, exit 4). Its notion is Unicode White_Space, which
+// differs from JS `\s` at U+0085 (br refuses it) and U+FEFF (br accepts it), so spell it out.
+const KEY_WHITESPACE_RE = /[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
 // Matches runner.js#lookupCapability's text for an adapter that omits a capability whose
 // category contract carries no `fallback` (an older vendored contract): still "unavailable".
 // That text is built from the capability and adapter ids only, never from the finding.
@@ -80,6 +86,10 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function validKey(key) {
+  return nonEmpty(key) && !KEY_WHITESPACE_RE.test(key);
+}
+
 function validLabels(labels) {
   return Array.isArray(labels) && labels.length > 0 && labels.every((l) => typeof l === 'string' && LABEL_RE.test(l));
 }
@@ -100,11 +110,14 @@ function validPriority(priority) {
  * @returns {{ok:true, data:{id:string}} | object}
  */
 function createFinding(deps, { title, description, type = 'bug', labels, priority, key } = {}) {
-  if (!nonEmpty(key)) return failure('INVALID_ARG', "createFinding: 'key' must be a non-empty string");
+  if (!validKey(key)) return failure('INVALID_ARG', "createFinding: 'key' must be a non-empty string without whitespace");
   if (!nonEmpty(title)) return failure('INVALID_ARG', "createFinding: 'title' must be a non-empty string");
   if (typeof description !== 'string') return failure('INVALID_ARG', "createFinding: 'description' must be a string");
   if (!validLabels(labels)) {
-    return failure('INVALID_ARG', "createFinding: 'labels' must be a non-empty list of [A-Za-z0-9_:-] labels");
+    return failure(
+      'INVALID_ARG',
+      "createFinding: 'labels' must be a non-empty list of [A-Za-z0-9_:-] labels that do not start with '-'"
+    );
   }
   if (!validPriority(priority)) return failure('INVALID_ARG', "createFinding: 'priority' must be an integer 0-4");
   return call(deps, 'tracker.create-detailed', {
@@ -129,7 +142,7 @@ function createFinding(deps, { title, description, type = 'bug', labels, priorit
  *   Several beads sharing one key is refused, never resolved by picking one.
  */
 function findByKey(deps, { key } = {}) {
-  if (!nonEmpty(key)) return failure('INVALID_ARG', "findByKey: 'key' must be a non-empty string");
+  if (!validKey(key)) return failure('INVALID_ARG', "findByKey: 'key' must be a non-empty string without whitespace");
   const result = call(deps, 'tracker.find-by-key', { key });
   if (!result.ok) return result;
 
