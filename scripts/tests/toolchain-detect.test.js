@@ -736,17 +736,70 @@ describe('production wiring: main() uses the real detectAdapter via its unmodifi
  * example (`'a'.repeat(40) + '!'`).
  */
 describe('remote_url_matches: bounded regex evaluation (PR 4 review Finding 4)', () => {
-  test('a catastrophic-backtracking pattern against a real near-matching origin URL throws a named DETECTION_SIGNAL_ERROR via the deadline path (not the invalid-regex path) (unit level: testRemoteUrlPattern, the function detectAdapter delegates the actual evaluation to)', () => {
-    // No wall-clock assertion: how long the deadline took is load-dependent. That the deadline
-    // exists and bounds the evaluation is proven by the mutation-proof test below (a mutant
-    // without the vm timeout never completes inside a spawnSync kill window), and the thrown
-    // message distinguishes the deadline path from the invalid-regex path deterministically.
-    let thrown;
+  // Upper bound for the vm deadline `testRemoteUrlPattern` may hand to the regex engine (the
+  // shipped deadline is 200ms; the wall-clock assertion this replaces allowed 2000ms). It is
+  // asserted on the `timeout` OPTION, never on elapsed time, so it cannot flake under load or
+  // on a faster runner, while a deadline raised a lot (e.g. 15x) or removed fails by name.
+  const MAX_REMOTE_URL_DEADLINE_MS = 1000;
+  const isBoundedDeadlineMs = (ms) =>
+    Number.isFinite(ms) && ms > 0 && ms <= MAX_REMOTE_URL_DEADLINE_MS;
+
+  function expectBoundedDeadlines(deadlinesMs) {
+    // At least one evaluation must have been observed, or this check would pass vacuously
+    // (for example if the evaluation ever moved off `vm.Script#runInContext`).
+    expect(deadlinesMs.length).toBeGreaterThan(0);
+    // toStrictEqual, not toEqual: toEqual ignores `undefined` array items, so `[undefined]`
+    // (a REMOVED timeout) would compare equal to `[]` and pass.
+    expect(deadlinesMs.filter((ms) => !isBoundedDeadlineMs(ms))).toStrictEqual([]);
+  }
+
+  /**
+   * Run `evaluate(pattern, url)` (a `testRemoteUrlPattern`) while recording every `timeout`
+   * option it hands to `vm.Script#runInContext`, the one place the evaluation deadline is
+   * enforced. A call whose timeout is not a bounded deadline is REFUSED (it throws) instead of
+   * evaluated: an exponential pattern with a removed or huge deadline would block this Jest
+   * worker for seconds up to forever, so a bad deadline has to fail fast and by name here.
+   * Returns `{ thrown, deadlinesMs }`; the spy is always restored.
+   */
+  function evaluateRecordingDeadlines(evaluate, pattern, url) {
+    const vm = require('vm');
+    const realRunInContext = vm.Script.prototype.runInContext;
+    const deadlinesMs = [];
+    const spy = jest
+      .spyOn(vm.Script.prototype, 'runInContext')
+      .mockImplementation(function (contextifiedObject, options) {
+        const timeout = options && options.timeout;
+        deadlinesMs.push(timeout);
+        if (!isBoundedDeadlineMs(timeout)) {
+          throw new Error(
+            `refused to evaluate: vm timeout ${timeout} is not a positive number <= ` +
+              `${MAX_REMOTE_URL_DEADLINE_MS}ms`
+          );
+        }
+        return realRunInContext.call(this, contextifiedObject, options);
+      });
     try {
-      testRemoteUrlPattern('^(a+)+$', 'a'.repeat(40) + '!');
+      evaluate(pattern, url);
+      return { thrown: undefined, deadlinesMs };
     } catch (error) {
-      thrown = error;
+      return { thrown: error, deadlinesMs };
+    } finally {
+      spy.mockRestore();
     }
+  }
+
+  test('a catastrophic-backtracking pattern against a real near-matching origin URL throws a named DETECTION_SIGNAL_ERROR via the deadline path (not the invalid-regex path) (unit level: testRemoteUrlPattern, the function detectAdapter delegates the actual evaluation to)', () => {
+    // No wall-clock assertion: how long the deadline took is load-dependent. The deadline path
+    // is identified deterministically by the thrown message (it differs from the invalid-regex
+    // path), and the deadline's MAGNITUDE is pinned by the next test, which asserts the `timeout`
+    // option itself. The call goes through the recording spy so that a removed or inflated
+    // deadline is refused (a fast, named failure) instead of blocking this Jest worker on an
+    // exponential pattern.
+    const { thrown } = evaluateRecordingDeadlines(
+      testRemoteUrlPattern,
+      '^(a+)+$',
+      'a'.repeat(40) + '!'
+    );
 
     expect(thrown).toBeDefined();
     expect(thrown.code).toBe('DETECTION_SIGNAL_ERROR');
@@ -754,6 +807,19 @@ describe('remote_url_matches: bounded regex evaluation (PR 4 review Finding 4)',
     expect(thrown.message).toContain('^(a+)+$');
     expect(thrown.message).toContain('possible catastrophic backtracking');
     expect(thrown.message).not.toContain('is invalid');
+  });
+
+  test('the deadline testRemoteUrlPattern hands to the regex engine is bounded: every vm timeout it passes is a positive number no larger than 1000ms (deterministic: asserts the option itself, never elapsed time)', () => {
+    // `^(a+)+$` against 40 a's and a '!' can only end through the deadline, so this is the
+    // evaluation whose bound matters. The mutation-proof tests below show this check fails
+    // when the deadline is raised 15x or removed.
+    const { deadlinesMs } = evaluateRecordingDeadlines(
+      testRemoteUrlPattern,
+      '^(a+)+$',
+      'a'.repeat(40) + '!'
+    );
+
+    expectBoundedDeadlines(deadlinesMs);
   });
 
   test('an oversized pattern is rejected by name, never evaluated (unit level: testRemoteUrlPattern)', () => {
@@ -821,8 +887,9 @@ describe('remote_url_matches: bounded regex evaluation (PR 4 review Finding 4)',
       timeout: 120000
     });
 
-    // Never killed by the subprocess hang bound: the real deadline bounds this to a few
-    // hundred ms, nowhere near the kill timeout (generous so load cannot trip it).
+    // Never killed by the subprocess hang bound (a kill timeout far above any plausible load
+    // stall: it signals a hang, not slowness; the deadline's magnitude is asserted by the
+    // bounded-deadline test above).
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stdout);
@@ -882,8 +949,8 @@ describe('remote_url_matches: bounded regex evaluation (PR 4 review Finding 4)',
 
         // With the deadline removed, the mutant never finishes within the 2s kill window --
         // spawnSync reports it was killed (signal set / ETIMEDOUT), and it never printed
-        // 'completed' -- exactly what the real (unmutated) "within a few hundred ms" test
-        // above disproves.
+        // 'completed' -- exactly what the real (unmutated) deadline-path and bounded-deadline
+        // tests above disprove.
         expect(child.stdout).not.toBe('completed');
         expect(child.signal !== null || (child.error && child.error.code === 'ETIMEDOUT')).toBe(
           true
@@ -891,6 +958,56 @@ describe('remote_url_matches: bounded regex evaluation (PR 4 review Finding 4)',
       } finally {
         mutantRoot.cleanup();
       }
+    });
+  });
+
+  describe('mutation-proof: a raised or removed vm timeout fails the bounded-deadline check', () => {
+    // Each mutant is a throwaway copy of detect.js (never the real source), required
+    // in-process. The recording spy REFUSES an out-of-bounds deadline before any pattern runs,
+    // so neither mutant can hang this worker and no wall-clock bound is involved.
+    function recordMutantDeadlines(needle, replacement) {
+      const mutantRoot = makeMutantToolchainRoot();
+      try {
+        const mutated = mutateAndRequire(
+          mutantRoot.toolchainLibDir + '/detect.js',
+          needle,
+          replacement
+        );
+        return evaluateRecordingDeadlines(
+          mutated.testRemoteUrlPattern,
+          '^(a+)+$',
+          'a'.repeat(40) + '!'
+        ).deadlinesMs;
+      } finally {
+        mutantRoot.cleanup();
+      }
+    }
+
+    test('raising the deadline 15x fails expectBoundedDeadlines, the exact assertion the bounded-deadline test above makes on the real code (200ms -> 3000ms at the shipped value)', () => {
+      const deadlinesMs = recordMutantDeadlines(
+        '    script.runInContext(sandbox, { timeout: REMOTE_URL_MATCH_TIMEOUT_MS });',
+        '    script.runInContext(sandbox, { timeout: REMOTE_URL_MATCH_TIMEOUT_MS * 15 });'
+      );
+
+      // The mutation took effect (one evaluation, above the bound), so the throw below is the
+      // bound check rejecting it, not an empty observation.
+      expect(deadlinesMs).toHaveLength(1);
+      expect(deadlinesMs[0]).toBeGreaterThan(MAX_REMOTE_URL_DEADLINE_MS);
+      expect(() => expectBoundedDeadlines(deadlinesMs)).toThrow();
+    });
+
+    test('removing the timeout option (no deadline at all) fails expectBoundedDeadlines instead of hanging the worker on an exponential pattern', () => {
+      const deadlinesMs = recordMutantDeadlines(
+        '    script.runInContext(sandbox, { timeout: REMOTE_URL_MATCH_TIMEOUT_MS });',
+        '    script.runInContext(sandbox);'
+      );
+
+      expect(deadlinesMs).toStrictEqual([undefined]);
+      expect(() => expectBoundedDeadlines(deadlinesMs)).toThrow();
+    });
+
+    test('an evaluation that never reaches vm.Script#runInContext (nothing observed) fails expectBoundedDeadlines instead of passing vacuously', () => {
+      expect(() => expectBoundedDeadlines([])).toThrow();
     });
   });
 });
