@@ -22,13 +22,38 @@ const { isObjectId } = require('./pr-review-scope');
 
 const STATE_DIR = path.join('.ensemble', 'pr-review');
 
+/**
+ * Credential shapes redacted from every string, replaced by `[REDACTED]`:
+ * GitHub tokens (`gh[pousr]_`, fine-grained `github_pat_`), `sk-` keys, Slack
+ * `xox*-` tokens, AWS access key ids (AKIA/ASIA/ABIA/ACCA/A3T), `Bearer`
+ * values, `Authorization:` headers, PEM private key blocks (through the END
+ * line, or to the end of the string when it is missing, so a truncated quoted
+ * key never leaks its body), and generic `name = value` secrets (see
+ * GENERIC_SECRET_PATTERN).
+ *
+ * Rules the next reader relies on: redaction is idempotent (`[REDACTED]` is
+ * never re-wrapped or grown), and hex digests, shas and dedupe keys are not
+ * credential-shaped, so they survive untouched.
+ */
 const TOKEN_PATTERNS = [
+  /-----BEGIN [^\n-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^\n-]*PRIVATE KEY-----|$)/g,
   /gh[pousr]_[A-Za-z0-9]{20,}/g,
+  /github_pat_[A-Za-z0-9_]{22,}/g,
   /sk-[A-Za-z0-9]{20,}/g,
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
+  /\b(?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16}\b/g,
   /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
   /Authorization:\s*\S+(?:\s+\S+)?/gi,
 ];
+
+/**
+ * `name = value` / `name: "value"` where the name contains secret, token,
+ * password, passwd, pwd, api_key, access_key or private_key. Captures the name
+ * and separator (kept) and the value (replaced): a quoted string of 6+ chars
+ * or an unquoted run of 8+ chars without whitespace, quote, comma or semicolon.
+ */
+const GENERIC_SECRET_PATTERN =
+  /([\w.-]*(?:secret|token|password|passwd|pwd|api[-_]?key|access[-_]?key|private[-_]?key)[\w.-]*\\?["']?[ \t]*[:=][ \t]*)(?:"[^"\n]{6,}"|'[^'\n]{6,}'|(?!\[REDACTED\])[^\s"',;]{8,})/gi;
 
 const SENSITIVE_KEY_PATTERN = /token|secret|password|api[-_]?key|authorization/i;
 
@@ -41,7 +66,8 @@ function isText(value) {
 }
 
 function redactString(value) {
-  return TOKEN_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), value);
+  return TOKEN_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), value)
+    .replace(GENERIC_SECRET_PATTERN, (match, prefix) => `${prefix}[REDACTED]`);
 }
 
 /** Deep-redacts credential-shaped values (tokens, keys, Authorization headers). */

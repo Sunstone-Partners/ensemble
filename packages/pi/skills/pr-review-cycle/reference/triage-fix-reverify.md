@@ -96,6 +96,29 @@ cannot vouch for), fall back to the full base-correct range and report
 `reason` and `unvouched` verbatim: a push that cannot be vouched for is
 never trusted as "nothing else changed."
 
+**Findings the new head fixed (CLI `pr-review-clear-cli.js`, kata `n350`, AC-008-3).** Once the
+new head's review has been through `ledger` `recordRound`, run `node "$PR_REVIEW_CLEAR_CLI"`
+(`pr-review-clear-cli.js`, in the same directory as `PR_REVIEW_CLI`) with `{ repoRoot, baseSha,
+headSha, lastReviewedSha, ledger, incoming }`. `repoRoot` is the repository under review (a git
+root or a linked worktree of it; there is no default). `lastReviewedSha` is the prior round's
+`reviewedHeadSha`, the same value `review-range` was given above: every finding carried over from
+that report was alive then, so what changed since is all that can have fixed it (without it, a
+finding's own `headSha` is the baseline, which also counts an edit the finding survived).
+`ledger` is the findings carried over; `incoming` is what this head's review raised (what
+`recordRound` was given as `incoming`). The CLI reads git and writes nothing. It marks a carried
+finding `cleared`, with `clearedBy` the new head, when the diff `lastReviewedSha..headSha` changed
+the file and line it cites and no finding this head's review raised is the same defect (same
+file, failure mode and class; the line is not part of that, so a defect re-reported lower after
+the file shifted counts). Every other entry comes back as given, with its reason in `kept[]`
+(`re-reported`, `location-unchanged`, `recorded-head-not-on-pr`, ...). Carry the `ledger` it
+returns forward in place of the one you sent: the gate stops blocking on a `cleared` finding, and
+the bead recorder (Step 10) closes its bead. This is the AC-008-3 heuristic and nothing more: a
+changed location is not proof the defect is gone, the re-review not raising it again is the other
+half, and a `lastReviewedSha` that is not on the PR (a force-push replaced it) clears nothing, so
+that finding stays until it is fixed again or a person decides. It reads the review ledger only:
+the security lane's findings are not passed (the lane reports and never closes), and it writes
+no `resolution`.
+
 The batch fix changes the tree, so re-resolve after it lands: the re-review
 diff (same base), `headSha`, `reviewedHeadSha` (Step 8) and `reviewedTreeSha`
 (its tree id, `REVIEWED_TREE_SHA`) all come from the
