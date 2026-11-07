@@ -15,7 +15,9 @@
  *
  * FAIL CLOSED to `{ mode:'full' }` -- every applicable reason is listed, none is dropped -- when:
  *   - the range decision is not a readable `delta` (a `full` range stays full; its reason is kept);
- *   - the last reviewed head was never seen by the caller (`headSeenBefore` is not exactly true);
+ *   - the last reviewed head is not on record as reviewed: `reviewed.headSha`, the `reviewedHeadSha` the review state
+ *     recorded for a COMPLETED round, is missing or is not `delta.lastReviewedSha`. A commit the repository merely
+ *     holds is not a head anyone reviewed, so the caller reads this from the state, never from git;
  *   - the delta changes no path (nothing can justify reading nothing);
  *   - a changed path is classified High or sensitive, or is a review-declaration file, or the
  *     classification is unreadable or does not cover every changed path;
@@ -33,6 +35,8 @@ const OPAQUE_CODE = /\.(?:py|rb|go|rs|java|kt|cs|ex|exs|erl|php|swift|c|cc|cpp|h
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
+/** Two full object ids naming the same object (hex is case-insensitive); anything else is never the same. */
+const sameObjectId = (a, b) => isObjectId(a) && isObjectId(b) && a.toLowerCase() === b.toLowerCase();
 
 function full(reasons, extra = {}) {
   return { mode: 'full', reasons, readSet: [], ...extra };
@@ -43,13 +47,14 @@ function full(reasons, extra = {}) {
  * @param {Object} input.delta  The `chooseReviewRange` answer: `{ ok:true, mode, lastReviewedSha, headSha, reason }`.
  * @param {string[]} input.changedPaths  The paths changed in `lastReviewedSha..headSha` (not the whole PR).
  * @param {Object} input.pathsClassification  The `classifyPaths` answer for (at least) those paths.
- * @param {boolean} input.headSeenBefore  True only when the caller knows `delta.lastReviewedSha` was reviewed before.
+ * @param {{headSha?:string}} [input.reviewed]  What the review-state report of the last COMPLETED round recorded: its
+ *   `reviewedHeadSha`. Absent, or not `delta.lastReviewedSha`, the head was never seen and the plan is `full`.
  * @param {Object} [input.importGraph]  `buildImportGraph` output for the head.
  * @returns {{mode:'delta'|'full', reasons:string[], readSet:Array<{path:string, reasons:string[]}>}}
  */
 function planDeltaReview(input) {
   const request = isObject(input) ? input : {};
-  const { delta, changedPaths, pathsClassification, headSeenBefore, importGraph } = request;
+  const { delta, changedPaths, pathsClassification, reviewed, importGraph } = request;
   const reasons = [];
 
   // ---- the range decision: only a readable delta can be refined, a full range is never overridden ----
@@ -61,7 +66,7 @@ function planDeltaReview(input) {
   }
   if (!isObjectId(delta.lastReviewedSha) || !isObjectId(delta.headSha)) reasons.push('delta-unreadable');
 
-  if (headSeenBefore !== true) reasons.push('head-never-seen');
+  if (!isObject(reviewed) || !sameObjectId(reviewed.headSha, delta.lastReviewedSha)) reasons.push('head-never-seen');
 
   // ---- the changed paths ----
   const pathsReadable = Array.isArray(changedPaths) && changedPaths.every(isText);

@@ -23,6 +23,7 @@ One JSON object on stdin.
 | `repoRoot` | The git repository holding both commits. Default: the current directory. |
 | `headRef` | A ref that must still resolve to `headSha` when the step starts and right before anything is published. A head that moved is `head-moved`. |
 | `lastReviewedSha`, `remediationShas` | Decide, through `chooseReviewRange`, whether `delta.diff` is produced. |
+| `reviewedHeadSha` | The `reviewedHeadSha` the review-state report recorded for the last **completed** round: a head that round reviewed. The delta plan treats `lastReviewedSha` as seen only when it is this head; without it the plan is `full` (`head-never-seen`). Read it from the state, never from git: a commit the repository holds is not a head anyone reviewed. |
 | `testFiles`, `testCommand` | Baseline test files (default: tests the PR changed, plus tests named after a changed source file) and the argv prefix to run them with (default: the repository's `jest`). An argument inside the real `node_modules` runs from the private copy. |
 | `baselineTimeoutMs` | How long the baseline may run (default 10 minutes). A run that exceeds it is recorded with `timedOut: true`. |
 | `nodeModules` | The `node_modules` the baseline resolves third-party requires from (default: `<repoRoot>/node_modules` when it exists). The baseline runs against a private copy of it; `probe.js` resolves requires from this one. |
@@ -34,7 +35,8 @@ One JSON object on stdin.
 `<fingerprint>` is the first 16 hex characters of the sha256 of every input that
 decides what the directory holds: the schema version, the run and repository,
 the base and head, the resolved range decision (mode, reason, reviewed head, the
-commits nobody vouched for), `testFiles`, `testCommand`, `baselineTimeoutMs` and
+commits nobody vouched for), `reviewedHeadSha` (it decides the delta plan),
+`testFiles`, `testCommand`, `baselineTimeoutMs` and
 the resolved `nodeModules`. The manifest records them under `inputs`.
 
 | Path | Content |
@@ -57,8 +59,9 @@ the test runner's own timings, so key carry-over on the other hashes.
 A re-review after a fix push does not have to re-read the whole PR, but it must
 not read less than it can justify. `facts.json` carries `deltaPlan`, the answer of
 `planDeltaReview` (`lib/pr-review-delta.js`, pure), and `delta`, the facts it was
-given when the range is a delta: `{ lastReviewedSha, changedPaths, headSeenBefore }`
+given when the range is a delta: `{ lastReviewedSha, reviewedHeadSha, changedPaths }`
 (`changedPaths` are the paths changed in `lastReviewedSha..HEAD`, not the whole PR;
+`reviewedHeadSha` is the record the payload carried, `null` without one;
 `delta` is `null` for a full range).
 
 ```json
@@ -78,7 +81,7 @@ read the full range. `reasons` lists every rule that applied, none is dropped:
 | Reason | Meaning |
 |---|---|
 | `range-is-full` plus the range reason | `review-range` did not vouch for a delta (`first-round`, `unvouched-history`, ...). A full range is never turned into a delta. |
-| `head-never-seen` | The last reviewed head is not a commit this repository holds. |
+| `head-never-seen` | The review state does not record the last reviewed head as reviewed by a completed round: no `reviewedHeadSha`, or one that is not `lastReviewedSha`. A commit that is readable and in history is not enough. |
 | `high-path-touched`, `sensitive-path-touched` | The delta changes a High or sensitive path, or a review declaration file (`REVIEW.md`, `CODEOWNERS`), as the **base** commit's declaration classifies it. |
 | `empty-delta` | The delta changes no path: nothing justifies reading nothing. |
 | `unanalyzed-source-changed` | The delta changes source in a language the import graph does not read (`.py`, `.sh`, `.ex`, ...). |

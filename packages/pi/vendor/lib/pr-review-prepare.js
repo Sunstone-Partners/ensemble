@@ -278,7 +278,7 @@ function readInput(options) {
   const { repoRoot, runId } = options;
   if (!isText(repoRoot) || !path.isAbsolute(repoRoot)) throw new PrepareError('invalid-input', 'input', 'repoRoot must be an absolute path');
   if (!isText(runId)) throw new PrepareError('invalid-input', 'input', 'runId is required');
-  for (const key of ['baseSha', 'headSha', 'mergeBaseSha', 'prBaseSha', 'parentPhaseTipSha', 'lastReviewedSha']) {
+  for (const key of ['baseSha', 'headSha', 'mergeBaseSha', 'prBaseSha', 'parentPhaseTipSha', 'lastReviewedSha', 'reviewedHeadSha']) {
     const value = options[key];
     if (value !== undefined && value !== null && value !== '' && !isObjectId(value)) {
       throw new PrepareError('invalid-input', 'input', `${key} is not a full object id`);
@@ -520,10 +520,21 @@ function rangeFacts(range) {
 }
 
 /**
+ * What the caller says the last COMPLETED round recorded in the review-state report, as the delta plan takes it: on the
+ * caller's word, so it is an input like any other (facts.json states it, the fingerprint covers it). Only a delta range
+ * reads it; for any other range it is `null`.
+ */
+function reviewedRecord(options, range) {
+  if (range.mode !== 'delta') return null;
+  return { headSha: options.reviewedHeadSha || null };
+}
+
+/**
  * Every input that decides what a preparation holds. Its sha256 names the directory and is checked on reuse, so two
  * preparations that differ in ANY of these never share (or replace) a directory: the resolved range decision (mode,
- * reason, reviewed head, the commits nobody vouched for), the baseline's inputs (test files, command, timeout, the
- * node_modules it resolves from) and the run and repository the directory belongs to.
+ * reason, reviewed head, the commits nobody vouched for), what the review state says the last completed round reviewed
+ * (it decides the delta plan), the baseline's inputs (test files, command, timeout, the node_modules it resolves from)
+ * and the run and repository the directory belongs to.
  */
 function fingerprintInputs(options, range, nodeModules) {
   return {
@@ -533,6 +544,7 @@ function fingerprintInputs(options, range, nodeModules) {
     baseSha: range.baseSha,
     headSha: range.headSha,
     range: rangeFacts(range),
+    reviewed: reviewedRecord(options, range),
     testFiles: options.testFiles ? [...options.testFiles].sort() : null,
     testCommand: options.testCommand || null,
     baselineTimeoutMs: options.baselineTimeoutMs || DEFAULT_BASELINE_TIMEOUT_MS,
@@ -630,6 +642,10 @@ function resultFrom(manifest, dir, reused) {
  * @param {string} [options.lastReviewedSha] The head the previous round reviewed; with `remediationShas` it decides
  *   (via `chooseReviewRange`) whether a `delta.diff` is produced.
  * @param {string[]} [options.remediationShas]
+ * @param {string} [options.reviewedHeadSha] The `reviewedHeadSha` the review-state report recorded for the last COMPLETED
+ *   round: a head that round reviewed. The delta plan treats `lastReviewedSha` as seen only when it is this head; without it
+ *   the plan is `full` (`head-never-seen`). The caller reads it from the state: this step never infers it from git, because
+ *   a commit the repository holds is not a head anyone reviewed.
  * @param {string} [options.stateRoot]       Default `<repoRoot>/.ensemble/pr-review/prepare`.
  * @param {string[]} [options.testFiles]     Baseline test files; default: the test files the PR changed or whose
  *   source it changed.
@@ -699,23 +715,24 @@ function scanImportLines(deps, repoRoot, headSha) {
 
 /**
  * What a delta re-review reads (kata 801a). The repo scan lives here, outside the pure planner: the changed paths of the
- * delta, their classification (same base-commit declaration as `paths`), whether the last reviewed head is a commit this
- * repository holds, and the import graph of the head. A full range is passed through unrefined.
+ * delta, their classification (same base-commit declaration as `paths`), what the review state says the last completed
+ * round reviewed (the caller's record, never inferred from git) and the import graph of the head. A full range is passed
+ * through unrefined.
  */
 function deriveDelta(deps, options, range, entries, declarationInput) {
   if (range.mode !== 'delta') return { delta: null, deltaPlan: planDeltaReview({ delta: range }) };
   const { repoRoot } = options;
   const deltaPaths = listChanged(deps, repoRoot, [range.lastReviewedSha, range.headSha]).map((f) => f.path);
   const lines = scanImportLines(deps, repoRoot, range.headSha);
-  const headSeenBefore = commitReadable(deps, repoRoot, range.lastReviewedSha);
+  const reviewed = reviewedRecord(options, range);
   const deltaPlan = planDeltaReview({
     delta: range,
     changedPaths: deltaPaths,
     pathsClassification: classifyPaths({ ...declarationInput, changedPaths: deltaPaths }),
-    headSeenBefore,
+    reviewed,
     importGraph: lines === null ? undefined : buildImportGraph({ filePaths: entries.map((entry) => entry.path), lines }),
   });
-  return { delta: { lastReviewedSha: range.lastReviewedSha, changedPaths: deltaPaths, headSeenBefore }, deltaPlan };
+  return { delta: { lastReviewedSha: range.lastReviewedSha, reviewedHeadSha: reviewed.headSha, changedPaths: deltaPaths }, deltaPlan };
 }
 
 /**

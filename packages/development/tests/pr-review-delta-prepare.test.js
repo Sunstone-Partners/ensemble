@@ -28,11 +28,12 @@ function write(root, rel, content) {
 }
 
 /**
- * base -> reviewed (R) -> head. `change(root)` makes the head commit, a remediation commit on top of R.
+ * base -> reviewed (R) -> head. `change(root)` makes the head commit, a remediation commit on top of R. With `middle(root)`
+ * a commit U is made between them: it is in the history and readable, but no round ever reviewed it.
  * The repository holds a module with an importer, a test that imports it, a test that only carries its name, an
  * unrelated module and a module whose name has a space in it.
  */
-function fixture(change) {
+function fixture(change, middle) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'delta-prepare-'));
   roots.push(root);
   git(root, ['init', '-q', '-b', 'main']);
@@ -52,14 +53,22 @@ function fixture(change) {
   write(root, 'src/unrelated.js', 'module.exports = 11;\n');
   git(root, ['commit', '-q', '-am', 'reviewed']);
   const reviewed = git(root, ['rev-parse', 'HEAD']);
+  let unreviewed = null;
+  if (middle) {
+    middle(root);
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', 'pushed outside the review loop']);
+    unreviewed = git(root, ['rev-parse', 'HEAD']);
+  }
   change(root);
   git(root, ['add', '-A']);
   git(root, ['commit', '-q', '-m', 'remediation']);
   const head = git(root, ['rev-parse', 'HEAD']);
   git(root, ['update-ref', 'refs/heads/pr', head]);
-  return { root, base, reviewed, head };
+  return { root, base, reviewed, unreviewed, head };
 }
 
+/** The options a caller builds from the review-state report of a completed round that reviewed `fx.reviewed`. */
 const options = (fx, overrides = {}) => ({
   repoRoot: fx.root,
   runId: 'run-delta',
@@ -67,6 +76,7 @@ const options = (fx, overrides = {}) => ({
   headSha: fx.head,
   headRef: 'refs/heads/pr',
   lastReviewedSha: fx.reviewed,
+  reviewedHeadSha: fx.reviewed,
   remediationShas: [fx.head],
   testCommand: NODE_TEST,
   nodeModules: path.join(fx.root, 'no-node-modules'),
@@ -95,7 +105,7 @@ describe('facts.json deltaPlan, from a real repository', () => {
     const result = prepareReview(options(fx));
     expect(result).toMatchObject({ ok: true, mode: 'delta' });
     const facts = factsOf(result);
-    expect(facts.delta).toEqual({ lastReviewedSha: fx.reviewed, changedPaths: ['src/thing.js'], headSeenBefore: true });
+    expect(facts.delta).toEqual({ lastReviewedSha: fx.reviewed, reviewedHeadSha: fx.reviewed, changedPaths: ['src/thing.js'] });
     expect(facts.deltaPlan.mode).toBe('delta');
     expect(facts.deltaPlan.readSet.map((e) => e.path)).toEqual(['src/app.js', 'src/thing.js', 'tests/thing.test.js']);
     // the importer of the importer is not part of the radius, and nothing unrelated is read
@@ -163,16 +173,45 @@ describe('facts.json deltaPlan, from a real repository', () => {
     expect(factsOf(result).deltaPlan).toEqual({ mode: 'full', reasons: ['import-graph-unavailable'], readSet: [] });
   });
 
-  it('a reviewed head the repository stops holding between the range decision and the plan is a full re-read', () => {
+  // The range decision (chooseReviewRange) only checks that the commits since the last reviewed head are vouched for. A head
+  // that is readable and in history is not thereby a head any round reviewed, so "seen" comes from the review state.
+  const withUnreviewedCommit = () => fixture(
+    (root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"),
+    (root) => write(root, 'src/unreviewed.js', 'module.exports = 5;\n'),
+  );
+
+  it('a readable commit no round reviewed is not a head the review state has seen: a full re-read, never a delta', () => {
+    const fx = withUnreviewedCommit();
+    // no record, a record of another head, a record of a later head: none of them says a round reviewed U
+    for (const reviewedHeadSha of [undefined, fx.reviewed, fx.head]) {
+      const result = prepareReview(options(fx, { lastReviewedSha: fx.unreviewed, reviewedHeadSha }));
+      expect(result).toMatchObject({ ok: true, mode: 'delta' });
+      const facts = factsOf(result);
+      expect(facts.delta.reviewedHeadSha).toBe(reviewedHeadSha || null);
+      expect(facts.deltaPlan).toEqual({ mode: 'full', reasons: ['head-never-seen'], readSet: [] });
+    }
+  });
+
+  it('the record decides: the same commit, recorded by the state as reviewed, is a delta', () => {
+    const fx = withUnreviewedCommit();
+    const facts = factsOf(prepareReview(options(fx, { lastReviewedSha: fx.unreviewed, reviewedHeadSha: fx.unreviewed })));
+    expect(facts.deltaPlan.mode).toBe('delta');
+    expect(facts.deltaPlan.readSet.map((e) => e.path)).toEqual(['src/app.js', 'src/thing.js', 'tests/thing.test.js']);
+  });
+
+  it('a reviewed head that is not a full object id is refused, never read as "unseen"', () => {
     const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"));
-    const real = defaultDeps();
-    const lookup = `${fx.reviewed}^{commit}`;
-    const deps = { ...real, git: (args, o) => (args[0] === 'rev-parse' && args.includes(lookup) ? { status: 1, stdout: '', stderr: '' } : real.git(args, o)) };
-    const result = prepareReview(options(fx), deps);
-    expect(result).toMatchObject({ ok: true, mode: 'delta' });
-    const facts = factsOf(result);
-    expect(facts.delta.headSeenBefore).toBe(false);
-    expect(facts.deltaPlan).toEqual({ mode: 'full', reasons: ['head-never-seen'], readSet: [] });
+    expect(prepareReview(options(fx, { reviewedHeadSha: 'main' }))).toMatchObject({ ok: false, status: 'PREPARE_FAILED', reason: 'invalid-input' });
+  });
+
+  it('preparations with different review records have directories of their own, so a reader holding one never loses it', () => {
+    const fx = fixture((root) => write(root, 'src/thing.js', "module.exports = () => 'v1';\n"));
+    const recorded = prepareReview(options(fx));
+    const unrecorded = prepareReview(options(fx, { reviewedHeadSha: undefined }));
+    expect(unrecorded.dir).not.toBe(recorded.dir);
+    expect(fs.existsSync(recorded.dir)).toBe(true);
+    expect(factsOf(recorded).deltaPlan.mode).toBe('delta');
+    expect(factsOf(unrecorded).deltaPlan.reasons).toEqual(['head-never-seen']);
   });
 
   it('the same inputs publish the same facts: the plan is part of what a reuse re-derives', () => {

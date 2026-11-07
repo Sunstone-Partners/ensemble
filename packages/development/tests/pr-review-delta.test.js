@@ -56,7 +56,7 @@ function plan(overrides = {}) {
     delta: deltaRange(),
     changedPaths,
     pathsClassification: classify(changedPaths),
-    headSeenBefore: true,
+    reviewed: { headSha: REVIEWED },
     importGraph: graph(),
     ...overrides,
   });
@@ -111,10 +111,19 @@ describe('planDeltaReview: fails closed to a full re-read (AC1, AC2)', () => {
     for (const reason of reasons) expect(result.reasons).toContain(reason);
   };
 
-  it('a head the caller has never seen', () => {
-    expectFull(plan({ headSeenBefore: false }), 'head-never-seen');
-    expectFull(plan({ headSeenBefore: undefined }), 'head-never-seen');
-    expectFull(plan({ headSeenBefore: 'yes' }), 'head-never-seen');
+  it('a last reviewed head the review state does not record as reviewed (AC1: a head never seen)', () => {
+    for (const reviewed of [undefined, null, {}, { headSha: null }, { headSha: true }, { headSha: 'main' }]) {
+      expectFull(plan({ reviewed }), 'head-never-seen');
+    }
+  });
+
+  it('a record for another head does not make this one seen, however readable that other commit is', () => {
+    expectFull(plan({ reviewed: { headSha: 'e'.repeat(40) } }), 'head-never-seen');
+    expectFull(plan({ reviewed: { headSha: HEAD } }), 'head-never-seen');
+  });
+
+  it('the record names the delta head whatever the case of its hex', () => {
+    expect(plan({ reviewed: { headSha: REVIEWED.toUpperCase() } }).mode).toBe('delta');
   });
 
   it('a delta touching a High path', () => {
@@ -167,7 +176,7 @@ describe('planDeltaReview: fails closed to a full re-read (AC1, AC2)', () => {
   });
 
   it('every applicable reason is reported, none is dropped', () => {
-    const result = plan({ headSeenBefore: false, importGraph: undefined, changedPaths: ['core/engine.js'], pathsClassification: classify(['core/engine.js']) });
+    const result = plan({ reviewed: undefined, importGraph: undefined, changedPaths: ['core/engine.js'], pathsClassification: classify(['core/engine.js']) });
     expect(result.reasons).toEqual(expect.arrayContaining(['head-never-seen', 'high-path-touched', 'import-graph-unavailable']));
   });
 
