@@ -121,19 +121,23 @@
  *   run the subcommand against the repository at `<path>` instead of `process.cwd()`. It sets
  *   `ctx.projectRoot`, so adapter resolution (`.ensemble/toolchain.yaml`), the `cwd` of every
  *   adapter command and preflight health check (the tracker's `br` reads THAT tree's
- *   `.beads/`), and the preflight/confirm/ledger/failure/
- *   trace state under `<path>/.ensemble/state/` all follow it. PR review runs in a sibling
- *   `../ensemble.*` worktree, so without it `run tracker.*` would hit whatever tracker the
- *   CLI's own cwd resolves to. Precedence: `--project-root` > `ctx.projectRoot` (programmatic
- *   callers) > `process.cwd()`. There is deliberately NO environment-variable tier: the only
- *   related variable, `ENSEMBLE_PROJECT_ROOT`, is set only inside lifecycle-hook children and
- *   honouring it would silently change default behaviour. Without the flag nothing changes.
- *   The value is the NEXT argument: the `--project-root=<path>` spelling is `INVALID_ARG` naming
- *   the space form (it would otherwise fall through to the positionals, be ignored, and run
- *   against the cwd tree -- the silent wrong-tree outcome this flag exists to prevent).
+ *   `.beads/`), and the preflight/confirm/ledger/failure/trace state under
+ *   `<path>/.ensemble/state/` all follow it. PR review runs in a sibling `../ensemble.*`
+ *   worktree, so without it `run tracker.*` would hit whatever tracker the CLI's own cwd
+ *   resolves to (for a LINKED worktree see the tracker-data note below). Precedence:
+ *   `--project-root` > `ctx.projectRoot` (programmatic callers) > `process.cwd()`. There is
+ *   deliberately NO environment-variable tier: the toolchain never reads
+ *   `ENSEMBLE_PROJECT_ROOT` (the lifecycle-hook runner sets it for hook-handler processes
+ *   only) and honouring it would silently change default behaviour. Without the flag nothing
+ *   changes. The value is the NEXT argument: the `--project-root=<path>` spelling is
+ *   `INVALID_ARG` naming the space form (it would otherwise fall through to the positionals,
+ *   be ignored, and run against the cwd tree -- the silent wrong-tree outcome this flag exists
+ *   to prevent).
  *   The value must be an existing git repo root or linked-worktree root (`.git` dir or
- *   `gitdir:` file); it is realpath'd; anything else is `INVALID_ARG` and nothing runs (for
- *   `trace`, the usual non-failing `trace: unavailable (...)`).
+ *   `gitdir:` file); it is realpath'd; anything else is `INVALID_ARG` and nothing runs. For
+ *   `trace start`/`trace end`, which never fail the traced flow, that is the usual
+ *   `trace: unavailable (...)` on stderr and exit 0; `trace summarize` keeps its own contract
+ *   and exits 1 (0 with `--brief`).
  *   TRUST MODEL (kata vsg4 review round 1): the named tree is a source of cwd, config
  *   (`.ensemble/toolchain.yaml`) and state ONLY -- never of code to run. `main()` sets
  *   `ctx.untrustedProjectRoot`, so `./toolchain/adapters.js` does not search the tree's
@@ -146,13 +150,14 @@
  *   the tree's own files; preflight/confirm records it carries are consent/health gates, not a
  *   security boundary (`./toolchain/confirm.js`). Without the flag a project root the process
  *   was started in keeps its `packages/*\/skills/` tier, unchanged.
- *   A linked worktree is accepted
- *   and used VERBATIM (never mapped back to the main checkout): it is the adapter's `cwd` and
- *   the root of `.ensemble/` config and state. Which tracker DATA the adapter then reads is the
- *   adapter's own business: observed with br 0.6.0, `br` run from a linked worktree uses the
- *   MAIN checkout's shared `.beads` database (the worktree's checked-out `.beads/` holds only
- *   config + issues.jsonl), so `--project-root <worktree>` and `--project-root <main>` read the
- *   same beads while `.ensemble/state` stays per-path. `validate` accepts but never uses it.
+ *   A linked worktree is accepted and used VERBATIM (never mapped back to the main checkout):
+ *   it is the adapter's `cwd` and the root of `.ensemble/` config and state. Which tracker
+ *   DATA the adapter then reads is the adapter's own business: observed with br 0.6.0, `br`
+ *   run from a linked worktree uses the MAIN checkout's shared `.beads` database (the
+ *   worktree's checked-out `.beads/` holds only config + issues.jsonl), so for a linked
+ *   worktree the flag changes the adapter's cwd, config and state, NOT the tracker data a
+ *   real `br` reads: `--project-root <worktree>` and `--project-root <main>` read the same
+ *   beads while `.ensemble/state` stays per-path. `validate` accepts but never uses it.
  *
  * Output:
  *   - Default (no `--json`): a human-readable table with columns `category`, `adapter`,
