@@ -266,6 +266,27 @@ describe('the real CLI process on a real git fixture', () => {
     expect(done.out.gate.findings.open).toEqual(['f1']); // filtered, still listed and still blocking
   });
 
+  test('a pre-existing label on a line the real diff changes stays in the gate; one on a file the PR does not touch stays pre-existing (review of PR 264, P1)', () => {
+    const review = prep({ runId: 'pre-existing' }).out;
+    answerReview(review, {
+      findings: {
+        'reviewer-s1-a': [
+          reviewerFinding({ severity: 'pre-existing', locationOrLink: 'src/a.js:1', failureMode: 'list[i + 1] reads one past the end on the last element' }),
+          reviewerFinding({ severity: 'pre-existing', locationOrLink: 'README.md:1', originalTextOrLink: 'README.md:1', failureMode: 'the fixture readme says nothing about how to run it' }),
+        ],
+      },
+    });
+    const verify = coll('pre-existing').out;
+    expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    answerVotes(verify, 'real');
+    const done = coll('pre-existing');
+    expect(done.out.status).toBe('DONE');
+    expect(done.out.ledger.map((entry) => [entry.id, entry.severity])).toEqual([['f1', 'important'], ['f2', 'pre-existing']]);
+    expect(done.out.ledger[0]).toMatchObject({ claimedSeverity: 'pre-existing', strippedFields: ['severity'] });
+    expect(done.out.gate.findings).toMatchObject({ open: ['f1'], preExisting: 1 });
+    expect(done.out.gate.blockers.map((b) => b.code)).toContain('open-important-finding');
+  });
+
   test('a High path is NEEDS_FULL_MODE: exit 1, nothing dispatched, no briefs, later calls repeat it', () => {
     setGh({ head: fx.high });
     const r = prep({ runId: 'high' });

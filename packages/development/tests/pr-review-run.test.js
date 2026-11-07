@@ -45,9 +45,9 @@ function makeFacts({ changedPaths, numstat, policyJson = {} }) {
 
 /**
  * A harness: scratch repo root, a prepared directory with facts/baseline, and fake deps with call logs.
- * `overrides` replaces any fake dep; `facts`/`baseline` replace what the prepared directory holds.
+ * `overrides` replaces any fake dep; `facts`/`baseline`/`rangeDiff` replace what the prepared directory holds.
  */
-function harness({ changedPaths = ['src/a.js'], numstat, policyJson, facts, baseline, overrides = {}, prepareOverride } = {}) {
+function harness({ changedPaths = ['src/a.js'], numstat, policyJson, facts, baseline, overrides = {}, prepareOverride, rangeDiff = 'diff --git a/x b/x\n' } = {}) {
   fs.mkdirSync(SCRATCH, { recursive: true });
   const root = fs.mkdtempSync(path.join(SCRATCH, 'u-'));
   roots.push(root);
@@ -55,7 +55,7 @@ function harness({ changedPaths = ['src/a.js'], numstat, policyJson, facts, base
   const dir = path.join(root, 'prepared');
   fs.mkdirSync(repoRoot, { recursive: true });
   fs.mkdirSync(path.join(dir, 'snapshot'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'range.diff'), 'diff --git a/x b/x\n');
+  fs.writeFileSync(path.join(dir, 'range.diff'), rangeDiff);
   const theFacts = facts === undefined ? makeFacts({ changedPaths, numstat: numstat || changedPaths.map((p) => ({ path: p, added: 10, deleted: 2 })), policyJson }) : facts;
   fs.writeFileSync(path.join(dir, 'facts.json'), JSON.stringify(theFacts));
   const theBaseline = baseline === undefined ? { ran: false, reason: 'no-test-files', command: null, exitCode: null, timedOut: false, selection: [] } : baseline;
@@ -661,6 +661,209 @@ describe('findings: completed, never dropped, never closed by an agent', () => {
     expect(next.status).toBe('DONE');
     expect(next.ledger).toEqual([]);
     expect(h.readRun().waves.map((w) => w.round)).toEqual(['review']);
+  });
+});
+
+describe('a `pre-existing` label is a claim about provenance and is checked against the diff (review of PR 264, P1)', () => {
+  // A unified diff as git writes it: hunks in a changed file, a new file, a deleted file and a binary file.
+  const DIFF = `${[
+    'diff --git a/src/a.js b/src/a.js',
+    'index 1111111..2222222 100644',
+    '--- a/src/a.js',
+    '+++ b/src/a.js',
+    '@@ -1,3 +1,4 @@ function head()',
+    ' one',
+    '+two',
+    ' three',
+    ' four',
+    '@@ -40,2 +41,2 @@',
+    '-old forty',
+    '+new forty-one',
+    ' tail',
+    'diff --git a/src/new.js b/src/new.js',
+    'new file mode 100644',
+    'index 0000000..3333333',
+    '--- /dev/null',
+    '+++ b/src/new.js',
+    '@@ -0,0 +1,2 @@',
+    '+a',
+    '+b',
+    'diff --git a/old.js b/old.js',
+    'deleted file mode 100644',
+    'index 4444444..0000000',
+    '--- a/old.js',
+    '+++ /dev/null',
+    '@@ -1,2 +0,0 @@',
+    '-x',
+    '-y',
+    'diff --git a/img.png b/img.png',
+    'index 5555555..6666666 100644',
+    'Binary files a/img.png and b/img.png differ',
+  ].join('\n')}\n`;
+  const diffOf = (over = {}) => ({ index: S.parseDiffHunks(DIFF), changedPaths: ['src/a.js', 'src/new.js', 'old.js', 'img.png'], snapshotDir: '/snap/dir', ...over });
+  const claim = (location, over = {}) => S.completeFinding(finding({ severity: 'pre-existing', locationOrLink: location, ...over }), 'reviewer-s1-a', 'f1');
+
+  test('parseDiffHunks: the new-side range of every hunk, per file; a deleted and a binary file have none', () => {
+    const { files } = S.parseDiffHunks(DIFF);
+    expect([...files.keys()].sort()).toEqual(['src/a.js', 'src/new.js']);
+    expect(files.get('src/a.js').hunks).toEqual([[1, 4], [41, 42]]);
+    expect(files.get('src/new.js').hunks).toEqual([[1, 2]]);
+    expect(S.parseDiffHunks(null)).toBeNull();
+    expect(S.parseDiffHunks('').files.size).toBe(0);
+  });
+
+  test('parseDiffHunks counts hunk bodies: an added line `++ x` (read `+++ x`) and a removed `-- x` (read `--- x`) start no file', () => {
+    const trap = `${[
+      'diff --git a/notes.md b/notes.md',
+      '--- a/notes.md',
+      '+++ b/notes.md',
+      '@@ -1,2 +1,3 @@',
+      '--- a/not-a-header.txt',
+      '+++ b/not-a-header.txt',
+      ' context',
+      '+added',
+      '\\ No newline at end of file',
+      'diff --git a/after.js b/after.js',
+      '--- a/after.js',
+      '+++ b/after.js',
+      '@@ -5 +5 @@',
+      '-x',
+      '+y',
+    ].join('\n')}\n`;
+    const { files } = S.parseDiffHunks(trap);
+    expect([...files.keys()].sort()).toEqual(['after.js', 'notes.md']);
+    expect(files.get('notes.md').hunks).toEqual([[1, 3]]);
+    expect(files.get('after.js').hunks).toEqual([[5, 5]]);
+  });
+
+  test('parseDiffHunks reads the quoted path git writes for a non-ASCII name', () => {
+    const quoted = `${['diff --git "a/caf\\303\\251.js" "b/caf\\303\\251.js"', '--- "a/caf\\303\\251.js"', '+++ "b/caf\\303\\251.js"', '@@ -3 +3 @@', '-a', '+b'].join('\n')}\n`;
+    expect(S.parseDiffHunks(quoted).files.get('caf\u00e9.js').hunks).toEqual([[3, 3]]);
+  });
+
+  // src/a.js changes lines 1-4 and 41-42 (context included); src/new.js is new (lines 1-2)
+  test.each([
+    ['src/a.js:1', false],
+    ['src/a.js:4', false],
+    ['src/a.js:5', true],
+    ['src/a.js:40', true],
+    ['src/a.js:41', false],
+    ['src/a.js:42', false],
+    ['src/a.js:43', true],
+    ['src/a.js:3-10', false],
+    ['src/a.js:10-3', false],
+    ['src/a.js:5-39', true],
+    ['src/a.js:39-41', false],
+    ['src/other.js:7', true],
+    ['README.md:1', true],
+    ['./src/a.js:2', false],
+    ['SRC/A.JS:2', false],
+    ['SRC/A.JS:20', true],
+    ['/snap/dir/src/a.js:2', false],
+    ['/snap/dir/src/a.js:20', true],
+    ['src/new.js:1', false],
+    ['img.png:1', false],
+    ['old.js:1', false],
+    ['src/a.js', false],
+    ['src/a.js:12:5', false],
+    ['src/a.js#L12', false],
+    ['src/a.js:0', false],
+    ['unspecified', false],
+    ['../escape.js:3', false],
+    ['/etc/passwd:3', false],
+  ])('a pre-existing claim at %s is honoured: %p', (location, honoured) => {
+    const out = S.gradePreExisting(claim(location), diffOf());
+    expect(out.severity).toBe(honoured ? 'pre-existing' : 'important');
+  });
+
+  test('a claim the diff does not bear out is graded Important, the agent\'s word kept beside it and the severity named as stripped', () => {
+    const out = S.gradePreExisting(claim('src/a.js:2', { preExisting: true }), diffOf());
+    expect(out).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('inside a hunk'), strippedFields: ['severity'], locationOrLink: 'src/a.js:2' });
+    expect(out.preExisting).toBeUndefined();
+  });
+
+  test('an unreadable diff bears nothing out; any other severity, and the spellings of pre-existing the ledger reads, are handled as the gate reads them', () => {
+    expect(S.gradePreExisting(claim('src/c.js:7'), diffOf({ index: null })).severity).toBe('important');
+    expect(S.gradePreExisting(claim('src/c.js:7'), diffOf({ index: null })).severityNote).toMatch(/could not be read/);
+    for (const severity of ['Pre-Existing', 'PREEXISTING', 'pre existing']) {
+      expect(S.gradePreExisting(claim('src/a.js:2', { severity }), diffOf())).toMatchObject({ severity: 'important', claimedSeverity: severity });
+    }
+    for (const severity of ['important', 'nit', 'critical', 'catastrophic']) {
+      const entry = S.completeFinding(finding({ severity, locationOrLink: 'src/a.js:2' }), 'reviewer-s1-a', 'f1');
+      expect(S.gradePreExisting(entry, diffOf())).toBe(entry);
+    }
+  });
+
+  async function claimsRun(h, locations) {
+    h.reviews = { ok: true, reviews: [{ login: 'bob', authorType: 'User', state: 'APPROVED', commitSha: HEAD, submittedAt: '2026-01-01T00:00:00Z' }] };
+    const m = await h.prepare();
+    answerReview(m, {
+      findingsFor: (name) => (name === 'reviewer-s1-a' ? locations.map((location, i) => finding({ severity: 'pre-existing', locationOrLink: location, failureMode: `defect number ${i} of a different kind in ${location}` })) : []),
+      lane: { findings: [], pathsReviewed: allPaths(h) },
+    });
+    const verify = await h.collect();
+    expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    voteAll(verify, () => 'real');
+    return h.collect();
+  }
+
+  test('through a run: a pre-existing finding on a changed line stays in the gate as Important; ones the diff bears out stay pre-existing and do not block', async () => {
+    const h = harness({ rangeDiff: DIFF });
+    const out = await claimsRun(h, ['src/a.js:2', 'src/c.js:7', 'src/a.js:20']);
+    expect(out.status).toBe('DONE');
+    const byId = Object.fromEntries(out.ledger.map((entry) => [entry.id, entry]));
+    expect(byId.f1).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing' });
+    expect(byId.f2.severity).toBe('pre-existing');
+    expect(byId.f3.severity).toBe('pre-existing');
+    expect(out.gate.findings).toMatchObject({ open: ['f1'], important: 1, preExisting: 2 });
+    expect(out.gate.blockers.map((b) => b.code)).toContain('open-important-finding');
+    expect(out.gate.mergeable).toBe(false);
+    expect(out.reducedReview).toMatch(/graded Important, not pre-existing[^\n]*f1 \(src\/a\.js:2\)/);
+    expect(h.stateWrites[0].state.ledger.find((entry) => entry.id === 'f1').claimedSeverity).toBe('pre-existing');
+  });
+
+  test('control: the same claims all on lines the diff does not touch leave the gate mergeable', async () => {
+    const h = harness({ rangeDiff: DIFF });
+    const out = await claimsRun(h, ['src/c.js:7', 'src/a.js:20']);
+    expect(out.gate.findings).toMatchObject({ open: [], important: 0, preExisting: 2 });
+    expect(out.gate.mergeable).toBe(true);
+    expect(out.reducedReview).not.toMatch(/graded Important, not pre-existing/);
+  });
+
+  test('a diff that cannot be read bears nothing out: every pre-existing claim is graded Important', async () => {
+    const h = harness({ rangeDiff: DIFF });
+    const out = await (async () => {
+      h.reviews = { ok: true, reviews: [] };
+      const m = await h.prepare();
+      fs.rmSync(path.join(h.root, 'prepared', 'range.diff'));
+      answerReview(m, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding({ severity: 'pre-existing', locationOrLink: 'src/c.js:7' })] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const verify = await h.collect();
+      voteAll(verify, () => 'real');
+      return h.collect();
+    })();
+    expect(out.ledger[0]).toMatchObject({ severity: 'important', claimedSeverity: 'pre-existing', severityNote: expect.stringContaining('could not be read') });
+    expect(out.gate.findings.open).toEqual(['f1']);
+  });
+
+  test('the diff is read only when a pre-existing claim needs it, and a security-lane finding is never regraded (it blocks whatever its label)', async () => {
+    const reads = [];
+    const h = harness({ rangeDiff: DIFF });
+    const real = h.deps.fs;
+    h.deps.fs = { ...real, readText: (file) => (reads.push(path.basename(file)), real.readText(file)) };
+    const m = await h.prepare();
+    answerReview(m, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding()] : []), lane: { findings: [finding({ severity: 'pre-existing', locationOrLink: 'src/c.js:7', failureMode: 'the path is spliced into a shell command' })], pathsReviewed: allPaths(h) } });
+    const verify = await h.collect();
+    voteAll(verify, () => 'real');
+    const out = await h.collect();
+    expect(reads.filter((name) => name === 'range.diff')).toEqual([]);
+    expect(out.security.findings[0]).toMatchObject({ id: 's1', severity: 'pre-existing' });
+    expect(out.gate.blockers.map((b) => b.code)).toContain('security-finding-open');
+  });
+
+  test('the reviewer is told how the label is checked', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    expect(fs.readFileSync(m.agents[0].briefPath, 'utf8')).toMatch(/pre-existing[^\n]*checks the `file:line` you cite against the diff[^\n]*graded Important/);
   });
 });
 

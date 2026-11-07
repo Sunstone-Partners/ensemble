@@ -55,7 +55,7 @@ const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
 const { planSlices, verifyCoverage } = require('./pr-review-depth');
 const { reviewDeadlines, toVotesInput } = require('./pr-review-results');
-const { dedupeFindings, isActionable, validateLedger } = require('./pr-review-ledger');
+const { dedupeFindings, isActionable, normalizeSeverity, validateLedger } = require('./pr-review-ledger');
 const { tallyVotes } = require('./pr-review-votes');
 const { evaluateApprovals } = require('./pr-review-approvals');
 const { checkDescription } = require('./pr-review-description');
@@ -162,6 +162,16 @@ function loadRun(deps, repoRoot, runId) {
     return isObject(run) && run.schema === SCHEMA && run.runId === runId ? run : undefined;
   } catch (_error) {
     return undefined;
+  }
+}
+
+/** The hunks of the prepared range diff, or null when it cannot be read (a claim that needs it is then not borne out). */
+function readDiffIndex(deps, file) {
+  try {
+    const text = typeof file === 'string' ? deps.fs.readText(file) : null;
+    return text === null ? null : S.parseDiffHunks(text);
+  } catch (_error) {
+    return null;
   }
 }
 
@@ -499,6 +509,11 @@ function processReview(run, deps) {
   const agents = reviewWaves.flatMap((w) => w.agents);
   const raw = reviewWaves.flatMap((w) => w.result.findings);
 
+  // A finding labelled `pre-existing` never blocks, and the label is the agent's own word about provenance: it stands only
+  // when the cited lines lie outside the PR's diff (S.gradePreExisting). The diff is read once, and only when a claim needs it.
+  const claimsPreExisting = raw.some((finding) => finding.reviewer !== LANE_NAME && normalizeSeverity(finding.severity) === 'pre-existing');
+  const diff = claimsPreExisting ? { index: readDiffIndex(deps, run.prepared.rangeDiff), changedPaths: run.changedPaths, snapshotDir: run.prepared.snapshotDir } : null;
+
   const completed = [];
   const laneFindings = [];
   let nextId = 0;
@@ -507,7 +522,8 @@ function processReview(run, deps) {
     const name = finding.reviewer;
     const { reviewer, ...own } = finding;
     const entry = S.completeFinding(own, name, name === LANE_NAME ? `s${(nextLaneId += 1)}` : `f${(nextId += 1)}`);
-    (name === LANE_NAME ? laneFindings : completed).push(entry);
+    if (name === LANE_NAME) laneFindings.push(entry);
+    else completed.push(diff === null ? entry : S.gradePreExisting(entry, diff));
   }
   const deduped = dedupeFindings(completed);
   if (!Array.isArray(deduped)) return failure('RUN_FAILED', { reason: 'dedupe-refused', error: deduped.reason });
@@ -680,6 +696,8 @@ function reducedReviewNotice(run, built, notReviewed, stage) {
   if (run.security.status !== 'clean') lines.push(`security lane ${run.security.status}${run.security.reason ? `: ${run.security.reason}` : ''}`);
   if (built.tally.verification !== 'performed') lines.push(`verification ${built.tally.verification}${built.tally.reason ? `: ${built.tally.reason}` : ''}`);
   if (notReviewed.unbriefable.length > 0) lines.push(`unbriefable candidate(s) kept, unverified: ${notReviewed.unbriefable.map((u) => u.id).join(', ')}`);
+  const regraded = built.ledger.filter((entry) => entry.claimedSeverity !== undefined);
+  if (regraded.length > 0) lines.push(`graded Important, not pre-existing as the reviewer called them, because the diff does not bear the label out: ${regraded.map((entry) => `${entry.id} (${entry.locationOrLink})`).join(', ')}`);
   if (stage.tests === undefined) lines.push('tests not shown: no baseline run, a timed-out one, or no relevant test files');
   else lines.push(`tests: the baseline ran the relevant test files only (exit ${stage.tests.exitCode}), not the full suite`);
   return lines.join('\n');
