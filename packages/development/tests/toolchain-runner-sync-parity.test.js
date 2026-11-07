@@ -54,6 +54,11 @@ beforeAll(() => {
       "} else if (cmd === 'envfail-secret') {",
       "  process.stdout.write(JSON.stringify({ error: { code: 'CONFIG_ERROR', hint: 'password=hunter2secretvalue' } }));",
       '  process.exit(1);',
+      "} else if (cmd === 'envfail-quoted-secret') {",
+      "  process.stdout.write(JSON.stringify({ error: { code: 'CONFIG_ERROR', hint: 'password=\"hunter2quotedvalue\"', details: [{ note: 'api_key=\"nestedquotedvalue\"' }] } }));",
+      '  process.exit(1);',
+      "} else if (cmd === 'envzero-quoted-secret') {",
+      "  process.stdout.write(JSON.stringify({ error: { code: 'CONFIG_ERROR', hint: 'password=\"hunter2quotedvalue\"' } }));",
       "} else if (cmd === 'envfail-long') {",
       "  process.stdout.write(JSON.stringify({ error: { code: 'VALIDATION_FAILED', hint: 'z'.repeat(20000) } }));",
       '  process.exit(1);',
@@ -86,7 +91,7 @@ function adapter(overrides = {}) {
   return {
     adapter: 'faketool-adapter',
     binaries: [bin],
-    allowlist: [{ bin, sub: ['echo', 'wrapped', 'env', 'fail', 'sleep', 'largeOutput', 'envfail', 'envfail-stderr', 'envfail-secret', 'envfail-long', 'plainfail'] }],
+    allowlist: [{ bin, sub: ['echo', 'wrapped', 'env', 'fail', 'sleep', 'largeOutput', 'envfail', 'envfail-stderr', 'envfail-secret', 'envfail-quoted-secret', 'envzero-quoted-secret', 'envfail-long', 'plainfail'] }],
     env: ['FAKE_TOOL_TOKEN'],
     capabilities: {
       'test.echo': { run: [bin, 'echo'] },
@@ -99,6 +104,8 @@ function adapter(overrides = {}) {
       'test.envfail': { run: [bin, 'envfail'] },
       'test.envfail-stderr': { run: [bin, 'envfail-stderr'] },
       'test.envfail-secret': { run: [bin, 'envfail-secret'] },
+      'test.envfail-quoted-secret': { run: [bin, 'envfail-quoted-secret'] },
+      'test.envzero-quoted-secret': { run: [bin, 'envzero-quoted-secret'] },
       'test.envfail-long': { run: [bin, 'envfail-long'] },
       'test.plainfail': { run: [bin, 'plainfail'] },
       'test.sleep': { run: [bin, 'sleep'] },
@@ -221,6 +228,29 @@ describe('runCapability vs runCapabilitySync: identical envelopes for every guar
       expect(ls).toEqual(la);
       expect(la.error.message).toContain('[truncated]');
       expect(la.error.message.length).toBeLessThan(5000);
+    });
+
+    // JSON escapes the embedded quotes of password="..." to \", which the key-value-secret
+    // pattern does not match once the envelope is serialized -- every string leaf must be
+    // redacted BEFORE JSON.stringify.
+    test('a double-quoted secret in the envelope detail is redacted (non-zero exit, both entry points)', async () => {
+      const a = await runCapability(adapter(), 'test.envfail-quoted-secret', {}, {});
+      const s = runCapabilitySync(adapter(), 'test.envfail-quoted-secret', {}, {});
+      expect(s).toEqual(a);
+      expect(a.error.code).toBe('TOOL_FAILED');
+      expect(a.error.message).toContain('CONFIG_ERROR');
+      expect(a.error.message).toContain('[REDACTED:key-value-secret]');
+      expect(a.error.message).not.toContain('hunter2quotedvalue');
+      expect(a.error.message).not.toContain('nestedquotedvalue');
+    });
+
+    test('a double-quoted secret in a zero-exit stdout error envelope is redacted (both entry points)', async () => {
+      const a = await runCapability(adapter(), 'test.envzero-quoted-secret', {}, {});
+      const s = runCapabilitySync(adapter(), 'test.envzero-quoted-secret', {}, {});
+      expect(s).toEqual(a);
+      expect(a.error.code).toBe('TOOL_FAILED');
+      expect(a.error.message).toContain('[REDACTED:key-value-secret]');
+      expect(a.error.message).not.toContain('hunter2quotedvalue');
     });
   });
 

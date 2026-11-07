@@ -239,8 +239,10 @@
  *   "Timeout containment" above). The message names the adapter, the capability and the
  *   configured timeout.
  * - `TOOL_FAILED`: any other `execFile` callback error (binary not found, non-zero exit, and so
- *   on). The message names the adapter and the capability and includes the child's stderr (or
- *   the raw error message when stderr is empty), passed through `redactSecrets` (same function
+ *   on). The message names the adapter and the capability and includes the child's stderr (or,
+ *   when stderr is empty, the tool's own JSON error envelope printed on stdout -- `br` prints
+ *   `{error:{code,message,hint}}` there -- and failing that the raw error message), with every
+ *   string leaf of that envelope redacted before serialization, passed through `redactSecrets` (same function
  *   `ledger.js`/`preflight.js` use for their own on-disk records) and truncated to
  *   `MAX_TOOL_FAILED_DETAIL_LENGTH` characters before it ever leaves this function -- a failing
  *   tool's stderr is attacker- or misconfiguration-influenced input the CLI prints verbatim, so
@@ -1031,6 +1033,40 @@ function redactAndBound(rawDetail) {
 }
 
 /**
+ * Redact every string leaf of a decoded error envelope with `redactSecrets` BEFORE it is
+ * serialized. Redacting the `JSON.stringify` output instead misses a double-quoted value such
+ * as `password="..."`: JSON escapes the embedded quotes to `\"`, which the key-value-secret
+ * pattern (an optional quote directly after the separator, then non-space non-quote
+ * characters) no longer matches, so the secret would reach the caller verbatim while the same
+ * text on stderr is redacted.
+ *
+ * @param {unknown} value
+ * @returns {unknown} a structural copy with every string leaf redacted
+ */
+function redactEnvelopeLeaves(value) {
+  if (typeof value === 'string') return redactSecrets(value).text;
+  if (Array.isArray(value)) return value.map(redactEnvelopeLeaves);
+  if (value !== null && typeof value === 'object') {
+    const copy = {};
+    for (const [key, leaf] of Object.entries(value)) copy[key] = redactEnvelopeLeaves(leaf);
+    return copy;
+  }
+  return value;
+}
+
+/**
+ * The serialized, leaf-redacted text of a stdout error envelope's `error` object -- the one
+ * helper behind both the zero-exit check and the non-zero-exit detail. The caller still
+ * length-bounds the final message with `redactAndBound`.
+ *
+ * @param {object} envelopeError
+ * @returns {string}
+ */
+function serializeEnvelopeError(envelopeError) {
+  return JSON.stringify(redactEnvelopeLeaves(envelopeError));
+}
+
+/**
  * Parse `stdout` as a tool error envelope: a top-level JSON OBJECT with its own `error`
  * property that is itself an object. A top-level JSON ARRAY (e.g. `br show`'s `[{...}]`) is
  * never an envelope. Shared by the zero-exit check and the non-zero-exit detail fallback.
@@ -1080,7 +1116,7 @@ function checkZeroExitErrorEnvelope(adapterId, capability, stdout) {
   const envelopeError = extractStdoutErrorEnvelope(stdout);
   if (envelopeError === null) return null;
 
-  const boundedDetail = redactAndBound(JSON.stringify(envelopeError));
+  const boundedDetail = redactAndBound(serializeEnvelopeError(envelopeError));
   return {
     ok: false,
     error: {
@@ -1110,7 +1146,7 @@ function nonZeroExitDetail(stderr, stdout, fallbackMessage) {
   if (trimmedStderr) return trimmedStderr;
   const envelopeError = extractStdoutErrorEnvelope(stdout);
   if (envelopeError !== null) {
-    return `tool reported an error envelope on stdout (${JSON.stringify(envelopeError)})`;
+    return `tool reported an error envelope on stdout (${serializeEnvelopeError(envelopeError)})`;
   }
   return fallbackMessage;
 }
