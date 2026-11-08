@@ -1398,8 +1398,8 @@ describe('verifier waves dispatched while the wave before is still running (kata
     agent('reviewer', 0, 30, { agent: 'RevA', ...w(1) }),
     agent('verifier', 31, 51, { agent: 'VerA', ...w(1) }),
     agent('verifier', 31, 41, { agent: 'VerB', ...w(1) }),
-    agent('verifier', 41, 60, { agent: 'VerC', ...w(2, refill ? { refill: true } : {}) }),
-    agent('verifier', 51, 58, { agent: 'VerD', ...w(3, refill ? { refill: true } : {}) }),
+    agent('verifier', 41, 60, { agent: 'VerC', ...w(2, refill ? { refill: true, cap: 4, running: 1 } : {}) }),
+    agent('verifier', 51, 58, { agent: 'VerD', ...w(3, refill ? { refill: true, cap: 4, running: 1 } : {}) }),
     verdict(60, 61),
   ];
 
@@ -1439,10 +1439,101 @@ describe('verifier waves dispatched while the wave before is still running (kata
   });
 
   test('an unusable verifier span among them makes the step a lower bound; no usable span is a missing step', () => {
-    const some = computeReviewTiming([...rolling(true).slice(0, 5), agent('verifier', 55, null, { agent: 'VerE', ...w(3, { refill: true }) }), verdict(60, 61)]);
+    const some = computeReviewTiming([...rolling(true).slice(0, 5), agent('verifier', 55, null, { agent: 'VerE', ...w(3, { refill: true, cap: 4, running: 1 }) }), verdict(60, 61)]);
     expect(some.criticalPath.rounds[0].steps[1]).toMatchObject({ rolling: true, lowerBound: true, unusable: 1 });
-    const none = computeReviewTiming([root(0, 300), agent('reviewer', 0, 30, w(1)), agent('verifier', 31, null, w(2, { refill: true })), verdict(60, 61)]);
+    const none = computeReviewTiming([root(0, 300), agent('reviewer', 0, 30, w(1)), agent('verifier', 31, null, w(2, { refill: true, cap: 4, running: 0 })), verdict(60, 61)]);
     expect(none.criticalPath.missing).toBe(true);
     expect(none.criticalPath.reason).toContain('verifier: every verifier span is unusable');
+  });
+});
+
+describe('the refill marks explain only the overlap the runner makes (kata 630v, independent review round 1)', () => {
+  const NAMES = { reviewer: STAGES.reviewer, verifier: STAGES.verifier, verdict: STAGES.verdict, root: STAGES.root };
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timing-refill-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Records `spans` ([{name, start, end, attrs, status}], seconds from T0) with the REAL recorder under an injected clock and reads them back with the real `pr-review-cli timing`. */
+  let recorded = 0;
+  function recordAndRead(spans) {
+    let now = T0;
+    const runId = `refill-${(recorded += 1)}`; // one trace file per recording
+    const tracer = createTracer({ runId, projectRoot: dir, clock: { now: () => now, mono: () => now - T0 } });
+    const events = spans.flatMap((s, i) => [{ at: s.start, order: 1, i }, { at: s.end, order: 0, i }]).sort((a, b) => a.at - b.at || a.order - b.order);
+    const ids = [];
+    for (const e of events) {
+      now = T0 + e.at * 1000;
+      const s = spans[e.i];
+      if (e.order === 1) ids[e.i] = tracer.startSpan(s.name, { kind: STAGE_KINDS[s.name] || 'phase', attrs: s.attrs });
+      else tracer.endSpan(ids[e.i], { status: s.status || 'ok' });
+    }
+    const res = spawnSync(process.execPath, [CLI, 'timing'], { input: JSON.stringify({ runId, cwd: dir }), encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    return JSON.parse(res.stdout);
+  }
+
+  const base = (verifiers) => [
+    { name: NAMES.root, start: 0, end: 300, attrs: {} },
+    { name: NAMES.reviewer, start: 0, end: 30, attrs: { agent: 'RevA', round: 1, wave: 1 } },
+    ...verifiers.map((v) => ({ name: NAMES.verifier, start: v.start, end: v.end, status: v.status, attrs: { agent: v.agent, round: 1, wave: v.wave, ...v.attrs } })),
+    { name: NAMES.verdict, start: 70, end: 71, attrs: { round: 1 } },
+  ];
+  const M = (running, cap = 4) => ({ refill: true, cap, running });
+  // wave 1 holds 31-51 and 31-41; the refills start at 41 (VerA still running) and at 51 (VerC still running)
+  const wave1 = [{ agent: 'VerA', wave: 1, start: 31, end: 51 }, { agent: 'VerB', wave: 1, start: 31, end: 41 }];
+  const refills = (marks2 = M(1), marks3 = M(1)) => [{ agent: 'VerC', wave: 2, start: 41, end: 60, attrs: marks2 }, { agent: 'VerD', wave: 3, start: 51, end: 58, attrs: marks3 }];
+  const verifierStep = (t) => t.criticalPath.rounds[0].steps.find((x) => x.stage === 'verifier');
+
+  test('control: every overlapping wave marked, with cap facts the trace bears out: ONE rolling verifier step, the critical path known', () => {
+    const t = recordAndRead(base([...wave1, ...refills()]));
+    expect(t.criticalPath.missing).toBe(false);
+    expect(verifierStep(t)).toMatchObject({ missing: false, rolling: true, waves: 3, ms: 29000 });
+    expect(t.warnings.filter((x) => x.includes('refill marks'))).toEqual([]);
+  });
+
+  test('the reviewer\'s repro: the LAST refill wave alone is marked, the overlapping wave 2 is not: the overlap is refused as before, and the reader says why', () => {
+    const t = recordAndRead(base([...wave1, ...refills({}, M(1))]));
+    expect(t.criticalPath).toMatchObject({ missing: true });
+    expect(t.criticalPath.reason).toContain('verifier wave 2 starts');
+    expect(t.warnings.some((x) => x.includes('verifier wave 2 overlaps an earlier wave and not every one of its spans is marked'))).toBe(true);
+  });
+
+  test('no marks at all stays refused (the guard against mis-stamped waves is untouched)', () => {
+    expect(recordAndRead(base([...wave1, ...refills({}, {})])).criticalPath).toMatchObject({ missing: true });
+  });
+
+  test('a mark without the cap facts, or with facts the trace contradicts, explains nothing', () => {
+    const refused = (verifiers, why) => {
+      const t = recordAndRead(base(verifiers));
+      expect(t.criticalPath).toMatchObject({ missing: true });
+      expect(t.warnings.join('\n')).toContain(why);
+    };
+    refused([...wave1, ...refills({ refill: true }, M(1))], 'without a readable, single cap and running count'); // no cap, no running
+    refused([...wave1, ...refills(M(0), M(1))], 'earlier verifier spans were still running when it started'); // says nothing ran, VerA ran
+    refused([...wave1, ...refills(M(1, 1), M(1))], 'more than its cap of 1'); // 1 running + 1 dispatched > cap 1
+    refused([...wave1, { agent: 'VerC', wave: 2, start: 41, end: 60, attrs: M(1) }, { agent: 'VerC2', wave: 2, start: 41, end: 60, attrs: { refill: true, cap: 4, running: 2 } }], 'without a readable, single cap and running count'); // the wave's spans disagree
+  });
+
+  test('a wave with ONE marked span and one unmarked is not a refill wave: refused, and the unmarked span is named by the reason', () => {
+    const t = recordAndRead(base([...wave1, { agent: 'VerC', wave: 2, start: 41, end: 60, attrs: M(1) }, { agent: 'VerC2', wave: 2, start: 41, end: 59, attrs: {} }]));
+    expect(t.criticalPath).toMatchObject({ missing: true });
+    expect(t.warnings.join('\n')).toContain('verifier wave 2 overlaps an earlier wave and not every one of its spans is marked');
+  });
+
+  test('more verifier spans at once than a recorded cap is refused: five ran at once and a refill says the cap was 4', () => {
+    const five = ['V1', 'V2', 'V3', 'V4', 'V5'].map((agent) => ({ agent, wave: 1, start: 31, end: 40 }));
+    const t = recordAndRead(base([...five, { agent: 'VerC', wave: 2, start: 45, end: 60, attrs: M(0) }]));
+    expect(verifierStep(t).rolling).toBeUndefined(); // the contradiction withdraws the rolling reading: the two waves are read one after another
+    expect(t.warnings.join('\n')).toContain('5 verifier spans ran at once, more than the cap of 4');
+  });
+
+  test('a verifier that ended `expired` is not counted as running: its span only ends when its wave is collected', () => {
+    // VerB never wrote and is past its deadline (the dispatcher stopped it), VerA arrived: the refill left 0 running
+    const t = recordAndRead(base([{ agent: 'VerA', wave: 1, start: 31, end: 41 }, { agent: 'VerB', wave: 1, start: 31, end: 60, status: 'expired' }, { agent: 'VerC', wave: 2, start: 41, end: 58, attrs: M(0) }]));
+    expect(verifierStep(t)).toMatchObject({ missing: false, rolling: true });
   });
 });

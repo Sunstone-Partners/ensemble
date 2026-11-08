@@ -292,7 +292,7 @@ describe('the real CLI process on a real git fixture', () => {
     answerVotes({ agents: v1.agents.slice(0, 1) });
     const v2 = coll('rolling');
     expect(v2.code).toBe(0);
-    expect(v2.out).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify', refill: true, wave: '2 of 2' });
+    expect(v2.out).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify', refill: true, wave: '2 (rolling)' });
     expect(v2.out.agents.map((a) => a.name)).toEqual(['verifier-9']);
     expect(v2.out.stillRunning).toEqual(v1.agents.slice(1).map((a) => a.name));
     expect(v2.out.stillRunning.length + v2.out.agents.length).toBeLessThanOrEqual(8);

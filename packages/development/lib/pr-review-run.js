@@ -506,7 +506,7 @@ function dispatchWave(run, wave, now, deps, tracer) {
     agent.deadlineMinutes = deadline.minutes;
     agent.prompt = S.agentPrompt(agent);
     const stage = stageOfAgent(agent);
-    agent.spanId = tracer.start(stage, STAGE_KINDS[stage], { agent: agent.name, role: agent.role, round: run.round, wave: wave.wave, ...(wave.refill === true ? { refill: true } : {}) });
+    agent.spanId = tracer.start(stage, STAGE_KINDS[stage], { agent: agent.name, role: agent.role, round: run.round, wave: wave.wave, ...(wave.refill === true ? { refill: true, cap: run.maxConcurrentAgents, running: wave.stillRunning.length } : {}) });
     dispatched.push(agent);
   }
   wave.status = 'dispatched';
@@ -520,7 +520,7 @@ function manifestOf(run, wave) {
     status: 'DISPATCH',
     runId: run.runId,
     round: wave.round,
-    wave: `${wave.wave} of ${wave.of}`,
+    wave: waveLabel(wave),
     headSha: run.headSha,
     mode: run.mode,
     ...(run.reReview === undefined ? {} : { reReview: run.reReview }),
@@ -1025,17 +1025,18 @@ function refillVerifyWave(run, running) {
   if (free < batch) return null;
   const take = queue.slice(0, free);
   const rest = queue.slice(free);
+  // A wave already dispatched keeps its number and its total; the waves from here on are numbered on and carry no total (`of: null`):
+  // how many more there will be depends on when verifiers arrive.
   run.waves = run.waves.filter((w) => !(w.round === 'verify' && w.status === 'planned'));
-  const refill = { round: 'verify', wave: 0, of: 0, status: 'planned', refill: true, stillRunning: [...running], agents: take };
+  let number = run.waves.filter((w) => w.round === 'verify').length;
+  const refill = { round: 'verify', wave: (number += 1), of: null, status: 'planned', refill: true, stillRunning: [...running], agents: take };
   run.waves.push(refill);
-  for (const group of S.chunk(rest, run.maxConcurrentAgents)) run.waves.push({ round: 'verify', wave: 0, of: 0, status: 'planned', agents: group });
-  const verifyWaves = run.waves.filter((w) => w.round === 'verify');
-  verifyWaves.forEach((w, index) => {
-    w.wave = index + 1;
-    w.of = verifyWaves.length;
-  });
+  for (const group of S.chunk(rest, run.maxConcurrentAgents)) run.waves.push({ round: 'verify', wave: (number += 1), of: null, status: 'planned', agents: group });
   return refill;
 }
+
+/** `1 of 3`; a wave of a rolling verify round has no total: `2 (rolling)`. */
+const waveLabel = (wave) => (wave.of === null || wave.of === undefined ? `${wave.wave} (rolling)` : `${wave.wave} of ${wave.of}`);
 
 /* ------------------------------------------------------------- finalisation */
 
@@ -1597,7 +1598,7 @@ async function collectStages(input, deps, ctx) {
     const earliest = Math.min(...running.map((a) => a.deadlineAt));
     logCall(run, 'collect', startedAt, deps);
     saveRun(deps, run);
-    return { ok: true, status: 'PENDING', runId: run.runId, round: first.round, wave: `${first.wave} of ${first.of}`, waitingOn: running.map((a) => a.name), retryAfterMs: Math.max(1000, Math.min(15000, earliest - now)), earliestDeadlineAt: earliest, earliestDeadlineAtIso: new Date(earliest).toISOString() };
+    return { ok: true, status: 'PENDING', runId: run.runId, round: first.round, wave: waveLabel(first), waitingOn: running.map((a) => a.name), retryAfterMs: Math.max(1000, Math.min(15000, earliest - now)), earliestDeadlineAt: earliest, earliestDeadlineAtIso: new Date(earliest).toISOString() };
   }
   if (outstanding.length > 0) saveRun(deps, run);
 

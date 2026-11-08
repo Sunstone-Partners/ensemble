@@ -79,9 +79,11 @@
  * that carry ONE wave number but start further apart than CLOCK_SKEW_TOLERANCE_MS are the spans of more than one wave
  * under a mis-stamped number, and that step is MISSING and names the wave (one slowest span of them would pass a shorter
  * chain off as the whole). VERIFY REFILLS (kata 630v): `review-run` may dispatch verifiers into slots a wave freed while the wave
- * still runs; those spans carry the attr `refill` (true), and then the verifier stage of the round is ONE step, `rolling: true`,
- * from the first verifier's start to the last one's end, with `waves` counting the waves; overlapping waves WITHOUT the mark are
- * refused as above, and only the verifier stage rolls. HONEST LIMIT: the steps are reviewers, verifiers and the verdict, as the contract says, so the
+ * still runs; those spans carry the attrs `refill` (true), `cap` and `running` (the agents of earlier waves it left running). When
+ * EVERY wave that overlaps an earlier one is marked on every span and its facts bear out (`running` plus its own agents within
+ * `cap`, no more earlier spans running at its start than `running`, never more spans at once than the cap), the verifier stage is
+ * ONE step, `rolling: true`, from the first verifier's start to the last one's end, with `waves` counting the waves. Otherwise the
+ * marks explain nothing: a warning says why and overlapping waves are refused as above. Only the verifier stage rolls. HONEST LIMIT: the steps are reviewers, verifiers and the verdict, as the contract says, so the
  * security lane (or the classifier, or the second assessor) is never a step. The chain is then a lower bound whenever such an
  * agent may have lengthened it, and the round says which: `outlasted` lists each one that ended after the slowest reviewer
  * of its wave (an agent naming no wave, or a wave no reviewer step has, is compared with the last reviewer step), with the
@@ -364,6 +366,54 @@ function rollingStep(stage, spans, window) {
 }
 
 /**
+ * Why the overlapping verifier waves of a round are NOT the refill the runner makes, or null when every overlap is explained
+ * (kata 630v, review round 1). A wave that starts before an earlier wave ended is explained only when EVERY span of it carries
+ * the `refill` mark and the cap facts the runner records on a refill (`cap`, `running`: the agents of earlier waves it left
+ * running), and those facts are consistent with the trace: `running` plus the wave's own agents within `cap`, and no more
+ * earlier-wave spans still running at its start than `running` says. Past that, at no moment may more verifier spans run than the
+ * largest cap. A span that ended `expired` is left out of the two counts: the dispatcher stops an agent at its deadline, and the
+ * span only ends when its wave is collected. One marked span among unmarked overlapping waves therefore explains nothing.
+ */
+function refillOverlapProblem(spans) {
+  const waves = new Map();
+  for (const span of spans) {
+    const wave = waveOf(span);
+    if (wave === null) return 'some verifier spans name no wave';
+    waves.set(wave, [...(waves.get(wave) || []), span]);
+  }
+  const usable = (list) => list.map((span) => ({ span, found: intervalOf(span) })).filter((entry) => entry.found.ok);
+  const ordered = [...waves.keys()].sort((a, b) => a - b).map((wave) => ({ wave, entries: usable(waves.get(wave)), all: waves.get(wave) }));
+  const live = (entry) => entry.span.status !== 'expired';
+  let caps = 0;
+  for (let i = 1; i < ordered.length; i += 1) {
+    const own = ordered[i];
+    for (const span of own.all) if (isRefill(span) && asCount(span.attrs.cap) >= 1) caps = Math.max(caps, asCount(span.attrs.cap));
+    if (own.entries.length === 0) continue;
+    const start = Math.min(...own.entries.map((e) => e.found.start));
+    const earlier = ordered.slice(0, i).flatMap((w) => w.entries);
+    if (earlier.length === 0 || start >= Math.max(...earlier.map((e) => e.found.end))) continue; // one after another: nothing to explain
+    const label = `verifier wave ${own.wave}`;
+    if (!own.all.every(isRefill)) return `${label} overlaps an earlier wave and not every one of its spans is marked as a refill`;
+    const casts = own.all.map((s) => ({ cap: asCount(s.attrs.cap), running: asCount(s.attrs.running) }));
+    const { cap, running } = casts[0];
+    if (cap === null || cap < 1 || running === null || casts.some((c) => c.cap !== cap || c.running !== running)) return `${label} is a refill without a readable, single cap and running count`;
+    if (running + own.all.length > cap) return `${label} left ${running} agents running and dispatched ${own.all.length}: more than its cap of ${cap}`;
+    const active = earlier.filter((e) => live(e) && e.found.start <= start && e.found.end > start).length;
+    if (active > running) return `${label} left ${running} agents running but ${active} earlier verifier spans were still running when it started`;
+    caps = Math.max(caps, cap);
+  }
+  if (caps > 0) {
+    const events = ordered.flatMap((w) => w.entries).filter(live).flatMap((e) => [[e.found.start, 1], [e.found.end, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let now = 0;
+    for (const [, delta] of events) {
+      now += delta;
+      if (now > caps) return `${now} verifier spans ran at once, more than the cap of ${caps}`;
+    }
+  }
+  return null;
+}
+
+/**
  * The steps one stage contributes to a round's chain, each `{label, wave, step, interval}`. A stage dispatched in several
  * waves is one step per wave (that wave's slowest span), in wave order, because the waves ran one after another; a stage in
  * one wave, or in spans that name none, is one step as ever. Spans that name no wave beside spans that do are one extra
@@ -373,7 +423,11 @@ function rollingStep(stage, spans, window) {
  * are not checked (a narrated dispatch staggers its agents).
  */
 function stagePicks(stage, spans, window, warnings, roundLabel) {
-  if (stage === 'verifier' && spans.some(isRefill)) return [rollingStep(stage, spans, window)];
+  if (stage === 'verifier' && spans.some(isRefill)) {
+    const problem = refillOverlapProblem(spans);
+    if (problem === null) return [rollingStep(stage, spans, window)];
+    warnings.push(`round ${roundLabel}: the verifier refill marks do not explain the overlap (${problem}); the waves are read as one after another`);
+  }
   const waves = [...new Set(spans.map(waveOf))].sort(nullLast);
   if (waves.length > 1 && waves.includes(null)) warnings.push(`round ${roundLabel}: some ${stage} spans carry a wave and some do not; the unnumbered ones are one extra wave`);
   if (waves.length === 0) return [{ label: stage, wave: null, ...slowestStep(stage, spans, window) }];

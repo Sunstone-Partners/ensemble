@@ -1901,7 +1901,7 @@ describe('rolling verification (kata 630v): freed slots take the next verifiers,
     // verifier-1 arrives: ONE slot is free, so verifier-5 starts (the plan's next verifier) and says which agents still run
     vote([v1.agents[0]]);
     const v2 = await h.collect();
-    expect(v2).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true, wave: '2 of 3', maxConcurrentAgents: 4 });
+    expect(v2).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true, wave: '2 (rolling)', maxConcurrentAgents: 4 });
     expect(v2.agents.map(nameOf)).toEqual(['verifier-5']);
     expect(v2.stillRunning).toEqual(['verifier-2', 'verifier-3', 'verifier-4']);
     expect(v2.stillRunning.length + v2.agents.length).toBeLessThanOrEqual(4);
@@ -1909,7 +1909,7 @@ describe('rolling verification (kata 630v): freed slots take the next verifiers,
     // verifier-2 and verifier-5 arrive: two slots are free, one verifier is left
     vote([v1.agents[1], v2.agents[0]]);
     const v3 = await h.collect();
-    expect(v3).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true, wave: '3 of 3' });
+    expect(v3).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true, wave: '3 (rolling)' });
     expect(v3.agents.map(nameOf)).toEqual(['verifier-6']);
     expect(v3.stillRunning).toEqual(['verifier-3', 'verifier-4']);
     expect(v3.stillRunning.length + v3.agents.length).toBeLessThanOrEqual(4);
@@ -1933,7 +1933,7 @@ describe('rolling verification (kata 630v): freed slots take the next verifiers,
     }
     expect(out.votes.outcomes).toHaveLength(6);
     expect(out.votes.outcomes.every((o) => o.outcome === 'present')).toBe(true);
-    expect(run.waves.filter((w) => w.round === 'verify').map((w) => [w.wave, w.of, w.status, w.refill === true])).toEqual([[1, 3, 'collected', false], [2, 3, 'collected', true], [3, 3, 'collected', true]]);
+    expect(run.waves.filter((w) => w.round === 'verify').map((w) => [w.wave, w.of, w.status, w.refill === true])).toEqual([[1, 2, 'collected', false], [2, null, 'collected', true], [3, null, 'collected', true]]);
   });
 
   test('a refill agent is given ITS OWN deadline, from the collect that dispatched it, never the first wave\'s', async () => {
@@ -1946,6 +1946,36 @@ describe('rolling verification (kata 630v): freed slots take the next verifiers,
     expect(v2.agents[0].dispatchedAt).toBe(later);
     expect(v2.agents[0].deadlineAt).toBe(later + 5 * 60 * 1000);
     expect(v2.agents[0].deadlineAt).toBeGreaterThan(v1.agents[0].deadlineAt);
+  });
+
+  test('an agent past its deadline is not running: it frees its slot at once for the refill, and stays expired in the record (independent review round 1)', async () => {
+    // 8 candidates x 3 verifiers = 8 verifiers at a cap of 4: wave 1 is verifier-1..4, four are queued
+    const EIGHT = (n) => (n === 'reviewer-s1-a' ? Array.from({ length: 8 }, (_, i) => finding({ locationOrLink: `src/a.js:${i + 1}`, failureMode: `distinct defect number ${i} in a different subsystem ${'x'.repeat(i)}` })) : []);
+    const h = harness({ policyJson: { maxConcurrentAgents: 4 } });
+    const m1 = await h.prepare();
+    answerReview(m1, { findingsFor: EIGHT, lane: { findings: [], pathsReviewed: allPaths(h) } });
+    const v1 = await h.collect();
+    expect(v1.agents.map(nameOf)).toEqual(['verifier-1', 'verifier-2', 'verifier-3', 'verifier-4']);
+    // verifier-1 and -2 arrive; verifier-3 passed its deadline unarrived (the dispatcher stopped it); verifier-4 is still running
+    vote(v1.agents.slice(0, 2));
+    const real = h.deps.collectResults;
+    h.deps.collectResults = (input) => {
+      const out = real(input);
+      return { ...out, agents: out.agents.map((a) => (a.name === 'verifier-3' ? { ...a, pending: false, state: 'expired', reason: 'deadline-passed' } : a)) };
+    };
+    const v2 = await h.collect();
+    // three slots are free (cap 4, one agent running): three verifiers go, and only verifier-4 is still running
+    expect(v2).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true });
+    expect(v2.agents.map(nameOf)).toEqual(['verifier-5', 'verifier-6', 'verifier-7']);
+    expect(v2.stillRunning).toEqual(['verifier-4']);
+    expect(v2.stillRunning.length + v2.agents.length).toBeLessThanOrEqual(4);
+    // the expired agent is not erased: its wave is not collected yet, and when it is the record says expired
+    vote([v1.agents[3], ...v2.agents]);
+    const v3 = await h.collect();
+    expect(v3).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    expect(v3.agents.map(nameOf)).toEqual(['verifier-8']);
+    const states = Object.fromEntries(h.readRun().waves.filter((w) => w.round === 'verify' && w.status === 'collected').flatMap((w) => w.agents).map((a) => [a.name, a.state]));
+    expect(states['verifier-3']).toBe('expired');
   });
 
   test('a wave whose agents have all arrived or expired is followed by the planned next wave exactly as before: no refill, and the expiry is recorded', async () => {
