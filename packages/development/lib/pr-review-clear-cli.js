@@ -55,7 +55,11 @@
  *   8. `git diff` of the cited file from the baseline to this head cannot be read
  *      -> diff-failed (as given); the cited line (or, for a file-only citation, any line) is
  *      untouched -> location-unchanged: the line is moved to this head's numbering
- *   9. otherwise CLEARED: the original entry plus `cleared`, `clearedBy` (the full head id)
+ *   9. touched, but git's rename detection (`-M`, 50% similarity) says the cited FILE was renamed
+ *      -> location-unanchored (as given): the defect went with the file to a path this entry does not
+ *      name, and the verb does not guess it. A review that raises it under the new path adds an entry
+ *      of its own (the ledger's identity includes the path), so a person decides the old one
+ *  10. otherwise CLEARED: the original entry plus `cleared`, `clearedBy` (the full head id)
  *      and `clearedReason` as `clearFixedFindings` produced them (`not-cleared` if it
  *      declines).
  *
@@ -71,7 +75,9 @@
  * fixed it). When that diff touched the line or replaced the file, or its own head does not lead there (a
  * force-push replaced it, or the repository no longer holds it), its place is unknown ->
  * location-unanchored (as given, not stamped, never cleared; a review that raises it again re-anchors it).
- * A mode-only change (chmod) touches no line; deleting, creating or replacing a file with binary content does.
+ * A mode-only change (chmod) touches no line; deleting, creating or replacing a file with binary content does,
+ * and so does a rename (rule 9 then keeps the entry). A file deleted outright, or replaced by one too
+ * dissimilar for git to pair, is a deletion, not a rename.
  * The output ledger has the input's length and order; a second run over its own output changes
  * nothing; the input is never mutated.
  *
@@ -178,6 +184,13 @@ function deriveCleared(input) {
     return { ...entry, locationOrLink, locationAsOf: head };
   };
 
+  // Git's rename pairs from a baseline to this head, asked once per baseline: the whole-tree diff is the same for every entry.
+  const renameCache = new Map();
+  const renamesSince = (from) => {
+    if (!renameCache.has(from)) renameCache.set(from, repo.renamedPaths(git, cwd, { from, to: head }));
+    return renameCache.get(from);
+  };
+
   const out = ledger.map((entry) => {
     if (entry.cleared === true) return keep(entry, 'already-cleared');
     const own = typeof entry.headSha === 'string' ? repo.resolveCommit(git, cwd, entry.headSha) : null;
@@ -232,6 +245,13 @@ function deriveCleared(input) {
       const moved = cited.line === null ? null : movedLocation(numbered, changed.hunks);
       return moved === null ? keep(entry, 'location-unchanged') : keepMoved(entry, 'location-unchanged', moved);
     }
+
+    // The path is gone, but `--no-renames` reads a RENAME as a deletion. When git pairs the path with a created file
+    // the defect went along with it, to a path this entry does not name; the verb does not guess where, so the entry
+    // is kept, never cleared. (A review that raises it under the new path adds an entry of its own.)
+    const renames = renamesSince(recorded);
+    if (!renames.ok) return keep(entry, 'diff-failed');
+    if (renames.moves.has(cited.file)) return keep(entry, 'location-unanchored');
 
     const decision = clearFixedFindings({
       ledger: [numbered],

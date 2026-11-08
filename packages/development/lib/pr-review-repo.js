@@ -159,6 +159,35 @@ function changedOldLines(git, cwd, { from, to, file } = {}) {
 }
 
 /**
+ * The files git's rename detection (`-M`, its default similarity) says were renamed between `from` and `to`:
+ * `{ ok: true, moves }`, `moves` a Map from the old path to the new one (empty when nothing was renamed).
+ * `changedOldLines` reads a rename as the deletion of the old path (`--no-renames`, so that a line number
+ * belongs to ONE path); this is how a caller tells that deletion from a file that only left under another name.
+ * A file deleted outright, or replaced by one too dissimilar to pair, is not a rename.
+ * Fail closed: a diff git cannot produce, or output that is not what `-z --name-status` writes for a rename,
+ * is `ok: false`, never an empty map.
+ */
+function renamedPaths(git, cwd, { from, to } = {}) {
+  const a = resolveCommit(git, cwd, from);
+  const b = resolveCommit(git, cwd, to);
+  if (a === null) return { ok: false, reason: 'from-not-found' };
+  if (b === null) return { ok: false, reason: 'to-not-found' };
+  const result = git(['diff', '--name-status', '-z', '--find-renames', '--diff-filter=R', '--no-color', '--no-ext-diff', a, b], { cwd });
+  if (result.status !== 0) return { ok: false, reason: 'diff-failed' };
+
+  const fields = String(result.stdout).split('\0');
+  if (fields[fields.length - 1] === '') fields.pop();
+  // `-z` writes one rename as three NUL-ended fields: `R<similarity>`, the old path, the new path.
+  if (fields.length % 3 !== 0) return { ok: false, reason: 'unreadable-diff' };
+  const moves = new Map();
+  for (let i = 0; i < fields.length; i += 3) {
+    if (!/^R\d*$/.test(fields[i]) || fields[i + 1] === '' || fields[i + 2] === '') return { ok: false, reason: 'unreadable-diff' };
+    moves.set(fields[i + 1], fields[i + 2]);
+  }
+  return { ok: true, moves };
+}
+
+/**
  * Where line `line` of `from` is in `to`, given the `hunks` of `changedOldLines`: `{ touched: true, line: null }`
  * when a hunk modified or removed it, else `{ touched: false, line }` moved by every hunk above it (an insertion
  * above pushes it down, a removal above pulls it up). Pure.
@@ -184,5 +213,6 @@ module.exports = {
   holdsHead,
   readBlobAt,
   changedOldLines,
+  renamedPaths,
   advanceLine
 };

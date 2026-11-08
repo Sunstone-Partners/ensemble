@@ -621,6 +621,89 @@ describe('a force-push between rounds clears nothing (an entry raised at a head 
   });
 });
 
+describe('a renamed file keeps its findings (a rename is not a fix: the defect went with the file)', () => {
+  let w;
+  let b0;
+  let r1;
+  const heads = {};
+  const at = (head, extra = {}) => deriveCleared({ git: defaultGit(), cwd: w, baseSha: b0, headSha: heads[head], lastReviewedSha: r1, incoming: [], now: () => 0, ...extra });
+  const content = numbered(30);
+  const lineEntry = () => finding('F', 'src/a.js:20', 'defect');
+  const fileEntry = () => finding('G', 'src/a.js', 'defect');
+  const branch = (name) => sh(w, ['checkout', '-q', '-b', name, r1]);
+
+  beforeAll(() => {
+    w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prr-clear-rename-')));
+    roots.push(w);
+    sh(w, ['init', '-q', '-b', 'main']);
+    sh(w, ['config', 'user.name', 'T']);
+    sh(w, ['config', 'user.email', 't@example.com']);
+    sh(w, ['config', 'commit.gpgsign', 'false']);
+    b0 = commit(w, { 'README.md': 'base\n' }, 'base');
+    r1 = commit(w, { 'src/a.js': content, 'src/other.js': numbered(10) }, 'r1: the defect is on line 20 of src/a.js');
+
+    branch('rename');
+    heads.rename = commit(w, { 'src/b.js': content }, 'rename only', ['src/a.js']);
+    branch('rename-edit');
+    heads.renameEdit = commit(w, { 'src/c.js': numbered(30, { 12: 'CHANGED 12' }) }, 'rename and edit another line', ['src/a.js']);
+    branch('rename-fix');
+    heads.renameFix = commit(w, { 'src/d.js': numbered(30, { 20: 'FIXED 20' }) }, 'rename and edit the cited line', ['src/a.js']);
+    branch('move');
+    heads.move = commit(w, { 'lib/a.js': content }, 'move to another directory', ['src/a.js']);
+    branch('delete');
+    heads.delete = commit(w, {}, 'delete', ['src/a.js']);
+    branch('dissimilar');
+    heads.dissimilar = commit(w, { 'src/e.js': Array.from({ length: 30 }, (_, i) => `entirely different ${i}`).join('\n') + '\n' }, 'delete and create something else', ['src/a.js']);
+    branch('other-rename');
+    heads.otherRename = commit(w, { 'src/a.js': numbered(30, { 20: 'FIXED 20' }), 'src/other2.js': numbered(10) }, 'fix in place, rename another file', ['src/other.js']);
+    sh(w, ['checkout', '-q', 'main']);
+  });
+
+  test.each([
+    ['a rename only (identical content)', 'rename'],
+    ['a rename with an edit on another line', 'renameEdit'],
+    ['a rename with an edit on the cited line itself', 'renameFix'],
+    ['a move to another directory', 'move']
+  ])('%s clears nothing: location-unanchored, for a cited line and a file-only citation alike', (_label, head) => {
+    const r = at(head, { ledger: [lineEntry(), fileEntry()] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([
+      { id: 'F', reason: 'location-unanchored' },
+      { id: 'G', reason: 'location-unanchored' }
+    ]);
+    expect(r.ledger).toEqual([lineEntry(), fileEntry()]);
+  });
+
+  test('the defect raised again under the new path does not make the old entry a fix either', () => {
+    const r = at('rename', { ledger: [lineEntry()], incoming: [finding('N', 'src/b.js:20', 'defect')] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
+  });
+
+  test('control: a file deleted outright is still a fix', () => {
+    const r = at('delete', { ledger: [lineEntry(), fileEntry()] });
+    expect(r.cleared.map((c) => c.id)).toEqual(['F', 'G']);
+  });
+
+  test('control: a file replaced by one too dissimilar for git to pair is a deletion, not a rename', () => {
+    const r = at('dissimilar', { ledger: [lineEntry()] });
+    expect(r.cleared.map((c) => c.id)).toEqual(['F']);
+  });
+
+  test('control: another file being renamed does not hold back a fix made in place', () => {
+    const r = at('otherRename', { ledger: [lineEntry(), fileEntry()] });
+    expect(r.cleared.map((c) => c.id)).toEqual(['F', 'G']);
+  });
+
+  test('a rename lookup git cannot answer keeps the entry (diff-failed) instead of clearing on a guess', () => {
+    const real = defaultGit();
+    const flaky = (args, opts) => (args.includes('--find-renames') ? { status: 128, stdout: '', stderr: 'boom' } : real(args, opts));
+    const r = at('delete', { ledger: [lineEntry()], git: flaky });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'diff-failed' }]);
+  });
+});
+
 describe('entry point', () => {
   test('reads the payload on stdin and prints one JSON result', () => {
     const payload = { repoRoot: dir, baseSha: base, headSha: p2, ledger: [finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 })], incoming: [] };

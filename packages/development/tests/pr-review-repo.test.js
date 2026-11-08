@@ -334,6 +334,71 @@ describe('changedOldLines', () => {
   });
 });
 
+describe('renamedPaths', () => {
+  let w;
+  let a;
+  let c1;
+  let c2;
+  let c3;
+  const moves = (from, to) => repo.renamedPaths(git, w, { from, to });
+
+  beforeAll(() => {
+    w = mkdir('prr-rename-');
+    initRepo(w);
+    a = commit(w, { 'src/a.js': numbered(30), 'src/keep.js': numbered(5), 'docs/old name.md': numbered(10), 'src/caf\u00e9.js': numbered(8) }, 'a');
+    sh(w, ['mv', 'src/a.js', 'src/b.js']);
+    c1 = commit(w, {}, 'rename only');
+    sh(w, ['mv', 'docs/old name.md', 'docs/new name.md']);
+    sh(w, ['mv', 'src/caf\u00e9.js', 'src/m\u00fcnchen.js']);
+    c2 = commit(w, { 'src/b.js': numbered(30, { 12: 'CHANGED 12' }) }, 'rename two more, edit one');
+    sh(w, ['rm', '-q', 'src/keep.js']);
+    c3 = commit(w, {}, 'delete outright');
+  });
+
+  test('a rename is paired old path to new path', () => {
+    expect(moves(a, c1)).toEqual({ ok: true, moves: new Map([['src/a.js', 'src/b.js']]) });
+  });
+
+  test('a name with a space, a name that is not ASCII and an edited rename are paired too (the paths are not quoted)', () => {
+    const r = moves(c1, c2);
+    expect(r.ok).toBe(true);
+    expect([...r.moves.entries()].sort()).toEqual(
+      [
+        ['docs/old name.md', 'docs/new name.md'],
+        ['src/caf\u00e9.js', 'src/m\u00fcnchen.js']
+      ].sort()
+    );
+    expect(moves(a, c2).moves.get('src/a.js')).toBe('src/b.js');
+  });
+
+  test('a file deleted outright, or nothing changed at all, is no rename', () => {
+    expect(moves(c2, c3)).toEqual({ ok: true, moves: new Map() });
+    expect(moves(a, a)).toEqual({ ok: true, moves: new Map() });
+  });
+
+  test('unresolvable commits fail', () => {
+    expect(repo.renamedPaths(git, w, { from: 'deadbeefdeadbeef', to: c1 })).toEqual({ ok: false, reason: 'from-not-found' });
+    expect(repo.renamedPaths(git, w, { from: a, to: 'main' })).toEqual({ ok: false, reason: 'to-not-found' });
+  });
+
+  test('a diff git fails on, or output that is not a rename list, is not read as "nothing was renamed"', () => {
+    const answering = (diff) => scripted((args) => (args[0] === 'rev-parse' ? { status: 0, stdout: `${a}\n`, stderr: '' } : diff));
+    expect(repo.renamedPaths(answering({ status: 128, stdout: '', stderr: 'bad' }), w, { from: a, to: c1 })).toEqual({ ok: false, reason: 'diff-failed' });
+    for (const stdout of ['R100\0src/a.js\0', 'M\0src/a.js\0src/b.js\0', 'R100\0\0src/b.js\0', 'R100\0src/a.js\0src/b.js\0R100\0x\0']) {
+      expect(repo.renamedPaths(answering({ status: 0, stdout, stderr: '' }), w, { from: a, to: c1 })).toEqual({ ok: false, reason: 'unreadable-diff' });
+    }
+  });
+
+  test('runs a read-only whole-tree diff between two full ids, with rename detection and no pathspec', () => {
+    const fake = scripted((args) => (args[0] === 'rev-parse' ? { status: 0, stdout: `${a}\n`, stderr: '' } : { status: 0, stdout: '', stderr: '' }));
+    repo.renamedPaths(fake, w, { from: a, to: c1 });
+    const diff = fake.calls.map((c) => c.args).find((args) => args.includes('diff'));
+    expect(diff).toEqual(expect.arrayContaining(['--name-status', '-z', '--find-renames', '--diff-filter=R', '--no-ext-diff']));
+    expect(diff).not.toContain('--');
+    expect(diff.slice(-2)).toEqual([a, a]);
+  });
+});
+
 describe('advanceLine', () => {
   const h = (oldStart, oldCount, newStart, newCount) => ({ oldStart, oldCount, newStart, newCount });
 
