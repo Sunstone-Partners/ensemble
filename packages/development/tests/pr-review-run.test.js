@@ -417,7 +417,13 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
     const triage = await h.collect(collect);
     return { manifest, triage };
   }
-  const sensitive = () => harness({ changedPaths: ['secure/key.js'], policyJson: { sensitivePaths: ['secure/**'] } });
+  const sensitive = () => {
+    const h = harness({ changedPaths: ['secure/key.js'], policyJson: { sensitivePaths: ['secure/**'] } });
+    const dir = path.join(h.root, 'prepared', 'snapshot', 'secure');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'key.js'), `${Array.from({ length: 30 }, (_, i) => `// line ${i + 1}`).join('\n')}\n`);
+    return h;
+  };
   const keyFinding = (over = {}) => finding({ locationOrLink: 'secure/key.js:3', originalTextOrLink: 'secure/key.js:3', ...over });
   const onlyA = (n) => (n.endsWith('-a') ? [keyFinding()] : []);
   const LATE = () => Date.now() + 6 * 3600 * 1000;
@@ -514,6 +520,22 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
       expect(h.readRun().phase).toBe('triage');
     });
 
+    test('an entry that matches an existing candidate never displaces or re-grades it: the reviewer\'s candidate stays exactly as it was (a review of this PR found the dedupe let the orchestrator take it over)', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: (n) => (n.endsWith('-a') ? [keyFinding({ severity: 'nit' })] : []) });
+      const before = h.readRun().candidates;
+      expect(before).toEqual([expect.objectContaining({ id: 'f1', source: 'reviewer-s1-a', severity: 'nit' })]);
+      const verify = await h.collect({ triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:3', failureMode: keyFinding().failureMode, severity: 'important' }] } });
+      expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+      const after = h.readRun();
+      expect(after.candidates).toEqual(before);
+      expect(after.triage).toMatchObject({ requested: 1, additionalCandidateIds: [], mergedIntoExisting: 1 });
+      voteAll(verify, () => 'real');
+      const done = await h.collect();
+      expect(done.ledger.map((e) => [e.id, e.source, e.severity])).toEqual([['f1', 'reviewer-s1-a', 'nit']]);
+      expect(done.triage).toMatchObject({ additionalCandidateIds: [], mergedIntoExisting: 1 });
+    });
+
     test('an added candidate is verified by five independent verifiers from a brief that carries the claim and location only, and lands in the ledger as the orchestrator\'s', async () => {
       const h = sensitive();
       await toTriage(h, { findingsFor: onlyA });
@@ -560,6 +582,12 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
       ['a candidate key that re-grades or closes', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'x y z', resolution: 'resolved' }] }, /unknown key "resolution"/],
       ['a pre-existing label', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'x y z', severity: 'pre-existing' }] }, /severity must be one of important, nit/],
       ['a location a verifier cannot be briefed with', { additionalCandidates: [{ locationOrLink: 'secure/key.js', failureMode: 'x y z' }] }, /path\/to\/file:line/],
+      ['an absolute path', { additionalCandidates: [{ locationOrLink: '/etc/passwd:1', failureMode: 'x y z' }] }, /repository-relative/],
+      ['a home-relative path', { additionalCandidates: [{ locationOrLink: '~/.ssh/id_rsa:1', failureMode: 'x y z' }] }, /repository-relative/],
+      ['a path that climbs out with ..', { additionalCandidates: [{ locationOrLink: 'secure/../../x.js:1', failureMode: 'x y z' }] }, /repository-relative/],
+      ['a file the head snapshot does not hold', { additionalCandidates: [{ locationOrLink: 'secure/missing.js:1', failureMode: 'x y z' }] }, /not a line of a regular file of the head snapshot/],
+      ['a line past the end of the file', { additionalCandidates: [{ locationOrLink: 'secure/key.js:31', failureMode: 'x y z' }] }, /not a line of a regular file of the head snapshot/],
+      ['a range that runs past the end of the file', { additionalCandidates: [{ locationOrLink: 'secure/key.js:29-31', failureMode: 'x y z' }] }, /not a line of a regular file of the head snapshot/],
       ['no failure mode', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9' }] }, /failureMode/],
       ['more than 20 candidates', { additionalCandidates: Array.from({ length: 21 }, (_, i) => ({ locationOrLink: `secure/key.js:${i + 1}`, failureMode: 'something is wrong here' })) }, /at most 20/],
     ];

@@ -43,6 +43,9 @@
  * changed paths alone (no classifier or second assessor), so a path-only reading can raise a tier but never lower one.
  * Coverage is the agents' own report (`pathsReviewed`) and their read-only access an instruction nobody here enforces. The
  * baseline test run (head code) happens inside prepare, before the tier is known. `agentAuthored` is the caller's word.
+ * `run.json` is local, unauthenticated state: `modeInvariant` refuses a stored FULL run whose depth, verifier count or lane was
+ * lowered, but it cannot tell a run whose mode label was rewritten to light from a light run, so whoever can write the run
+ * directory can choose the mode of a run that has not finished. The mode of a NEW run is only ever `selectMode`'s.
  *
  * deps (every function may be async):
  *   now()                                    epoch ms
@@ -104,7 +107,7 @@ const RULES = Object.freeze([
 /** What a TRIAGE answer tells the orchestrating model, on top of RULES. */
 const TRIAGE_RULES = Object.freeze([
   'This is a FULL-mode run: nothing is dispatched on this answer. Read the candidates, the coverage and the security lane, then call `collect` again with `triage`.',
-  'Triage can only ADD candidates the reviewers missed (for example an interaction between slices): `{"triage":{"additionalCandidates":[{"locationOrLink":"path/file.js:12","failureMode":"what goes wrong","severity":"important|nit","evidence":"what you read"}]}}`. `{"triage":{}}` adds none.',
+  'Triage can only ADD candidates the reviewers missed (for example an interaction between slices): `{"triage":{"additionalCandidates":[{"locationOrLink":"path/file.js:12","failureMode":"what goes wrong","severity":"important|nit","evidence":"what you read"}]}}`. `{"triage":{}}` adds none. A location must be a line of a regular file of the head, named by a repository-relative path; an entry that matches a candidate the reviewers already raised is dropped and theirs stays as it was.',
   'Every candidate, yours included, is then settled by independent fresh-context verifiers who are briefed with the claim and its location only. You can not remove, merge away, re-grade, close or waive a candidate, mark a slice reviewed, or decide a verdict: the gate and whether the review is complete are computed by the runner alone.',
   'A `collect` without `triage` repeats this answer; the run cannot reach verification without it.',
 ]);
@@ -914,15 +917,34 @@ function triageStep(run, input, deps, tracer, startedAt, now) {
   const validated = F.validateTriage(input.triage);
   if (validated.ok !== true) return failure('RUN_FAILED', { reason: 'triage-refused', error: validated.reason, runId: run.runId });
 
+  // A cited location must be a regular file of the head snapshot, exactly spelled and never followed, with the line in it:
+  // a verifier is briefed with that path, so a path the snapshot does not hold (a home-relative or absolute path included)
+  // is never passed on.
+  for (const raw of validated.additional) {
+    const cited = /^(.+):(\d+)(?:-(\d+))?$/.exec(raw.locationOrLink);
+    let found = null;
+    try {
+      found = typeof run.prepared.snapshotDir === 'string' && typeof deps.fs.headFile === 'function' ? deps.fs.headFile(run.prepared.snapshotDir, cited[1]) : null;
+    } catch (_error) {
+      found = null;
+    }
+    const last = Number(cited[3] === undefined ? cited[2] : cited[3]);
+    if (!isObject(found) || !(Number(cited[2]) >= 1 && last >= Number(cited[2]) && last <= found.lines)) {
+      return failure('RUN_FAILED', { reason: 'triage-refused', error: `${raw.locationOrLink} is not a line of a regular file of the head snapshot (spell the repository-relative path exactly)`, runId: run.runId });
+    }
+  }
+
   const used = run.candidates.flatMap((c) => [c.id, ...(Array.isArray(c.mergedFrom) ? c.mergedFrom.map((m) => m.id) : [])]);
   const top = used.map((id) => /^f(\d+)$/.exec(String(id))).filter((m) => m !== null).map((m) => Number(m[1]));
   const first = Math.max(0, ...top) + 1;
   const entries = validated.additional.map((raw, index) => S.completeFinding(raw, F.ORCHESTRATOR, `f${first + index}`));
+  // An entry the dedupe would merge with an existing candidate is dropped: the existing candidate stays exactly as it was
+  // (id, source, severity), so triage can never displace or re-grade one. Only a distinct entry is appended, unchanged.
   let candidates = run.candidates;
-  if (entries.length > 0) {
-    const combined = dedupeFindings([...run.candidates, ...entries]);
+  for (const entry of entries) {
+    const combined = dedupeFindings([...candidates, entry]);
     if (!Array.isArray(combined)) return failure('RUN_FAILED', { reason: 'triage-refused', error: combined.reason, runId: run.runId });
-    candidates = combined;
+    if (combined.length > candidates.length) candidates = [...candidates, entry];
   }
   const kept = entries.filter((e) => candidates.some((c) => c.id === e.id)).map((e) => e.id);
   run.candidates = candidates;

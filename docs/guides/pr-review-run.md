@@ -94,8 +94,10 @@ verification without it. Triage can ONLY ADD candidates. Each added candidate ge
 through the same 5 independent fresh-context verifiers as every other candidate; their briefs carry the claim and
 location only, never anything the orchestrator concluded, and `pre-existing` is not an allowed severity for it. Triage
 can never remove, merge away, re-grade, close or waive a candidate, never mark a slice reviewed and never set a verdict.
-A refused `triage` payload (an unknown key, a bad location, more than the cap of 20 candidates, a severity other than
-`important` or `nit`) is `RUN_FAILED` with reason `triage-refused`; it is not terminal: fix the payload and call again.
+A refused `triage` payload (an unknown key, a location that is not a line of a regular file of the head snapshot named by a
+repository-relative path, more than the cap of 20 candidates, a severity other than `important` or `nit`) is `RUN_FAILED`
+with reason `triage-refused`; it is not terminal: fix the payload and call again. An entry that matches a candidate the
+reviewers already raised is dropped: that candidate stays exactly as it was.
 
 ## Re-review scope (`reReview`)
 

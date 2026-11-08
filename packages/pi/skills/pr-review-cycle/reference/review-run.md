@@ -50,7 +50,7 @@ the same as in light mode.
    fresh-context verifiers as every other candidate, whose briefs carry the claim and location only, never anything
    you concluded; `pre-existing` is not an allowed severity for it. You never remove, merge away, re-grade, close or
    waive a candidate, never mark a slice reviewed, never set a verdict and never decide a gate. A refused `triage`
-   (an unknown key, a bad location, more than 20 candidates, a severity other than `important` or `nit`) is
+   (an unknown key, a location that is not a line of a regular file of the head, more than 20 candidates, a severity other than `important` or `nit`) is
    `RUN_FAILED` with reason `triage-refused` and is not terminal: fix the payload and call `collect` again.
 6. `ADJUDICATE` (ok:true): the result already carries the gate, computed with every listed item held open. Decide
    ONLY the items in `adjudicate[]`, each as `fix`, `deferred` or `not-applicable` with a reason, and re-enter

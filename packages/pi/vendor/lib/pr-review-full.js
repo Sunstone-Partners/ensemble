@@ -95,6 +95,12 @@ function planReReview(input) {
 /** `file:line` or `file:start-end`, the only location a verifier can be briefed with. */
 const FILE_LINE = /^[^\s:][^:\r\n]*:\d+(?:-\d+)?$/;
 
+/** A repository-relative path: no absolute or home-relative start, no backslash or NUL, no empty, `.` or `..` segment. */
+function isRepoRelative(location) {
+  const file = location.slice(0, location.lastIndexOf(':'));
+  return !(file.startsWith('/') || file.startsWith('~') || /[\\\0]/.test(file)) && file.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
 /**
  * Validates a triage payload: `{ additionalCandidates: [{locationOrLink, failureMode, severity?, evidence?}] }`.
  * Triage can only ADD: there is no key that removes, merges away, re-grades, closes or waives a candidate, and an unknown
@@ -113,7 +119,7 @@ function validateTriage(triage) {
     const at = `additionalCandidates[${index}]`;
     if (!isObject(item)) return { ok: false, reason: `${at} must be an object` };
     for (const key of Object.keys(item)) if (!CANDIDATE_KEYS.includes(key)) return { ok: false, reason: `${at}: unknown key ${JSON.stringify(key)}` };
-    if (!isText(item.locationOrLink) || !FILE_LINE.test(item.locationOrLink.trim())) return { ok: false, reason: `${at}.locationOrLink must be "path/to/file:line" (or "file:start-end"): a verifier is briefed with the claim and that location` };
+    if (!isText(item.locationOrLink) || !FILE_LINE.test(item.locationOrLink.trim()) || !isRepoRelative(item.locationOrLink.trim())) return { ok: false, reason: `${at}.locationOrLink must be "path/to/file:line" (or "file:start-end") with a repository-relative path (no absolute, home-relative or ".." path): a verifier is briefed with the claim and that location` };
     if (!isText(item.failureMode)) return { ok: false, reason: `${at}.failureMode must say, in a sentence, what goes wrong` };
     if (item.severity !== undefined && !TRIAGE_SEVERITIES.includes(item.severity)) return { ok: false, reason: `${at}.severity must be one of ${TRIAGE_SEVERITIES.join(', ')} (a pre-existing label is not the orchestrator's to give)` };
     if (item.evidence !== undefined && !isText(item.evidence)) return { ok: false, reason: `${at}.evidence must be text` };
