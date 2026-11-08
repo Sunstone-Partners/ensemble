@@ -1643,14 +1643,27 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     }
   });
 
-  test('the reviewer is given what important and nit mean, by what a user gets and not by how new the path is; the security lane is not handed that guide (kata yg7k)', async () => {
+  test('every agent that writes findings, the security lane included, is given the severity words\' meaning from REVIEW.md\'s own bullets, and no example or extra category (kata yg7k)', async () => {
     const m = await harness().prepare();
-    const reviewer = fs.readFileSync(m.agents.find((a) => a.role === 'reviewer').briefPath, 'utf8');
-    expect(reviewer).toMatch(/Severity is about what a user or caller gets, not about how new or rare the path is/);
-    expect(reviewer).toMatch(/A defect in a new or opt-in feature is `important` when a user who opts in hits it/);
-    expect(reviewer).toMatch(/Report one root cause once/);
-    const lane = m.agents.find((a) => a.role === 'security');
-    if (lane !== undefined) expect(fs.readFileSync(lane.briefPath, 'utf8')).not.toMatch(/Severity is about what a user or caller gets/);
+    for (const a of m.agents) {
+      const brief = fs.readFileSync(a.briefPath, 'utf8');
+      expect(brief).toContain('- **Important** \u2014 the change is wrong, unsafe or unproven: a defect a user or another agent would hit');
+      expect(brief).toContain('- **Nit** \u2014 a preference that does not change behaviour');
+      expect(brief).toMatch(/a new or opt-in path is not a reason to call it a nit/);
+      expect(brief).not.toMatch(/Report one root cause once/);
+    }
+  });
+
+  test('the meaning comes from the REVIEW.md Severity section read at the base when facts carry it, else the built-in copy (kata yg7k)', async () => {
+    const guide = '- **Important** \u2014 marker-important text.\n- **Nit** \u2014 marker-nit text.\n- **Pre-existing** \u2014 marker-pre text.';
+    const base = makeFacts({ changedPaths: ['src/a.js'], numstat: [{ path: 'src/a.js', added: 10, deleted: 2 }] });
+    const h = harness({ facts: { ...base, guidance: { severityGuide: guide } } });
+    const m = await h.prepare();
+    for (const a of m.agents) {
+      const brief = fs.readFileSync(a.briefPath, 'utf8');
+      expect(brief).toContain('marker-important text.');
+      expect(brief).not.toContain('a defect a user or another agent would hit');
+    }
   });
 
   test('the reviewer is told that a symlink is not followed and that a line past the end of the file is graded Important', async () => {

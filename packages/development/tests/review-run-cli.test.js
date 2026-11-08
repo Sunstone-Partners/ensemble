@@ -25,7 +25,8 @@ const CLI = path.join(__dirname, '..', 'lib', 'review-run-cli.js');
 const PR_REVIEW_CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const FIXTURES = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'znd1', 'fixtures');
 const BODY = '## Testing\nran the relevant tests\n\n## Risk\nlow\n\n## How to revert\nrevert the commit\n';
-const POLICY = '# Review\n\n```ensemble-review-policy\n{"sensitivePaths":["secure/**"],"highPaths":["wide/**"],"reviewerToolCalls":57,"reviewerSnippets":2}\n```\n';
+const SEVERITY = '## Severity\n\n- **Important** \u2014 fixture-important: the change is wrong.\n- **Nit** \u2014 fixture-nit: a preference.\n- **Pre-existing** \u2014 fixture-pre: not this PR.\n\n';
+const POLICY = '# Review\n\n' + SEVERITY + '```ensemble-review-policy\n{"sensitivePaths":["secure/**"],"highPaths":["wide/**"],"reviewerToolCalls":57,"reviewerSnippets":2}\n```\n';
 /** The changed lines of the 19 paths of the one real full-mode run (PR 271), in path order: the `wide` branch adds one new file of each size (kata sfpb). */
 const WIDE_LINES = [1, 127, 1, 159, 1, 145, 12, 8, 76, 125, 355, 38, 1, 8, 76, 159, 1, 145, 12];
 const widePath = (index) => `wide/a${String(index + 1).padStart(2, '0')}.js`;
@@ -210,8 +211,12 @@ describe('the real CLI process on a real git fixture', () => {
     // what a reviewer may spend comes from the policy block of REVIEW.md at the base, not from the template (kata yg7k)
     expect(brief).toMatch(/^Tool calls: 57$/m);
     expect(brief).toMatch(/^Throwaway snippets: 2$/m);
-    // and the security lane, which is not a reviewer of a slice, is not handed the reviewer's severity guide
-    expect(fs.readFileSync(m.agents.find((a) => a.name === 'security-lane').briefPath, 'utf8')).not.toMatch(/Severity is about what a user or caller gets/);
+    // the meaning of the severity words is the Severity section of REVIEW.md at the base, for every agent that writes findings, the lane too
+    for (const agent of m.agents) {
+      const text = fs.readFileSync(agent.briefPath, 'utf8');
+      expect(text).toContain('fixture-important: the change is wrong.');
+      expect(text).toContain('fixture-nit: a preference.');
+    }
     process.stderr.write(`\nSMOKE manifest: ${JSON.stringify({ status: m.status, runId: m.runId, round: m.round, wave: m.wave, tier: m.tier.effectiveTier, depth: m.depth, agents: m.agents.map((a) => ({ name: a.name, role: a.role, outPath: path.relative(fx.work, a.outPath), deadlineAtIso: a.deadlineAtIso })) })}\n`);
   });
 
@@ -530,7 +535,7 @@ describe('the real CLI process on a real git fixture', () => {
     expect(rangeBrief).toMatch(/^Tool calls: 57$/m);
     expect(rangeBrief).toMatch(/^Throwaway snippets: 2$/m);
     expect(rangeBrief).not.toMatch(/at most (ONE|40)\b/);
-    expect(rangeBrief).toMatch(/Severity is about what a user or caller gets, not about how new or rare the path is/);
+    expect(rangeBrief).toContain('fixture-important: the change is wrong.');
     const rangeDiff = /Diff for the whole range: (\S+)/.exec(rangeBrief)[1];
     expect(path.basename(rangeDiff)).toBe('range.diff');
     expect(fs.readFileSync(rangeDiff, 'utf8').split('\n').filter((line) => line.startsWith('diff --git '))).toHaveLength(19);

@@ -489,7 +489,7 @@ function buildReviewAgents(run, deps, ctx) {
     const rendered = deps.renderBrief(_role, _vars);
     const full = { ...record, briefPath, outPath };
     deps.fs.mkdirp(path.dirname(briefPath), 0o700);
-    deps.fs.writeAtomic(briefPath, `${rendered.replace(/\s*$/, '\n')}\n${S.reviewerContract(full)}`, 0o600);
+    deps.fs.writeAtomic(briefPath, `${rendered.replace(/\s*$/, '\n')}\n${S.reviewerContract(full, run.severityGuide)}`, 0o600);
     return full;
   });
 }
@@ -701,6 +701,8 @@ async function prepareStages(input, deps, ctx) {
     numstat: facts.numstat,
     policy: isObject(facts.policy) && isObject(facts.policy.policy) ? facts.policy.policy : null,
     policyRejected: isObject(facts.policy) && Array.isArray(facts.policy.rejected) ? facts.policy.rejected : [],
+    // the Severity bullets of REVIEW.md at the base (null: a cached prepare without them, or a REVIEW.md without the section)
+    severityGuide: isObject(facts.guidance) && typeof facts.guidance.severityGuide === 'string' ? facts.guidance.severityGuide : null,
     sensitivePaths: isObject(facts.paths) && Array.isArray(facts.paths.sensitive) ? facts.paths.sensitive : [],
     phase: 'preparing',
     waves: [],

@@ -84,7 +84,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { chooseReviewRange, isObjectId } = require('./pr-review-scope');
-const { loadPolicy } = require('./pr-review-policy');
+const { loadPolicy, extractSeverityGuide } = require('./pr-review-policy');
 const { classifyPaths } = require('./pr-review-paths');
 const { planDeltaReview } = require('./pr-review-delta');
 const { buildImportGraph, mentionNeedles, SCANNED_EXTENSIONS } = require('./pr-review-import-graph');
@@ -839,7 +839,7 @@ function deriveFromGit(deps, options, range, nodeModules, treeSha, entries) {
       deleted: numstat.reduce((n, f) => n + (f.deleted || 0), 0),
       binary: numstat.filter((f) => f.binary).length,
     },
-    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath },
+    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath, severityGuide: extractSeverityGuide(reviewText) },
     policy,
     pathsInput,
     paths: classification,

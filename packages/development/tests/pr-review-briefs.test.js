@@ -740,3 +740,27 @@ describe('shipped copies carry the templates', () => {
     expect(fs.realpathSync(path.join(REPO_ROOT, 'packages/full/skills/pr-review-cycle/templates'))).toBe(fs.realpathSync(TEMPLATE_DIR));
   });
 });
+
+describe('the skill docs hand the orchestrator the inputs the renderer requires (kata yg7k)', () => {
+  const docVars = (file, role) => {
+    const text = fs.readFileSync(path.join(REFERENCE_DIR, file), 'utf8').replace(/\s+/g, ' ');
+    const match = new RegExp(`role: "${role}", vars: \\{([^}]*)\\}`).exec(text);
+    return match === null ? null : match[1].split(',').map((name) => name.trim()).sort();
+  };
+
+  test.each([
+    ['scope-guidance-depth.md', 'reviewer'],
+    ['review-run.md', 'range-reviewer'],
+  ])('%s: the %s call lists exactly the inputs ROLES requires, so a documented call does not throw', (file, role) => {
+    expect(docVars(file, role)).toEqual(Object.keys(ROLES[role].inputs).sort());
+  });
+
+  test('a documented reviewer call renders through the real CLI (exit 0), and the old input set is refused', () => {
+    const { spawnSync } = require('child_process');
+    const run = (vars) => spawnSync(process.execPath, [CLI, 'brief'], { input: JSON.stringify({ role: 'reviewer', vars }), encoding: 'utf8' });
+    const vars = { ...CASES.reviewer.vars };
+    expect(run(vars).status).toBe(0);
+    const { toolCalls, snippets, ...old } = vars;
+    expect(run(old).status).toBe(1);
+  });
+});

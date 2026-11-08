@@ -101,10 +101,11 @@ const DEFAULT_MAX_CONCURRENT_AGENTS = 8;
 /**
  * What a reviewer may spend in one pass (kata yg7k). `reviewerToolCalls` is the cap the reviewer and whole-range briefs
  * state ("at most N tool calls in all"); `reviewerSnippets` is how many throwaway read-only snippets it may run to settle a
- * claim about what code DOES. The first measured Medium run (PR 207) kept the cap at 40 and the snippets at one: the one snippet
- * was spent on a nit, and the findings that needed running the code (an input that throws, a pattern that matches too much)
- * were never raised. More calls and snippets buy deeper reviewers and cost wall time and tokens: a reviewer that uses its whole
- * budget runs longer, so a maintainer who raises them should raise `deadlineMinutes.reviewer` with them.
+ * claim about what code DOES. The first measured Medium run (PR 207) kept the cap at 40 and the snippets at one: reviewers spent
+ * snippets on nits, and findings that needed running the code were never raised. More calls and snippets buy deeper reviewers and
+ * cost wall time and tokens: a reviewer that uses its whole budget runs longer, so a maintainer who raises them should raise
+ * `deadlineMinutes.reviewer` with them. ADVISORY: the runner sizes a deadline from paths and changed lines only and neither
+ * checks nor warns about the budget. The default of 3 snippets is a judgement, not a measurement (like `deadlineHeadroom`).
  */
 const DEFAULT_REVIEWER_TOOL_CALLS = 40;
 const REVIEWER_TOOL_CALLS_MIN = 10;
@@ -189,6 +190,36 @@ const SIMPLE_KEYS = Object.freeze({
 });
 
 const KNOWN_KEYS = Object.freeze(['sourceSha', 'roundCap', 'depth', 'deadlineMinutes', ...Object.keys(SIMPLE_KEYS)]);
+
+/**
+ * The meaning of the three severity words, as the repository wrote it (kata yg7k): the three bullets (`Important`, `Nit`,
+ * `Pre-existing`) of the "## Severity" section of the REVIEW.md text the caller read at the BASE commit. A reviewer's contract carries
+ * it, so what an Important finding is stays the prose a maintainer edits, with no code change. Pure; the text is never executed. Returns
+ * the bullets joined by newlines with line breaks inside a bullet collapsed, or null when the section or any of the three bullets is
+ * absent (the caller then uses its built-in copy, which is these same bullets as REVIEW.md carries them).
+ */
+function extractSeverityGuide(text) {
+  if (typeof text !== 'string') return null;
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex((line) => /^##\s+Severity\s*$/.test(line));
+  if (start === -1) return null;
+  const bullets = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^#{1,6}\s/.test(lines[i])) break;
+    const open = /^- \*\*(Important|Nit|Pre-existing)\*\*\s/.exec(lines[i]);
+    if (open === null) continue;
+    let bullet = lines[i].trim();
+    while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) {
+      i += 1;
+      bullet += ` ${lines[i].trim()}`;
+    }
+    bullets.push({ word: open[1], text: bullet });
+  }
+  const words = bullets.map((bullet) => bullet.word);
+  if (words.length !== 3 || !['Important', 'Nit', 'Pre-existing'].every((word) => words.includes(word))) return null;
+  const guide = bullets.map((bullet) => bullet.text).join('\n');
+  return guide.length > 2000 || /[\u0000-\u0008\u000B-\u001F\u007F]/.test(guide) ? null : guide;
+}
 
 /** The answer when nothing can be trusted: strict defaults, named reason. */
 function strict(reason, warnings = []) {
@@ -370,6 +401,7 @@ function loadPolicy(input) {
 
 module.exports = {
   loadPolicy,
+  extractSeverityGuide,
   DEFAULT_EVAL_CASES_DIR,
   DEFAULT_POLICY,
   DEFAULT_ROUND_CAP,

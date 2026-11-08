@@ -167,6 +167,33 @@ describe('policy keys deadlineMinutes and maxConcurrentAgents', () => {
   });
 });
 
+describe('extractSeverityGuide: the Severity bullets of REVIEW.md at the base (kata yg7k)', () => {
+  const { extractSeverityGuide } = require('../lib/pr-review-policy');
+  const { DEFAULT_SEVERITY_GUIDE } = require('../lib/pr-review-run-support');
+  const SECTION = '## Severity\n\nintro\n\n- **Important** \u2014 a wrong thing,\n  over two lines.\n- **Nit** \u2014 a preference.\n- **Pre-existing** \u2014 an old defect.\n\nOlder ledgers.\n\n## Next\n- **Important** \u2014 not this one.\n';
+
+  test('the three bullets, a wrapped bullet joined to one line, nothing from another section', () => {
+    expect(extractSeverityGuide(SECTION)).toBe('- **Important** \u2014 a wrong thing, over two lines.\n- **Nit** \u2014 a preference.\n- **Pre-existing** \u2014 an old defect.');
+  });
+
+  test.each([
+    ['no section', '# Review\n'],
+    ['a missing bullet', '## Severity\n- **Important** \u2014 a.\n- **Nit** \u2014 b.\n'],
+    ['a repeated word instead of the third', '## Severity\n- **Important** \u2014 a.\n- **Nit** \u2014 b.\n- **Nit** \u2014 c.\n'],
+    ['a fourth bullet repeating a word', '## Severity\n- **Important** \\u2014 a.\n- **Nit** \\u2014 b.\n- **Pre-existing** \\u2014 c.\n- **Nit** \\u2014 d.\n'],
+    ['a control character', '## Severity\n- **Important** \u2014 a\u0001.\n- **Nit** \u2014 b.\n- **Pre-existing** \u2014 c.\n'],
+    ['an oversized section', `## Severity\n- **Important** \u2014 ${'x'.repeat(2100)}\n- **Nit** \u2014 b.\n- **Pre-existing** \u2014 c.\n`],
+    ['not text', null],
+  ])('%s gives null, so the built-in copy applies', (_name, text) => {
+    expect(extractSeverityGuide(text)).toBeNull();
+  });
+
+  test('the repository\'s REVIEW.md and the built-in copy say the same, so the default never drifts from what a maintainer governs', () => {
+    const review = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'REVIEW.md'), 'utf8');
+    expect(extractSeverityGuide(review)).toBe(DEFAULT_SEVERITY_GUIDE);
+  });
+});
+
 describe('policy keys reviewerToolCalls and reviewerSnippets (kata yg7k)', () => {
   const load = (policy) =>
     loadPolicy({ baseSha: BASE_SHA, sourceSha: BASE_SHA, text: `\`\`\`ensemble-review-policy\n${JSON.stringify(policy)}\n\`\`\`\n` });
