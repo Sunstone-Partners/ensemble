@@ -2041,6 +2041,89 @@ describe('rolling verification (kata 630v): freed slots take the next verifiers,
   });
 });
 
+describe('the replay behind the documented verify-round numbers (kata 630v, review round 1): the REAL runner on the measured verifier times', () => {
+  // verifier-1..17 of run pr207-hi-q3c (a Medium review, 17 candidates x 3 verifiers, cap 8): minutes from dispatch to the result file.
+  // verifier-12 never wrote and was stopped at its 5-minute deadline. These are the numbers the guide cites; `pr-review-cli timing`
+  // on that run's trace reads the three barrier waves at 4.5, 5.0 and 1.9 minutes (11.4 minutes of steps, 11.7 from the first dispatch to the last result).
+  const MEASURED = [2.03, 2.13, 2.27, 3.13, 4.5, 2.49, 2.06, 2.68, 3.3, 3.89, 3.42, null, 1.5, 4.41, 2.44, 2.11, 1.9];
+  const MIN = 60 * 1000;
+  const SEVENTEEN = (n) => (n === 'reviewer-s1-a' ? Array.from({ length: 17 }, (_, i) => finding({ locationOrLink: `src/a.js:${(i % 6) + 1}`, failureMode: `distinct defect number ${i} in a different subsystem ${'x'.repeat(i)} and ${'y'.repeat(17 - i)}` })) : []);
+
+  // The agent's arrival time from its dispatch; null = never arrives (stopped at its deadline).
+  const arrival = (agent) => (MEASURED[Number(agent.name.split('-')[1]) - 1] === null ? null : agent.dispatchedAt + MEASURED[Number(agent.name.split('-')[1]) - 1] * MIN);
+
+  /** The verify round driven through the real `collect` on a simulated clock polled every `pollMs`: minutes from the first dispatch to the answer that ends the round. */
+  async function rolling(pollMs) {
+    const h = harness({ policyJson: { maxConcurrentAgents: 8 } });
+    const m1 = await h.prepare();
+    answerReview(m1, { findingsFor: SEVENTEEN, lane: { findings: [], pathsReviewed: allPaths(h) } });
+    const v1 = await h.collect();
+    expect(v1.agents).toHaveLength(8);
+    const start = v1.agents[0].dispatchedAt;
+    let clock = start;
+    h.deps.collectResults = ({ expected }) => ({
+      agents: expected.map((a) => {
+        const at = arrival(a);
+        if (at !== null && at <= clock) return { name: a.name, role: a.role, state: 'arrived', arrivedAt: at, pending: false };
+        if (clock >= a.deadlineAt) return { name: a.name, role: a.role, state: 'expired', reason: 'deadline-passed', pending: false };
+        return { name: a.name, role: a.role, pending: true, deadlineAt: a.deadlineAt };
+      }),
+      findings: [], votes: [], incompleteVerifiers: [], reviewedSlices: [], unreviewedDetail: [], warnings: [],
+    });
+    let dispatched = v1.agents.length;
+    let peak = 0;
+    let running = new Map(v1.agents.map((a) => [a.name, a]));
+    for (let tick = 1; tick < 10000; tick += 1) {
+      clock = start + tick * pollMs;
+      const answer = await h.collect({ now: clock });
+      running = new Map([...running].filter(([, a]) => (arrival(a) === null ? clock < a.deadlineAt : arrival(a) > clock)));
+      if (answer.status === 'DISPATCH') {
+        for (const a of answer.agents) running.set(a.name, a);
+        dispatched += answer.agents.length;
+        peak = Math.max(peak, running.size);
+        expect(running.size).toBeLessThanOrEqual(8); // the cap, at every dispatch
+      } else if (answer.status !== 'PENDING') {
+        expect(dispatched).toBe(17);
+        return { minutes: (clock - start) / MIN, peak };
+      }
+    }
+    throw new Error('the replay did not finish');
+  }
+
+  /** The barrier model with the same poll: a wave is dispatched at the first poll after the whole wave before it was done; the round ends at the first poll after the last wave. */
+  function barrier(pollMs) {
+    const poll = pollMs / MIN;
+    let t = 0;
+    for (let i = 0; i < MEASURED.length; i += 8) {
+      const wave = MEASURED.slice(i, i + 8).map((m) => (m === null ? 5 : m));
+      t = Math.ceil((t + Math.max(...wave)) / poll - 1e-9) * poll;
+    }
+    return t;
+  }
+
+  test('rolling beats the barrier on the measured times at every poll rate, and the round never runs more than the cap at once', async () => {
+    const rows = [];
+    for (const pollMs of [1000, 7500, 15000]) {
+      const r = await rolling(pollMs);
+      const b = barrier(pollMs);
+      rows.push({ pollS: pollMs / 1000, barrier: Math.round(b * 100) / 100, rolling: Math.round(r.minutes * 100) / 100, saved: Math.round((b - r.minutes) * 100) / 100 });
+      expect(r.peak).toBeLessThanOrEqual(8);
+      expect(r.minutes).toBeLessThan(b);
+    }
+    process.stderr.write(`\nREPLAY verify round (minutes): ${JSON.stringify(rows)}\n`);
+    // the documented figures (docs/guides/pr-review-run.md, Rolling verification): the barrier model gives 11.4 to 11.5 minutes against
+    // the measured 11.7 (the difference is the harness turnaround between waves), and the real runner's rolling round saves 3.7 to 4.1
+    const at = (pollS) => rows.find((row) => row.pollS === pollS);
+    expect(at(7.5).barrier).toBeGreaterThan(11.3);
+    expect(at(7.5).barrier).toBeLessThan(11.8);
+    expect(at(7.5).rolling).toBeGreaterThan(6.2); // the lower bound: 49.3 agent-minutes / cap 8
+    for (const row of rows) {
+      expect(row.saved).toBeGreaterThan(3.6);
+      expect(row.saved).toBeLessThan(4.3);
+    }
+  });
+});
+
 describe('a candidate the verifier brief refuses (kata 0g9n): never verified, never dropped, never read as verified', () => {
   // Reviewers of review infrastructure write these words about the code; the verifier brief refuses them in a claim (by design:
   // the claim must be reworded by whoever wrote it), so the candidate cannot be put to a verifier. The REAL renderer is used.

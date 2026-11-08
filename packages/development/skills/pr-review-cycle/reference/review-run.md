@@ -231,7 +231,7 @@ reasoning, and why a rewrite or a re-run of the reviewer was not chosen, is in `
   (`review`, `review.head-read`, `review.gate`, `review.verdict`, `review.<role>` per agent, each with `round`, agents
   also with their `wave`; an agent ends at its last message, `last_message_ts`). Review waves run one after another, so the
   critical path sums the slowest reviewer of each review wave and the slowest verifier of each verify wave; verifier waves
-  dispatched as a refill overlap, so they are ONE step (`verifier`, `rolling: true`, `waves: n`: first start to last end). The security
+  dispatched as a refill overlap, so, when each is marked with its cap facts and the trace bears them out, they are ONE step (`verifier`, `rolling: true`, `waves: n`: first start to last end); otherwise the overlap is refused with a warning. The security
   lane is no step of it, so `timing` reports a lower bound, naming the agent, when a lane ended after the slowest
   reviewer of its wave (`outlasted`, the usual case at the default cap) or ran in a wave no reviewer ran in
   (`uncountedWaves`). A verdict that was not recorded (a failed state write, retried) is a span that ended in error and

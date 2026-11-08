@@ -297,21 +297,25 @@ value cannot be told from the default. The brief's timebox is the deadline the a
 | agent | work | deadline |
 |---|---|---|
 | a reviewer on a slice at the limits (8 paths, 612 lines) | 7.49 min | 22 (the fixed-cost floor; modelled 14.98, base 15) |
-| a reviewer on 4 paths, 280 lines (kata `d9sy`) | 12.8 min, over 15 (stopped), 7.2 min in three measured runs | 22 (modelled 8, base 15) |
+| a reviewer on 4 paths, 280 lines (kata `d9sy`) | 12.8 min, over 15 (stopped), and 7.2 and 7.3 in one re-review | 22 (modelled 8, base 15) |
 | the security lane of the real run (19 paths, 1450 lines) | 17.75 min | 36 (2.03 x what it took; it was given 15) |
 | a verifier | not sized | 5 |
 
 **The fixed cost (kata `d9sy`).** The model is proportional through the origin and was derived at the default effort. The first
-live runs at effort `hi` (kata `q3a9`) show a reviewer's time on a small slice is not its size: 77 lines took 14.6 and 9.1 minutes,
-327 lines 10.6 and 9.4, 323 lines 8.2 and 10.6, the 727-line whole-range reader 13.9, and the same four paths (280 lines) took
-12.8 minutes, more than 15 (that reviewer was stopped at its deadline and the slice was reported not reviewed) and, a re-review
-later, 7.2 and 7.3. Nothing queued: the harness started the agents 11 ms after the manifest, in one wave under a cap of 8, and
-the deadline starts at dispatch. So a reviewer, the whole-range reader and the lane have a floor, `MIN_AGENT_MINUTES`: the
-slowest FINISHED reviewer measured (14.58 minutes) times `FLOOR_FACTOR` (1.5, a judgement like the headroom), 22 minutes,
-whatever the policy's `deadlineMinutes` says (a policy raises a deadline above it, never below it). The slice limits and the
-headroom are unchanged, because a finer slice does not shorten a fixed cost. A reviewer slower than 22 minutes is still
-`expired` and its slice reported not reviewed; re-dispatching a lost reviewer is not built (the loss was slowness, not a stuck
-agent: the same slice took 7.2 minutes next time, and a second 15 minutes would have cost more than the longer deadline).
+live runs at effort `hi` (kata `q3a9`) show a reviewer's time on a small slice does not follow its size: 77 lines took 14.6 and 9.1
+minutes, 327 lines 10.6 and 9.4, 323 lines 8.2 and 10.6, the 727-line whole-range reader 13.9, and the same four paths (280 lines)
+took 12.8 minutes for one reviewer and more than 15 for another (stopped at its deadline; the slice was reported not reviewed),
+while two other reviewers of a re-review of those four paths took 7.2 and 7.3. What this establishes: no queueing (the
+orchestrator's dispatch logs put the spawn call 10 to 11 ms after the manifest, one wave of three agents under a cap of 8, and the
+deadline starts at dispatch) and no size effect on a small slice. What it does NOT establish: why the lost reviewer was lost. It
+has no arrival and no last message, so a slow agent cannot be told from a hung one, and the agent's own start time is not
+recorded. The floor helps the slow case only; a hung agent now holds the run 22 minutes instead of 15 and its slice is still
+reported not reviewed. So a reviewer, the whole-range reader and the lane have a floor, `MIN_AGENT_MINUTES`: the slowest FINISHED
+reviewer measured (14.58 minutes) times `FLOOR_FACTOR` (1.5, a judgement like the headroom), 22 minutes, whatever the policy's
+`deadlineMinutes` says (a policy raises a deadline above it, never below it; a value below it is named in the sizing warnings).
+It was measured at effort `hi` and the runner records no effort, so it applies at whatever effort the dispatcher uses. The slice
+limits and the headroom are unchanged, because a finer slice does not shorten a fixed cost. A reviewer slower than 22 minutes is
+still `expired` and its slice reported not reviewed. Re-dispatching a lost reviewer is not built.
 
 **The record.** The DISPATCH manifest of the review round and `run.json` carry `sizing`: `model` (the two rates, the
 headroom, the 60-minute maximum and the run it derives from), `limits` (`sliceMaxFiles`, `sliceTargetLines`,
@@ -477,21 +481,29 @@ cap makes (a cap of 2 on two reviewers and the lane leaves the lane alone in wav
 is the owner's decision; until then the figure says what it leaves out.
 
 Rolling verification (kata `630v`). The first live Medium review (PR 207: 17 candidates x 3 verifiers, at most 3 claims each, 17
-verifiers at a cap of 8) took three barrier waves of 4.5, 5.0 (a verifier stopped at its 5-minute deadline) and 1.9 minutes: 11.7
-minutes for 49.3 agent-minutes of work, because each wave lasted as long as its slowest verifier while the slots of its faster
-ones stood idle. A `collect` that finds verifiers of the dispatched waves still running and slots free (cap minus the agents
-still running, never more) now dispatches the next verifiers of the plan into them: a `DISPATCH` whose manifest carries
-`refill: true`, `stillRunning` (the agents of earlier waves that you keep waiting for) and only the new agents. A refill is at
-least a quarter of the cap (or everything that is left), so the orchestrator is not asked for a manifest per freed slot. The
-plan is unchanged: `run.verifyAgents` was fixed before the first dispatch, the refill takes its next agents in order, each is
-briefed with its own candidates only, every candidate keeps its K distinct verifiers (none a reviewer, none its raiser), each
-deadline starts at that agent's own dispatch, and the run is not collected until every agent of every wave has arrived or
-expired. An expired verifier is not running, so its slot is refilled, and it stays `expired` in the record. The review round is
-not rolling: its agents differ in kind and the lane is the longest. Replayed on the measured verifier times (cap 8, a poll
-every 7.5 s): barrier 11.8 minutes, rolling 7.4, a saving of 4.4 minutes (37% of the verify round), 22.4 of the measured 26.8
-minutes for the run; the lower bound is 49.3 / 8 = 6.2 minutes. The PR's 8-13 minute target is NOT reached by this: the slowest
-reviewer alone took 14.6 minutes. Verifying the candidates of the reviewers that finish early (8.2 to 10.6 minutes) while the
-slowest still runs is not built: a duplicate finding of a late reviewer would merge into a candidate already settled.
+verifiers at a cap of 8) took three barrier waves; `pr-review-cli timing` reads them at 4.5, 5.0 (a verifier stopped at its
+5-minute deadline) and 1.9 minutes, 11.4 minutes of steps and 11.7 from the first dispatch to the last result, for 49.3
+agent-minutes of work: each wave lasted as long as its slowest verifier while the slots of its faster ones stood idle. A `collect`
+that finds verifiers of the dispatched waves still running and slots free (cap minus the agents still running, never more) now
+dispatches the next verifiers of the plan into them: a `DISPATCH` whose manifest carries `refill: true`, `stillRunning` (the agents
+of earlier waves that you keep waiting for) and only the new agents. A refill is at least a quarter of the cap (or everything that
+is left), so the orchestrator is not asked for a manifest per freed slot. The plan is unchanged: `run.verifyAgents` was fixed
+before the first dispatch, the refill takes its next agents in order, each is briefed with its own candidates only, every
+candidate keeps its K distinct verifiers (none a reviewer, none its raiser), each deadline starts at that agent's own dispatch,
+and the run is not collected until every agent of every wave has arrived or expired. An expired verifier is not running, so its
+slot is refilled, and it stays `expired` in the record. A wave dispatched after a refill carries no total (`2 (rolling)`): how
+many there will be depends on when verifiers arrive. The review round is not rolling: its agents differ in kind and the lane is
+the longest.
+
+The numbers are reproducible: the test `the replay behind the documented verify-round numbers` in `pr-review-run.test.js` drives
+the REAL runner (`collect` on a simulated clock, cap 8) over the 17 measured verifier times and prints the figures
+(`npx jest --runInBand packages/development/tests/pr-review-run.test.js -t "replay behind"`). Barrier: 11.4 to 11.5 minutes (the
+measured 11.7 includes the harness turnaround between waves). Rolling: 7.3 (a poll every second), 7.4 (every 7.5 s) and 7.8
+minutes (every 15 s), saving 4.1, 4.1 and 3.8 minutes (33 to 36% of the verify round), which puts the run at about 22.9 of the
+measured 26.8 minutes; the lower bound is 49.3 / 8 = 6.2 minutes. This is a replay of one run's times, not a live measurement. The
+PR's 8-13 minute target is NOT reached by this: the slowest reviewer alone took 14.6 minutes. Verifying the candidates of the
+reviewers that finish early (8.2 to 10.6 minutes) while the slowest still runs is not built: a duplicate finding of a late reviewer
+would merge into a candidate already settled.
 
 One verdict stays in the window. The verdict span ends `ok` when the verdict was recorded and `error` when that attempt
 did not get that far (a failed state write, or a throw such as `final.json` failing to write); the reader takes an `error`
