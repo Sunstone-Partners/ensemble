@@ -3355,13 +3355,17 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(agentOf(m, 'security-lane').deadlineMinutes).toBe(36);
     });
 
-    test('a sizing key the policy loader REJECTED (it never reaches run.policy) is named in the plan, with its value and reason, and the default applies', async () => {
+    test('a sizing key the policy loader REJECTED (it never reaches run.policy) is named in the plan, with its value and the loader\'s own reason, and the default applies', async () => {
       const changedPaths = REAL271.map(([file]) => file);
-      const facts = makeFacts({ changedPaths, numstat: REAL271.map(([file, lines]) => ({ path: file, added: lines, deleted: 0 })), policyJson: { highPaths: ['packages/development/lib/**'] } });
-      facts.policy.rejected = [{ key: 'sliceMaxFiles', reason: 'not-an-integer-in-range', value: 0 }, { key: 'roundCap', reason: 'out-of-range', value: 9 }];
+      // the rejection is what the REAL loader emitted for the invalid values below, not a reason typed into the fixture (review of PR 274, round 2)
+      const facts = makeFacts({ changedPaths, numstat: REAL271.map(([file, lines]) => ({ path: file, added: lines, deleted: 0 })), policyJson: { highPaths: ['packages/development/lib/**'], sliceMaxFiles: 0, roundCap: 9 } });
+      const rejected = facts.policy.rejected.find((entry) => entry.key === 'sliceMaxFiles');
+      expect(rejected).toMatchObject({ value: 0 });
+      expect(typeof rejected.reason).toBe('string');
+      expect(facts.policy.rejected.map((entry) => entry.key)).toContain('roundCap'); // a rejected key that is not a sizing key is not named here
       const m = await harness({ facts, rangeDiff: diffOf(changedPaths) }).prepare();
       expect(m.sizing.limits.sliceMaxFiles).toBe(8);
-      expect(m.sizing.warnings).toEqual([{ code: 'invalid-sliceMaxFiles', message: "the policy's sliceMaxFiles (0) was rejected (not-an-integer-in-range), so the default applies" }]);
+      expect(m.sizing.warnings).toEqual([{ code: 'invalid-sliceMaxFiles', message: `the policy's sliceMaxFiles (0) was rejected (${rejected.reason}), so the default applies` }]);
     });
   });
 
