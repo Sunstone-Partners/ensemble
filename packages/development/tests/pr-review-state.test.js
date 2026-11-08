@@ -66,7 +66,7 @@ describe('pr-review-state: redact widened credential shapes', () => {
     expect(out).toBe(`before\n${R}\nafter`);
   });
 
-  test('redacts a truncated PEM block with no END line through the end of the string', () => {
+  test('redacts a truncated PEM block with no END line: header plus the base64 body lines that follow', () => {
     const out = redact(`quoted: ${pemBegin}\n${BODY}\n${BODY}`);
     expect(out).not.toContain(BODY);
     expect(out).toBe(`quoted: ${R}`);
@@ -93,7 +93,7 @@ describe('pr-review-state: redact widened credential shapes', () => {
     expect(redact('a ' + 'ghp_' + alnum(30))).toBe(`a ${R}`);
     expect(redact('a ' + 'sk-' + alnum(30))).toBe(`a ${R}`);
     expect(redact('a ' + 'xoxb-' + '1234567890-abcdef')).toBe(`a ${R}`);
-    expect(redact('Bearer abc123.def456')).toBe(R);
+    expect(redact('Bearer abc123def456.ghi789')).toBe(R);
     expect(redact('Authorization: Basic dXNlcjpwYXNz')).toBe(R);
   });
 
@@ -127,6 +127,71 @@ describe('pr-review-state: redact widened credential shapes', () => {
       quoted: `secret: ${R}`,
     });
     expect(redact(once)).toEqual(once);
+  });
+});
+
+describe('redact does not mangle ordinary text', () => {
+  const R = '[REDACTED]';
+  const BODY = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj';
+  const pemBegin = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
+  const pemEnd = '-----END ' + 'RSA PRIVATE KEY-----';
+  const SHA = '3f2a9c1d7e04b5a6c8d9e0f1a2b3c4d5e6f70819';
+
+  test.each([
+    ['a 40-hex git sha', SHA],
+    ['a sha inside prose', `Last confirmed at head ${SHA}, still open.`],
+    ['a uuid', '123e4567-e89b-12d3-a456-426614174000'],
+    ['a base64 literal in a code sample', 'const logo = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";'],
+    ['Bearer prose', 'Bearer tokens are sent in the Authorization header.'],
+    ['Authorization prose', 'Authorization: header is required'],
+    ['bare key=value prose', 'the key=value pairs in the config'],
+    ['a camelCase name that merely starts with token', 'tokenBudget = 12345678'],
+    ['a name containing key mid-word', 'monkeyPatch=abcdefgh1'],
+    ['a code reference assigned to a secret name', 'api_key = process.env.API_KEY'],
+    ['password prose', 'password: required'],
+  ])('leaves %s untouched', (_name, text) => {
+    expect(redact(text)).toBe(text);
+  });
+
+  test('a header quoted in prose does not erase the prose or footer after it', () => {
+    const text = `The check misses ${pemBegin} headers in comments.\n\nLast confirmed: o/r PR #1 at head abcdef1`;
+    const out = redact(text);
+    expect(out).toContain('headers in comments.');
+    expect(out).toContain('\n\nLast confirmed: o/r PR #1 at head abcdef1');
+    expect(out).toBe(`The check misses ${R} headers in comments.\n\nLast confirmed: o/r PR #1 at head abcdef1`);
+  });
+
+  test('a truncated PEM loses its body but the line after the body survives', () => {
+    const out = redact(`key:\n${pemBegin}\n${BODY}\n${BODY}\nLast confirmed: o/r PR #1`);
+    expect(out).not.toContain(BODY);
+    expect(out).toBe(`key:\n${R}\nLast confirmed: o/r PR #1`);
+  });
+
+  test('a JSON-escaped PEM with END is redacted through the END and not beyond', () => {
+    const json = JSON.stringify(`pre ${pemBegin}\n${BODY}\n${BODY}\n${pemEnd}\nafter`);
+    expect(json).toContain('\\n');
+    const out = redact(json);
+    expect(out).not.toContain(BODY);
+    expect(out).toBe(`"pre ${R}\\nafter"`);
+  });
+
+  test('a truncated JSON-escaped PEM loses body segments only', () => {
+    const out = redact(`"${pemBegin}\\n${BODY}\\n${BODY}\\nLast confirmed: o/r PR #1"`);
+    expect(out).not.toContain(BODY);
+    expect(out).toBe(`"${R}\\nLast confirmed: o/r PR #1"`);
+  });
+
+  test('true positives: short passwords, client secrets, Authorization and Bearer credentials', () => {
+    expect(redact('password=hunter2')).toBe(`password=${R}`);
+    expect(redact('client_secret: "s3cretV4lue"')).toBe(`client_secret: ${R}`);
+    const jwtish = 'eyJhbGciOiJIUzI1NiJ9' + '.eyJzdWIiOiIxMjM0NTY3ODkwIn0.fakeSig123';
+    expect(redact(`Authorization: Bearer ${jwtish}`)).toBe(R);
+    expect(redact(`sent Bearer ${'abcdEFGH1234ijklMNOP5678'} ok`)).toBe(`sent ${R} ok`);
+  });
+
+  test('redaction of these shapes is idempotent', () => {
+    const once = redact(`password=hunter2 Bearer abcdEFGH1234ijklMNOP5678 ${pemBegin}\n${BODY}`);
+    expect(redact(once)).toBe(once);
   });
 });
 
