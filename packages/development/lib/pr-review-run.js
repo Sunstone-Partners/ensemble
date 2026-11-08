@@ -95,6 +95,11 @@
  * relaxes a fail-closed rule: an agent that arrives after its (larger) deadline is `expired`, a reviewer that lists fewer paths
  * than its slice leaves the slice not reviewed, a slice or deadline the limits cannot hold is a recorded warning and not a pass.
  *
+ * A light run cut into several slices has no TRIAGE step, so it gets ONE more reviewer, `reviewer-range`: the whole range diff, every
+ * changed path, one lens, graded like any reviewer (a failed read is its own `whole-range` entry among the unreviewed slices). It is
+ * planned only when the cap holds it beside the slices and the lane (`slices x lenses + lane + 1 <= maxConcurrentAgents`): a slice
+ * that fits the limits is never given up for it, and the plan says (`reader-not-planned`) when it is left out.
+ *
  * deps (every function may be async):
  *   now()                                    epoch ms
  *   makeTracer(traceRunId)                   -> {startSpan(name,{kind,attrs}), endSpan(id,{status,attrs})}   (never throws)
@@ -338,12 +343,13 @@ function planRunSlices(run, numstat) {
   const paths = numstat.map((entry) => ({ path: entry.path, lines: changedLines(entry) }));
   const lenses = run.depth.reviewersPerSlice;
   const lane = run.securityLane ? 1 : 0;
-  // A light run (it has no TRIAGE step) that is cut into several slices gets ONE whole-range reader beside the slice reviewers and
-  // the lane: each slice reviewer reads its own slice's diff, so this is the one non-security reader of the whole diff. Its seat is
-  // kept out of the slices' budget whenever the run could be cut at all, so the whole round still runs in ONE wave.
+  // The slices come first: as many as the limits ask for, never more than let the whole round (every lens of every slice, and the
+  // lane) run in ONE wave. A light run (it has no TRIAGE step) cut into several slices then gets ONE whole-range reader beside them,
+  // the one non-security reader of the whole diff, but only when the cap holds it as well: a slice that fits the limits is never given
+  // up for it, and the plan says so when it is left out (`reader-not-planned`).
   const quick = run.depth.mode === 'quick';
-  const readerSeat = !quick && isObject(run.mode) && run.mode.mode === 'light' ? 1 : 0;
-  const maxSlices = Math.max(1, Math.floor((run.maxConcurrentAgents - lane - readerSeat) / lenses));
+  const light = !quick && isObject(run.mode) && run.mode.mode === 'light';
+  const maxSlices = Math.max(1, Math.floor((run.maxConcurrentAgents - lane) / lenses));
   const request = {
     paths,
     threshold: run.policy && Number.isInteger(run.policy.sliceThreshold) ? run.policy.sliceThreshold : undefined,
@@ -356,8 +362,10 @@ function planRunSlices(run, numstat) {
   if (plan.ok !== true) return plan;
   // the same request with room for every slice the limits ask for (at most one per path): what the cap kept from the plan
   const wanted = planSlices({ ...request, maxSlices: Math.max(1, paths.length) });
-  const reader = readerSeat === 1 && plan.slices.length > 1;
-  const wantedReader = readerSeat === 1 && wanted.slices.length > 1;
+  const cut = light && plan.slices.length > 1;
+  const withReader = plan.slices.length * lenses + lane + 1;
+  const reader = cut && withReader <= run.maxConcurrentAgents;
+  const wantedReader = light && wanted.slices.length > 1;
   const slices = plan.slices.map((slice) => ({
     id: slice.id,
     files: slice.paths.length,
@@ -374,10 +382,15 @@ function planRunSlices(run, numstat) {
   const over = slices.filter((slice) => slice.overLimit);
   if (over.length > 0) {
     const agents = wanted.slices.length * lenses + lane + (wantedReader ? 1 : 0);
-    const beside = [lane === 1 ? 'the security lane' : null, readerSeat === 1 ? 'the whole-range reader' : null].filter((name) => name !== null).join(' and ');
     warnings.push({
       code: 'slice-over-limit',
-      message: `slice ${over.map((slice) => slice.id).join(', ')} hold${over.length === 1 ? 's' : ''} more than ${resolved.maxFiles} paths or ${resolved.targetLines} changed lines: those limits need ${wanted.slices.length} slices (${agents} agents at once), and the concurrency cap of ${run.maxConcurrentAgents} allows ${maxSlices} slices of ${lenses} lenses${beside === '' ? '' : ` beside ${beside}`}; raise maxConcurrentAgents to ${agents} (the policy allows at most 32) to hold them. A reviewer that does not reach every path of its slice is reported not reviewed`,
+      message: `slice ${over.map((slice) => slice.id).join(', ')} hold${over.length === 1 ? 's' : ''} more than ${resolved.maxFiles} paths or ${resolved.targetLines} changed lines: those limits need ${wanted.slices.length} slices (${agents} agents at once${wantedReader ? ', the whole-range reader among them' : ''}), and the concurrency cap of ${run.maxConcurrentAgents} allows ${maxSlices} slices of ${lenses} lenses${lane === 1 ? ' beside the security lane' : ''}; raise maxConcurrentAgents to ${agents} (the policy allows at most 32) to hold them. A reviewer that does not reach every path of its slice is reported not reviewed`,
+    });
+  }
+  if (cut && !reader) {
+    warnings.push({
+      code: 'reader-not-planned',
+      message: `no whole-range reader is planned: ${plan.slices.length} slices of ${lenses} lenses${lane === 1 ? ' and the security lane' : ''} make ${withReader - 1} agents at once, the concurrency cap is ${run.maxConcurrentAgents} and the reader would be one more; raise maxConcurrentAgents to ${withReader} (the policy allows at most 32) to add it`,
     });
   }
   const sizing = {
@@ -455,8 +468,9 @@ function buildReviewAgents(run, deps, ctx) {
   if (run.sizing.wholeRangeReader === true) {
     const work = { files: run.changedPaths.length, lines: run.sizing.work.lines };
     const lens = run.assignments[0].lens;
-    const reader = { name: RANGE_NAME, role: 'reviewer', sliceId: RANGE_COVERAGE_SLICE, lens, paths: run.changedPaths, work, _role: 'reviewer' };
-    reader._vars = { slice: RANGE_COVERAGE_SLICE, lens, timeboxMinutes: deadline(reader, work, 'the whole-range reader').minutes, paths: run.changedPaths, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir };
+    // its own brief (`range-reviewer`): the whole range, and what only a reader of the whole range can find
+    const reader = { name: RANGE_NAME, role: 'reviewer', sliceId: RANGE_COVERAGE_SLICE, lens, paths: run.changedPaths, work, _role: 'range-reviewer' };
+    reader._vars = { lens, timeboxMinutes: deadline(reader, work, 'the whole-range reader').minutes, paths: run.changedPaths, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir };
     agents.push(reader);
   }
   if (run.securityLane) {
@@ -1157,15 +1171,28 @@ async function gateStage(run, built, deps, tracer) {
 
 function reducedReviewNotice(run, built, notReviewed, stage) {
   const lines = [];
-  if (notReviewed.unreviewedSlices.length > 0) lines.push(`NOT REVIEWED: slice(s) ${notReviewed.unreviewedSlices.join(', ')}${notReviewed.unreviewedPaths.length > 0 ? `; path(s) ${notReviewed.unreviewedPaths.join(', ')}` : ''}`);
+  const sliceIds = notReviewed.unreviewedSlices.filter((id) => id !== RANGE_COVERAGE_SLICE);
+  if (notReviewed.unreviewedSlices.length > 0) {
+    const parts = [];
+    if (sliceIds.length > 0) parts.push(`slice(s) ${sliceIds.join(', ')}`);
+    if (notReviewed.unreviewedSlices.includes(RANGE_COVERAGE_SLICE)) parts.push('whole-range read');
+    if (notReviewed.unreviewedPaths.length > 0) parts.push(`path(s) ${notReviewed.unreviewedPaths.join(', ')}`);
+    lines.push(`NOT REVIEWED: ${parts.join('; ')}`);
+  }
   const sizing = isObject(run.sizing) ? run.sizing : null;
   if (sizing !== null && Array.isArray(sizing.warnings)) for (const warning of sizing.warnings) lines.push(`plan ${warning.code}: ${warning.message}`);
   const rangeDetail = isObject(run.coverage) && Array.isArray(run.coverage.detail) ? run.coverage.detail.find((d) => d.sliceId === RANGE_COVERAGE_SLICE) : undefined;
-  if (rangeDetail !== undefined) lines.push(`whole-range read NOT REVIEWED (${rangeDetail.reasons.map((r) => `${r.agent}: ${r.reason}`).join(', ')}${rangeDetail.missingPaths.length > 0 ? `; paths it did not list: ${rangeDetail.missingPaths.join(', ')}` : ''}): an interaction between slices was then read as a whole only by the security lane`);
+  // who read the whole diff, by what happened and not by what was planned: the security lane counts only when it arrived and covered every
+  // changed path, the TRIAGE step is a full run's, the whole-range reader counts only when it was planned and its read did not fail
+  const laneRead = run.security.status === 'clean' || run.security.status === 'findings';
+  if (rangeDetail !== undefined) lines.push(`whole-range read NOT REVIEWED (${rangeDetail.reasons.map((r) => `${r.agent}: ${r.reason}`).join(', ')}${rangeDetail.missingPaths.length > 0 ? `; paths it did not list: ${rangeDetail.missingPaths.join(', ')}` : ''}): an interaction between slices was then read as a whole ${laneRead ? 'only by the security lane' : 'by no agent'}`);
   const narrowed = sizing !== null && Array.isArray(sizing.slices) ? sizing.slices.filter((slice) => slice.diff === 'slice').length : 0;
   if (narrowed > 0) {
-    const wholeReaders = run.mode.mode === 'full' ? 'the security lane and the TRIAGE step' : sizing.wholeRangeReader === true ? `the security lane and by one whole-range reader (${RANGE_NAME}: one pass under one lens, with no second reader of the whole diff)` : 'the security lane (this mode has no TRIAGE step)';
-    lines.push(`cross-slice: ${narrowed} of ${sizing.slices.length} slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by ${wholeReaders}`);
+    const full = run.mode.mode === 'full';
+    const readerRead = sizing.wholeRangeReader === true && rangeDetail === undefined;
+    const named = [laneRead ? 'the security lane' : null, full ? 'the TRIAGE step' : null].filter((name) => name !== null).join(' and ');
+    const readers = readerRead ? `${named === '' ? '' : `${named} and by `}one whole-range reader (${RANGE_NAME}: one pass under one lens, with no second reader of the whole diff)` : named;
+    lines.push(`cross-slice: ${narrowed} of ${sizing.slices.length} slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole ${readers === '' ? 'by no agent' : `only by ${readers}`}${full || readerRead ? '' : ' (this mode has no TRIAGE step)'}`);
   }
   if (run.security.status !== 'clean') lines.push(`security lane ${run.security.status}${run.security.reason ? `: ${run.security.reason}` : ''}`);
   if (built.tally.verification !== 'performed') lines.push(`verification ${built.tally.verification}${built.tally.reason ? `: ${built.tally.reason}` : ''}`);
@@ -1569,4 +1596,4 @@ function emit(run, wave, deps, tracer, startedAt, now, flags = {}) {
   return manifestOf(run, wave);
 }
 
-module.exports = { prepareRun, collectRun, PREPARE_KEYS, COLLECT_KEYS, RUN_SUBDIR, LANE_NAME, SCHEMA, RULES };
+module.exports = { prepareRun, collectRun, planRunSlices, PREPARE_KEYS, COLLECT_KEYS, RUN_SUBDIR, LANE_NAME, SCHEMA, RULES };

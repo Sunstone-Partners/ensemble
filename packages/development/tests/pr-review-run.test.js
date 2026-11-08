@@ -15,7 +15,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { prepareRun, collectRun, PREPARE_KEYS, COLLECT_KEYS } = require('../lib/pr-review-run');
+const { prepareRun, collectRun, planRunSlices, PREPARE_KEYS, COLLECT_KEYS } = require('../lib/pr-review-run');
 const S = require('../lib/pr-review-run-support');
 const { collectResults } = require('../lib/pr-review-results');
 const { renderBriefFromFiles } = require('../lib/pr-review-brief-files');
@@ -3110,7 +3110,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(done.reducedReview.split('\n')).toContain("cross-slice: 2 of 3 slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by the security lane and the TRIAGE step");
     });
 
-    test('light, three slices: ONE whole-range reader is the eighth agent of the one wave at the default cap, sized for the whole diff, handed the whole range diff and every path (review of PR 274, round 2)', async () => {
+    test('light, three slices: ONE whole-range reader is the eighth agent of the one wave at the default cap, sized for the whole diff, handed the whole range diff, every path and a brief that says so (review of PR 274, rounds 2 and 3)', async () => {
       const h = real271({ policyJson: { highPaths: [] } });
       const m = await h.prepare();
       expect(m.sizing.wholeRangeReader).toBe(true);
@@ -3118,13 +3118,25 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(m.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'reviewer-s2-a', 'reviewer-s2-b', 'reviewer-s3-a', 'reviewer-s3-b', 'reviewer-range', 'security-lane']);
       expect(m.agents).toHaveLength(8); // 3 slices x 2 lenses + the reader + the lane: exactly the cap
       const range = agentOf(m, 'reviewer-range');
-      expect(range).toMatchObject({ role: 'reviewer', deadlineMinutes: 36, work: { files: 19, lines: 1450 } });
+      expect(range).toMatchObject({ role: 'reviewer', sliceId: 'whole-range', deadlineMinutes: 36, work: { files: 19, lines: 1450 } });
+      expect(range.paths).toEqual(allPaths(h)); // every changed path, not one slice's
       expect(minutesBetween(range)).toBe(36);
+      // the lens of a general reader: the first of the pool, the same as the first reviewer of every slice, and never `security` (the lane's)
+      const lensOf = (name) => h.readRun().waves.flatMap((wave) => wave.agents).find((a) => a.name === name).lens;
+      expect(lensOf('reviewer-range')).toBe('correctness');
+      expect(lensOf('reviewer-range')).toBe(lensOf('reviewer-s1-a'));
       const brief = briefOf(range);
+      expect(brief).toMatch(/^You are reviewing the whole of a pull request/);
+      expect(brief).toContain('Your scope: the whole range, every changed path');
+      expect(brief).toContain('Your lens: correctness');
       expect(brief).toContain('Timebox: 36 minutes');
-      expect(brief).toContain(`Diff for your slice: ${h.readRun().prepared.rangeDiff}`);
+      expect(brief).toContain(`Diff for the whole range: ${h.readRun().prepared.rangeDiff}`);
       for (const file of allPaths(h)) expect(brief).toContain(`- ${file}\n`);
-      for (const a of m.agents.filter((agent) => /^reviewer-s\d/.test(agent.name))) expect(a.deadlineMinutes).toBe(15);
+      expect(brief).not.toMatch(/You are reviewing one slice|Your slice:|Diff for your slice/);
+      for (const a of m.agents.filter((agent) => /^reviewer-s\d/.test(agent.name))) {
+        expect(a.deadlineMinutes).toBe(15);
+        expect(briefOf(a)).toMatch(/^You are reviewing one slice of a pull request/);
+      }
     });
 
     test('light, one slice (the limits raised to hold the PR whole), and full mode: no whole-range reader (the slice reviewers read the whole diff, and a full run has TRIAGE)', async () => {
@@ -3137,16 +3149,75 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(full.agents.some((a) => a.name === 'reviewer-range')).toBe(false);
     });
 
-    test('the cap arithmetic is explicit: at a cap of 7 the reader keeps its seat and the slices give way (two slices, six agents, one wave), and the plan says what would hold the limits', async () => {
-      const m = await real271({ policyJson: { highPaths: [], maxConcurrentAgents: 7 } }).prepare();
-      expect(m).toMatchObject({ wave: '1 of 1' });
-      expect(m.sizing.limits).toMatchObject({ slicesAllowed: 2, slicesWanted: 3 });
-      expect(m.sizing.slices).toHaveLength(2);
-      expect(m.agents).toHaveLength(6); // 2 slices x 2 lenses + the reader + the lane
-      const over = m.sizing.warnings.find((warning) => warning.code === 'slice-over-limit');
-      expect(over.message).toMatch(/limits need 3 slices \(8 agents at once\)/);
-      expect(over.message).toMatch(/allows 2 slices of 2 lenses beside the security lane and the whole-range reader/);
-      expect(over.message).toMatch(/raise maxConcurrentAgents to 8/);
+    test.each([
+      [8, 3, true, 8, []],
+      [7, 3, false, 7, ['reader-not-planned']],
+      [6, 2, true, 6, ['slice-over-limit']],
+      [5, 2, false, 5, ['slice-over-limit', 'reader-not-planned']],
+      [4, 1, false, 3, ['slice-over-limit']],
+    ])('the cap arithmetic is explicit: at a cap of %i the real PR (light, with the lane) is %i slices, reader %s, %i agents at once, warnings %j (review of PR 274, round 3)', async (cap, slices, reader, agents, codes) => {
+      const m = await real271({ policyJson: { highPaths: [], maxConcurrentAgents: cap } }).prepare();
+      expect(m).toMatchObject({ wave: '1 of 1', maxConcurrentAgents: cap });
+      expect(m.sizing.slices).toHaveLength(slices);
+      expect(m.sizing.wholeRangeReader).toBe(reader);
+      expect(m.agents.some((a) => a.name === 'reviewer-range')).toBe(reader);
+      expect(m.agents).toHaveLength(agents);
+      expect(m.sizing.warnings.map((warning) => warning.code)).toEqual(codes);
+    });
+
+    test('the warnings say what the plan holds and what would change it: no reader named where there is none, the cap that would hold the limits, the cap that would add the reader', async () => {
+      const warningsAt = async (cap) => (await real271({ policyJson: { highPaths: [], maxConcurrentAgents: cap } }).prepare()).sizing.warnings;
+      expect(await warningsAt(7)).toEqual([{ code: 'reader-not-planned', message: 'no whole-range reader is planned: 3 slices of 2 lenses and the security lane make 7 agents at once, the concurrency cap is 7 and the reader would be one more; raise maxConcurrentAgents to 8 (the policy allows at most 32) to add it' }]);
+      const [over6] = await warningsAt(6);
+      expect(over6.code).toBe('slice-over-limit');
+      expect(over6.message).toMatch(/those limits need 3 slices \(8 agents at once, the whole-range reader among them\), and the concurrency cap of 6 allows 2 slices of 2 lenses beside the security lane; raise maxConcurrentAgents to 8 /);
+      const [over4] = await warningsAt(4);
+      expect(over4.code).toBe('slice-over-limit');
+      for (const warning of [over6, over4]) expect(warning.message).not.toMatch(/beside (the security lane and )?the whole-range reader/);
+      const cap5 = await warningsAt(5);
+      expect(cap5.map((warning) => warning.code)).toEqual(['slice-over-limit', 'reader-not-planned']);
+      expect(cap5[1].message).toMatch(/2 slices of 2 lenses and the security lane make 5 agents at once, the concurrency cap is 5 and the reader would be one more; raise maxConcurrentAgents to 6 /);
+    });
+
+    describe('the reader\'s seat over the whole cap matrix: slices first, the reader only when the cap holds it too (review of PR 274, round 3)', () => {
+      const policy = loadPolicy({ text: null, baseSha: BASE }).policy;
+      const numstatOf = (count, lines) => Array.from({ length: count }, (_, i) => ({ path: `src/f${String(i).padStart(2, '0')}.js`, added: lines, deleted: 0 }));
+      const planFor = ({ cap, lenses, lane, paths, lines = 200, mode = 'light', depth = 'standard' }) => {
+        const planned = planRunSlices({ policy, policyRejected: [], depth: { mode: depth, reviewersPerSlice: lenses }, securityLane: lane === 1, mode: { mode }, maxConcurrentAgents: cap }, numstatOf(paths, lines));
+        expect(planned.ok).toBe(true);
+        return planned;
+      };
+      const rows = [];
+      for (const lane of [0, 1]) for (const lenses of [2, 3]) for (const cap of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]) for (const paths of [2, 4, 8, 10, 13]) rows.push({ cap, lenses, lane, paths });
+
+      test('over caps 1 to 12, with and without the lane, two and three lenses, 2 to 13 paths: the reader never costs a slice, is planned only for several slices and only when the cap holds it, and a plan without it says so', () => {
+        for (const row of rows) {
+          const label = JSON.stringify(row);
+          const light = planFor(row);
+          const full = planFor({ ...row, mode: 'full', depth: 'deep' });
+          const wanted = planFor({ ...row, cap: 32 }).plan.slices.length;
+          const n = light.plan.slices.length;
+          const fits = n > 1 && n * row.lenses + row.lane + 1 <= row.cap;
+          const codes = light.sizing.warnings.map((warning) => warning.code);
+          expect([label, n]).toEqual([label, Math.min(wanted, Math.max(1, Math.floor((row.cap - row.lane) / row.lenses)))]);
+          expect([label, n]).toEqual([label, full.plan.slices.length]); // the reader never costs a slice: light and full are cut alike
+          expect([label, light.sizing.wholeRangeReader]).toEqual([label, fits]);
+          expect([label, codes.includes('reader-not-planned')]).toEqual([label, n > 1 && !fits]);
+          expect([label, codes.includes('slice-over-limit')]).toEqual([label, n < wanted]);
+          expect([label, full.sizing.wholeRangeReader, full.sizing.warnings.some((warning) => warning.code === 'reader-not-planned')]).toEqual([label, false, false]);
+          for (const warning of light.sizing.warnings) expect([label, /beside (the security lane and )?the whole-range reader/.test(warning.message)]).toEqual([label, false]);
+        }
+      });
+
+      test('the review\'s repros: no lane at a cap of 4 is two slices within the limits and no reader (it was one over-limit slice); no lane at the default cap with a 4-slice PR is four slices within the limits and no reader (it was three over-limit slices and a reader); a cap of 5 with the lane is two slices within the limits', () => {
+        const a = planFor({ cap: 4, lenses: 2, lane: 0, paths: 4 });
+        expect([a.plan.slices.length, a.sizing.wholeRangeReader, a.sizing.slices.every((slice) => !slice.overLimit), a.sizing.warnings.map((warning) => warning.code)]).toEqual([2, false, true, ['reader-not-planned']]);
+        const b = planFor({ cap: 8, lenses: 2, lane: 0, paths: 10 });
+        expect([b.plan.slices.length, b.sizing.wholeRangeReader, b.sizing.slices.every((slice) => !slice.overLimit), b.sizing.warnings.map((warning) => warning.code)]).toEqual([4, false, true, ['reader-not-planned']]);
+        expect(b.sizing.warnings[0].message).toContain('raise maxConcurrentAgents to 9 ');
+        const c = planFor({ cap: 5, lenses: 2, lane: 1, paths: 4 });
+        expect([c.plan.slices.length, c.sizing.wholeRangeReader, c.sizing.slices.every((slice) => !slice.overLimit)]).toEqual([2, false, true]);
+      });
     });
 
     test('with every agent in time and every path listed, the whole-range read is reviewed (coverage complete), and the notice names the reader and what it cannot do', async () => {
@@ -3169,7 +3240,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(done.notReviewed.unreviewedPaths).toEqual([]); // the slice reviewers covered every path under two lenses
       expect(done.coverage.complete).toBe(false);
       const lines = done.reducedReview.split('\n');
-      expect(lines).toContain('NOT REVIEWED: slice(s) whole-range');
+      expect(lines).toContain('NOT REVIEWED: whole-range read');
       expect(lines.find((line) => line.startsWith('whole-range read NOT REVIEWED (reviewer-range: paths-not-reviewed; paths it did not list: '))).toBeDefined();
     });
 
@@ -3208,6 +3279,98 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(h.readRun().candidates.map((c) => c.source)).toEqual(['reviewer-range']);
       expect(verify.agents.length).toBeGreaterThanOrEqual(3);
       expect(verify.agents.some((a) => a.name === 'reviewer-range')).toBe(false);
+    });
+
+    test('the reader never masks a missing slice reviewer: both reviewers of slice 2 expire while the reader and the lane arrive in full, and slice 2 is still NOT REVIEWED, by name, with its paths (review of PR 274, round 3)', async () => {
+      const h = real271({ policyJson: { highPaths: [] } });
+      const m = await h.prepare();
+      for (const name of ['reviewer-s2-a', 'reviewer-s2-b']) {
+        const a = agentOf(m, name);
+        backdate(h, name, a.deadlineMinutes + 1, a.deadlineMinutes);
+      }
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const done = await h.collect();
+      const slice2 = h.readRun().slices[1].paths;
+      expect(done.notReviewed.unreviewedSlices).toEqual(['whole-pr~2']);
+      expect([...done.notReviewed.unreviewedPaths].sort()).toEqual([...slice2].sort());
+      expect(done.coverage.complete).toBe(false);
+      expect(done.reducedReview.split('\n').find((line) => line.startsWith('NOT REVIEWED: slice(s) whole-pr~2; path(s) '))).toBeDefined();
+      expect(done.reducedReview).not.toMatch(/whole-range read NOT REVIEWED/); // the reader arrived in full: it is not what failed
+    });
+
+    test('the same when one slice reviewer lists too few paths: THAT slice is not reviewed, and the reader\'s full read does not cover for it', async () => {
+      const h = real271({ policyJson: { highPaths: [] } });
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) }, partial: { 'reviewer-s2-a': [REAL271[8][0]] } });
+      const done = await h.collect();
+      const slice2 = h.readRun().slices[1];
+      expect(done.coverage).toMatchObject({ complete: false, unreviewedSlices: ['whole-pr~2'], uncovered: slice2.paths });
+      expect(done.notReviewed.unreviewedSlices).toEqual(['whole-pr~2']);
+      expect(done.notReviewed.unreviewedPaths).toEqual(slice2.paths);
+    });
+
+    test('a slice and the reader both failing are each named, the reader not as a slice: NOT REVIEWED: slice(s) whole-pr~2; whole-range read; path(s) ...', async () => {
+      const h = real271({ policyJson: { highPaths: [] } });
+      const m = await h.prepare();
+      for (const name of ['reviewer-s2-a', 'reviewer-s2-b', 'reviewer-range']) {
+        const a = agentOf(m, name);
+        backdate(h, name, a.deadlineMinutes + 1, a.deadlineMinutes);
+      }
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const done = await h.collect();
+      expect(done.notReviewed.unreviewedSlices).toEqual(['whole-pr~2', 'whole-range']);
+      expect(done.reducedReview).toMatch(/^NOT REVIEWED: slice\(s\) whole-pr~2; whole-range read; path\(s\) /m);
+      expect(done.reducedReview).not.toMatch(/slice\(s\) [^;\n]*whole-range/);
+    });
+
+    test('the notice credits only what read the whole diff: a reader that expired is not credited, a lane that expired is not credited, and with neither it says by no agent (review of PR 274, round 3)', async () => {
+      const linesOf = async ({ expire }) => {
+        const h = real271({ policyJson: { highPaths: [] } });
+        const m = await h.prepare();
+        for (const name of expire) {
+          const a = agentOf(m, name);
+          backdate(h, name, a.deadlineMinutes + 1, a.deadlineMinutes);
+        }
+        answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+        return (await h.collect()).reducedReview.split('\n');
+      };
+      const prefix = "cross-slice: 3 of 3 slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole";
+      const reader = 'one whole-range reader (reviewer-range: one pass under one lens, with no second reader of the whole diff)';
+      // the reader expired: the lane alone read the whole diff, in both lines
+      const readerOut = await linesOf({ expire: ['reviewer-range'] });
+      expect(readerOut).toContain(`${prefix} only by the security lane (this mode has no TRIAGE step)`);
+      expect(readerOut.find((line) => line.startsWith('whole-range read NOT REVIEWED'))).toMatch(/: an interaction between slices was then read as a whole only by the security lane$/);
+      // the lane expired: the reader alone read it, and the lane's own line says why it is not credited
+      const laneOut = await linesOf({ expire: ['security-lane'] });
+      expect(laneOut).toContain(`${prefix} only by ${reader}`);
+      expect(laneOut.some((line) => line.startsWith('security lane not-run: '))).toBe(true);
+      // both expired: nobody read it as a whole
+      const noneOut = await linesOf({ expire: ['reviewer-range', 'security-lane'] });
+      expect(noneOut).toContain(`${prefix} by no agent (this mode has no TRIAGE step)`);
+      expect(noneOut.find((line) => line.startsWith('whole-range read NOT REVIEWED'))).toMatch(/: an interaction between slices was then read as a whole by no agent$/);
+    });
+
+    test('with no reader planned (a cap of 7) the notice names the security lane alone and carries the plan\'s reader-not-planned line; nothing failed, so nothing is NOT REVIEWED', async () => {
+      const h = real271({ policyJson: { highPaths: [], maxConcurrentAgents: 7 } });
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const done = await h.collect();
+      const lines = done.reducedReview.split('\n');
+      expect(lines).toContain("cross-slice: 3 of 3 slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by the security lane (this mode has no TRIAGE step)");
+      expect(lines.some((line) => line.startsWith('plan reader-not-planned: no whole-range reader is planned'))).toBe(true);
+      expect(done.notReviewed.unreviewedSlices).toEqual([]);
+      expect(done.coverage.complete).toBe(true);
+    });
+
+    test('a full run whose security lane expired credits the TRIAGE step alone for a read of the whole diff', async () => {
+      const h = real271();
+      const m = await h.prepare();
+      const lane = agentOf(m, 'security-lane');
+      backdate(h, 'security-lane', lane.deadlineMinutes + 1, lane.deadlineMinutes);
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      await h.collect();
+      const done = await finish(h);
+      expect(done.reducedReview.split('\n')).toContain("cross-slice: 3 of 3 slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by the TRIAGE step");
     });
 
     test('nothing was narrowed when the PR is one slice (the limits raised to hold it whole): no cross-slice line', async () => {

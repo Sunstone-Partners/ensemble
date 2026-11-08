@@ -518,7 +518,10 @@ describe('the real CLI process on a real git fixture', () => {
     const range = m.agents.find((a) => a.name === 'reviewer-range');
     expect(range).toMatchObject({ role: 'reviewer', deadlineMinutes: 36, work: { files: 19, lines: 1450 } });
     // its brief hands it the WHOLE range diff (a real git diff of all 19 files) and its deadline is the whole diff's
-    const rangeDiff = /Diff for your slice: (\S+)/.exec(fs.readFileSync(range.briefPath, 'utf8'))[1];
+    const rangeBrief = fs.readFileSync(range.briefPath, 'utf8');
+    expect(rangeBrief).toMatch(/^You are reviewing the whole of a pull request/); // its own brief: it reads the whole range, not a slice
+    expect(rangeBrief).not.toMatch(/You are reviewing one slice|Your slice:/);
+    const rangeDiff = /Diff for the whole range: (\S+)/.exec(rangeBrief)[1];
     expect(path.basename(rangeDiff)).toBe('range.diff');
     expect(fs.readFileSync(rangeDiff, 'utf8').split('\n').filter((line) => line.startsWith('diff --git '))).toHaveLength(19);
     // stand-in agents: the slice reviewers and the lane list everything; the whole-range reader stops after four paths
@@ -530,7 +533,7 @@ describe('the real CLI process on a real git fixture', () => {
     expect(done.out.notReviewed.unreviewedSlices).toEqual(['whole-range']);
     expect(done.out.notReviewed.unreviewedPaths).toEqual([]);
     expect(done.out.coverage.complete).toBe(false);
-    expect(done.out.reducedReview).toMatch(/^NOT REVIEWED: slice\(s\) whole-range$/m);
+    expect(done.out.reducedReview).toMatch(/^NOT REVIEWED: whole-range read$/m);
     expect(done.out.reducedReview).toMatch(/whole-range read NOT REVIEWED \(reviewer-range: paths-not-reviewed; paths it did not list: med\/a05\.js/);
     // timing: ok, all eight agents counted, the reader is one more reviewer span in the same wave
     const t = spawnSync(process.execPath, [PR_REVIEW_CLI, 'timing'], { input: JSON.stringify({ runId: 'medwide', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root });
