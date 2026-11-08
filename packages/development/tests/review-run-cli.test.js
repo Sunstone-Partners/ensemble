@@ -22,6 +22,7 @@ const { defaultDeps: prepareGit } = require('../lib/review-prepare-runtime');
 const { prepareReview } = require('../lib/pr-review-prepare');
 
 const CLI = path.join(__dirname, '..', 'lib', 'review-run-cli.js');
+const PR_REVIEW_CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const FIXTURES = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'znd1', 'fixtures');
 const BODY = '## Testing\nran the relevant tests\n\n## Risk\nlow\n\n## How to revert\nrevert the commit\n';
 const POLICY = '# Review\n\n```ensemble-review-policy\n{"sensitivePaths":["secure/**"]}\n```\n';
@@ -257,6 +258,92 @@ describe('the real CLI process on a real git fixture', () => {
     // the run directory is private
     expect(fs.statSync(runDir('flow')).mode & 0o777).toBe(0o700);
     expect(fs.statSync(path.join(runDir('flow'), 'run.json')).mode & 0o777).toBe(0o600);
+  });
+
+  test('the trace review-run writes is the stage contract pr-review-cli timing reads: ok, every stage found, a critical path inside the window (kata k0sh)', () => {
+    const review = prep({ runId: 'timed' }).out;
+    answerReview(review, { findings: { 'reviewer-s1-a': [reviewerFinding({ uncertain: true })] } });
+    const verify = coll('timed').out;
+    expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    answerVotes(verify, 'real');
+    expect(coll('timed').out).toMatchObject({ status: 'ADJUDICATE' });
+
+    const run = spawnSync(process.execPath, [PR_REVIEW_CLI, 'timing'], { input: JSON.stringify({ runId: 'timed', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root });
+    expect(run.status).toBe(0);
+    const timing = JSON.parse(run.stdout);
+    expect(timing.ok).toBe(true);
+    expect(timing.wall.missing).toBe(false);
+    expect(timing.warnings).toEqual([]);
+    expect(timing.agents).toMatchObject({ count: 6, unusable: [], byRole: { reviewer: { count: 2 }, 'security-lane': { count: 1 }, verifier: { count: 3 } } });
+    for (const stage of ['review.head-read', 'review.gate', 'review.verdict', 'review.reviewer', 'review.verifier', 'review.security-lane']) {
+      expect({ stage, missing: timing.stages[stage].missing }).toEqual({ stage, missing: false });
+    }
+    // reviewer -> verifier -> verdict in round 1, none missing; the figures are the agents' own slowest, not the collect calls
+    expect(timing.criticalPath.missing).toBe(false);
+    expect(timing.criticalPath.rounds).toHaveLength(1);
+    expect(timing.criticalPath.rounds[0]).toMatchObject({ round: 1, steps: [{ stage: 'reviewer', missing: false }, { stage: 'verifier', missing: false }, { stage: 'verdict', missing: false }] });
+    // each step names the agent behind it, and the idle time between an agent's last message and the collect that closed its span is
+    // recorded as linger rather than counted in the agent's length (the span ends at last_message_ts)
+    const [reviewerStep, verifierStep] = timing.criticalPath.rounds[0].steps;
+    expect(reviewerStep.name).toMatch(/^reviewer-s1-[ab]$/);
+    expect(verifierStep.name).toMatch(/^verifier-\d+$/);
+    expect(timing.agents.lingerMs).toBeGreaterThan(0);
+    expect(timing.orchestratorOnly.missing).toBe(false);
+    expect(timing.beforeFirstDispatch.missing).toBe(false);
+    expect(timing.criticalPath.ms + timing.orchestratorOnly.ms).toBeLessThanOrEqual(timing.wall.ms);
+    // the stage spans, not the runner's own names, are what the reader found: nothing of the old scheme is needed
+    const starts = fs.readFileSync(path.join(fx.work, '.ensemble', 'state', 'toolchain', 'trace-timed.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'span_start');
+    const names = starts.map((r) => r.name);
+    expect(names.filter((n) => n === 'review')).toHaveLength(1);
+    expect(names).not.toContain('gate');
+    expect(names.some((n) => n.startsWith('agent:'))).toBe(false);
+    // the spans the reader never knew (`precheck`, `prepare-head`) are gone, not kept beside the contract names
+    expect(names.filter((n) => !n.startsWith('review'))).toEqual([]);
+    // every agent span names its round and its wave (one wave of each kind here: the cap is 8)
+    expect(starts.filter((r) => r.kind === 'agent').map((r) => [r.attrs.round, r.attrs.wave])).toEqual(Array(6).fill([1, 1]));
+    // adjudicating re-runs the gate and the verdict after the root has closed: those spans lie outside the window, so the answer is unchanged
+    expect(coll('timed', { adjudications: [{ id: 'f1', disposition: 'fix', reason: 'will fix' }] }).out.status).toBe('DONE');
+    const again = JSON.parse(spawnSync(process.execPath, [PR_REVIEW_CLI, 'timing'], { input: JSON.stringify({ runId: 'timed', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root }).stdout);
+    expect(again).toMatchObject({ ok: true, warnings: [], wall: timing.wall, criticalPath: timing.criticalPath });
+    expect(again.stages['review.verdict'].count).toBe(2);
+  });
+
+  test('a FULL-mode run (TRIAGE stop, five verifiers per candidate, the lane) writes the same stage contract: pr-review-cli timing is ok, every stage found, a critical path inside the window (kata dqcs on kata k0sh)', () => {
+    setGh({ head: fx.high });
+    fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
+    const review = prep({ runId: 'timed-full' }).out;
+    expect(review).toMatchObject({ ok: true, status: 'DISPATCH', mode: { mode: 'full' } });
+    answerReview(review, { changed: ['secure/key.js'], findings: { 'reviewer-s1-a': [reviewerFinding({ locationOrLink: 'secure/key.js:1', originalTextOrLink: 'secure/key.js:1', failureMode: 'the key is a constant string that is committed to the repository' })] } });
+    expect(coll('timed-full').out.status).toBe('TRIAGE');
+    const verify = coll('timed-full', { triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:1', failureMode: 'the module exports the secret to every importer without any access check', severity: 'important' }] } }).out;
+    expect(verify).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify' });
+    answerVotes(verify, 'real');
+    expect(coll('timed-full').out).toMatchObject({ ok: true, status: 'DONE', mode: { mode: 'full' } });
+
+    const run = spawnSync(process.execPath, [PR_REVIEW_CLI, 'timing'], { input: JSON.stringify({ runId: 'timed-full', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root });
+    expect(run.status).toBe(0);
+    const timing = JSON.parse(run.stdout);
+    expect(timing.ok).toBe(true);
+    expect(timing.wall.missing).toBe(false);
+    expect(timing.warnings).toEqual([]);
+    // two reviewers, the lane and five verifiers (two candidates settled by a pool of five), every one a span the reader can use
+    expect(timing.agents).toMatchObject({ count: 8, unusable: [], byRole: { reviewer: { count: 2 }, 'security-lane': { count: 1 }, verifier: { count: 5 } } });
+    for (const stage of ['review.head-read', 'review.gate', 'review.verdict', 'review.reviewer', 'review.verifier', 'review.security-lane']) {
+      expect({ stage, missing: timing.stages[stage].missing }).toEqual({ stage, missing: false });
+    }
+    // the TRIAGE stop dispatches nothing and has no span of its own: it lies inside the `review` window as orchestrator-only time
+    expect(timing.criticalPath.missing).toBe(false);
+    expect(timing.criticalPath.rounds).toHaveLength(1);
+    expect(timing.criticalPath.rounds[0]).toMatchObject({ round: 1, steps: [{ stage: 'reviewer', missing: false }, { stage: 'verifier', missing: false }, { stage: 'verdict', missing: false }] });
+    expect(timing.orchestratorOnly.missing).toBe(false);
+    expect(timing.criticalPath.ms + timing.orchestratorOnly.ms).toBeLessThanOrEqual(timing.wall.ms);
+    const names = fs.readFileSync(path.join(fx.work, '.ensemble', 'state', 'toolchain', 'trace-timed-full.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'span_start').map((r) => r.name);
+    expect(names.filter((n) => n === 'review')).toHaveLength(1);
+    expect(names.filter((n) => n === 'review.verifier')).toHaveLength(5);
+    expect(names.filter((n) => n === 'review.security-lane')).toHaveLength(1);
+    expect(names.filter((n) => n === 'review.reviewer')).toHaveLength(2);
+    expect(names.filter((n) => n === 'review.verdict')).toHaveLength(1);
+    expect(names.filter((n) => n === 'gate' || n === 'precheck' || n === 'prepare-head' || n.startsWith('agent:'))).toEqual([]);
   });
 
   test('a run with no uncertain finding and every vote cast finishes DONE in one collect after the verify wave', () => {
