@@ -507,6 +507,25 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(guide).toMatch(/not run end to end here/);
   });
 
+  test('the guide, the reference, the user guide and the CHANGELOG state the whole-range reader of a light run cut into several slices, the cap arithmetic, what it is graded on and what it cannot do (review of PR 274, round 2)', () => {
+    for (const text of [guide, reference]) {
+      expect(text).toContain('reviewer-range');
+      expect(text).toContain('whole-range');
+      expect(text).toMatch(/one pass[^.]{0,40}one lens/);
+    }
+    expect(guide).toContain('floor((maxConcurrentAgents - 1 for the lane - 1 for the whole-range reader, in light mode) / lenses per slice)');
+    expect(reference).toContain('floor((maxConcurrentAgents - 1 - 1 in light mode for the whole-range reader) / lenses per slice)');
+    expect(guide).toMatch(/the plan does not warn about it/);
+    expect(guide).toMatch(/36 minutes for the real PR/);
+    expect(guide).toMatch(/no second independent reader of the whole diff/);
+    expect(guide).toMatch(/`paths-not-reviewed`/);
+    expect(guide).toMatch(/`deadlineHeadroom` changes the deadlines only/);
+    expect(row('maxConcurrentAgents')).toMatch(/whole-range reader/);
+    expect(row('deadlineMinutes')).toMatch(/only when its payload carries `work`/);
+    const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
+    expect(unreleased).toMatch(/gets one whole-range reader \(kata `sfpb`, review round 2/);
+  });
+
   test('the CHANGELOG entry is the first of Unreleased and says the model is one run and nothing is relaxed', () => {
     const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
     const first = unreleased.slice(unreleased.indexOf('- **packages/development:**'));

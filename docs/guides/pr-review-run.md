@@ -233,16 +233,21 @@ and a long file costs by its length, so whichever term is larger for the slice i
 identical work varies, and no ratio in it is that spread (the reviewers' 1.70 compares a reviewer that read 19 paths with one
 that stopped after 5). 2 is the round number above the first two ratios and below the third, and it is below it on purpose:
 the rates are the lane's, the slower of the only two agents that read the same paths, so a reviewer's estimate is already 2.26
-times what the faster one took. The choice moves the plan: at 2.5 the limits are 6 paths and 490 lines, the real PR needs four
-slices (nine agents, one more than the default cap holds in one wave) and the lane is given 45 minutes. Raise
-`deadlineHeadroom` if live runs show agents slower than twice the slowest rate seen.
+times what the faster one took. The choice moves the plan if the CONSTANT moves: at 2.5 the limits would be 6 paths and 490
+lines, the real PR would need four slices (nine agents, one more than the default cap holds in one wave) and the lane would be
+given 45 minutes. The policy key `deadlineHeadroom` changes the deadlines only: the slice limits are the keys `sliceMaxFiles`
+and `sliceTargetLines`, which keep their defaults of 8 and 612 unless they are set. Raise `deadlineHeadroom` if live runs show
+agents slower than twice the slowest rate seen.
 
 **Slices.** Every PR is cut by size, at every size, in path order, into slices of at most `sliceMaxFiles` paths and about
 `sliceTargetLines` changed lines (policy keys; the defaults above). A path is never cut, so one 355-line file is one slice,
 and every path is in exactly one slice and is read under at least two distinct lenses (Standard and Deep). The number of
-slices is held to what lets the WHOLE review round run in one wave: `floor((maxConcurrentAgents - 1 for the lane) / lenses
-per slice)`, which is 3 slices (six reviewers and the lane) at the default cap of 8. The lane is the longest agent, so it
-never queues behind a wave of reviewers. Quick is still one reviewer and one slice, whatever the size. `sliceThreshold` no
+slices is held to what lets the WHOLE review round run in one wave: `floor((maxConcurrentAgents - 1 for the lane - 1 for the
+whole-range reader, in light mode) / lenses per slice)`, which is 3 slices at the default cap of 8: six reviewers and the lane in
+full mode, and in light mode six reviewers, the whole-range reader and the lane, eight agents. The lane is the longest agent, so
+it never queues behind a wave of reviewers. The cap must hold one slice's lenses and the lane (3 agents) for the round to be one
+wave at all: below that the runner still plans one slice and the round is split into waves, with the lane in the last, and the
+plan does not warn about it. Quick is still one reviewer and one slice, whatever the size. `sliceThreshold` no
 longer decides whether the runner cuts a PR: it is the area-split trigger of `planSlices`, and the runner passes no areas,
 so it only names the one slice (`whole-pr` under it, `(repository root)` over it).
 
@@ -253,9 +258,21 @@ and a slice file that cannot be written leave that slice the WHOLE range diff: m
 (`sizing.slices[n].diff` is `slice` or `whole-range`). With one slice the range diff is the slice's, and it is not read at
 `prepare`. The security lane always reads the whole range diff.
 
+**The whole-range reader (light mode).** A light run has no `TRIAGE` step, so when it is cut into several slices the runner adds
+ONE more reviewer, `reviewer-range`: the first lens of the pool, every changed path, the WHOLE range diff, in the same wave. It is
+graded like any reviewer. The model sizes its deadline for the whole diff (36 minutes for the real PR, where a slice reviewer gets
+15); a result after the deadline is `expired` and a list of fewer paths than the diff is `paths-not-reviewed`, and either one
+leaves its read, slice id `whole-range`, in `notReviewed.unreviewedSlices` and the coverage incomplete (the slices' own coverage
+stands, so `unreviewedPaths` is empty), with its own `whole-range read NOT REVIEWED` line in `reducedReview`. It is no pass of any
+slice's lens, so it never masks a missing slice reviewer. Its findings are candidates like any other's and go through the same
+verification. What it covers: the interactions between slices that the security lens does not read. What it cannot do: it is one
+pass under one lens with no second independent reader of the whole diff, and it can fail to reach every path like any reviewer. A
+full run has no such reader, since its `TRIAGE` step is handed the whole range.
+
 **Deadlines.** For a reviewer and for the lane the policy's `deadlineMinutes` (15) is a BASE: the deadline is
-`clamp(ceil(estimate x headroom), base, 60)` minutes, so the model only ever raises it. The reviewer's work is its slice;
-the lane's is every changed path. A verifier settles at most three claims whatever the PR's size and keeps its 5 minutes.
+`clamp(ceil(estimate x headroom), base, 60)` minutes, so the model only ever raises it. The reviewer's work is its slice (the
+whole diff when it was handed the whole range diff); the whole-range reader's and the lane's is every changed path. A verifier
+settles at most three claims whatever the PR's size and keeps its 5 minutes.
 `deadlineMinutes` is a floor and not a pin because a loaded policy always holds every key, set or defaulted, and an explicit
 value cannot be told from the default. The brief's timebox is the deadline the agent is given.
 
@@ -299,13 +316,13 @@ time, and narrow what each reviewer reads (the cross-slice limit below).
 - The lane is one agent over the whole PR. Its modelled deadline passes the 60-minute maximum at about 32 paths or 2,450
   changed lines; beyond that the deadline is capped and said, and a lane that does not arrive leaves the security review
   missing. Cutting the lane by slice is not built.
-- A reviewer reads its slice's diff, not the PR's, so an interaction between two slices is read as a whole only by the security
-  lane (a security lens over the whole range diff) and, in full mode, by the `TRIAGE` step. A Medium PR in light mode has no
-  `TRIAGE`: above 8 paths or 612 changed lines it used to be one whole-PR review (under the 1500-line threshold) and now has no
-  non-security reader of the whole diff. The final answer says so (`reducedReview`, the `cross-slice` line), and the `TRIAGE`
-  answer carries the range diff's path and the slices' paths (`rangeDiff`, `slices`) for the orchestrator who looks for such an
-  interaction. Slices are contiguous runs of paths in path order, so a source file and its vendored mirror are usually in
-  different slices.
+- A reviewer reads its slice's diff, not the PR's, so an interaction between two slices is read as a whole by the security lane (a
+  security lens over the whole range diff) and, in full mode, by the `TRIAGE` step; a light run, which has no `TRIAGE` step, gets
+  the whole-range reader above (one pass under one lens: it can miss, and there is no second reader of the whole diff). The final
+  answer says so (`reducedReview`, the `cross-slice` line, which counts only the slices that were really cut: a slice handed the
+  whole range diff is not one), and the `TRIAGE` answer carries the range diff's path and the slices' paths (`rangeDiff`,
+  `slices`) for the orchestrator who looks for such an interaction. Slices are contiguous runs of paths in path order, so a
+  source file and its vendored mirror are usually in different slices.
 - A PR with no changed paths plans ONE empty slice (`sizing.work` is 0 paths and 0 lines) and `collect` refuses the reviewers of
   a slice that has no path to read, so such a run ends refused rather than in a verdict. This is unchanged by the size model and
   was read from the planner and the collector, not run end to end here.
