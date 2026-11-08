@@ -346,6 +346,12 @@ function planRunSlices(run, numstat) {
     overLimit: !quick && (slice.paths.length > resolved.maxFiles || (slice.paths.length > 1 && slice.lines > resolved.targetLines)),
   }));
   const warnings = resolved.warnings.map((code) => ({ code, message: `the policy's ${code.slice('invalid-'.length)} is not readable, so the default applies` }));
+  // a value the policy loader rejected never reaches `run.policy` (the default stands in its place): name it here, so the verdict says so
+  const SIZING_KEYS = ['sliceMaxFiles', 'sliceTargetLines', 'deadlineHeadroom'];
+  for (const rejected of Array.isArray(run.policyRejected) ? run.policyRejected : []) {
+    if (!isObject(rejected) || !SIZING_KEYS.includes(rejected.key)) continue;
+    warnings.push({ code: `invalid-${rejected.key}`, message: `the policy's ${rejected.key} (${JSON.stringify(rejected.value)}) was rejected (${rejected.reason}), so the default applies` });
+  }
   const over = slices.filter((slice) => slice.overLimit);
   if (over.length > 0) {
     const agents = wanted.slices.length * lenses + lane;
@@ -647,6 +653,7 @@ async function prepareStages(input, deps, ctx) {
     changedPaths: facts.changedPaths,
     numstat: facts.numstat,
     policy: isObject(facts.policy) && isObject(facts.policy.policy) ? facts.policy.policy : null,
+    policyRejected: isObject(facts.policy) && Array.isArray(facts.policy.rejected) ? facts.policy.rejected : [],
     sensitivePaths: isObject(facts.paths) && Array.isArray(facts.paths.sensitive) ? facts.paths.sensitive : [],
     phase: 'preparing',
     waves: [],
@@ -1040,6 +1047,11 @@ async function gateStage(run, built, deps, tracer) {
 function reducedReviewNotice(run, built, notReviewed, stage) {
   const lines = [];
   if (notReviewed.unreviewedSlices.length > 0) lines.push(`NOT REVIEWED: slice(s) ${notReviewed.unreviewedSlices.join(', ')}; path(s) ${notReviewed.unreviewedPaths.join(', ')}`);
+  const sizing = isObject(run.sizing) ? run.sizing : null;
+  if (sizing !== null && Array.isArray(sizing.warnings)) for (const warning of sizing.warnings) lines.push(`plan ${warning.code}: ${warning.message}`);
+  if (sizing !== null && Array.isArray(sizing.slices) && sizing.slices.some((slice) => slice.diff === 'slice')) {
+    lines.push(`cross-slice: ${sizing.slices.length} slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by the security lane${run.mode.mode === 'full' ? ' and the TRIAGE step' : ' (this mode has no TRIAGE step)'}`);
+  }
   if (run.security.status !== 'clean') lines.push(`security lane ${run.security.status}${run.security.reason ? `: ${run.security.reason}` : ''}`);
   if (built.tally.verification !== 'performed') lines.push(`verification ${built.tally.verification}${built.tally.reason ? `: ${built.tally.reason}` : ''}`);
   if (notReviewed.unbriefable.length > 0) lines.push(`unbriefable candidate(s) kept, unverified: ${notReviewed.unbriefable.map((u) => u.id).join(', ')}`);
@@ -1201,6 +1213,8 @@ function triageManifest(run) {
     dispatched: [],
     candidates: run.candidates.map((c) => ({ id: c.id, locationOrLink: c.locationOrLink, severity: c.severity, failureMode: c.failureMode, source: c.source })),
     coverage: { complete: run.coverage.complete, unreviewedSlices: run.coverage.unreviewedSlices, uncovered: run.coverage.uncovered },
+    rangeDiff: isObject(run.prepared) && typeof run.prepared.rangeDiff === 'string' ? run.prepared.rangeDiff : null,
+    slices: Array.isArray(run.slices) ? run.slices.map((slice) => ({ id: slice.id, paths: slice.paths })) : [],
     security: { status: run.security.status, findings: run.security.findings.length, ...(run.security.reason === undefined ? {} : { reason: run.security.reason }) },
     maxAdditionalCandidates: F.MAX_ADDITIONAL_CANDIDATES,
     next: `node review-run-cli.js collect  (payload {"repoRoot": ${JSON.stringify(run.repoRoot)}, "runId": ${JSON.stringify(run.runId)}, "triage": {"additionalCandidates": []}})`,

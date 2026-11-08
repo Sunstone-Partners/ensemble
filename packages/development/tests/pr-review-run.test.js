@@ -2805,6 +2805,47 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       const { triage } = await toTriage(h);
       expect(triage).toMatchObject({ status: 'TRIAGE', security: { status: 'clean' }, coverage: { complete: true, unreviewedSlices: [], uncovered: [] } });
     });
+
+    test('the TRIAGE answer carries the whole range diff and every slice\'s paths: what the orchestrator needs to look for an interaction between slices (review of PR 274, round 1)', async () => {
+      const h = real271();
+      const { triage } = await toTriage(h);
+      expect(triage.status).toBe('TRIAGE');
+      expect(triage.rangeDiff).toBe(h.readRun().prepared.rangeDiff);
+      expect(sectionsIn(fs.readFileSync(triage.rangeDiff, 'utf8')).sort()).toEqual(allPaths(h).slice().sort());
+      expect(triage.slices.map((slice) => [slice.id, slice.paths.length])).toEqual([['whole-pr~1', 8], ['whole-pr~2', 3], ['whole-pr~3', 8]]);
+      expect(triage.slices.flatMap((slice) => slice.paths).sort()).toEqual(allPaths(h).slice().sort());
+    });
+
+    test('the final answer says each reviewer read only its slice\'s diff, and what read the whole diff: the security lane and, in full mode, the TRIAGE step', async () => {
+      const h = real271();
+      await toTriage(h);
+      const done = await finish(h);
+      expect(done.reducedReview.split('\n')).toContain("cross-slice: 3 slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by the security lane and the TRIAGE step");
+    });
+
+    test('a Medium run in light mode has no TRIAGE step to read the interactions between slices, and the answer says so', async () => {
+      const h = real271({ policyJson: { highPaths: [] } });
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const done = await h.collect();
+      expect(done.status).toBe('DONE');
+      expect(done.reducedReview.split('\n')).toContain("cross-slice: 3 slices were each reviewed on their own slice's diff, so an interaction between slices was read as a whole only by the security lane (this mode has no TRIAGE step)");
+    });
+
+    test('nothing was narrowed when the PR is one slice (the limits raised to hold it whole): no cross-slice line', async () => {
+      const h = real271({ policyJson: { sliceMaxFiles: 30, sliceTargetLines: 5000 } });
+      const { m } = await toTriage(h);
+      expect(m.sizing.slices).toHaveLength(1);
+      const done = await finish(h);
+      expect(done.reducedReview).not.toMatch(/cross-slice/);
+    });
+
+    test('the plan\'s own warnings reach the verdict: a slice over its limits (the cap held fewer slices than the limits ask for) is named in reducedReview', async () => {
+      const h = real271({ policyJson: { sliceTargetLines: 300, maxConcurrentAgents: 12 } });
+      await toTriage(h);
+      const done = await finish(h);
+      expect(done.reducedReview).toMatch(/^plan slice-over-limit: slice whole-pr~\d.* raise maxConcurrentAgents to 13/m);
+    });
   });
 
   describe('a PR the limits cannot hold in one wave: the plan is bigger than the limits and SAYS so', () => {
@@ -2934,6 +2975,15 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(m.sizing.model.headroom).toBe(2);
       expect(m.sizing.warnings.map((warning) => warning.code)).toEqual(['invalid-sliceMaxFiles', 'invalid-deadlineHeadroom']);
       expect(agentOf(m, 'security-lane').deadlineMinutes).toBe(36);
+    });
+
+    test('a sizing key the policy loader REJECTED (it never reaches run.policy) is named in the plan, with its value and reason, and the default applies', async () => {
+      const changedPaths = REAL271.map(([file]) => file);
+      const facts = makeFacts({ changedPaths, numstat: REAL271.map(([file, lines]) => ({ path: file, added: lines, deleted: 0 })), policyJson: { highPaths: ['packages/development/lib/**'] } });
+      facts.policy.rejected = [{ key: 'sliceMaxFiles', reason: 'not-an-integer-in-range', value: 0 }, { key: 'roundCap', reason: 'out-of-range', value: 9 }];
+      const m = await harness({ facts, rangeDiff: diffOf(changedPaths) }).prepare();
+      expect(m.sizing.limits.sliceMaxFiles).toBe(8);
+      expect(m.sizing.warnings).toEqual([{ code: 'invalid-sliceMaxFiles', message: "the policy's sliceMaxFiles (0) was rejected (not-an-integer-in-range), so the default applies" }]);
     });
   });
 
