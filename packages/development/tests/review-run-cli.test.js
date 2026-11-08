@@ -324,6 +324,28 @@ describe('the real CLI process on a real git fixture', () => {
     expect(snapshotRepo()).toEqual(before);
   });
 
+  test('through the real process: a triage claim the verifier brief refuses is triage-refused (exit 1, not terminal), and a mode label rewritten to light is mode-invariant (exit 1, nothing finalised) (review of PR 271)', () => {
+    setGh({ head: fx.high });
+    fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
+    const r = prep({ runId: 'high-tamper' });
+    expect(r.out).toMatchObject({ ok: true, status: 'DISPATCH', mode: { mode: 'full' } });
+    answerReview(r.out, { changed: ['secure/key.js'] });
+    expect(coll('high-tamper').out.status).toBe('TRIAGE');
+    const refused = coll('high-tamper', { triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:1', failureMode: 'the verdict of the comparison is wrong', severity: 'important' }] } });
+    expect(refused.code).toBe(1);
+    expect(refused.out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'triage-refused', error: expect.stringContaining('cannot be briefed to a verifier') });
+    expect(coll('high-tamper').out.status).toBe('TRIAGE'); // the refusal is not terminal: the run still waits for triage
+    const file = path.join(runDir('high-tamper'), 'run.json');
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    stored.mode.mode = 'light';
+    fs.writeFileSync(file, JSON.stringify(stored));
+    const tampered = coll('high-tamper', { triage: {} });
+    expect(tampered.code).toBe(1);
+    expect(tampered.out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'mode-invariant' });
+    expect(fs.existsSync(path.join(runDir('high-tamper'), 'final.json'))).toBe(false);
+    expect(fs.existsSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'))).toBe(false);
+  });
+
   test('a head that moves between prepare and collect is RUN_INVALIDATED: exit 1, no ledger, no gate, no state report', () => {
     fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
     const review = prep({ runId: 'moved' }).out;
