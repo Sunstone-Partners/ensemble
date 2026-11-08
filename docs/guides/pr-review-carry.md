@@ -162,8 +162,10 @@ the state report of `lastReviewedSha` (the same `state-read` rule: a report for 
   at the new head, so the gap blocks again until it is decided again or read;
 - a round of the FULL range (`deltaPlan.mode: 'full'`) read every path itself and carries nothing: its own record replaces the
   earlier one;
-- no earlier report, a report written for another head, one with no `coverage`, or one this module cannot read answers `unavailable`
-  with the reason, never `complete`, and `gate` and `status` then refuse as for any unreadable coverage;
+- no earlier report, a report written for another head, one with no `coverage` (every report written before this release) or one this
+  module cannot read answers `unavailable` with the reason and `fullRangeRequired: true`, never `complete`, and `gate` and `status` then
+  refuse as for any unreadable coverage. Only a round of the FULL range clears it: re-run that round once with `deltaPlan.mode: 'full'` (a
+  delta re-review stays unavailable, and so does every delta round after it); its record is then written and the next delta round carries it;
 - the earlier record is read from the report, never from the payload (`priorCoverage` is refused), so a caller cannot trade a gap
   for a clean sheet.
 

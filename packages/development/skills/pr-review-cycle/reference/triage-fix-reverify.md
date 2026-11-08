@@ -152,7 +152,9 @@ verification contract.
    coverage }`: `coverage` is this round's own record (`slices` with `reviewedBy`), `deltaPlan` the `review-range` answer. A delta
    round reads only what changed, so the gaps of the report of `lastReviewedSha` are still unread: it answers the record with
    every one of them added (`carriedFrom`, and their old decisions stale at this head); a `full` range carries none. No such
-   report, or one it cannot read, answers `unavailable`, never `complete`. Pass the answer's `coverage` to `status` and `gate`:
+   report, or one it cannot read (every report written before the coverage existed has none), answers `unavailable`, never `complete`,
+   with `fullRangeRequired: true`: re-run THIS round once over the full range (`deltaPlan.mode: "full"`); a delta re-review stays
+   unavailable, and so does every delta round after it, and the later delta rounds carry the record the full range wrote. Pass the answer's `coverage` to `status` and `gate`:
    a carried verdict never turns an incomplete coverage into a complete one.
 
 **Findings the new head fixed (CLI `pr-review-clear-cli.js`, kata `n350`, AC-008-3).** Once the
