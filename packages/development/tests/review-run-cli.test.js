@@ -461,6 +461,43 @@ describe('the real CLI process on a real git fixture', () => {
     expect(snapshotRepo()).toEqual(before);
   });
 
+  test('a High PR of the real run\'s shape (three slices) whose reviewer raises a candidate the verifier brief refuses: through the real process it ends DONE with that candidate UNVERIFIED (unbriefable), and every slice still carries its sized deadline (kata sfpb with kata 0g9n)', () => {
+    setGh({ head: fx.wide });
+    fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
+    const before = snapshotRepo();
+    const r = prep({ runId: 'wide-refused' });
+    expect(r.code).toBe(0);
+    const m = r.out;
+    expect(m).toMatchObject({ ok: true, status: 'DISPATCH', round: 'review', wave: '1 of 1', mode: { mode: 'full' } });
+    expect(m.sizing.slices.map((slice) => [slice.files, slice.diff])).toEqual([[8, 'slice'], [3, 'slice'], [8, 'slice']]);
+    const sized = { 'reviewer-s1-a': 15, 'reviewer-s1-b': 15, 'reviewer-s2-a': 15, 'reviewer-s2-b': 15, 'reviewer-s3-a': 15, 'reviewer-s3-b': 15, 'security-lane': 36 };
+    expect(Object.fromEntries(m.agents.map((a) => [a.name, a.deadlineMinutes]))).toEqual(sized);
+    const changed = WIDE_LINES.map((_, index) => widePath(index));
+    const KEY = 'compares the submitted key with the stored value using a loose equality so a type juggled key passes the check';
+    // the reviewer of the SECOND slice (its 355-line file) raises a defect in its own slice whose wording the verifier brief refuses
+    answerReview(m, { changed, findings: { 'reviewer-s2-a': [reviewerFinding({ locationOrLink: `${widePath(10)}:1`, originalTextOrLink: `${widePath(10)}:1`, failureMode: `the orchestrator ${KEY}` })] } });
+    const triage = coll('wide-refused');
+    expect(triage.code).toBe(0);
+    expect(triage.out).toMatchObject({ ok: true, status: 'TRIAGE', security: { status: 'clean' }, coverage: { complete: true, unreviewedSlices: [], uncovered: [] } });
+    expect(triage.out.candidates.map((c) => [c.id, c.unbriefable && c.unbriefable.kind])).toEqual([['f1', 'leak']]);
+    expect(triage.out.slices.map((slice) => slice.paths.length)).toEqual([8, 3, 8]);
+    const done = coll('wide-refused', { triage: {} });
+    expect(done.code).toBe(0);
+    expect(done.out).toMatchObject({ status: 'DONE', mode: { mode: 'full' }, votes: { reason: 'unbriefable-candidates' } });
+    expect(done.out.notReviewed.unbriefable.map((u) => [u.id, u.kind])).toEqual([['f1', 'leak']]);
+    expect(done.out.votes.outcomes.map((o) => [o.id, o.outcome, o.reason])).toEqual([['f1', 'unverified', 'unbriefable']]);
+    expect(done.out.reducedReview).toMatch(/verification not-performed: unbriefable-candidates/);
+    expect(done.out.reducedReview).toMatch(/UNVERIFIED, no verifier was asked [^\n]*: f1 \(leak, claim\)/);
+    expect(done.out.reducedReview).toMatch(/cross-slice: 3 slices were each reviewed on their own slice's diff/);
+    // the sized plan survived the unbriefable record: the same deadlines and slice diffs in the stored run, and no verify wave (nothing a verifier can be briefed with)
+    const run = JSON.parse(fs.readFileSync(path.join(runDir('wide-refused'), 'run.json'), 'utf8'));
+    expect(Object.fromEntries(run.waves[0].agents.map((a) => [a.name, a.deadlineMinutes]))).toEqual(sized);
+    expect(run.sizing.slices.map((slice) => slice.diff)).toEqual(['slice', 'slice', 'slice']);
+    expect(run.waves.map((wave) => wave.round)).toEqual(['review']);
+    process.stderr.write(`\nSMOKE sized+refused: ${JSON.stringify({ deadlines: sized, outcomes: done.out.votes.outcomes.map((o) => `${o.id}:${o.outcome}:${o.reason}`), verification: done.out.votes.verification })}\n`);
+    expect(snapshotRepo()).toEqual(before);
+  });
+
   test('through the real process: a triage claim the verifier brief refuses is triage-refused (exit 1, not terminal), and a mode label rewritten to light is mode-invariant (exit 1, nothing finalised) (review of PR 271)', () => {
     setGh({ head: fx.high });
     fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
