@@ -227,6 +227,7 @@ function buildCoverage(input) {
   if (under.length > 0) {
     const required = Number.isInteger(input.requiredLenses) && input.requiredLenses > 0 ? input.requiredLenses : null;
     const paths = unique(under.map((entry) => entry.path.trim()));
+    const noLens = unique(under.filter((entry) => texts(entry.lenses).length === 0).map((entry) => entry.path.trim()));
     gaps.push(
       makeGap({
         id: 'coverage:under-reviewed',
@@ -234,7 +235,7 @@ function buildCoverage(input) {
         paths,
         reasons: [],
         locationOrLink: `under-reviewed: ${listPaths(paths, 3)}`,
-        failureMode: `NOT REVIEWED under every required lens: ${plural(paths.length, 'path')} (${listPaths(paths)}) ${paths.length === 1 ? 'was' : 'were'} read under fewer distinct lenses than ${required === null ? 'the mode requires' : `the ${required} the mode requires`}`,
+        failureMode: `NOT REVIEWED under every required lens: ${plural(paths.length, 'path')} (${listPaths(paths)}) ${paths.length === 1 ? 'was' : 'were'} read under fewer distinct lenses than ${required === null ? 'the mode requires' : `the ${required} the mode requires`}${noLens.length > 0 ? `; no reviewer named ${plural(noLens.length, 'path')} (${listPaths(noLens)}), so nobody read ${noLens.length === 1 ? 'it' : 'them'}` : ''}`,
         evidence: under.slice(0, LISTED_PATHS).map((entry) => `${entry.path.trim()}: ${texts(entry.lenses).join('+') || 'no lens'}`).join('; '),
         origin,
       })
@@ -325,7 +326,8 @@ function gradeCoverage(record, context = {}) {
   const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
   if (validation.ok !== true || bad.length > 0 || duplicates.length > 0) {
     const named = unique([...validation.offendingIds, ...bad.map((gap) => (isObject(gap) ? gap.id : null)), ...duplicates]).map((id) => (id === null || id === undefined ? 'unidentified' : String(id)));
-    out.missing.push(`unusable coverage gaps (${named.join(', ') || 'unreadable'})`);
+    const problems = bad.map((gap) => `${isObject(gap) && gap.id !== undefined ? String(gap.id) : 'unidentified'}: ${gapShapeProblem(gap)}`);
+    out.missing.push(`unusable coverage gaps (${named.join(', ') || 'unreadable'})${problems.length > 0 ? `: ${problems.join('; ')}` : ''}`);
     return out;
   }
   for (const gap of gaps) {
@@ -361,7 +363,7 @@ function summarizeOpen(open) {
  *   `coverage` is the record to hand to `status` and `gate`. It is `incomplete` while any gap of the earlier round stands, and
  *   `unavailable` when the earlier round's coverage cannot be read: a delta says nothing about the paths it did not read.
  */
-function carryCoverage(input) {
+function carryCoverageOf(input) {
   const current = isObject(input) ? input.current : undefined;
   if (!isObject(current)) return { ok: false, carried: [], reasons: ['this round\'s coverage record is not an object'], coverage: unavailableRecord('this round\'s coverage record could not be read') };
   if (input.fullRange === true) return { ok: true, carried: [], reasons: ['range-full'], coverage: current };
@@ -392,6 +394,17 @@ function carryCoverage(input) {
   const status = current.status === 'unavailable' ? 'unavailable' : 'incomplete';
   const coverage = { ...current, status, gaps: [...own, ...carriedGaps] };
   return { ok: true, carried: carriedGaps.map((gap) => gap.id), reasons: ['prior-coverage-incomplete'], coverage };
+}
+
+/** What a delta round over an unreadable earlier record is told to do: only the full range replaces an unknown with a record. */
+const FULL_RANGE_WAY_OUT = 'run this round over the FULL range (deltaPlan.mode "full"): its reviewers read every path themselves and its own record replaces the earlier one';
+
+function carryCoverage(input) {
+  const answer = carryCoverageOf(input);
+  if (answer.ok === true || !answer.reasons.some((reason) => reason.startsWith('prior-'))) return answer;
+  // A delta over a report with no readable coverage (every report written before the coverage existed) stays unavailable, and so does
+  // every delta round after it: the answer says what clears it instead of leaving the orchestrator to guess.
+  return { ...answer, fullRangeRequired: true, coverage: unavailableRecord(`${answer.coverage.reason}; ${FULL_RANGE_WAY_OUT}`) };
 }
 
 module.exports = {

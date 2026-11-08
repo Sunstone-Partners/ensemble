@@ -3872,3 +3872,23 @@ describe('review coverage (kata k48x): what nobody read stops the gate and the l
     expect(gaps.every((gap) => gap.resolution === undefined && gap.cleared !== true && gap.disposition === 'adjudicate')).toBe(true);
   });
 });
+
+describe('review coverage through the runner: a path read under fewer lenses than the mode requires is the under-reviewed gap (kata k48x, review of PR 278, round 2)', () => {
+  test('the stored plan gives the second lens one path of two: the other path is read under one lens, a gap the gate and the status stop on', async () => {
+    const h = harness({ changedPaths: ['src/a.js', 'src/b.js'], baseline: { ran: true, exitCode: 0, timedOut: false, command: ['jest'], selection: [{ file: 't/a.test.js', why: 'related' }] } });
+    h.reviews = { ok: true, reviews: [{ login: 'bob', authorType: 'User', state: 'APPROVED', commitSha: HEAD, submittedAt: '2026-01-01T00:00:00Z' }] };
+    const m = await h.prepare();
+    expect(m.status).toBe('DISPATCH');
+    const file = path.join(h.runDir(), 'run.json');
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const wave of stored.waves) for (const agent of wave.agents) if (agent.name === 'reviewer-s1-b') agent.paths = ['src/a.js'];
+    fs.writeFileSync(file, JSON.stringify(stored));
+    answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+    const out = await h.collect({ now: Math.max(...m.agents.map((a) => a.deadlineAt)) + 1000 });
+    expect(out.status).toBe('DONE');
+    expect(out.gate.mergeable).toBe(false);
+    expect(out.gate.blockers.map((b) => [b.code, b.gapId, b.paths])).toEqual([['review-coverage-incomplete', 'coverage:under-reviewed', ['src/b.js']]]);
+    expect(out.reviewStatus.localPhase).toBe('LOCAL_REVIEW_PENDING');
+    expect(out.notReviewed.underReviewedPaths.map((entry) => entry.path)).toEqual(['src/b.js']);
+  });
+});

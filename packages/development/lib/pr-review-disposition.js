@@ -244,14 +244,27 @@ function summarize({ openBeads, acceptedBlocking, undecidedBlocking, findingsWit
 
 /** What Accept means for each kind of gap, said where the operator reads it (a gap is not always a path nobody read). */
 const COVERAGE_ACCEPT_NOTES = {
-  slice: 'Records that no reviewer read this slice and you accept merging without that read.',
   'whole-range': 'Records that the whole-range reader (the one read of an interaction between slices) did not read the whole diff: the slice reviewers read these paths one slice at a time. You accept merging without that read.',
   uncovered: 'Records that no slice held these paths and no reviewer read them, and you accept merging without that read.',
   'under-reviewed': 'Records that these paths were read under fewer distinct lenses than the mode requires, and you accept merging with that shorter review.',
   unnamed: 'Records that the review reported incomplete coverage without saying what it missed, so every changed path counts as not reviewed, and you accept merging without that read.',
 };
 const COVERAGE_ACCEPT_TAIL = ' The other way out is to run the review again.';
-const coverageAcceptNote = (gap) => `${COVERAGE_ACCEPT_NOTES[gap.gapType] || COVERAGE_ACCEPT_NOTES.unnamed}${COVERAGE_ACCEPT_TAIL}`;
+
+/** Why a slice's reviewers failed, as the gap carries it: `reviewer-s1-b: expired:deadline-passed; ...`. */
+const reasonsLine = (gap) => (Array.isArray(gap.reasons) ? gap.reasons.filter(isObject).map((entry) => `${entry.agent}: ${entry.reason}`).join('; ') : '');
+
+/**
+ * A slice counts as reviewed only when EVERY reviewer of it arrived in time and listed every path, so a slice one of its two reviewers
+ * did read is still a gap: the note says what failed and why that slice does not count, instead of calling it unread.
+ */
+function sliceAcceptNote(gap) {
+  const why = reasonsLine(gap);
+  return why === ''
+    ? 'Records that no reviewer result covered this slice and you accept merging without that read.'
+    : `Records that this slice was not fully reviewed (${why}): a slice counts as reviewed only when every reviewer of it arrived in time and listed every path, so it does not count even where another reviewer of it did read its paths. You accept merging without the full review.`;
+}
+const coverageAcceptNote = (gap) => `${gap.gapType === 'slice' ? sliceAcceptNote(gap) : COVERAGE_ACCEPT_NOTES[gap.gapType] || COVERAGE_ACCEPT_NOTES.unnamed}${COVERAGE_ACCEPT_TAIL}`;
 
 /**
  * The operator's list entry for one coverage gap the gate holds open: Accept is its only choice (it is never defaulted, never

@@ -402,7 +402,7 @@ function footer(context) {
 
 /** What each kind of gap says about itself in its bead: the title's prefix and the heading over its paths (a gap is not always unread). */
 const GAP_BEAD_WORDS = {
-  slice: { prefix: 'Not reviewed', heading: 'Paths not reviewed (no reviewer read this slice):' },
+  slice: { prefix: 'Not reviewed', heading: 'Paths of a slice that was not fully reviewed (a slice counts as reviewed only when every reviewer of it arrived and listed every path):' },
   'whole-range': { prefix: 'Whole-range read missing', heading: 'Paths the whole-range read did not cover (the slice reviewers read each slice on its own):' },
   uncovered: { prefix: 'Not reviewed', heading: 'Paths no slice held and no reviewer read:' },
   'under-reviewed': { prefix: 'Under-reviewed', heading: 'Paths read under fewer distinct lenses than the mode requires:' },

@@ -558,7 +558,7 @@ describe('the record\'s contract: a coverage written by hand, or merged from ano
 
   test('what Accept says matches what the gap is: a whole-range gap is not "no reviewer read these paths", an under-reviewed one is not unread', () => {
     const noteOf = (coverage) => buildDispositionChoices({ ledger: [], security: { status: 'clean', findings: [] }, headSha: HEAD, coverage }).dispositionChoices[0].choices[0].note;
-    expect(noteOf(incomplete())).toMatch(/no reviewer read this slice/);
+    expect(noteOf(incomplete())).toMatch(/no reviewer result covered this slice/);
     const range = noteOf(incomplete(READER_LOST));
     expect(range).toMatch(/whole-range reader/);
     expect(range).toMatch(/slice reviewers read these paths one slice at a time/);
@@ -567,5 +567,88 @@ describe('the record\'s contract: a coverage written by hand, or merged from ano
     expect(under).toMatch(/fewer distinct lenses/);
     expect(under).not.toMatch(/nobody read|no reviewer read/);
     expect(noteOf(incomplete({ unreviewedSlices: [], uncovered: ['docs/x.md'], changedPaths: [...CHANGED, 'docs/x.md'] }))).toMatch(/no slice held these paths/);
+  });
+
+  test('a slice one reviewer of two read is not described as unread: the note names what failed and why the slice does not count (review of PR 278, round 2)', () => {
+    const noteOf = (coverage) => buildDispositionChoices({ ledger: [], security: { status: 'clean', findings: [] }, headSha: HEAD, coverage }).dispositionChoices[0].choices[0].note;
+    const partial = incomplete({ unreviewedSlices: ['s1'], uncovered: ['src/a.js', 'src/b.js'], detail: [{ sliceId: 's1', reasons: [{ agent: 'reviewer-s1-b', reason: 'expired:deadline-passed' }], missingPaths: [] }] });
+    const note = noteOf(partial);
+    expect(note).toContain('reviewer-s1-b: expired:deadline-passed');
+    expect(note).toMatch(/was not fully reviewed/);
+    expect(note).toMatch(/even where another reviewer of it did read/);
+    expect(note).not.toMatch(/no reviewer read|nobody read/);
+  });
+
+  test('slices: ok and covered follow the record, and a plan holding a path changedPaths does not name is unavailable (review of PR 278, round 2)', () => {
+    const paths = [{ path: 'src/a.js', lines: 10 }, { path: 'src/b.js', lines: 10 }];
+    const all = paths.map((entry) => entry.path);
+    const reviewedBy = ['correctness', 'security'].map((lens) => ({ sliceId: 'whole-pr', lens, reviewer: `s1-${lens}`, paths: all }));
+    const omitted = cli.runSlices({ paths, mode: 'standard', reviewedBy });
+    expect([omitted.ok, omitted.covered, omitted.coverage.status]).toEqual([false, false, 'unavailable']);
+    expect(omitted.coverageReason).toMatch(/changedPaths was not given/);
+    const empty = cli.runSlices({ paths, mode: 'standard', reviewedBy, changedPaths: [] });
+    expect([empty.ok, empty.covered, empty.coverage.status]).toEqual([false, false, 'unavailable']);
+    expect(empty.coverage.reason).toMatch(/plan holds paths that changedPaths does not name \(src\/a\.js, src\/b\.js\)/);
+    expect(cli.runSlices({ paths, mode: 'standard', reviewedBy, changedPaths: ['src/a.js'] }).coverage.status).toBe('unavailable');
+    const full = cli.runSlices({ paths, mode: 'standard', reviewedBy, changedPaths: all });
+    expect([full.ok, full.covered, full.coverage.status]).toEqual([true, true, 'complete']);
+  });
+
+  test('an under-reviewed gap says so for a path no reviewer named, and an unusable gap says why (review of PR 278, round 2)', () => {
+    const named = incomplete({ unreviewedSlices: [], uncovered: [], underReviewed: [{ path: 'src/a.js', lenses: [] }, { path: 'src/b.js', lenses: ['correctness'] }], requiredLenses: 2 });
+    expect(named.gaps[0].failureMode).toMatch(/no reviewer named 1 path \(src\/a\.js\), so nobody read it/);
+    const zero = cli.runSlices({ paths: [], mode: 'standard', reviewedBy: [], changedPaths: [] });
+    const verdict = evaluateGate(gateInput({ coverage: zero.coverage }));
+    expect(verdict.blockers[0].code).toBe('review-data-unavailable');
+    expect(verdict.blockers[0].missing.join(' ')).toMatch(/it names no path/);
+  });
+});
+
+describe('a state report written before the coverage existed: the migration is one full-range round, then delta rounds carry (review of PR 278, round 2)', () => {
+  const H2 = 'd'.repeat(40);
+  const H3 = 'e'.repeat(40);
+  let dir;
+  beforeEach(() => {
+    fs.mkdirSync(FIXTURES, { recursive: true });
+    dir = fs.mkdtempSync(path.join(FIXTURES, 'migrate-'));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  /** The report of a round, written the way the skill writes it; `coverage: undefined` is a report of the release before this one. */
+  function record(head, coverage) {
+    const status = cli.runStatus(statusFacts({ headSha: head, reviewedHeadSha: head, coverage: coverage === undefined ? COMPLETE : coverage }));
+    if (coverage === undefined) delete status.coverage;
+    expect(cli.runStateWrite({ prId: '42', cwd: dir, state: status }).ok).toBe(true);
+  }
+  const carry = (lastReviewedSha, mode) => cli.runCarry({ action: 'coverage', prId: '42', cwd: dir, lastReviewedSha, deltaPlan: { mode }, coverage: COMPLETE });
+
+  test('a delta round over a report with no coverage is unavailable AND says what clears it; the full-range round clears it and the next delta round carries', () => {
+    record(OLD_HEAD, undefined);
+    const delta = carry(OLD_HEAD, 'delta');
+    expect(delta).toMatchObject({ ok: false, fullRangeRequired: true, priorState: 'read' });
+    expect(delta.coverage.status).toBe('unavailable');
+    expect(delta.coverage.reason).toMatch(/FULL range/);
+    const full = carry(OLD_HEAD, 'full');
+    expect(full).toMatchObject({ ok: true, carried: [], reasons: ['range-full'] });
+    expect(full.fullRangeRequired).toBeUndefined();
+    expect(full.coverage).toEqual(COMPLETE);
+    record(H2, full.coverage);
+    const next = carry(H2, 'delta');
+    expect(next).toMatchObject({ ok: true, carried: [], reasons: ['prior-coverage-complete'] });
+    expect(next.fullRangeRequired).toBeUndefined();
+    expect(cli.runStatus(statusFacts({ headSha: H3, reviewedHeadSha: H3, coverage: next.coverage })).localPhase).toBe('LOCAL_REVIEW_COMPLETE');
+  });
+
+  test('a delta re-review of the migrating head stays unavailable and says the same, round after round, until a full range is read', () => {
+    record(OLD_HEAD, undefined);
+    const first = carry(OLD_HEAD, 'delta');
+    record(H2, first.coverage); // the report that delta round writes holds the unavailable record
+    const second = carry(H2, 'delta');
+    expect(second).toMatchObject({ ok: false, fullRangeRequired: true });
+    expect(second.coverage.status).toBe('unavailable');
+    const full = carry(H2, 'full');
+    expect(full.coverage).toEqual(COMPLETE);
+    record(H3, full.coverage);
+    expect(carry(H3, 'delta')).toMatchObject({ ok: true, reasons: ['prior-coverage-complete'] });
   });
 });

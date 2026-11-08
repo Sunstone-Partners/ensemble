@@ -612,14 +612,19 @@ function runSlices(payload) {
   });
 
   const changedGiven = Array.isArray(request.changedPaths);
+  const planned = plan.slices.flatMap((slice) => slice.paths);
+  const notChanged = changedGiven ? planned.filter((file) => !request.changedPaths.includes(file)) : [];
   // A plan is only as complete as the paths it was cut from: with no `changedPaths` to hold it against, a changed file the plan
-  // never held cannot be seen, so the record is `unavailable` (never complete) instead of graded against the plan's own paths.
+  // never held cannot be seen, and a plan holding a path `changedPaths` does not name was cut from another listing. Either way the
+  // record is `unavailable` (never complete) instead of graded against the plan's own paths.
   const unavailable =
     coverage.ok !== true
       ? coverage.reason || 'the coverage could not be computed'
-      : changedGiven
-        ? null
-        : 'changedPaths was not given, so the plan cannot be checked against the changed files: a changed file the plan never held would read as covered';
+      : !changedGiven
+        ? 'changedPaths was not given, so the plan cannot be checked against the changed files: a changed file the plan never held would read as covered'
+        : notChanged.length > 0
+          ? `the plan holds paths that changedPaths does not name (${notChanged.slice(0, 5).join(', ')}${notChanged.length > 5 ? ', ...' : ''}), so the two lists were not cut from one listing and the plan cannot be graded against the changed files`
+          : null;
   // The record `status` and `gate` take: a path nobody read is a named gap there, never a quiet `covered:false` a caller can drop.
   const record = buildCoverage({
     changedPaths: changedGiven ? request.changedPaths : plan.slices.flatMap((slice) => slice.paths),
@@ -646,9 +651,9 @@ function runSlices(payload) {
     coverage: record,
   };
   if (coverage.reason !== undefined) result.coverageReason = coverage.reason;
-  // The verdict and the record must not disagree: with the changed paths in hand, a plan the record does not call complete (no
-  // path at all) is not `covered`.
-  if (changedGiven && coverage.ok === true && coverage.covered === true && record.status !== 'complete') {
+  // The verdict and the record must not disagree: a plan the record does not call complete (no `changedPaths`, a plan and a changed
+  // list cut from different listings, or no path at all) is not `covered`.
+  if (coverage.ok === true && coverage.covered === true && record.status !== 'complete') {
     result.ok = false;
     result.covered = false;
     result.coverageReason = record.reason || 'the coverage record lists gaps the verdict did not';

@@ -162,3 +162,14 @@ describe('the plan records one bead per open gap', () => {
     expect(create.create.description).toContain('[REDACTED]');
   });
 });
+
+describe('a slice one reviewer read is not called unread in its bead (kata k48x, review of PR 278, round 2)', () => {
+  test('the heading says the slice was not fully reviewed, and the claim names the reviewer that failed', () => {
+    const coverage = gapsFor({ unreviewedSlices: ['s1'], uncovered: ['src/a.js', 'src/b.js'], detail: [{ sliceId: 's1', reasons: [{ agent: 'reviewer-s1-b', reason: 'expired:deadline-passed' }], missingPaths: [] }] });
+    const inp = input({ coverage });
+    const [create] = creates(planBeads(inp, empty(inp)));
+    expect(create.create.description).toContain('Paths of a slice that was not fully reviewed');
+    expect(create.create.description).toContain('reviewer-s1-b: expired');
+    expect(create.create.description).not.toMatch(/no reviewer read/);
+  });
+});
