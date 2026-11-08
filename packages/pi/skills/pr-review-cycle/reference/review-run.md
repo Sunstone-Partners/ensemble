@@ -117,8 +117,10 @@ A delta round reads only the delta plan's read set, on `delta.diff`: fewer slice
 push left alone (its hunk, dependencies and dependents untouched, its file outside the delta) keeps the prior verdict and is
 not verified again (the verify manifest's `carry` says how many), every other one is verified again. The ledger keeps the
 prior findings: carried ones restamped (`carriedFrom`), fixed ones cleared, re-reported ones replaced, the rest as recorded.
-Your job does not change: dispatch what the manifest lists and call `collect`. The honest limits: `remediationShas` is your
-statement of which commits are the fix round's own, and the delta never reaches a High or sensitive path.
+The security lane and the whole-range reader keep the whole range. Your job does not change: dispatch what the manifest lists and
+call `collect`. The honest limits are listed in the answer (`reReview.delta.limits`): the read set is the changed files, their direct
+importers and tests; a High or sensitive file can be in it as a caller of a changed file; `remediationShas` is your statement of which
+commits are the fix round's own.
 
 ## Slices and deadlines (kata `sfpb`)
 

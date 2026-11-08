@@ -36,6 +36,21 @@ const identity = (value) => (isText(value) ? value.trim() : Number.isFinite(valu
 /** The lists of a state report's `notReviewed` that must all be empty before the round can stand for the paths a delta does not read. */
 const NOT_REVIEWED_LISTS = Object.freeze(['unreviewedSlices', 'unreviewedPaths', 'incompleteVerifiers', 'unbriefable', 'expiredAgents']);
 
+/**
+ * What a delta round does NOT see, said in its answer (kata xb4j review): the plan's read set is the changed files, their direct
+ * importers, their tests and name matches, so a module the changed file itself imports, a caller of a caller, and anything the
+ * graph cannot resolve are in no read set (the security lane and the whole-range reader keep the whole range); the carry's own
+ * declared limits hold (direct dependents only, bare npm packages and lockfile changes unseen, symlinks and computed specifiers
+ * fail closed); a High or sensitive file can be in the read set as a caller of a changed file, while a changed path never is.
+ */
+const DELTA_LIMITS = Object.freeze([
+  'read-set: changed files, their direct importers and tests, and name matches; not the modules a changed file imports, nor callers of callers',
+  'the security lane and the whole-range reader read the whole range',
+  'carry: direct dependents only; bare npm packages and lockfile changes are not seen; symlinks and computed specifiers re-verify',
+  'a High or sensitive file can be in the read set as a caller of a changed file; a changed path never is',
+  'remediationShas is the caller\'s statement of which commits are the fix round\'s own',
+]);
+
 const no = (reason) => ({ ok: false, reason });
 
 /**
@@ -234,7 +249,8 @@ function planRunCarry(run, hashed) {
   const carried = [];
   const carriedIds = [];
   const tally = [];
-  const reasons = [...plan.reasons];
+  // the round's own reasons, then why each candidate that was not carried is verified again
+  const reasons = [...plan.reasons, ...plan.reverify.flatMap((entry) => (Array.isArray(entry.reasons) ? entry.reasons : []))];
   for (const record of plan.carried) {
     const candidate = byKey.get(keyOf(record));
     const entry = priorById.get(identity(record.id));
@@ -319,4 +335,4 @@ function verdictRecords(run, findings) {
   return { verdicts: [...carried, ...fresh], recorded: fresh.length, skipped: recorded.ok === true ? recorded.skipped : [{ id: null, reason: recorded.reason }] };
 }
 
-module.exports = { priorRound, deltaScope, idSeed, hashCandidates, carryFacts, planRunCarry, composeDeltaLedger, verdictRecords, NOT_REVIEWED_LISTS };
+module.exports = { DELTA_LIMITS, priorRound, deltaScope, idSeed, hashCandidates, carryFacts, planRunCarry, composeDeltaLedger, verdictRecords, NOT_REVIEWED_LISTS };

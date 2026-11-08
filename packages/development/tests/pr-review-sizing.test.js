@@ -535,15 +535,17 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(unreleased).toContain('reader-not-planned');
   });
 
-  // The entry is found by its own words anywhere in Unreleased: pinning it as the FIRST entry made every later change to the
-  // changelog (each puts its entry at the top) fail this test without touching the sizing docs it guards.
-  test('the CHANGELOG has the sizing entry in Unreleased and it says the model is one run and nothing is relaxed', () => {
+  // Newest first: the xb4j entry (re-review delta, the change after this one) is the first entry of Unreleased and the sfpb entry
+  // follows it directly. A later change that puts its own entry on top updates this pin, with the entry it puts above.
+  test('the CHANGELOG has the sizing entry directly after the newest one and it says the model is one run and nothing is relaxed', () => {
     // (`read` collapses whitespace, so the text is one line: entries are told apart by their `- **packages/` openers)
     const afterUnreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
     const release = afterUnreleased.indexOf(' ## [', 10);
     const unreleased = release === -1 ? afterUnreleased : afterUnreleased.slice(0, release);
-    const start = unreleased.indexOf('- **packages/development:** `review-run` sizes its slices and deadlines to what there is to read (kata `sfpb`');
-    expect(start).toBeGreaterThan(-1);
+    const entries = unreleased.slice(unreleased.indexOf('- **packages/')).split(/(?=- \*\*packages\/[a-z]+(?:, packages\/[a-z]+)*:\*\* )/);
+    expect(entries[0]).toMatch(/^- \*\*packages\/development:\*\* review-run re-review plans a delta, carries verdicts and re-verifies only what changed \(kata `xb4j`/);
+    const start = unreleased.indexOf(entries[1]);
+    expect(entries[1]).toMatch(/^- \*\*packages\/development:\*\* `review-run` sizes its slices and deadlines to what there is to read \(kata `sfpb`/);
     const first = unreleased.slice(start);
     const entry = first.slice(0, first.indexOf('- **packages/development:**', 10));
     expect(entry).toMatch(/Nothing is relaxed/);

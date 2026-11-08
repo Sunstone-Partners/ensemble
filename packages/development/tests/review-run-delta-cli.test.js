@@ -88,7 +88,7 @@ function buildFixture() {
   git(work, 'add', '.');
   git(work, 'commit', '-q', '-m', 'a wide Medium PR');
   fs.appendFileSync(path.join(work, '.git', 'info', 'exclude'), '.ensemble/\n');
-  return { root, origin, work, bin, head1: git(work, 'rev-parse', 'HEAD'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
+  return { root, origin, work, bin, head1: git(work, 'rev-parse', 'HEAD'), baseSha: git(work, 'rev-parse', 'main'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
 }
 
 beforeAll(() => {
@@ -214,8 +214,14 @@ describe('a re-review of the next head through the real CLI (kata xb4j)', () => 
     expect(path.basename(diffPath)).toBe('delta.diff');
     expect(fs.readFileSync(diffPath, 'utf8')).toContain('diff --git a/med/a02.js b/med/a02.js');
     expect(fs.readFileSync(diffPath, 'utf8')).not.toContain('med/a03.js');
+    // the security lane is not narrowed: it keeps the WHOLE range (a defect two hops from the push is in no read set)
+    const lane = p.out.agents.find((a) => a.role === 'security');
+    const laneBrief = fs.readFileSync(lane.briefPath, 'utf8');
+    expect(path.basename(/Diff: (\S+)/.exec(laneBrief)[1])).toBe('range.diff');
+    expect(laneBrief).toContain(`${fx.baseSha}..${head2}`);
+    expect(lane.work).toMatchObject({ files: 19 });
     // the reviewers raise the same two defects again: the first on a line the push changed, the second on code it did not touch
-    answerReview(p.out, { lanePaths: ['med/a02.js'], findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
+    answerReview(p.out, { findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
     const v = coll('b2');
     expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 1, verified: 1 } });
     // only the changed one goes to verifiers
@@ -396,7 +402,7 @@ describe('what a delta round does with the findings of the round before', () => 
     const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 'n-fix');
     const p = prep('n2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
     expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
-    answerReview(p.out, { lanePaths: ['med/a02.js'] });
+    answerReview(p.out);
     const done = coll('n2');
     expect(done.out).toMatchObject({ ok: true, status: 'DONE', carry: { appliedRange: 'delta', carried: 0, reverified: 0 } });
     const byLocation = (location) => done.out.ledger.find((entry) => entry.locationOrLink === location);
@@ -413,7 +419,7 @@ describe('what a delta round does with the findings of the round before', () => 
     const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED'), 'med/a03.js': '// line 1 changed\n' }, 'o-fix');
     const p = prep('o2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
     expect(p.out.reReview).toMatchObject({ scope: 'delta', delta: { changedPaths: 2, readPaths: 2 } });
-    answerReview(p.out, { lanePaths: ['med/a02.js', 'med/a03.js'], findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
+    answerReview(p.out, { findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
     const v = coll('o2');
     expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 0, verified: 2 } });
     expect(new Set(v.out.agents.flatMap((a) => a.candidateIds)).size).toBe(2);
@@ -428,14 +434,14 @@ describe('what a delta round does with the findings of the round before', () => 
     firstRound('p1');
     const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 'p-fix1');
     const p2 = prep('p2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
-    answerReview(p2.out, { lanePaths: ['med/a02.js'], findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
+    answerReview(p2.out, { findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
     answerVotes(coll('p2').out);
     expect(coll('p2').out).toMatchObject({ status: 'DONE', carry: { carried: 1 } });
     // round three: another one-line push to a different file; the finding in med/a03.js is carried again, from the FIRST head
     const head3 = push(head2, { 'med/a05.js': `${body(LINES[4])}// extra\n` }, 'p-fix2');
     const p3 = prep('p3', { lastReviewedSha: head2, remediationShas: [head3] });
     expect(p3.out.reReview).toMatchObject({ scope: 'delta', delta: { lastReviewedSha: head2, changedPaths: 1 } });
-    answerReview(p3.out, { lanePaths: ['med/a05.js'], findings: { 'reviewer-s1-a': [finding(...F2)] } });
+    answerReview(p3.out, { findings: { 'reviewer-s1-a': [finding(...F2)] } });
     const done = coll('p3');
     expect(done.out).toMatchObject({ status: 'DONE', carry: { carried: 1, reverified: 0 } });
     expect(done.out.ledger.find((entry) => entry.locationOrLink === F2[0])).toMatchObject({ headSha: head3, carriedFrom: fx.head1 });
@@ -475,7 +481,7 @@ describe('a full-mode (High tier) re-review: the headline case of the measuremen
     expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta', delta: { changedPaths: 1, readPaths: 1, agentsPlanned: 3, agentsFullRead: 7 } });
     expect(p.out.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
     // the reviewer raises the earlier defect again; the push did not touch it, so it keeps its verdict
-    answerReview(p.out, { lanePaths: ['README.md'], findings: { 'reviewer-s1-a': [finding('wide/a03.js:1', 'the first line returns before the guard on line 2 can run')] } });
+    answerReview(p.out, { lanePaths: [...widePaths, 'README.md'], findings: { 'reviewer-s1-a': [finding('wide/a03.js:1', 'the first line returns before the guard on line 2 can run')] } });
     const triage = coll('w2');
     expect(triage.out).toMatchObject({ status: 'TRIAGE', reReview: { scope: 'delta', appliedRange: 'delta' }, coverage: { complete: true } });
     expect(path.basename(triage.out.rangeDiff)).toBe('delta.diff');
@@ -485,5 +491,32 @@ describe('a full-mode (High tier) re-review: the headline case of the measuremen
     expect(done.out.ledger).toHaveLength(1);
     expect(done.out.ledger[0]).toMatchObject({ locationOrLink: 'wide/a03.js:1', headSha: head2, carriedFrom: head1, verification: { outcome: 'present' } });
     expect(done.out.coverage).toEqual({ complete: true, unreviewedSlices: [], uncovered: [] });
+  });
+});
+
+describe('the security lane of a delta round', () => {
+  test('a lane that lists only the delta paths did not cover the range it was given: unavailable, never clean', () => {
+    firstRound('s1');
+    const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 's-fix');
+    const p = prep('s2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    answerReview(p.out, { lanePaths: ['med/a02.js'] });
+    const done = coll('s2');
+    expect(done.out).toMatchObject({ status: 'DONE', security: { status: 'unavailable' } });
+    expect(done.out.gate.mergeable).toBe(false);
+  });
+});
+
+describe('the carry is refused for a file the push touched, even where its cited hunk is byte-identical', () => {
+  test('a push to line 100 of the file whose line 5 holds a settled finding: the finding is verified again, not carried', () => {
+    firstRound('t1');
+    const head2 = push(fx.head1, { 'med/a02.js': body(LINES[1]).replace('// line 100\n', '// line 100 touched\n') }, 't-fix');
+    const p = prep('t2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p.out.reReview).toMatchObject({ scope: 'delta' });
+    answerReview(p.out, { findings: { 'reviewer-s1-a': [finding(...F1)] } });
+    const v = coll('t2');
+    // hunk unchanged (lines 2-8 of med/a02.js are as they were) but the file is in the delta: planCarry says cited-file-in-delta
+    expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 0, verified: 1, reasons: expect.arrayContaining(['cited-file-in-delta']) } });
+    answerVotes(v.out);
+    expect(coll('t2').out).toMatchObject({ status: 'DONE', carry: { carried: 0, reverified: 1 } });
   });
 });

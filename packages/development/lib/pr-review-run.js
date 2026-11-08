@@ -337,6 +337,11 @@ function reviewDiffOf(run) {
   return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta' ? run.prepared.deltaDiff : run.prepared.rangeDiff;
 }
 
+/** True in a round that applied the delta read. */
+function deltaRoundOf(run) {
+  return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta';
+}
+
 /** The range the review agents are told they read. */
 function reviewRangeOf(run) {
   return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta' ? `${run.lastReviewedSha}..${run.headSha}` : `${run.baseSha}..${run.headSha}`;
@@ -488,17 +493,24 @@ function buildReviewAgents(run, deps, ctx) {
       agents.push(agent);
     });
   });
+  // The two agents that read ACROSS slices (the whole-range reader and the security lane) keep the WHOLE range in a delta round: a
+  // defect two hops from the push (a High module importing a module that imports the change) is in no read set, and these are
+  // the readers that can still see it.
+  const delta = deltaRoundOf(run);
+  const wholePaths = delta ? run.allChangedPaths : run.changedPaths;
+  const wholeDiff = delta ? run.prepared.rangeDiff : reviewDiffOf(run);
+  const wholeWork = { files: wholePaths.length, lines: delta ? run.numstat.reduce((n, entry) => n + changedLines(entry), 0) : run.sizing.work.lines };
   if (run.sizing.wholeRangeReader === true) {
-    const work = { files: run.changedPaths.length, lines: run.sizing.work.lines };
+    const work = wholeWork;
     const lens = run.assignments[0].lens;
     // its own brief (`range-reviewer`): the whole range, and what only a reader of the whole range can find
-    const reader = { name: RANGE_NAME, role: 'reviewer', sliceId: RANGE_COVERAGE_SLICE, lens, paths: run.changedPaths, work, _role: 'range-reviewer' };
-    reader._vars = { lens, timeboxMinutes: deadline(reader, work, 'the whole-range reader').minutes, paths: run.changedPaths, diffPath: reviewDiffOf(run), snapshotDir: run.prepared.snapshotDir };
+    const reader = { name: RANGE_NAME, role: 'reviewer', sliceId: RANGE_COVERAGE_SLICE, lens, paths: wholePaths, work, _role: 'range-reviewer' };
+    reader._vars = { lens, timeboxMinutes: deadline(reader, work, 'the whole-range reader').minutes, paths: wholePaths, diffPath: wholeDiff, snapshotDir: run.prepared.snapshotDir };
     agents.push(reader);
   }
   if (run.securityLane) {
-    const work = { files: run.changedPaths.length, lines: run.sizing.work.lines };
-    const lane = { name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: run.changedPaths, work, _role: 'security-lane', _vars: { range: reviewRangeOf(run), diffPath: reviewDiffOf(run), snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } };
+    const work = wholeWork;
+    const lane = { name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: wholePaths, work, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: wholeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } };
     deadline(lane, work, 'the security lane');
     agents.push(lane);
   }
@@ -798,7 +810,7 @@ async function prepareStages(input, deps, ctx) {
   if (deltaRead !== null) {
     // What the same push would have cost as a full re-read, so the plan shows the saving it makes.
     const whole = planRunSlices(run, facts.numstat);
-    run.reReview = { ...run.reReview, appliedRange: 'delta', delta: { lastReviewedSha: input.lastReviewedSha, changedPaths: deltaRead.changedPaths.length, readPaths: deltaRead.readPaths.length, agentsPlanned: agentCountOf(run, sliced), agentsFullRead: whole.ok === true ? agentCountOf(run, whole) : null } };
+    run.reReview = { ...run.reReview, appliedRange: 'delta', delta: { lastReviewedSha: input.lastReviewedSha, changedPaths: deltaRead.changedPaths.length, readPaths: deltaRead.readPaths.length, agentsPlanned: agentCountOf(run, sliced), agentsFullRead: whole.ok === true ? agentCountOf(run, whole) : null, limits: D.DELTA_LIMITS } };
   }
   run.slices = sliced.plan.slices;
   run.assignments = sliced.plan.reviewerAssignments;
@@ -1344,6 +1356,7 @@ function carrySummaryOf(run) {
     reasons: carry.reasons,
     cleared: delta.cleared,
     notes: delta.notes,
+    limits: D.DELTA_LIMITS,
   };
 }
 

@@ -201,7 +201,7 @@ that wrote it (kata `xb4j`). `reviewedHeadSha` and `reviewedBaseSha` are not pay
 `delta` only when all of these hold: the state names that head and PR, the run record it points at is a finished run of
 the same head, base and PR, the state holds that round's verdicts, ledger and a complete coverage (`notReviewed` empty:
 no unreviewed slice or path, no incomplete verifier, no unbriefable candidate, no expired agent) and a security lane that
-found nothing (the lane's findings are not in the ledger, so a round that holds any is read whole again); the prepared
+found nothing, or was not asked for (the lane's findings are not in the ledger, so a round that holds any is read whole again); the prepared
 range is a readable delta, every commit of it is one of `remediationShas`, the delta plan says delta and no path in the
 delta is High or sensitive. Anything else is `full` (a full re-read), with every reason listed, and the run says why the
 last round was unusable as `prior-round-unusable:<reason>` (`state-absent`, `state-other-head`, `state-other-pr`,
@@ -209,9 +209,8 @@ last round was unusable as `prior-round-unusable:<reason>` (`state-absent`, `sta
 `state-verdicts-unrecorded`, `state-round-incomplete`, `state-security-open`, `state-unreadable`). A head that was never
 seen is a full review, never a silent skip. `first-review` when there is no previous head.
 
-**What a delta round does.** `reReview.appliedRange` is `delta`. The reviewers, the whole-range reader and the security
-lane are planned over the delta plan's read set (the changed paths, their callers and their tests), read the delta diff
-(`delta.diff`, `lastReviewedSha..headSha`) and are covered for exactly those paths, so a push that touches one file is read
+**What a delta round does.** `reReview.appliedRange` is `delta`. The slice reviewers are planned over the delta plan's read set (the changed paths, their callers and their tests), read the
+delta diff (`delta.diff`, `lastReviewedSha..headSha`) and are covered for exactly those paths, so a push that touches one file is read
 by one slice (two reviewers and the lane) where a full read of the same PR took eight agents. The plan shows it:
 `reReview.delta` is `{lastReviewedSha, changedPaths, readPaths, agentsPlanned, agentsFullRead}`. The paths the push left
 alone were read by the round before, whole (that is why a round that left anything unread is not a base for a delta).
@@ -232,9 +231,22 @@ fixed (its cited lines touched, nobody re-reported it) is cleared by the same ru
 code nobody re-read stays, as recorded, and keeps blocking. Candidate ids continue after the prior ledger's, so no two
 findings share an id. If the fixed-finding check cannot run, nothing is cleared and nothing is dropped.
 
-Honest limits: `remediationShas` is still the caller's statement that those commits are the fix round's own (the runner
-cannot tell who pushed a commit); the delta read never reaches a High or sensitive path. A reviewer may cite any file, but
-only the read set was handed to the delta round. A carried verdict was settled by the verifiers of the round before.
+**What stays whole.** The security lane and the whole-range reader read the whole range (`range.diff`, every changed path
+of the PR) in a delta round too: a defect two hops from the push (a High module importing a module that imports the change)
+is in no read set, and they are the readers that can still see it. A lane that lists fewer paths than it was given is
+`unavailable`, as in any round.
+
+Honest limits (also in the answer as `reReview.delta.limits` and `carry.limits`): the read set is the changed files, their
+direct importers and tests and name matches, so the modules a changed file itself imports, callers of callers and anything the
+graph cannot resolve are in no slice's read set; a delta changes no High or sensitive path, but its read set can include High
+or sensitive files as callers of a changed file (they are read, not exempt); `remediationShas` is still the caller's statement
+that those commits are the fix round's own (the runner cannot tell who pushed a commit); a carried verdict was settled by the
+verifiers of the round before, under the carry's declared limits (direct dependents only, bare npm packages and lockfile changes
+unseen, symlinks and computed specifiers re-verify). A carried finding is never coverage: coverage of a delta round is its own
+readers', and a last round with anything unreviewed (an unreviewed slice or path, an expired agent such as a security lane that
+never returned) is never a base for a delta. The delta-read reasons `delta-read-set-unreadable`, `delta-paths-unreadable` and
+`delta-diff-unreadable` also make a round full. A `not-run` lane (a tier that asked for none) is accepted as a base only when
+no agent expired.
 
 ## Slices and deadlines (the size model)
 
