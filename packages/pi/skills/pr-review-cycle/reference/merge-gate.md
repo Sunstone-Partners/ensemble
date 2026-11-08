@@ -300,8 +300,9 @@ it as its own state, never counted among the open beads.
 
 **Light mode does not call it yet.** When `selectMode` answers `light`, the runner
 (`reference/review-run.md`) builds the gate and the decision list itself and nothing in that
-path runs this recorder, so the findings of a light-mode review get no bead and the list shows
-none. Wiring the recorder into the runner is not part of this change.
+none. The same holds for coverage gaps (kata `k48x`): the recorder reads a `coverage` input, but a light-mode run never calls
+it, so its gaps get no bead (the decision list still shows each one, and a gap accepted there is recorded only in the state
+report). Wiring the recorder into the runner is not part of this change.
 
 **What the head under review cannot control.** First the recorder binds the checkout to the pull
 request's repository (`repo`), before the host or the tracker is asked anything: the repository's
