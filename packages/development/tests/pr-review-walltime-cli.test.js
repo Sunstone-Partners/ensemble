@@ -63,11 +63,16 @@ describe('walltime is registered and answers what the module answers', () => {
     expect(rest).toEqual(BASELINE.metrics);
   });
 
-  test('compare is compareWalltime', () => {
+  test('compare is compareWalltime with every counted current row checked against its trace', () => {
     const payload = { action: 'compare', baseline: fatBaseline(), current: fastCurrent() };
     const { status, out } = walltime(payload);
     expect(status).toBe(0);
-    expect(out).toEqual(JSON.parse(JSON.stringify(compareWalltime({ baseline: payload.baseline, current: payload.current }))));
+    const direct = JSON.parse(JSON.stringify(compareWalltime({ baseline: payload.baseline, current: payload.current })));
+    // The same grades; only the claim differs, because these hand-typed rows name no trace to re-derive.
+    expect({ ...out, fiveX: undefined, warnings: undefined }).toEqual({ ...direct, fiveX: undefined, warnings: undefined });
+    expect(direct.fiveX.claim).toBe('met');
+    expect(out.fiveX.claim).toBe('unknown');
+    expect(out.fiveX.attestation.tracesChecked).toBe(true);
   });
 });
 
@@ -80,18 +85,21 @@ describe('compare through the entry point', () => {
     expect(out.fiveX).toMatchObject({ claim: 'unknown', met: false });
   });
 
-  test('positive control: with enough baseline PRs and a real carried re-review the SAME entry point can say met', () => {
+  test('hand-typed rows reach met strata, but the entry point withholds the claim: they name no trace to re-derive', () => {
     const { out } = walltime({ action: 'compare', baseline: fatBaseline(), current: fastCurrent() });
     expect(out.strata.map((entry) => entry.status)).toEqual(['met', 'met', 'met']);
-    expect(out.fiveX).toMatchObject({ claim: 'met', met: true });
+    expect(out.fiveX).toMatchObject({ claim: 'unknown', met: false, attestation: { tracesChecked: true } });
+    expect(out.fiveX.reasons).toHaveLength(9);
+    expect(out.fiveX.reasons[0]).toContain('the row names no trace (run_id)');
   });
 
-  test('...and not without the carried re-review (AC3)', () => {
+  test('...and the carried re-review (AC3) is a reason of its own: carry evidence that carried nothing is named', () => {
     const current = fastCurrent();
     current.runs = current.runs.map((run) => (run.id === 'carry-1' ? { ...run, carry: { carried: 0, head_sha: sha('b'), from_heads: [] } } : run));
     const { out } = walltime({ action: 'compare', baseline: fatBaseline(), current });
     expect(out.strata.map((entry) => entry.status)).toEqual(['met', 'met', 'met']);
     expect(out.fiveX).toMatchObject({ claim: 'unknown', met: false });
+    expect(out.fiveX.reasons).toContain('carry: no real high-tier re-review with carried verdicts and a wall time is in the current cohort');
   });
 
   test('a cohort it cannot read is a refusing RESULT (exit 0), never a clean pass', () => {
@@ -207,5 +215,71 @@ describe('a request the dispatcher cannot read is an error (exit 1), so a misspe
     const { status, out } = walltime('{not json');
     expect(status).toBe(1);
     expect(out.error).toContain('invalid JSON on stdin');
+  });
+});
+
+describe('compare re-derives each counted current row from its trace, and a met needs that', () => {
+  // Nine real current rows, three PRs in each required stratum, each backed by a copy of the committed #234 trace under
+  // its own run id (19.661 min, one chain, no gate span), against a baseline five times slower.
+  let dir;
+  const slowBaseline = () => ({
+    schema: SCHEMA,
+    runs: [...stratum('medium', 'first', [100, 101, 102], 100), ...stratum('high', 'first', [100, 101, 102], 200), ...stratum('high', 're-review', [100, 101, 102], 300)],
+  });
+  const traced = (id, pr, tier, round, extra = {}) => row(id, pr, tier, round, 19.661, { gate_runs: null, gate_runs_reason: 'no span', run_id: `rid-${id}`, ...extra });
+  const tracedCurrent = () => ({
+    schema: SCHEMA,
+    runs: [
+      ...[400, 401, 402].map((pr) => traced(`m-${pr}`, pr, 'medium', 'first')),
+      ...[500, 501, 502].map((pr) => traced(`h-${pr}`, pr, 'high', 'first')),
+      traced('r-600', 600, 'high', 're-review'),
+      traced('r-601', 601, 'high', 're-review'),
+      traced('r-602', 602, 'high', 're-review', { carry: { carried: 2, head_sha: sha('b'), from_heads: [sha('a')] } }),
+    ],
+  });
+  const compareIn = (current, extra = {}) => walltime({ action: 'compare', baseline: slowBaseline(), current, ...extra });
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'walltime-compare-'));
+    const traces = path.join(dir, '.ensemble', 'state', 'toolchain');
+    fs.mkdirSync(traces, { recursive: true });
+    const text = fs.readFileSync(FIXTURE, 'utf8');
+    for (const run of tracedCurrent().runs) fs.writeFileSync(path.join(traces, `trace-${run.run_id}.jsonl`), text.split('review-pr234').join(run.run_id));
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  test('every row matches its trace: met, with the traces checked and the rest attested', () => {
+    const { status, out } = compareIn(tracedCurrent(), { cwd: dir });
+    expect(status).toBe(0);
+    expect(out.fiveX).toMatchObject({ claim: 'met', met: true, reasons: [], attestation: { tracesChecked: true, rowsWithoutTraceCheck: [] } });
+    expect(out.warnings).toEqual([expect.stringContaining('re-derived from their traces')]);
+  });
+
+  test('without the traces (the working directory holds none) the same rows are unknown, never met', () => {
+    const { out } = compareIn(tracedCurrent());
+    expect(out.fiveX.claim).toBe('unknown');
+    expect(out.fiveX.reasons).toHaveLength(9);
+    expect(out.fiveX.reasons[0]).toContain("trace: row 'm-400' was not re-derived from its trace");
+  });
+
+  test('a row whose wall time was edited (still above the floor) is named with what its trace says', () => {
+    const current = tracedCurrent();
+    current.runs.find((run) => run.id === 'h-501').wall_min = 3;
+    const { out } = compareIn(current, { cwd: dir });
+    expect(out.fiveX.claim).toBe('unknown');
+    expect(out.fiveX.reasons).toEqual(["trace: row 'h-501' was not re-derived from its trace (wall_min is 3, its trace says 19.661)"]);
+  });
+
+  test('a row that names no trace is not re-derived', () => {
+    const current = tracedCurrent();
+    delete current.runs.find((run) => run.id === 'r-601').run_id;
+    const { out } = compareIn(current, { cwd: dir });
+    expect(out.fiveX.claim).toBe('unknown');
+    expect(out.fiveX.reasons).toEqual(["trace: row 'r-601' was not re-derived from its trace (the row names no trace (run_id), so its figures cannot be re-derived)"]);
+  });
+
+  test('cwd must be text, and a misspelt key is still an error', () => {
+    expect(compareIn(tracedCurrent(), { cwd: 5 }).status).toBe(1);
+    expect(compareIn(tracedCurrent(), { cwdd: dir }).status).toBe(1);
   });
 });

@@ -36,15 +36,31 @@
  * behind the median). Where the plan's own figure is ambiguous the baseline takes the SMALLER (harder) reading.
  *
  * AC3 -- THE 5x CLAIM. `compareWalltime().fiveX.claim` is `met` only when every required stratum (`REQUIRED_STRATA`,
- * the three rows of the plan's section 2) is `met` AND the current cohort holds a real re-review in which verdicts
- * were carried across heads (the `carry` child's work: plan section 5, "Do not claim the 5x target met until PR 4 has
- * run on a real re-review"). Anything short of that is `unknown`, and one required stratum `not-met` is `not-met`.
+ * the three rows of the plan's section 2) is `met` AND the current cohort holds a real HIGH-tier re-review, with a
+ * wall time, in which verdicts were carried across heads: a row of the `high/re-review` stratum itself, the stratum
+ * the claim is about (the `carry` child's work: plan section 5, "Do not claim the 5x target met until PR 4 has run
+ * on a real re-review"). A carried re-review in another tier does not stand in for it. Anything short of that is
+ * `unknown`, and one required stratum `not-met` is `not-met`.
+ *
+ * THE FLOOR. A real review that dispatches a model agent cannot finish in under `MINIMUMS.wallMin` minute. A row
+ * below it is a typo, a unit slip (seconds for minutes) or a stand-in: it is listed under `excluded` with the reason
+ * and never enters a median, a count or the carry evidence, so a row of a few milliseconds cannot read as a zero.
+ *
+ * TRUST MODEL -- WHAT A `met` RESTS ON. Nothing signs a row. `origin`, the wall time, the counts and the carry
+ * evidence are what the row's writer states, and this pure module cannot check them. What it does: leave `stand-in`,
+ * `fixture` and below-the-floor rows out of EVERY statistic and out of the carry evidence, bind the carry evidence to
+ * the `high/re-review` stratum, and require it to name a count of carried verdicts and two different full object ids.
+ * `compareWalltime({ baseline, current, traceChecks })` additionally withholds `met` unless every counted current row
+ * of a required stratum has a passing check in `traceChecks` (`pr-review-cli.js walltime compare` builds it by
+ * re-deriving the row's wall time, chains and gate runs from the trace its `run_id` names). What no trace holds stays
+ * attested -- `origin`, the tier, and the carried-verdict evidence (a state report is an untracked file) -- and
+ * `fiveX.attestation` and a `claim-met-attested` warning say so on every `met`. With no `traceChecks` the module
+ * answers from the rows as written and says `tracesChecked: false`.
  *
  * HONEST LIMITS.
- *   - `origin` is the caller's statement. Nothing signs a row, so this code cannot tell a real review from a typed
- *     one; what it does is leave `stand-in` and `fixture` rows out of EVERY statistic and out of the carry evidence,
- *     and require the carry evidence to name two different full object ids and a count of carried verdicts.
  *   - A stratum compares run times; it does not normalise for the size of the PRs in it.
+ *   - The statistics are per RUN; the minimum counts distinct PRs. A PR with two runs in a stratum (a re-review whose
+ *     second chain was a second run) adds two figures and counts once toward the three.
  *   - The baseline's wall figures are the plan's whole minutes, each from the plan's own interval (see the baseline
  *     file's provenance); this module does not recompute them.
  */
@@ -61,11 +77,16 @@ const ORIGINS = Object.freeze(['real', 'stand-in', 'fixture']);
 /** The rows of the plan's section 2 target table: the strata the 5x claim is about. */
 const REQUIRED_STRATA = Object.freeze(['medium/first', 'high/first', 'high/re-review']);
 
-/** A stratum is compared only with this many distinct PRs, with a wall time, on each side. */
-const MINIMUMS = Object.freeze({ prsPerStratum: 3 });
+/** A stratum is compared only with this many distinct PRs, with a wall time, on each side; `wallMin` is the floor of THE FLOOR. */
+const MINIMUMS = Object.freeze({ prsPerStratum: 3, wallMin: 1 });
 
 /** 5x: the current figure may be at most a fifth of the baseline figure. */
 const SPEEDUP_TARGET = 5;
+
+/** What a printed `met` rests on, repeated in `fiveX.attestation` so the verdict never travels without it. */
+const TRUST_STATEMENT =
+  'origin and the carried-verdict evidence are what the rows state: nothing signs a row, and a state report is an untracked file. ' +
+  'The wall time, chains and gate runs of a row can be re-derived from its trace (walltime compare does, from each row run_id), and a met needs that for every counted current row of a required stratum.';
 
 /** Keys a row may carry. Anything else is refused, so a misspelt key is never read as an absent one. */
 const ROW_KEYS = Object.freeze([
@@ -177,7 +198,9 @@ function validateCohort(input, what = 'cohort') {
   });
   if (!isObject(input)) return refuse([`${what} must be an object with a runs array`]);
   if (!Array.isArray(input.runs)) return refuse([`${what}.runs must be an array`]);
-  if (hasOwn(input, 'schema') && input.schema !== SCHEMA) return refuse([`${what} has schema ${JSON.stringify(input.schema)}; this reader reads ${SCHEMA}`]);
+  if (input.schema !== SCHEMA) {
+    return refuse([hasOwn(input, 'schema') ? `${what} has schema ${JSON.stringify(input.schema)}; this reader reads ${SCHEMA}` : `${what} has no schema key; this reader reads ${SCHEMA}`]);
+  }
 
   const errors = [];
   const ids = new Map();
@@ -210,8 +233,14 @@ function validateCohort(input, what = 'cohort') {
 // Statistics
 // ---------------------------------------------------------------------------
 
-/** A run that counts: a real review with a wall time. Everything else is listed, never counted. */
-const isGraded = (run) => run.origin === 'real' && run.wall_min !== null;
+/** A wall time under the floor: a typo, a unit slip or a stand-in, never a review (THE FLOOR). */
+const belowFloor = (run) => run.wall_min !== null && run.wall_min < MINIMUMS.wallMin;
+
+/** A row that counts anywhere: a real review whose wall time, when it has one, is not under the floor. Everything else is listed, never counted. */
+const isCounted = (run) => run.origin === 'real' && !belowFloor(run);
+
+/** A run that counts in a stratum's statistics: a counted row with a wall time. */
+const isGraded = (run) => isCounted(run) && run.wall_min !== null;
 
 function distribution(values) {
   return values.length === 0 ? { median: null, p75: null } : { median: round3(median(values)), p75: round3(percentile(values, 75)) };
@@ -256,10 +285,18 @@ function perPrOf(runs) {
  * strata for both sides). Only `real` rows count; the rest are listed under `excluded`.
  */
 function summarize(runs, extraStrata = []) {
-  const real = runs.filter((run) => run.origin === 'real');
+  const real = runs.filter(isCounted);
   const excluded = runs
-    .filter((run) => run.origin !== 'real')
-    .map((run) => ({ id: run.id, pr: run.pr, origin: run.origin, reason: `origin is ${run.origin}: listed here, never counted` }));
+    .filter((run) => !isCounted(run))
+    .map((run) => ({
+      id: run.id,
+      pr: run.pr,
+      origin: run.origin,
+      reason:
+        run.origin !== 'real'
+          ? `origin is ${run.origin}: listed here, never counted`
+          : `wall_min ${run.wall_min} is under the ${MINIMUMS.wallMin} min a real review cannot beat: listed here, never counted`,
+    }));
 
   const ids = new Set([...REQUIRED_STRATA, ...extraStrata, ...real.map((run) => stratumId(run.tier, run.round))]);
   const strata = [...ids].sort(byStratum).map((id) => {
@@ -267,7 +304,7 @@ function summarize(runs, extraStrata = []) {
     const inStratum = real.filter((run) => run.tier === tier && run.round === round);
     const graded = inStratum.filter(isGraded);
     const walls = graded.map((run) => run.wall_min);
-    return {
+    const entry = {
       id,
       tier,
       round,
@@ -284,6 +321,9 @@ function summarize(runs, extraStrata = []) {
             ? 'no run of this tier and round has a wall time'
             : null,
     };
+    // The grade is judged on the unrounded figures; the rounded ones above are for display. Not enumerable: not in the output.
+    Object.defineProperty(entry, 'raw', { value: walls.length === 0 ? { median: null, p75: null } : { median: median(walls), p75: percentile(walls, 75) } });
+    return entry;
   });
 
   const perPr = perPrOf(real);
@@ -439,9 +479,9 @@ function gradeStratum(baseline, current) {
   };
   if (reasons.length > 0) return out;
 
-  out.medianMet = meetsTarget(current.medianMin, baseline.medianMin);
-  out.p75Met = meetsTarget(current.p75Min, baseline.p75Min);
-  out.speedup = { median: round3(baseline.medianMin / current.medianMin), p75: round3(baseline.p75Min / current.p75Min) };
+  out.medianMet = meetsTarget(current.raw.median, baseline.raw.median);
+  out.p75Met = meetsTarget(current.raw.p75, baseline.raw.p75);
+  out.speedup = { median: round3(baseline.raw.median / current.raw.median), p75: round3(baseline.raw.p75 / current.raw.p75) };
   out.status = out.medianMet && out.p75Met ? 'met' : 'not-met';
   if (!out.medianMet) reasons.push('median-above-target');
   if (!out.p75Met) reasons.push('p75-above-target');
@@ -463,9 +503,9 @@ function compareCount(key, baseline, current) {
   };
 }
 
-/** A real re-review, with a wall time, in which verdicts were carried across heads. */
+/** A real HIGH-tier re-review, with a plausible wall time, in which verdicts were carried across heads: a row of the stratum the 5x claim is about. */
 const isCarryEvidence = (run) =>
-  run.origin === 'real' && run.round === 're-review' && run.wall_min !== null && isObject(run.carry) && run.carry.carried >= 1;
+  isCounted(run) && run.tier === 'high' && run.round === 're-review' && run.wall_min !== null && isObject(run.carry) && run.carry.carried >= 1;
 
 /**
  * Compares a post-change cohort with the baseline, per (tier, round) stratum, and answers whether the 5x claim may be
@@ -484,6 +524,7 @@ const isCarryEvidence = (run) =>
  */
 function compareWalltime(input) {
   if (!isObject(input)) return refused('invalid-input');
+  if (input.traceChecks !== undefined && !isObject(input.traceChecks)) return refused('traceChecks must be an object of row id to { ok, reason }');
   const checked = {};
   for (const side of ['baseline', 'current']) {
     checked[side] = validateCohort(input[side], side);
@@ -492,7 +533,7 @@ function compareWalltime(input) {
 
   const ids = new Set(REQUIRED_STRATA);
   for (const side of ['baseline', 'current']) {
-    for (const run of checked[side].runs) if (run.origin === 'real') ids.add(stratumId(run.tier, run.round));
+    for (const run of checked[side].runs) if (isCounted(run)) ids.add(stratumId(run.tier, run.round));
   }
   const baseline = summarize(checked.baseline.runs, [...ids]);
   const current = summarize(checked.current.runs, [...ids]);
@@ -521,20 +562,29 @@ function compareWalltime(input) {
   const carry = {
     present: evidence.length > 0,
     evidence,
-    reason: evidence.length > 0 ? null : 'no real re-review with carried verdicts and a wall time is in the current cohort',
+    reason: evidence.length > 0 ? null : 'no real high-tier re-review with carried verdicts and a wall time is in the current cohort',
   };
 
   const required = strata.filter((entry) => entry.required);
+  // What a `met` rests on: every counted current row with a wall time in a required stratum, re-derived from its trace.
+  const needed = checked.current.runs.filter((run) => isGraded(run) && REQUIRED_STRATA.includes(stratumId(run.tier, run.round)));
+  const { traceChecks } = input;
+  const passed = (run) => isObject(traceChecks[run.id]) && traceChecks[run.id].ok === true;
+  const unchecked = traceChecks === undefined ? [] : needed.filter((run) => !passed(run));
   const reasons = [];
   let claim;
   if (required.some((entry) => entry.status === 'not-met')) {
     claim = 'not-met';
     for (const entry of required.filter((own) => own.status === 'not-met')) reasons.push(`${entry.id}: not met (${entry.reasons.join(', ')})`);
   } else {
-    claim = required.every((entry) => entry.status === 'met') && carry.present ? 'met' : 'unknown';
+    claim = required.every((entry) => entry.status === 'met') && carry.present && unchecked.length === 0 ? 'met' : 'unknown';
     if (claim === 'unknown') {
       for (const entry of required.filter((own) => own.status === 'unknown')) reasons.push(`${entry.id}: unknown (${entry.reasons.join(', ')})`);
       if (!carry.present) reasons.push(`carry: ${carry.reason}`);
+      for (const run of unchecked) {
+        const why = isObject(traceChecks[run.id]) && isText(traceChecks[run.id].reason) ? traceChecks[run.id].reason : 'no check was made for it';
+        reasons.push(`trace: row '${run.id}' was not re-derived from its trace (${why})`);
+      }
     }
   }
 
@@ -545,6 +595,10 @@ function compareWalltime(input) {
   for (const entry of strata.filter((own) => !own.required && own.status === 'not-met')) {
     warnings.push(`stratum-not-met: ${entry.id} is not met (${entry.reasons.join(', ')}); it is not one of the required strata, so the claim does not depend on it`);
   }
+  if (claim === 'met') {
+    const how = traceChecks === undefined ? 'no row was checked against a trace' : `the wall time, chains and gate runs of ${needed.length} row(s) were re-derived from their traces`;
+    warnings.push(`claim-met-attested: origin and the carried-verdict evidence are what the rows' writers state (nothing signs a row; a state report is an untracked file); ${how}`);
+  }
 
   return {
     ok: true,
@@ -554,7 +608,13 @@ function compareWalltime(input) {
     counts,
     perPr: { baseline: baseline.perPr, current: current.perPr },
     carry,
-    fiveX: { claim, met: claim === 'met', required: REQUIRED_STRATA, reasons },
+    fiveX: {
+      claim,
+      met: claim === 'met',
+      required: REQUIRED_STRATA,
+      reasons,
+      attestation: { tracesChecked: traceChecks !== undefined, rowsWithoutTraceCheck: unchecked.map((run) => run.id), statement: TRUST_STATEMENT },
+    },
     excluded: { baseline: baseline.excluded, current: current.excluded },
     warnings,
   };

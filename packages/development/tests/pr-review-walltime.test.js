@@ -66,7 +66,7 @@ const stratumOf = (result, id) => result.strata.find((entry) => entry.id === id)
 
 describe('the constants are the contract', () => {
   test('three PRs per stratum, 5x, and the three rows of the plan section 2 table', () => {
-    expect(MINIMUMS).toEqual({ prsPerStratum: 3 });
+    expect(MINIMUMS).toEqual({ prsPerStratum: 3, wallMin: 1 });
     expect(SPEEDUP_TARGET).toBe(5);
     expect(REQUIRED_STRATA).toEqual(['medium/first', 'high/first', 'high/re-review']);
     expect(TIERS).toEqual(['low', 'medium', 'high']);
@@ -183,11 +183,13 @@ describe('the schema: a cohort the module cannot read is refused whole', () => {
     expect(validateCohort({})).toMatchObject({ ok: false });
   });
 
-  test('a document of another schema version is refused; one with no schema key is read', () => {
+  test('a document of another schema version, or with no schema key, is refused', () => {
     const refused = validateCohort({ schema: 'review-walltime-cohort/2', runs: [] });
     expect(refused.ok).toBe(false);
     expect(refused.reason).toContain('this reader reads review-walltime-cohort/1');
-    expect(validateCohort({ runs: [] }).ok).toBe(true);
+    const missing = validateCohort({ runs: [] });
+    expect(missing.ok).toBe(false);
+    expect(missing.reason).toContain('has no schema key');
   });
 
   test('the document may carry its own provenance and metrics keys: only runs is read', () => {
@@ -454,7 +456,7 @@ describe('AC3: the 5x claim is met only with a real carried re-review in the dat
     for (const id of REQUIRED_STRATA) expect(stratumOf(result, id).status).toBe('met');
     expect(result.carry.present).toBe(true);
     expect(result.carry.evidence).toEqual([{ id: 'carry-1', pr: 900, carried: 3, headSha: sha('b'), fromHeads: [sha('a')] }]);
-    expect(result.fiveX).toEqual({ claim: 'met', met: true, required: REQUIRED_STRATA, reasons: [] });
+    expect(result.fiveX).toMatchObject({ claim: 'met', met: true, required: REQUIRED_STRATA, reasons: [], attestation: { tracesChecked: false, rowsWithoutTraceCheck: [] } });
   });
 
   test('every stratum met but NO carry evidence: the claim is unknown, never met', () => {
@@ -464,7 +466,7 @@ describe('AC3: the 5x claim is met only with a real carried re-review in the dat
     expect(result.carry).toMatchObject({ present: false, evidence: [] });
     expect(result.fiveX.claim).toBe('unknown');
     expect(result.fiveX.met).toBe(false);
-    expect(result.fiveX.reasons).toEqual(['carry: no real re-review with carried verdicts and a wall time is in the current cohort']);
+    expect(result.fiveX.reasons).toEqual(['carry: no real high-tier re-review with carried verdicts and a wall time is in the current cohort']);
   });
 
   test.each([
@@ -488,14 +490,27 @@ describe('AC3: the 5x claim is met only with a real carried re-review in the dat
     expect(result.fiveX.met).toBe(false);
   });
 
-  test('a carried re-review in a MEDIUM stratum is still the carry child re-review (any tier)', () => {
-    const current = [
-      ...currentRuns().filter((run) => run.id !== 'carry-1'),
-      row('plain-900', 900, 'high', 're-review', 12),
-      carryRow({ id: 'carry-m', pr: 910, tier: 'medium' }),
-    ];
-    const result = compare(baselineRuns(), current);
-    expect(result.carry.present).toBe(true);
+  test('a carried re-review in ANOTHER tier does not stand in for the high re-review the claim is about', () => {
+    // The reviewer's repro: three PRs per required stratum, no carry on any high re-review row, and one real re-review of another tier that carried.
+    for (const tier of ['low', 'medium']) {
+      const current = [
+        ...currentRuns().filter((run) => run.id !== 'carry-1'),
+        row('plain-900', 900, 'high', 're-review', 12),
+        carryRow({ id: `carry-${tier}`, pr: 910, tier, wall_min: 3 }),
+      ];
+      const result = compare(baselineRuns(), current);
+      for (const id of REQUIRED_STRATA) expect(stratumOf(result, id).status).toBe('met');
+      expect(result.carry).toMatchObject({ present: false, evidence: [] });
+      expect(result.fiveX.claim).toBe('unknown');
+      expect(result.fiveX.met).toBe(false);
+      expect(result.fiveX.reasons).toEqual([expect.stringContaining('carry: no real high-tier re-review')]);
+    }
+  });
+
+  test('a carried HIGH re-review is the evidence, and it is a run of the high/re-review stratum', () => {
+    const result = compare(baselineRuns(), currentRuns());
+    expect(stratumOf(result, 'high/re-review').current.prs).toBe(3);
+    expect(result.carry.evidence.map((entry) => entry.id)).toEqual(['carry-1']);
     expect(result.fiveX.claim).toBe('met');
   });
 
@@ -522,7 +537,7 @@ describe('AC3: the 5x claim is met only with a real carried re-review in the dat
     const result = compare([...baselineRuns(), ...lowBaseline], [...currentRuns(), ...lowCurrent]);
     expect(stratumOf(result, 'low/first')).toMatchObject({ status: 'not-met', required: false });
     expect(result.fiveX.claim).toBe('met');
-    expect(result.warnings).toEqual([expect.stringContaining('stratum-not-met: low/first')]);
+    expect(result.warnings).toEqual([expect.stringContaining('stratum-not-met: low/first'), expect.stringContaining('claim-met-attested')]);
   });
 
   test('a baseline compared with itself is not 5x', () => {
@@ -797,5 +812,118 @@ describe('carry evidence: verdict records stamped with this head and carried fro
     ['verdicts that are not an array', { headSha: sha('c'), verdicts: {} }, "carry.verdicts must be the state report's verdicts array"],
   ])('refuses %s', (_, input, reason) => {
     expect(carryEvidence(input)).toEqual({ ok: false, reason });
+  });
+});
+
+describe('the floor: a wall time no real review can show never enters a median', () => {
+  const tiny = (wall) => stratum('high', 'first', [wall, wall, wall], 500);
+  const swap = (rows) => [...currentRuns().filter((run) => !run.id.startsWith('high-first')), ...rows];
+
+  test('the reviewer repro: rows of 24 ms are listed as excluded, not read as a zero median that is met', () => {
+    const result = compare(baselineRuns(), swap(tiny(0.0004)));
+    expect(stratumOf(result, 'high/first')).toMatchObject({ status: 'unknown', current: { runs: 0, prs: 0, medianMin: null, p75Min: null } });
+    expect(result.fiveX.claim).toBe('unknown');
+    expect(result.excluded.current).toHaveLength(3);
+    expect(result.excluded.current[0]).toMatchObject({ origin: 'real', reason: expect.stringContaining('under the 1 min') });
+  });
+
+  test('the floor is one minute: 0.999 is excluded, 1 counts', () => {
+    expect(stratumOf(compare(baselineRuns(), swap(tiny(0.999))), 'high/first').current.prs).toBe(0);
+    const atFloor = compare(baselineRuns(), swap(tiny(1)));
+    expect(stratumOf(atFloor, 'high/first').current).toMatchObject({ prs: 3, medianMin: 1 });
+    expect(atFloor.excluded.current).toEqual([]);
+  });
+
+  test('a row under the floor adds nothing to the per-PR counts either', () => {
+    const result = compare(baselineRuns(), swap(tiny(0.5)));
+    expect(result.perPr.current.map((entry) => entry.pr)).not.toContain(500);
+  });
+
+  test('a carried high re-review under the floor is not carry evidence', () => {
+    const current = currentRuns().map((run) => (run.id === 'carry-1' ? { ...run, wall_min: 0.5 } : run));
+    const result = compare(baselineRuns(), current);
+    expect(result.carry.present).toBe(false);
+    expect(result.fiveX.claim).toBe('unknown');
+  });
+
+  test('a baseline row under the floor is excluded the same way', () => {
+    const result = compare([...baselineRuns(), ...stratum('low', 'first', [0.2], 150)], currentRuns());
+    expect(result.excluded.baseline).toEqual([expect.objectContaining({ id: 'low-first-150', reason: expect.stringContaining('under the 1 min') })]);
+  });
+
+  test('computeWalltimeCohort applies the same floor to a cohort on its own', () => {
+    const result = computeWalltimeCohort(doc([...baselineRuns(), row('typo', 77, 'high', 'first', 0.0004)]));
+    expect(result.excluded).toEqual([expect.objectContaining({ id: 'typo' })]);
+    expect(result.strata.find((entry) => entry.id === 'high/first')).toMatchObject({ runs: 3, medianMin: 55 });
+  });
+});
+
+describe('trace checks: a met needs every counted current row of a required stratum re-derived from a trace', () => {
+  const allOk = (runs) => Object.fromEntries(runs.map((run) => [run.id, { ok: true }]));
+  const compareChecked = (checks, current = currentRuns()) => compareWalltime({ baseline: doc(baselineRuns()), current: doc(current), traceChecks: checks });
+
+  test('every row checked: met, and the answer says the traces were checked', () => {
+    const result = compareChecked(allOk(currentRuns()));
+    expect(result.fiveX).toMatchObject({ claim: 'met', met: true, attestation: { tracesChecked: true, rowsWithoutTraceCheck: [] } });
+    expect(result.warnings).toEqual([expect.stringContaining('claim-met-attested')]);
+    expect(result.warnings[0]).toContain('re-derived from their traces');
+  });
+
+  test('no traceChecks: met is computed from the rows as written, and the answer says nothing was checked', () => {
+    const result = compare(baselineRuns(), currentRuns());
+    expect(result.fiveX.attestation).toMatchObject({ tracesChecked: false, rowsWithoutTraceCheck: [] });
+    expect(result.fiveX.attestation.statement).toContain('untracked');
+    expect(result.warnings).toEqual([expect.stringContaining('no row was checked against a trace')]);
+  });
+
+  test('one row whose check failed withholds the claim and names the row and the reason', () => {
+    const result = compareChecked({ ...allOk(currentRuns()), 'high-first-501': { ok: false, reason: 'wall_min is 10, its trace says 19.661' } });
+    expect(result.fiveX.claim).toBe('unknown');
+    expect(result.fiveX.met).toBe(false);
+    expect(result.fiveX.reasons).toEqual(["trace: row 'high-first-501' was not re-derived from its trace (wall_min is 10, its trace says 19.661)"]);
+    expect(result.fiveX.attestation.rowsWithoutTraceCheck).toEqual(['high-first-501']);
+    expect(result.warnings).toEqual([]);
+  });
+
+  test('a row with no check at all is not checked', () => {
+    const { 'medium-first-400': _omitted, ...checks } = allOk(currentRuns());
+    const result = compareChecked(checks);
+    expect(result.fiveX.claim).toBe('unknown');
+    expect(result.fiveX.reasons).toEqual(["trace: row 'medium-first-400' was not re-derived from its trace (no check was made for it)"]);
+  });
+
+  test('a check that is not ok:true does not pass (a truthy value is not enough)', () => {
+    expect(compareChecked({ ...allOk(currentRuns()), 'high-first-500': { ok: 'yes' } }).fiveX.claim).toBe('unknown');
+  });
+
+  test('a not-met stratum is still not-met: the checks only withhold a met', () => {
+    const slow = [...currentRuns().filter((run) => !run.id.startsWith('high-first')), ...stratum('high', 'first', [60, 60, 60], 500)];
+    expect(compareChecked({}, slow).fiveX.claim).toBe('not-met');
+  });
+
+  test('rows outside the required strata need no check', () => {
+    const result = compareWalltime({
+      baseline: doc([...baselineRuns(), ...stratum('low', 'first', [60, 60, 60], 150)]),
+      current: doc([...currentRuns(), ...stratum('low', 'first', [5, 5, 5], 450)]),
+      traceChecks: allOk(currentRuns()),
+    });
+    expect(result.fiveX.claim).toBe('met');
+  });
+
+  test('traceChecks that is not an object is refused', () => {
+    for (const bad of [null, 'x', 3, []]) {
+      expect(compareWalltime({ baseline: doc(baselineRuns()), current: doc(currentRuns()), traceChecks: bad })).toMatchObject({ ok: false, reason: expect.stringContaining('traceChecks') });
+    }
+  });
+});
+
+describe('the 5x boundary is judged on the values, not on their three-decimal display', () => {
+  test('a current median a hair above a fifth is not met although it displays as exactly a fifth', () => {
+    const current = [...currentRuns().filter((run) => !run.id.startsWith('high-first')), ...stratum('high', 'first', [11.0004, 11.0004, 11.0004], 500)];
+    const grade = stratumOf(compare(baselineRuns(), current), 'high/first');
+    expect(grade.current.medianMin).toBe(11);
+    expect(grade.target.medianMin).toBe(11);
+    expect(grade.medianMet).toBe(false);
+    expect(grade.status).toBe('not-met');
   });
 });

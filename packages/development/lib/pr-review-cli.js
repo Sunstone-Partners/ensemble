@@ -181,7 +181,9 @@
  *              { action: 'row', pr, tier, round, origin, runId, cwd? | timing, id?, source?, notes?, carry? }
  *              -- one cohort row from a `timing` answer: `runId` reads the trace as `timing` does, `timing` takes a
  *              `timing` answer directly (exactly one of the two); `carry` is `{ headSha, verdicts }` from the PR's state report
- *              { action: 'compare', baseline, current } -- two cohort documents
+ *              { action: 'compare', baseline, current, cwd? } -- two cohort documents. Each counted current row's wall time,
+ *              chains and gate runs are re-derived from the trace its `run_id` names (<cwd>/.ensemble/state/toolchain/), and a
+ *              5x `met` is withheld unless every such row of a required stratum passes; `fiveX.attestation` says what stays attested
  *
  * The tier, approval and merge-gate subcommands (TRD-026) each take the facts
  * their module grades and answer with that module's result verbatim:
@@ -916,6 +918,39 @@ function walltimeRow(payload) {
   });
 }
 
+/**
+ * Whether one current row's figures are what its trace says: the row's `run_id` names a trace under
+ * <cwd>/.ensemble/state/toolchain/, and its wall time, chains and gate runs equal what `timing` derives from it (the same
+ * derivation `walltime row` uses). Tier, round and origin are not in a trace, so they stay attested.
+ */
+function checkRowAgainstTrace(run, cwd) {
+  if (typeof run.run_id !== 'string' || run.run_id === '') return { ok: false, reason: 'the row names no trace (run_id), so its figures cannot be re-derived' };
+  let rebuilt;
+  try {
+    const timing = loadReviewTiming({ runId: run.run_id, projectRoot: cwd });
+    rebuilt = rowFromTiming({ timing, pr: run.pr, tier: run.tier, round: run.round, origin: run.origin, id: run.id });
+  } catch (error) {
+    return { ok: false, reason: `trace '${run.run_id}' cannot be read: ${error.message}` };
+  }
+  if (!rebuilt.ok) return { ok: false, reason: `trace '${run.run_id}' is not a readable review: ${rebuilt.reason}` };
+  const differs = ['wall_min', 'chains', 'gate_runs'].filter((key) => rebuilt.row[key] !== run[key]);
+  const same = differs.length === 0;
+  return same
+    ? { ok: true }
+    : { ok: false, reason: differs.map((key) => `${key} is ${JSON.stringify(run[key])}, its trace says ${JSON.stringify(rebuilt.row[key])}`).join('; ') };
+}
+
+/** `compare`: the module's grade, plus the trace check of every counted real current row that has a wall time. */
+function walltimeCompare(payload) {
+  const cwd = payload.cwd || process.cwd();
+  const runs = isObject(payload.current) && Array.isArray(payload.current.runs) ? payload.current.runs : [];
+  const traceChecks = {};
+  for (const run of runs) {
+    if (isObject(run) && typeof run.id === 'string' && run.origin === 'real' && run.wall_min !== null) traceChecks[run.id] = checkRowAgainstTrace(run, cwd);
+  }
+  return compareWalltime({ baseline: payload.baseline, current: payload.current, traceChecks });
+}
+
 const WALLTIME_ACTIONS = Object.freeze({
   summarize: {
     keys: { cohort: OBJECT },
@@ -928,7 +963,8 @@ const WALLTIME_ACTIONS = Object.freeze({
   },
   compare: {
     keys: { baseline: OBJECT, current: OBJECT },
-    run: (p) => compareWalltime({ baseline: p.baseline, current: p.current }),
+    optional: { cwd: TEXT },
+    run: walltimeCompare,
   },
 });
 
