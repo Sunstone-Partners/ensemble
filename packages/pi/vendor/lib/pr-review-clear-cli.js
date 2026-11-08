@@ -21,7 +21,8 @@
  *             was alive then, so what changed since is all that can have fixed it. Without it an
  *             entry's own `headSha` (when it has one) is the baseline: when the finding was first
  *             raised, a longer span that also counts an edit the finding survived. An entry this
- *             verb already moved (`locationAsOf`) is compared from that head instead
+ *             verb already moved (`locationAsOf`) is compared from that head instead, unless
+ *             `lastReviewedSha` is a LATER head (the verb skipped a round): then that is the baseline
  *   ledger    REQUIRED entries recorded in earlier rounds, as the previous run of this verb returned them
  *   incoming  REQUIRED, the findings the review of `headSha` raised (what was handed to
  *             `ledger recordRound` as `incoming`), `[]` when it raised none. It is never defaulted: without
@@ -42,7 +43,8 @@
  *      (as given: this is what makes a second run over the verb's own output change nothing)
  *   4. no baseline: no `locationAsOf`, no `lastReviewedSha` and no own `headSha` that is a commit
  *      -> no-recorded-head (as given)
- *   5. the baseline (`locationAsOf`, else `lastReviewedSha`, else the own head) not ON THE PR
+ *   5. the baseline (`lastReviewedSha` when it is later than the `locationAsOf` stamp, else the stamp,
+ *      else `lastReviewedSha`, else the own head) not ON THE PR
  *      -> recorded-head-not-on-pr (as given; an ancestor of head, not of base: a force-pushed old
  *      head is no longer an ancestor, and neither is a baseline the repository no longer holds,
  *      a `locationAsOf` included: the numbering it vouched for is gone)
@@ -69,11 +71,13 @@
  * therefore comes back with its `file:line` (or `file:a-b`) in THIS head's numbering (the `git diff`
  * hunks from its baseline to this head move it; a re-raised one takes the new review's location) and
  * `locationAsOf: <this head>`. The next run compares from that stamp. Run the verb at every head, in
- * order. An entry it never moved is numbered at the head it was raised at (its own `headSha`), not at
- * `lastReviewedSha`: compared from `lastReviewedSha`, that head has to lead to it. Its line is first moved
- * from its own head to that one (those edits only move it: the finding was alive there, so they cannot have
- * fixed it). When that diff touched the line or replaced the file, or its own head does not lead there (a
- * force-push replaced it, or the repository no longer holds it), its place is unknown ->
+ * order. An entry's line number belongs to the head the verb last moved it to (its stamp) or, if it never
+ * moved it, to the head it was raised at (its own `headSha`); that head has to LEAD to the baseline, and the
+ * line is first moved from it to the baseline (those edits only move it: the finding was alive at the
+ * baseline, so they cannot have fixed it). That is what happens when the verb arrives mid-review and when a
+ * round is skipped (the stamp is then older than `lastReviewedSha`, the head the skipped round reviewed).
+ * When that diff touched the line or replaced the file, or the number's head does not lead to the baseline
+ * (a force-push replaced it, or the repository no longer holds it), its place is unknown ->
  * location-unanchored (as given, not stamped, never cleared; a review that raises it again re-anchors it).
  * A mode-only change (chmod) touches no line; deleting, creating or replacing a file with binary content does,
  * and so does a rename (rule 9 then keeps the entry). A file deleted outright, or replaced by one too
@@ -199,7 +203,10 @@ function deriveCleared(input) {
     if (stamped === head) return keep(entry, 'location-current');
     // A stamp this repository no longer holds (a force-push replaced that head): the numbering it vouched for is gone.
     if (typeof entry.locationAsOf === 'string' && stamped === null) return keep(entry, 'recorded-head-not-on-pr');
-    const recorded = stamped !== null ? stamped : shared === undefined ? own : shared;
+    // A stamp older than lastReviewedSha means the verb did not run at the prior round's head (a skipped round). The
+    // finding was alive at that head, so THAT is the baseline, and the line is first moved from the stamp to it (below).
+    const lagging = stamped !== null && shared !== undefined && shared !== stamped && repo.isAncestor(git, cwd, stamped, shared) === true;
+    const recorded = lagging ? shared : stamped !== null ? stamped : shared === undefined ? own : shared;
     if (recorded === null) return keep(entry, shared === undefined ? 'no-recorded-head' : 'recorded-head-not-on-pr');
     if (recorded === head) return keep(entry, 'recorded-at-this-head');
     if (!repo.commitOnPr(git, cwd, { commit: recorded, headSha: head, baseSha: base }).ok) {
@@ -210,20 +217,22 @@ function deriveCleared(input) {
       const hasLocation = typeof raised.locationOrLink === 'string' && raised.locationOrLink.trim() !== '';
       return keepMoved(entry, 're-reported', hasLocation ? raised.locationOrLink : entry.locationOrLink);
     }
-    // An entry this verb never moved is numbered at the head it was raised at (its own `headSha`). Compared from
-    // lastReviewedSha, that head has to lead to it: when rounds went by without a run (the verb arrived mid-review,
-    // or a round was skipped) its line is first brought to the baseline, and the edits in between only MOVE it (the
-    // finding was alive at the baseline, so they cannot have fixed it). A head that does not lead there -- a
-    // force-push replaced it, or the repository no longer holds it -- makes the number meaningless in this diff, and
-    // an edit that touched the line leaves its place unknown: kept, never cleared on a guess.
+    // The head this entry's line number belongs to: the stamp when the verb moved it, else the head it was raised at
+    // (its own `headSha`). An entry that names neither is taken to be numbered at the baseline. When the number's head is
+    // not the baseline -- the verb arrived mid-review, or skipped a round -- that head has to lead to the baseline and
+    // the line is first brought to it: the edits in between only MOVE it (the finding was alive at the baseline, so
+    // they cannot have fixed it). A head that does not lead there -- a force-push replaced it, or the repository no
+    // longer holds it -- makes the number meaningless in this diff, and an edit that touched the line leaves its place
+    // unknown: kept, never cleared on a guess.
     let numbered = entry;
     const raisedAtAHead = entry.headSha !== undefined && entry.headSha !== null && String(entry.headSha).trim() !== '';
-    if (typeof entry.locationAsOf !== 'string' && shared !== undefined && raisedAtAHead && own !== recorded) {
+    const numberedAt = typeof entry.locationAsOf === 'string' ? stamped : raisedAtAHead ? own : undefined;
+    if (numberedAt !== undefined && numberedAt !== recorded) {
       // (`isAncestor` answers null for a head the repository does not hold: that does not lead there either.)
-      if (repo.isAncestor(git, cwd, own, recorded) !== true) return keep(entry, 'location-unanchored');
+      if (repo.isAncestor(git, cwd, numberedAt, recorded) !== true) return keep(entry, 'location-unanchored');
       const early = citation(entry);
       if (early !== null) {
-        const before = repo.changedOldLines(git, cwd, { from: own, to: recorded, file: early.file });
+        const before = repo.changedOldLines(git, cwd, { from: numberedAt, to: recorded, file: early.file });
         if (!before.ok) return keep(entry, 'diff-failed');
         const where = before.hunks === null ? null : movedLocation(entry, before.hunks);
         if (where === null) return keep(entry, 'location-unanchored');
