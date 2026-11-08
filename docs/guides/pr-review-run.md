@@ -193,13 +193,48 @@ refusal that is not an input's fault (a missing template, a stand-in renderer th
 ## Re-review scope (`reReview`)
 
 The run, the `TRIAGE` answer and the final answer record `reReview: {scope: 'first-review' | 'delta' | 'full',
-reasons: [...]}`. `delta` only when a previous reviewed head was supplied (`lastReviewedSha`), the prepared range is a
-readable delta whose plan says delta, the CLI has seen that head (the review state recorded it) and no path in the delta
-is High or sensitive. `full` (a full re-read) whenever the delta touches a High or sensitive path, the head was never
-seen, or anything is unreadable. `first-review` when there is no previous head. The honest limit: the runner has no
-delta-only read path yet (carry-over of verdicts is kata qw98, PR #268), so every run still has reviewers read the whole
-range, the superset. `reReview.appliedRange` is always `full-range` today; the field records the decision for the
-carry-over work to consume.
+reasons: [...], appliedRange}`. A re-review is asked for with `lastReviewedSha` (the head the last round reviewed) and
+`remediationShas` (the commits of the fix push) and nothing else: the runner reads the previously reviewed head and base
+itself, from the review state it recorded at `lastReviewedSha` (`.ensemble/pr-review/pr-<n>.json`) and the run record
+that wrote it (kata `xb4j`). `reviewedHeadSha` and `reviewedBaseSha` are not payload keys, so a caller cannot name them.
+
+`delta` only when all of these hold: the state names that head and PR, the run record it points at is a finished run of
+the same head, base and PR, the state holds that round's verdicts, ledger and a complete coverage (`notReviewed` empty:
+no unreviewed slice or path, no incomplete verifier, no unbriefable candidate, no expired agent) and a security lane that
+found nothing (the lane's findings are not in the ledger, so a round that holds any is read whole again); the prepared
+range is a readable delta, every commit of it is one of `remediationShas`, the delta plan says delta and no path in the
+delta is High or sensitive. Anything else is `full` (a full re-read), with every reason listed, and the run says why the
+last round was unusable as `prior-round-unusable:<reason>` (`state-absent`, `state-other-head`, `state-other-pr`,
+`state-base-unknown`, `state-not-from-a-run`, `state-run-record-mismatch`, `state-ledger-unreadable`,
+`state-verdicts-unrecorded`, `state-round-incomplete`, `state-security-open`, `state-unreadable`). A head that was never
+seen is a full review, never a silent skip. `first-review` when there is no previous head.
+
+**What a delta round does.** `reReview.appliedRange` is `delta`. The reviewers, the whole-range reader and the security
+lane are planned over the delta plan's read set (the changed paths, their callers and their tests), read the delta diff
+(`delta.diff`, `lastReviewedSha..headSha`) and are covered for exactly those paths, so a push that touches one file is read
+by one slice (two reviewers and the lane) where a full read of the same PR took eight agents. The plan shows it:
+`reReview.delta` is `{lastReviewedSha, changedPaths, readPaths, agentsPlanned, agentsFullRead}`. The paths the push left
+alone were read by the round before, whole (that is why a round that left anything unread is not a base for a delta).
+
+**Hash, plan, record.** Every round hashes each candidate at its head (`lib/pr-review-carry-hash.js`: the cited hunk and
+the files it depends on) and records every settled verdict in the state report as `verdicts`, with a `carry` summary
+(`appliedRange`, `carried`, `reverified`, `recorded`, `skipped`). A delta round plans a carry for every candidate
+(`lib/pr-review-carry.js` `planCarry`): a candidate whose cited hunk, dependencies and dependents the push did not touch
+(and whose file is not in the delta or its blast radius) keeps the prior verdict and is NOT put to verifiers again; every
+other candidate is verified again, and every reason `planCarry` lists is re-verification, never a carry. The verify
+round's manifest shows `carry: {carried, verified, reasons}`. All the limits of the carry contract hold (direct dependents
+only; bare npm packages and lockfile changes are not seen; a symlink or a computed specifier fails closed to re-verify).
+
+**The ledger.** The delta round's ledger is the prior ledger brought to the new head plus the fresh entries: a carried
+finding is the prior entry restamped with the new head (`carriedFrom` keeps the head that settled it), a finding the push
+fixed (its cited lines touched, nobody re-reported it) is cleared by the same rule as `pr-review-clear-cli.js`
+(`cleared: true`, `clearedBy` the head), a finding the fresh round re-reported is replaced by its new entry, and a finding in
+code nobody re-read stays, as recorded, and keeps blocking. Candidate ids continue after the prior ledger's, so no two
+findings share an id. If the fixed-finding check cannot run, nothing is cleared and nothing is dropped.
+
+Honest limits: `remediationShas` is still the caller's statement that those commits are the fix round's own (the runner
+cannot tell who pushed a commit); the delta read never reaches a High or sensitive path. A reviewer may cite any file, but
+only the read set was handed to the delta round. A carried verdict was settled by the verifiers of the round before.
 
 ## Slices and deadlines (the size model)
 
@@ -361,8 +396,9 @@ answer is not returned; nothing is recorded, so it is that commit's answer again
 ## Honest limits
 
 - Deadlines and the concurrency cap are the dispatcher's to enforce; the runner only computes and records them.
-- Carry-over of verdicts, sharding and verification pools are later work. `remediationShas` is only passed through to
-  `prepare`; `lastReviewedSha` feeds the `reReview` decision only, and reviewers read the full range.
+- Sharding is later work. `remediationShas` is the caller's statement of which commits are the fix round's own; it is
+  passed to `prepare`, where it decides whether the delta is vouched for. A re-review's reviewed head and base come from the
+  state this runner recorded, never from the payload (see Re-review scope).
 - `prepare` runs the precheck: it posts one PR comment and starts the local-CI gate in the background unless
   `dryRun` or `skipPrecheck` is set.
 - The baseline test run executes the head's own test code in a scratch directory. It is not a sandbox; see
@@ -487,7 +523,7 @@ What kata znd1 asked for and this runner does not do (none is claimed):
   prose still reaches the gate through the skill only.
 - `reviewDecision` is not consumed: approvals come from the PR's reviews with the existing withdrawal rule.
 - Deadlines and the concurrency cap are the dispatcher's to enforce. Tier kinds come from paths, not from a classifier agent.
-  Carry-over of verdicts, delta-only reading and sharding are not built.
+  Sharding is not built.
 
 Known defects the one real full-mode run found. The 15-minute deadline (kata `sfpb`) is addressed by a size model (Slices and
 deadlines, above) that is not yet measured on a live run; the one other still open is tracked on its own:
