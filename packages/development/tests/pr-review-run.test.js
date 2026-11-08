@@ -1962,6 +1962,24 @@ describe('a candidate the verifier brief refuses (kata 0g9n): never verified, ne
     expect(next.gate.findings.open).toEqual(['f1', 'f2']);
   });
 
+  test('a refusal the renderer did not tag is recorded as kind other, and a kind outside the vocabulary is not trusted', async () => {
+    // A stand-in renderer that throws a plain Error (a missing template, a broken install) or an Error with a made-up kind: the run
+    // still keeps the candidate unverified and names why, in the closed vocabulary, without reading the message.
+    const refusing = (thrown) => harness({ overrides: { renderBrief: (role, vars) => {
+      if (role === 'verifier' && /STANDIN/.test(vars.claim)) throw thrown;
+      return renderBriefFromFiles(role, vars);
+    } } });
+    for (const [thrown, expected] of [
+      [new Error('the template store is unreachable'), { id: 'f1', kind: 'other', reason: expect.stringContaining('the template store is unreachable') }],
+      [Object.assign(new Error('an odd refusal'), { kind: 'weird', input: 'claim' }), { id: 'f1', kind: 'other', input: 'claim', reason: expect.stringContaining('an odd refusal') }],
+    ]) {
+      const h = refusing(thrown);
+      const m = await toVerify(h, [finding({ failureMode: 'STANDIN the cache is read after it was cleared' }), clean(2)]);
+      expect([...askedOf(m).keys()]).toEqual(['f2']);
+      expect(h.readRun().unbriefable).toEqual([expected]);
+    }
+  });
+
   test.each([
     ['a path with whitespace', { locationOrLink: 'src/my file.js:3', originalTextOrLink: 'src/my file.js:3' }, 'path', 'location'],
     ['a path with parentheses', { locationOrLink: 'src/a(1).js:3', originalTextOrLink: 'src/a(1).js:3' }, 'path', 'location'],

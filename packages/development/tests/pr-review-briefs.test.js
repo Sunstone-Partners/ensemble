@@ -340,6 +340,12 @@ describe('what a reviewer is told to avoid is what the renderer refuses (kata 0g
     expect(() => renderBrief('verifier', { ...CASES.verifier.vars, claim: 'the verdict of the cache is stale after a reload at lib/x.js:12' }, template('verifier'))).toThrow(/reads as a verdict/);
     expect(() => renderBrief('verifier', { ...CASES.verifier.vars, claim: 'the orchestrator triage entry displaces a candidate' }, template('verifier'))).toThrow(/reads as the orchestrator/);
   });
+
+  test('the words that made the real run\'s candidates unbriefable are among the words a reviewer is told to avoid', () => {
+    // PR 271 had two refused claims, one naming the orchestrator and one a verdict. The list is generated from the same table
+    // the screen uses, so a word that left the table would leave the screen too; this pins the ones that bit, independently.
+    expect(claimRules().refusedWords).toEqual(expect.arrayContaining(['orchestrator', 'verdict', 'vote', 'conclusion']));
+  });
 });
 
 describe('AC2b: every input but the claim is a token from a strict grammar, so a note has nowhere to go', () => {
