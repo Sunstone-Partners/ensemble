@@ -28,6 +28,11 @@
  *   - HELD MEANS TRACKED. A key the tracker holds is skipped whatever the bead's state or labels. A bead a
  *     person closed (fixed, or judged not worth fixing) is never recreated or reopened by a later sweep.
  *     Several beads sharing one key are reported as an error and nothing is created for that key.
+ *     A bead that was DELETED is held too: br keeps its external reference (a tombstone that `list --all` does
+ *     not show), so the lookup says "not found" and the create is refused with "External reference '<this
+ *     entry's key>' already exists". That refusal is the tracker saying the key is taken: the entry is skipped
+ *     (`held-not-listed`), the sweep stays RECORDED, and every later sweep gives the same answer instead of
+ *     being PARTIAL for good. A dry run only looks up, so it cannot see this and plans the create.
  *   - NOTHING TO RECORD, NOTHING TOUCHED. With no key to look up, git, the host and the tracker are not
  *     asked at all.
  *   - WHERE THE BEADS GO. Into the tracker of the repository the pull request belongs to, resolved by
@@ -203,8 +208,9 @@ function unavailableResult(envelope, extra) {
 
 /**
  * The answer, from what was decided. Counts cover every entry that was keyed (and the unreadable ones as errors):
- * `create` the beads created (or, in a dry run, planned), `skip` the keys the tracker already held, `error` the
- * ambiguous keys, failed creates and unreadable entries. A sweep with an error is PARTIAL (exit 1), never silently fine.
+ * `create` the beads created (or, in a dry run, planned), `skip` the keys the tracker already held (a deleted bead
+ * still holds its key: see `heldWithoutListing`), `error` the ambiguous keys, failed creates and unreadable entries.
+ * A sweep with an error is PARTIAL (exit 1), never silently fine; a dry run with one is PLANNED and exits 1 as well.
  */
 function outcome({ dryRun, actions, invalid }) {
   const count = (name) => actions.filter((a) => a.action === name && a.ok !== false).length;
@@ -220,7 +226,7 @@ function outcome({ dryRun, actions, invalid }) {
     };
   }
   return {
-    ok: dryRun ? true : errors === 0,
+    ok: errors === 0,
     status: dryRun ? 'PLANNED' : errors === 0 ? 'RECORDED' : 'PARTIAL',
     recorded: !dryRun && errors === 0,
     counts: { create: count('create'), skip: count('skip'), error: errors },
@@ -228,6 +234,18 @@ function outcome({ dryRun, actions, invalid }) {
     beads,
     invalid,
   };
+}
+
+/**
+ * Whether a refused create says the key is ALREADY HELD although the lookup did not list it. br keeps the external
+ * reference of a deleted bead (a tombstone `list --all` does not show), so the lookup says "not found" and the create
+ * fails with `External reference '<key>' already exists on issue <id>` (exit 7, surfaced as TOOL_FAILED). Only that
+ * refusal, naming exactly this entry's key (the quotes keep `...comment9` from matching `...comment99`), counts: any
+ * other failure is a failure.
+ */
+function heldWithoutListing(result, key) {
+  const error = isObject(result.error) ? result.error : {};
+  return error.code === 'TOOL_FAILED' && typeof error.message === 'string' && error.message.includes(`External reference '${key}' already exists`);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +310,10 @@ function recordSweep(facts, tracker, options) {
     }
     const result = trackerFindings.createFinding(tracker, beadFor(kind, entry, context));
     if (!result.ok) {
+      if (heldWithoutListing(result, entry.key)) {
+        actions.push({ action: 'skip', reason: 'held-not-listed', kind, key: entry.key });
+        continue;
+      }
       if (result.unavailable && unavailable === null) unavailable = result;
       actions.push({ ...action, ok: false, reason: 'create-failed', error: result.error, ...(result.unavailable ? { unavailable: true } : {}) });
       continue;

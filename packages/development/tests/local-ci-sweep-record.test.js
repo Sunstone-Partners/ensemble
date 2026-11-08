@@ -53,8 +53,17 @@ const OPTIONS = { repo: 'Acme/Widgets', pr: 13, headSha: HEAD };
 
 const WRITES = ['tracker.create-detailed'];
 
-/** An in-memory `br`: the deps `recordSweep` runs against. `issues` may be pre-seeded; `fail` can refuse any call. */
-function fakeTracker({ fail = () => null, issues = [] } = {}) {
+/** What a create answers when the key is held by a DELETED bead (captured from br 0.6.0, through the runner's TOOL_FAILED detail). */
+const tombstoneRefusal = (key) => ({
+  ok: false,
+  error: {
+    code: 'TOOL_FAILED',
+    message: `beads: capability 'tracker.create-detailed' failed: {"error":{"code":"CONFIG_ERROR","message":"Configuration error: External reference '${key}' already exists on issue bd-9"}}`,
+  },
+});
+
+/** An in-memory `br`: the deps `recordSweep` runs against. `issues` may be pre-seeded; `deleted` are keys of deleted beads (held, not listed); `fail` can refuse any call. */
+function fakeTracker({ fail = () => null, issues = [], deleted = [] } = {}) {
   const calls = [];
   return {
     issues,
@@ -68,6 +77,7 @@ function fakeTracker({ fail = () => null, issues = [] } = {}) {
         case 'tracker.find-by-key':
           return { ok: true, data: JSON.stringify({ issues: JSON.parse(JSON.stringify(issues)) }) };
         case 'tracker.create-detailed': {
+          if (deleted.includes(args.externalKey)) return tombstoneRefusal(args.externalKey);
           if (issues.some((issue) => issue.external_ref === args.externalKey)) {
             return { ok: false, error: { code: 'TOOL_FAILED', message: 'CONFIG_ERROR: external_ref already exists' } };
           }
@@ -341,6 +351,40 @@ describe('failures are reported, never swallowed', () => {
   });
 });
 
+describe('a deleted bead still holds its key (kata mdfr review F3)', () => {
+  test('the entry is skipped as held-not-listed, the sweep stays RECORDED, and every later sweep answers the same', () => {
+    const tracker = fakeTracker({ deleted: [KEYS[1]] });
+    const first = recordSweep(FACTS, tracker, OPTIONS);
+    expect(first).toMatchObject({ ok: true, status: 'RECORDED', recorded: true, counts: { create: 2, skip: 1, error: 0 } });
+    expect(first.beads[KEYS[1]]).toEqual({ kind: 'finding', action: 'skip', reason: 'held-not-listed' });
+    expect(first.actions.find((a) => a.key === KEYS[1])).toEqual({ action: 'skip', reason: 'held-not-listed', kind: 'finding', key: KEYS[1] });
+    expect(tracker.issues.map((issue) => issue.external_ref)).toEqual([KEYS[0], KEYS[2]]);
+
+    for (let round = 0; round < 2; round += 1) {
+      const later = recordSweep(FACTS, tracker, OPTIONS);
+      expect(later).toMatchObject({ ok: true, status: 'RECORDED', recorded: true, counts: { create: 0, skip: 3, error: 0 } });
+      expect(later.beads[KEYS[1]]).toMatchObject({ action: 'skip', reason: 'held-not-listed' });
+    }
+    expect(tracker.issues).toHaveLength(2); // the deleted bead is never recreated
+  });
+
+  test("only a refusal naming this entry's own key counts: another key, a longer key, another code or another failure is still a failure", () => {
+    const refusal = (code, message) => ({ ok: false, error: { code, message } });
+    const cases = [
+      ['another key', refusal('TOOL_FAILED', `External reference '${KEYS[2]}' already exists on issue bd-9`)],
+      ['a longer key that starts with this one', refusal('TOOL_FAILED', `External reference '${KEYS[1]}9' already exists on issue bd-9`)],
+      ['another code', refusal('BAD_OUTPUT', `External reference '${KEYS[1]}' already exists on issue bd-9`)],
+      ['another failure', refusal('TOOL_FAILED', 'database is locked')],
+    ];
+    for (const [name, answer] of cases) {
+      const tracker = fakeTracker({ fail: (capability, args) => (capability === 'tracker.create-detailed' && args.externalKey === KEYS[1] ? answer : null) });
+      const result = recordSweep(FACTS, tracker, OPTIONS);
+      expect({ name, status: result.status, ...result.counts }).toEqual({ name, status: 'PARTIAL', create: 2, skip: 0, error: 1 });
+      expect(result.beads[KEYS[1]]).toMatchObject({ action: 'error', reason: 'create-failed' });
+    }
+  });
+});
+
 describe('dryRun', () => {
   test('looks the keys up and plans, and changes nothing', () => {
     const tracker = fakeTracker();
@@ -357,6 +401,20 @@ describe('dryRun', () => {
     const result = recordSweep(FACTS, tracker, { ...OPTIONS, dryRun: true });
     expect(result.counts).toEqual({ create: 2, skip: 1, error: 0 });
     expect(tracker.issues).toHaveLength(1);
+  });
+
+  test('a dry run only looks up, so it cannot see a deleted bead and plans the create (documented limit); it writes nothing', () => {
+    const tracker = fakeTracker({ deleted: [KEYS[1]] });
+    const result = recordSweep(FACTS, tracker, { ...OPTIONS, dryRun: true });
+    expect(result).toMatchObject({ ok: true, status: 'PLANNED', counts: { create: 3, skip: 0, error: 0 } });
+    expect(tracker.writes()).toEqual([]);
+  });
+
+  test('a plan that already holds an error is not clean: ok is false (exit 1), the status stays PLANNED, nothing is written (kata mdfr review F5)', () => {
+    const tracker = fakeTracker({ issues: [{ id: 'bd-1', status: 'open', labels: [], external_ref: KEYS[0] }, { id: 'bd-2', status: 'open', labels: [], external_ref: KEYS[0] }] });
+    const result = recordSweep(FACTS, tracker, { ...OPTIONS, dryRun: true });
+    expect(result).toMatchObject({ ok: false, status: 'PLANNED', recorded: false, counts: { create: 2, skip: 0, error: 1 } });
+    expect(tracker.writes()).toEqual([]);
   });
 });
 
@@ -705,8 +763,9 @@ if (argv[0] === 'list' && argv.includes('--all')) {
   process.stdout.write(JSON.stringify({ issues: state.issues, total: state.issues.length }));
 } else if (argv[0] === 'create') {
   const ref = flag('--external-ref');
-  if (state.issues.some((i) => i.external_ref === ref)) {
-    process.stdout.write(JSON.stringify({ error: { code: 'CONFIG_ERROR', message: "External reference '" + ref + "' already exists" } }));
+  const holder = state.issues.concat(state.deleted || []).find((i) => i.external_ref === ref);
+  if (holder) {
+    process.stdout.write(JSON.stringify({ error: { code: 'CONFIG_ERROR', message: "Configuration error: External reference '" + ref + "' already exists on issue " + holder.id } }));
     process.exit(7);
   }
   const issue = { id: 'bd-' + (state.issues.length + 1), title: flag('--title'), description: flag('-d'), issue_type: flag('--type'), status: 'open', priority: Number(flag('-p')), labels: flag('-l').split(','), external_ref: ref };
@@ -724,6 +783,13 @@ if (argv[0] === 'list' && argv.includes('--all')) {
     dir,
     calls: () => read('calls.log').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)),
     issues: () => (read('state.json') ? JSON.parse(read('state.json')).issues : []),
+    /** Delete the bead with this external reference the way br does: it leaves `list --all`, and its key stays taken. */
+    remove(ref) {
+      const state = JSON.parse(read('state.json'));
+      state.deleted = (state.deleted || []).concat(state.issues.filter((i) => i.external_ref === ref));
+      state.issues = state.issues.filter((i) => i.external_ref !== ref);
+      fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state));
+    },
   };
 }
 
@@ -759,6 +825,19 @@ describe('through the real process: the real entry point, the real adapter, a st
 
     // The head committed a toolchain config naming a tracker that does not exist: it was not the head's tree that decided.
     expect(br.calls().every((c) => fs.realpathSync(c.cwd) === fx.primary)).toBe(true);
+  });
+
+  test('a bead that was deleted keeps its key: later sweeps skip it (held-not-listed) instead of being PARTIAL for good', () => {
+    const br = statefulBr();
+    expect(sweepProcess(input(fx), br).body).toMatchObject({ status: 'RECORDED', counts: { create: 3 } });
+    br.remove(KEYS[1]);
+    for (let round = 0; round < 2; round += 1) {
+      const swept = sweepProcess(input(fx), br);
+      expect(swept.status).toBe(0);
+      expect(swept.body).toMatchObject({ ok: true, status: 'RECORDED', counts: { create: 0, skip: 3, error: 0 } });
+      expect(swept.body.beads[KEYS[1]]).toEqual({ kind: 'finding', action: 'skip', reason: 'held-not-listed' });
+    }
+    expect(br.issues().map((issue) => issue.external_ref)).toEqual([KEYS[0], KEYS[2]]);
   });
 
   test('a refusal exits 0 with the fallback and br is never run', () => {
