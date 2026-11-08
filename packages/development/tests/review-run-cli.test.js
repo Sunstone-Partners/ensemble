@@ -25,7 +25,10 @@ const CLI = path.join(__dirname, '..', 'lib', 'review-run-cli.js');
 const PR_REVIEW_CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const FIXTURES = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'znd1', 'fixtures');
 const BODY = '## Testing\nran the relevant tests\n\n## Risk\nlow\n\n## How to revert\nrevert the commit\n';
-const POLICY = '# Review\n\n```ensemble-review-policy\n{"sensitivePaths":["secure/**"]}\n```\n';
+const POLICY = '# Review\n\n```ensemble-review-policy\n{"sensitivePaths":["secure/**"],"highPaths":["wide/**"]}\n```\n';
+/** The changed lines of the 19 paths of the one real full-mode run (PR 271), in path order: the `wide` branch adds one new file of each size (kata sfpb). */
+const WIDE_LINES = [1, 127, 1, 159, 1, 145, 12, 8, 76, 125, 355, 38, 1, 8, 76, 159, 1, 145, 12];
+const widePath = (index) => `wide/a${String(index + 1).padStart(2, '0')}.js`;
 
 const GH_STUB = `#!/usr/bin/env node
 const fs = require('fs');
@@ -88,6 +91,12 @@ function buildFixture() {
   git(work, 'add', '.');
   git(work, 'commit', '-q', '-m', 'touch a sensitive path');
   git(work, 'checkout', '-q', 'main');
+  // a High PR of the shape of the one real full-mode run: 19 new files holding 1450 changed lines between them (kata sfpb)
+  git(work, 'checkout', '-q', '-b', 'wide');
+  WIDE_LINES.forEach((count, index) => write(work, widePath(index), `${Array.from({ length: count }, (_, line) => `// line ${line + 1}`).join('\n')}\n`));
+  git(work, 'add', '.');
+  git(work, 'commit', '-q', '-m', 'a wide High PR');
+  git(work, 'checkout', '-q', 'main');
   git(work, 'checkout', '-q', '-b', 'feature');
   write(work, 'src/a.js', 'module.exports = (list) => list.map((x, i) => list[i + 1] + x);\n');
   write(work, 'src/b.js', 'module.exports = () => 1;\n');
@@ -108,7 +117,7 @@ function buildFixture() {
   git(work, 'checkout', '-q', 'feature');
   // the review state is gitignored in real repositories; the fixture does the same so `git status` can be exact
   fs.appendFileSync(path.join(work, '.git', 'info', 'exclude'), '.ensemble/\n');
-  return { root, origin, work, bin, marker, head: git(work, 'rev-parse', 'feature'), high: git(work, 'rev-parse', 'high'), exec: git(work, 'rev-parse', 'exec'), link: git(work, 'rev-parse', 'link'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
+  return { root, origin, work, bin, marker, head: git(work, 'rev-parse', 'feature'), high: git(work, 'rev-parse', 'high'), wide: git(work, 'rev-parse', 'wide'), exec: git(work, 'rev-parse', 'exec'), link: git(work, 'rev-parse', 'link'), stateFile: path.join(root, 'gh-state.json'), logFile: path.join(root, 'gh.log') };
 }
 
 beforeAll(() => {
@@ -408,6 +417,47 @@ describe('the real CLI process on a real git fixture', () => {
     expect(done.out.ledger.map((e) => e.source)).toEqual(['reviewer-s1-a', 'orchestrator']);
     expect(JSON.parse(fs.readFileSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), 'utf8'))).toMatchObject({ mode: 'full' });
     process.stderr.write(`\nSMOKE full-mode: ${JSON.stringify({ wallMs: done.out.metrics.wallMs, orchestratorTurns: done.out.metrics.orchestratorTurns.atLeast, triageCalls: done.out.metrics.triageCalls, agents: done.out.metrics.agentsByRole })}\n`);
+    expect(snapshotRepo()).toEqual(before);
+  });
+
+  test('a High PR of the real full-mode run\'s shape (19 paths, 1450 changed lines) through the real process: three slices in one wave, a diff per slice cut from real git output, the lane given 36 minutes (kata sfpb)', () => {
+    setGh({ head: fx.wide });
+    fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
+    const before = snapshotRepo();
+    const r = prep({ runId: 'wide' });
+    expect(r.code).toBe(0);
+    const m = r.out;
+    expect(m).toMatchObject({ ok: true, status: 'DISPATCH', round: 'review', wave: '1 of 1', mode: { mode: 'full' }, depth: { mode: 'deep' }, maxConcurrentAgents: 8 });
+    expect(m.mode.reasons).toContain('high-path');
+    // the plan: three slices inside the limits, the whole round (six reviewers and the lane) in ONE wave
+    expect(m.sizing.work).toEqual({ files: 19, lines: 1450 });
+    expect(m.sizing.limits).toEqual({ sliceMaxFiles: 8, sliceTargetLines: 612, slicesAllowed: 3, slicesWanted: 3 });
+    expect(m.sizing.slices.map((slice) => [slice.files, slice.lines, slice.overLimit, slice.diff])).toEqual([[8, 454, false, 'slice'], [3, 556, false, 'slice'], [8, 440, false, 'slice']]);
+    expect(m.sizing.warnings).toEqual([]);
+    const reviewers = m.agents.filter((a) => a.role === 'reviewer');
+    expect(reviewers.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'reviewer-s2-a', 'reviewer-s2-b', 'reviewer-s3-a', 'reviewer-s3-b']);
+    for (const a of reviewers) expect(a).toMatchObject({ deadlineMinutes: 15 });
+    // the deadlines: 15 minutes for a slice the model says fits, 36 for the lane that took 17m45s on the run this is the shape of
+    const lane = m.agents.find((a) => a.role === 'security');
+    expect(lane).toMatchObject({ deadlineMinutes: 36, work: { files: 19, lines: 1450 } });
+    expect((lane.deadlineAt - lane.dispatchedAt) / 60000).toBe(36);
+    expect(lane.deadlineAt - lane.dispatchedAt).toBeGreaterThanOrEqual(17.75 * 60000 * 2);
+    // each reviewer's brief names the diff of its slice, cut from the REAL `git diff`: the sections of its own paths and no one else's
+    const sections = (text) => text.split('\n').filter((line) => line.startsWith('diff --git ')).map((line) => line.slice('diff --git a/'.length).split(' b/')[0]);
+    for (const a of reviewers) {
+      const brief = fs.readFileSync(a.briefPath, 'utf8');
+      const diffPath = /Diff for your slice: (\S+)/.exec(brief)[1];
+      expect(diffPath).toMatch(/\/slices\/slice-[123]\.diff$/);
+      expect(sections(fs.readFileSync(diffPath, 'utf8'))).toEqual(a.paths);
+      expect(brief).toContain('Timebox: 15 minutes');
+    }
+    const rangeDiff = /Diff: (\S+)/.exec(fs.readFileSync(lane.briefPath, 'utf8'))[1];
+    expect(path.basename(rangeDiff)).toBe('range.diff');
+    expect(sections(fs.readFileSync(rangeDiff, 'utf8'))).toHaveLength(19);
+    // stand-in agents: every reviewer lists every path of its slice and the lane lists all 19, so nothing is left unreviewed
+    answerReview(m, { changed: WIDE_LINES.map((_, index) => widePath(index)) });
+    expect(coll('wide').out).toMatchObject({ ok: true, status: 'TRIAGE', security: { status: 'clean' }, coverage: { complete: true, unreviewedSlices: [], uncovered: [] } });
+    process.stderr.write(`\nSMOKE sizing (the real run's shape): ${JSON.stringify({ wave: m.wave, agents: m.agents.length, limits: m.sizing.limits, slices: m.sizing.slices.map((slice) => ({ id: slice.id, files: slice.files, lines: slice.lines, diff: slice.diff })), deadlineMinutes: Object.fromEntries(m.agents.map((a) => [a.name, a.deadlineMinutes])) })}\n`);
     expect(snapshotRepo()).toEqual(before);
   });
 

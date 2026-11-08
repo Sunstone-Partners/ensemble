@@ -77,6 +77,16 @@
  * model). A trace file that already holds another `review` root (a second run sharing `traceRunId`) has no usable window: give
  * each run its own trace.
  *
+ * SIZE (kata sfpb): what an agent has to read decides how it is planned. `planRunSlices` cuts the changed paths into slices of at
+ * most `sliceMaxFiles` paths and about `sliceTargetLines` changed lines (policy keys; defaults derived from the one real full-mode
+ * run, `lib/pr-review-sizing.js`), never more slices than let the whole review round, security lane included, run in ONE wave at
+ * `maxConcurrentAgents` (the lane is the longest agent: it must not wait behind a wave of reviewers). With several slices each
+ * reviewer's brief names a diff of ITS slice (`slices/slice-<n>.diff`), not the whole range. An agent's deadline is the policy's
+ * `deadlineMinutes` as a floor, raised to the modelled time to read what it was given (a reviewer: its slice; the lane: every
+ * changed path), with headroom, at most 60 minutes. Everything is recorded in `run.sizing` and the DISPATCH manifest, and nothing
+ * relaxes a fail-closed rule: an agent that arrives after its (larger) deadline is `expired`, a reviewer that lists fewer paths
+ * than its slice leaves the slice not reviewed, a slice or deadline the limits cannot hold is a recorded warning and not a pass.
+ *
  * deps (every function may be async):
  *   now()                                    epoch ms
  *   makeTracer(traceRunId)                   -> {startSpan(name,{kind,attrs}), endSpan(id,{status,attrs})}   (never throws)
@@ -102,6 +112,8 @@ const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
 const { planSlices, verifyCoverage } = require('./pr-review-depth');
 const { reviewDeadlines, toVotesInput } = require('./pr-review-results');
+const { DEFAULT_POLICY, DEADLINE_MINUTES_MAX } = require('./pr-review-policy');
+const SZ = require('./pr-review-sizing');
 const { dedupeFindings, isActionable, normalizeSeverity, validateLedger } = require('./pr-review-ledger');
 const { tallyVotes } = require('./pr-review-votes');
 const { evaluateApprovals } = require('./pr-review-approvals');
@@ -294,20 +306,128 @@ function summarisePrecheck(result) {
   };
 }
 
+/** The changed lines of one `numstat` entry: added plus deleted (a binary file holds none). */
+const changedLines = (entry) => (entry.added || 0) + (entry.deleted || 0);
+
+/**
+ * Plans the review round's slices from the size model (kata sfpb): every slice holds at most `sliceMaxFiles` paths and about
+ * `sliceTargetLines` changed lines, so a reviewer can reach every path of it, and there are never more slices than let the WHOLE
+ * round (every lens of every slice, and the security lane) run in one wave at `maxConcurrentAgents`. When that ceiling is lower
+ * than the limits need, a slice is bigger than the limits say: the plan records it (`slice-over-limit`, with the number of agents
+ * that would hold the limits) and still plans every path, so an agent that does not reach all of its paths is reported not
+ * reviewed like any other. Quick is one reviewer and one slice whatever the size, so nothing is over its limits.
+ *
+ * Returns the `planSlices` refusal as it is, or `{ ok: true, plan, sizing }`: `plan` is the `planSlices` answer, `sizing` the
+ * record stored in the run and shown in the manifest.
+ */
+function planRunSlices(run, numstat) {
+  const resolved = SZ.resolveSizing(run.policy, DEFAULT_POLICY);
+  const paths = numstat.map((entry) => ({ path: entry.path, lines: changedLines(entry) }));
+  const lenses = run.depth.reviewersPerSlice;
+  const lane = run.securityLane ? 1 : 0;
+  const maxSlices = Math.max(1, Math.floor((run.maxConcurrentAgents - lane) / lenses));
+  const request = {
+    paths,
+    threshold: run.policy && Number.isInteger(run.policy.sliceThreshold) ? run.policy.sliceThreshold : undefined,
+    mode: run.depth.mode,
+    lensesPerSlice: lenses,
+    targetLines: resolved.targetLines,
+    maxFiles: resolved.maxFiles,
+  };
+  const plan = planSlices({ ...request, maxSlices });
+  if (plan.ok !== true) return plan;
+  // the same request with room for every slice the limits ask for (at most one per path): what the cap kept from the plan
+  const wanted = planSlices({ ...request, maxSlices: Math.max(1, paths.length) });
+  const quick = run.depth.mode === 'quick';
+  const slices = plan.slices.map((slice) => ({
+    id: slice.id,
+    files: slice.paths.length,
+    lines: slice.lines,
+    overLimit: !quick && (slice.paths.length > resolved.maxFiles || (slice.paths.length > 1 && slice.lines > resolved.targetLines)),
+  }));
+  const warnings = resolved.warnings.map((code) => ({ code, message: `the policy's ${code.slice('invalid-'.length)} is not readable, so the default applies` }));
+  const over = slices.filter((slice) => slice.overLimit);
+  if (over.length > 0) {
+    const agents = wanted.slices.length * lenses + lane;
+    warnings.push({
+      code: 'slice-over-limit',
+      message: `slice ${over.map((slice) => slice.id).join(', ')} hold${over.length === 1 ? 's' : ''} more than ${resolved.maxFiles} paths or ${resolved.targetLines} changed lines: those limits need ${wanted.slices.length} slices (${agents} agents at once), and the concurrency cap of ${run.maxConcurrentAgents} allows ${maxSlices} slices of ${lenses} lenses${lane === 1 ? ' beside the security lane' : ''}; raise maxConcurrentAgents to ${agents} (the policy allows at most 32) to hold them. A reviewer that does not reach every path of its slice is reported not reviewed`,
+    });
+  }
+  const sizing = {
+    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run },
+    limits: { sliceMaxFiles: resolved.maxFiles, sliceTargetLines: resolved.targetLines, slicesAllowed: maxSlices, slicesWanted: wanted.slices.length },
+    work: { files: paths.length, lines: plan.totalLines },
+    slices,
+    warnings,
+  };
+  return { ok: true, plan, sizing };
+}
+
+/**
+ * The diff file each slice's reviewers are handed. With one slice it is the range diff itself. With several it is the slice's own
+ * hunks (`slices/slice-<n>.diff` in the run directory), so the slice is the unit of work the reviewer brief says it is. A slice
+ * whose paths cannot all be placed in the diff, a diff that cannot be read and a file that cannot be written leave the slice the
+ * WHOLE range diff: more to read, never less. Which each slice got is recorded in `run.sizing.slices[n].diff`.
+ */
+function sliceDiffFiles(run, deps, dir) {
+  const whole = run.prepared.rangeDiff;
+  const files = run.slices.map(() => whole);
+  for (const entry of run.sizing.slices) entry.diff = 'whole-range';
+  if (run.slices.length <= 1) return files;
+  let text = null;
+  try {
+    text = typeof whole === 'string' ? deps.fs.readText(whole) : null;
+  } catch (_error) {
+    text = null;
+  }
+  const cut = text === null ? null : S.splitDiffBySlice(text, run.slices);
+  if (cut === null) return files;
+  cut.forEach((entry, index) => {
+    if (entry.missing.length > 0 || entry.text === '') return;
+    const file = path.join(dir, 'slices', `slice-${index + 1}.diff`);
+    try {
+      deps.fs.mkdirp(path.dirname(file), 0o700);
+      deps.fs.writeAtomic(file, entry.text, 0o600);
+    } catch (_error) {
+      return;
+    }
+    files[index] = file;
+    run.sizing.slices[index].diff = 'slice';
+  });
+  return files;
+}
+
 /** Builds the review round's agents and writes their brief files. Throws the renderer's refusal. */
 function buildReviewAgents(run, deps, ctx) {
   const dir = runDirOf(run.repoRoot, run.runId);
   const agents = [];
-  const minutes = (role) => reviewDeadlines({ role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy }).minutes;
+  const diffs = sliceDiffFiles(run, deps, dir);
+  // The deadline the agent is given at dispatch (`dispatchWave` asks the same question of the same inputs), so a brief's timebox is
+  // its deadline. A modelled need over the maximum is capped and said, once per slice or lane.
+  const deadline = (agent, work, label) => {
+    const answer = reviewDeadlines({ role: agent.role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy, work });
+    if (answer.ok !== true) throw new Error(`no deadline for ${agent.name}: ${answer.reason}`);
+    if (answer.sizing !== undefined && answer.sizing.capped) {
+      const message = `${label}: reading ${work.files} paths and ${work.lines} changed lines is modelled at ${answer.sizing.modeledMinutes} minutes, over the ${DEADLINE_MINUTES_MAX}-minute maximum, so its deadline is capped at ${DEADLINE_MINUTES_MAX} minutes; if it does not arrive in time it is reported not reviewed`;
+      if (!run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-capped', message });
+    }
+    return answer;
+  };
   run.slices.forEach((slice, sliceIndex) => {
+    const work = { files: slice.paths.length, lines: slice.lines };
     // one reviewer per (slice, lens) pass; the lenses come from the shared plan (planSlices), the names stay `reviewer-s<n>-<a|b|..>`
     run.assignments.filter((assignment) => assignment.sliceId === slice.id).forEach((assignment, lensIndex) => {
-      const name = `reviewer-s${sliceIndex + 1}-${S.LENSES[lensIndex]}`;
-      agents.push({ name, role: 'reviewer', sliceId: slice.id, lens: assignment.lens, paths: slice.paths, _vars: { slice: slice.id, lens: assignment.lens, timeboxMinutes: minutes('reviewer'), paths: slice.paths, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir }, _role: 'reviewer' });
+      const agent = { name: `reviewer-s${sliceIndex + 1}-${S.LENSES[lensIndex]}`, role: 'reviewer', sliceId: slice.id, lens: assignment.lens, paths: slice.paths, work, _role: 'reviewer' };
+      agent._vars = { slice: slice.id, lens: assignment.lens, timeboxMinutes: deadline(agent, work, `slice ${slice.id}`).minutes, paths: slice.paths, diffPath: diffs[sliceIndex], snapshotDir: run.prepared.snapshotDir };
+      agents.push(agent);
     });
   });
   if (run.securityLane) {
-    agents.push({ name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: run.changedPaths, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } });
+    const work = { files: run.changedPaths.length, lines: run.sizing.work.lines };
+    const lane = { name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: run.changedPaths, work, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } };
+    deadline(lane, work, 'the security lane');
+    agents.push(lane);
   }
   return agents.map((agent) => {
     const briefPath = path.join(dir, 'briefs', `${agent.name}.md`);
@@ -327,11 +447,12 @@ function dispatchWave(run, wave, now, deps, tracer) {
   const resultDir = path.join(runDirOf(run.repoRoot, run.runId), 'results', wave.round);
   deps.fs.mkdirp(resultDir, 0o700);
   for (const agent of wave.agents) {
-    const deadline = reviewDeadlines({ role: agent.role, now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy });
+    const deadline = reviewDeadlines({ role: agent.role, now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy, ...(agent.work === undefined ? {} : { work: agent.work }) });
     if (deadline.ok !== true) throw new Error(`no deadline for ${agent.name}: ${deadline.reason}`);
     agent.dispatchedAt = deadline.dispatchedAt;
     agent.deadlineAt = deadline.deadlineAt;
     agent.deadlineAtIso = deadline.deadlineAtIso;
+    agent.deadlineMinutes = deadline.minutes;
     agent.prompt = S.agentPrompt(agent);
     const stage = stageOfAgent(agent);
     agent.spanId = tracer.start(stage, STAGE_KINDS[stage], { agent: agent.name, role: agent.role, round: run.round, wave: wave.wave });
@@ -355,6 +476,7 @@ function manifestOf(run, wave) {
     tier: run.tier,
     depth: { mode: run.depth.mode, reviewersPerSlice: run.depth.reviewersPerSlice, verifiersPerCandidate: run.depth.verifiersPerCandidate, bounds: run.depth.bounds },
     maxConcurrentAgents: run.maxConcurrentAgents,
+    ...(wave.round === 'review' && run.sizing !== undefined ? { sizing: run.sizing } : {}),
     agents: wave.agents.map((a) => ({
       name: a.name,
       role: a.role,
@@ -364,6 +486,8 @@ function manifestOf(run, wave) {
       dispatchedAt: a.dispatchedAt,
       deadlineAt: a.deadlineAt,
       deadlineAtIso: a.deadlineAtIso,
+      ...(a.deadlineMinutes === undefined ? {} : { deadlineMinutes: a.deadlineMinutes }),
+      ...(a.work === undefined ? {} : { work: a.work }),
       ...(a.sliceId !== undefined && a.role === 'reviewer' ? { sliceId: a.sliceId, paths: a.paths } : {}),
       ...(a.candidateIds !== undefined ? { candidateIds: a.candidateIds } : {}),
     })),
@@ -551,21 +675,22 @@ async function prepareStages(input, deps, ctx) {
     run.reReview = F.planReReview({ lastReviewedSha: input.lastReviewedSha, rangeMode: prepared.mode, deltaPlan: facts.deltaPlan, delta: facts.delta, paths: facts.paths });
   }
 
-  // 7-8. depth and slices
+  // 7-8. depth, then the slices from the size model (kata sfpb)
   // Full mode is always Deep, whatever the tier word says (an unreadable tier resolves no depth of its own).
   const planned = S.planDepth(isFull ? { tier: F.FULL_DEPTH_TIER, effectiveTier: F.FULL_DEPTH_TIER } : tier);
   if (planned.ok !== true) return failure('RUN_FAILED', { reason: 'depth-refused', error: planned.reason, precheck });
   run.depth = planned.depth;
-  const sliced = planSlices({ paths: facts.numstat.map((f) => ({ path: f.path, lines: (f.added || 0) + (f.deleted || 0) })), threshold: run.policy && Number.isInteger(run.policy.sliceThreshold) ? run.policy.sliceThreshold : undefined, mode: run.depth.mode, lensesPerSlice: run.depth.reviewersPerSlice });
-  if (sliced.ok !== true) return failure('RUN_FAILED', { reason: 'slices-refused', error: sliced.reason, precheck });
-  run.slices = sliced.slices;
-  run.assignments = sliced.reviewerAssignments;
-  run.sliced = sliced.sliced;
   run.securityLane = isFull || SECURITY_REQUIRED_TIERS.includes(tier.tier) || SECURITY_REQUIRED_TIERS.includes(tier.effectiveTier) || mode.securityLane === true;
-  const downgraded = F.modeInvariant(run);
-  if (downgraded !== null) return failure('RUN_FAILED', { reason: 'mode-invariant', error: downgraded, precheck });
   const cap = run.policy && Number.isInteger(run.policy.maxConcurrentAgents) ? run.policy.maxConcurrentAgents : DEFAULT_MAX_CONCURRENT;
   run.maxConcurrentAgents = cap;
+  const sliced = planRunSlices(run, facts.numstat);
+  if (sliced.ok !== true) return failure('RUN_FAILED', { reason: 'slices-refused', error: sliced.reason, precheck });
+  run.slices = sliced.plan.slices;
+  run.assignments = sliced.plan.reviewerAssignments;
+  run.sliced = sliced.plan.sliced;
+  run.sizing = sliced.sizing;
+  const downgraded = F.modeInvariant(run);
+  if (downgraded !== null) return failure('RUN_FAILED', { reason: 'mode-invariant', error: downgraded, precheck });
 
   // 9-11. briefs, waves, deadlines. A brief the renderer refuses cannot be reviewed mechanically: a light run is handed to the
   // narrated procedure (NEEDS_FULL_MODE); a full run fails closed and says so (FULL_BRIEF_REFUSED), and is never lowered to light.
