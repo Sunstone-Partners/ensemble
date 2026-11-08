@@ -640,8 +640,9 @@ function runMode(payload) {
 
 /**
  * What the PR's state report said about the round the delta starts from. `verdicts` and `ledger` are what `planCarry` is
- * given: both empty when nothing was read (there is nothing to carry from). That is NOT what the answer's `ledger` says:
- * only `priorState: 'read'` made it a ledger.
+ * given: both empty when nothing was read (there is nothing to carry from); for a report that was read, what it holds
+ * (no `verdicts` is none, but no `ledger` is NOT an empty one: a ledger that is not a list is `ledger-unreadable`). That is
+ * not what the answer's `ledger` says either: only `priorState: 'read'` AND a ledger array make it a ledger.
  */
 function readPriorRound(payload) {
   const unavailable = (priorState) => ({ priorState, verdicts: [], ledger: [] });
@@ -650,7 +651,7 @@ function readPriorRound(payload) {
   if (!read.exists) return unavailable('absent');
   if (read.discarded || !isObject(read.state)) return unavailable('discarded');
   const { verdicts, ledger } = read.state;
-  return { priorState: 'read', verdicts: verdicts === undefined ? [] : verdicts, ledger: ledger === undefined ? [] : ledger };
+  return { priorState: 'read', verdicts: verdicts === undefined ? [] : verdicts, ledger };
 }
 
 function carryPlan(payload) {
@@ -659,8 +660,9 @@ function carryPlan(payload) {
   }
   const prior = readPriorRound(payload);
   const plan = planCarry({ ...payload, priorVerdicts: prior.verdicts, priorLedger: prior.ledger });
-  // The answer's `ledger` is the round's existing ledger, so an empty one reads as "no open findings": it is answered only
-  // for a prior state that was READ. An absent, discarded, corrupt or unreadable one answers `null`, never `[]`.
+  // The answer's `ledger` is the round's existing ledger, so an empty one reads as "no open findings": it is an array only
+  // for a prior state that was READ and holds a ledger array. An absent, discarded, corrupt or unreadable state, and a read
+  // report with no ledger list, answer `null`, never `[]`.
   const answer = { ...plan, ledger: prior.priorState === 'read' && Array.isArray(prior.ledger) ? prior.ledger : null, priorState: prior.priorState };
   if (prior.priorState !== 'read') {
     const unavailable = CARRY_REASONS.PRIOR_STATE_UNAVAILABLE;

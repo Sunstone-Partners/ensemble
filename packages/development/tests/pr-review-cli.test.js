@@ -1964,6 +1964,39 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     expect(out.ledger).toEqual([]);
   });
 
+  const withoutLedger = (state) => {
+    const { ledger: _ledger, ...rest } = state;
+    return rest;
+  };
+
+  test.each([
+    ['no ledger key', withoutLedger],
+    ['a null ledger', (state) => ({ ...state, ledger: null })],
+    ['a ledger that is a string', (state) => ({ ...state, ledger: 'a' })],
+    ['a ledger that is an object, not a list', (state) => ({ ...state, ledger: { a: finding('a') } })],
+  ])('a report that was read but holds %s answers a NULL ledger, never `[]`: an array is a ledger, and only that', (_name, shape) => {
+    const cwd = tmpCwd();
+    writeRound(cwd, shape(round1()));
+    const out = run(plan(cwd));
+    expect(out.priorState).toBe('read');
+    expect(out.ledger).toBeNull();
+    // nothing carries, and the planner's own gate says why: the prior ledger is not a list of findings
+    expect(out.carried).toEqual([]);
+    expect(out.reasons).toContain(REASONS.LEDGER_UNREADABLE);
+  });
+
+  test('through the real executable a read report with no ledger key answers `"ledger": null` in the JSON; the same report with its ledger answers an array', () => {
+    const cwd = tmpCwd();
+    writeRound(cwd, withoutLedger(round1()));
+    const res = cli(plan(cwd));
+    expect(res.status).toBe(0);
+    const out = JSON.parse(res.stdout);
+    expect(out.priorState).toBe('read');
+    expect(Object.prototype.hasOwnProperty.call(out, 'ledger') && out.ledger === null).toBe(true);
+    writeRound(cwd);
+    expect(Array.isArray(JSON.parse(cli(plan(cwd)).stdout).ledger)).toBe(true);
+  });
+
   test('a report that was read keeps answering its own ledger when the answer is ok:false (unreadable verdicts): the ledger as read, an empty one `[]`, never null', () => {
     const cwd = tmpCwd();
     writeRound(cwd, { ...round1(), ledger: [], verdicts: 'a' });
@@ -1997,7 +2030,7 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     writeRound(cwd, noLedger);
     const out = run(plan(cwd, { candidates: [candidate('a'), candidate('b')] }));
     expect(out.carried).toEqual([]);
-    for (const entry of out.reverify) expect(entry.reasons).toContain(REASONS.VERDICT_NOT_IN_LEDGER);
+    for (const entry of out.reverify) expect(entry.reasons).toContain(REASONS.LEDGER_UNREADABLE);
   });
 
   test('verdicts that are not a list make the whole answer ok:false: nothing carries', () => {
