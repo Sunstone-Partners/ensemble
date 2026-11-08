@@ -264,6 +264,11 @@ entry as `beadId` before `gate`, and each `closedBeadId` as `closedBeadId`: `bea
 an OPEN bead, so a live finding whose bead is closed carries `closedBeadId` and the list shows
 it as its own state, never counted among the open beads.
 
+**Light mode does not call it yet.** When `selectMode` answers `light`, the runner
+(`reference/review-run.md`) builds the gate and the decision list itself and nothing in that
+path runs this recorder, so the findings of a light-mode review get no bead and the list shows
+none. Wiring the recorder into the runner is not part of this change.
+
 **What the head under review cannot control.** Before it reads or writes the tracker the
 recorder asks the HOST (its pull-request view) about the pull request and refuses, by name, a head on a
 fork (`cross-repository-head`), a head whose repository the host did not state
