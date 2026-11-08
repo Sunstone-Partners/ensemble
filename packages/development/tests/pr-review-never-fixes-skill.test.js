@@ -469,6 +469,35 @@ describe('the bead recorder the skill names is a real entry point', () => {
   });
 });
 
+describe('the docs say where beads are recorded: the merge gate in full mode, not every review path (kata n350)', () => {
+  const headline = (...parts) => flatten(readRepo(...parts).split('\n').find((line) => /\(kata `n350`, plan/.test(line)));
+
+  test('the user guide scopes bead recording to MODE=gate in full mode and says the other paths record none', () => {
+    expect(GUIDE_RULE).toContain('**Only the merge gate records beads, and only in full mode:** `MODE=gate`');
+    expect(GUIDE_RULE).toContain('A review that stops short of the gate (`MODE=local`, `MODE=remote`) records none, and neither does a light-mode review (below).');
+    expect(GUIDE_RULE).toContain('does not call the bead recorder, so findings reviewed that way get no bead');
+    // The sentence that said every review of a PR records each presented finding, and the one that said pr-merge records none.
+    expect(GUIDE_RULE).not.toMatch(/A review of a PR \(local, remote or the merge gate\)[^.]*records each presented finding/);
+    expect(GUIDE_RULE).not.toMatch(/records no beads/);
+    expect(GUIDE_RULE).not.toMatch(/until kata `n350` lands/);
+  });
+
+  test('both changelogs headline the recorder as the merge gate\'s and name the paths that do not call it', () => {
+    for (const entry of [headline('CHANGELOG.md'), headline('packages', 'development', 'CHANGELOG.md')]) {
+      expect(entry).toMatch(/^- (\*\*packages\/development:\*\* )?[Tt]he merge gate records every presented PR-review finding as a bead \(kata `n350`/);
+      expect(entry).toContain('`MODE=gate` in full mode only');
+      expect(entry).toContain('`MODE=local`, `MODE=remote` and the light-mode runner (`lib/review-run-cli.js`) do not call the recorder');
+    }
+  });
+
+  test('the sp4w entries no longer say recording beads is not implemented or awaits n350', () => {
+    for (const entry of [CHANGELOG_ROOT, CHANGELOG_DEV]) {
+      expect(entry).not.toMatch(/awaits (the `beads` subcommand, )?kata `n350`|not implemented yet/);
+      expect(entry).toContain('Recording findings as beads is kata `n350`');
+    }
+  });
+});
+
 describe('the docs say /ensemble:pr-merge follows the no-fix rule (kata 6k8d)', () => {
   test('the user guide and both changelogs say pr-merge follows it and no longer carry the "not yet true" note', () => {
     expect(GUIDE_RULE).toContain('> **`/ensemble:pr-merge` follows this.**');
