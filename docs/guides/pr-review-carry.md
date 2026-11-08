@@ -102,9 +102,10 @@ Answers:
 - `record`: `{ ok, verdicts[], skipped[{ id, reason }] }` (or `{ ok:false, verdicts:[], skipped:[], reason }`). A finding that is not settled, has no id, no candidate (or an ambiguous one), no usable hash, cites another file or claim than its ledger entry says, or whose votes do not give its outcome under the round's verifier count is `skipped` and recorded nowhere: the next round verifies it again.
 - `reconcile`: `{ ok, ledger[], cleared[] }`. A finding no reviewer reported again whose cited location the push changed is cleared; one that was observed again, whatever its verdict, is not.
 
-A candidate's identity is its file and its claim: the claim as written, case
-folded and whitespace collapsed, nothing else erased. `x < y` and `x > y`, or
-`if (!ok)` and `if (ok)`, are different claims.
+A candidate's identity is its file and its claim: the claim as written, with
+runs of whitespace collapsed and nothing else erased, case included. `x < y`
+and `x > y`, `if (!ok)` and `if (ok)`, or `Foo is unchecked` and `foo is
+unchecked`, are different claims.
 
 ## Rules
 
@@ -158,7 +159,7 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 - The dependency closure is capped at 200 files; a larger one is not hashed (the citation gets `hashError`, hence `hash-missing`) rather than truncated.
 - Symlinks are refused by the hash step, whether cited or in the dependency closure (the citation gets `hashError`). So is a specifier whose path passes through a symlinked directory: any ancestor directory of the specifier's normalized path (resolved or absent) that git stores as a symlink, for the cited file's specifiers and for those of every closure member (`require('./vendor.js/pkg')` with `lib/vendor.js` a link to a directory). Git lists such a link as one entry holding its text and nothing under it, so the import resolves to nothing and no hash would see its target move.
 - Redaction: the hash CLI's output and the state writer replace the value of any key matching `/token|secret|password|api[-_]?key|authorization/i`. A `depHashes` entry keyed like `lib/token-cache.js` comes back `[REDACTED]`, which reads as a missing hash and disables carry for that closure (it fails closed).
-- A claim's identity is its exact words and symbols, so a re-worded or re-punctuated claim is a new candidate and is verified again.
+- A claim's identity is its exact words, symbols and capitalisation (only runs of whitespace are collapsed), so a re-worded, re-punctuated or re-capitalised claim is a new candidate and is verified again. That is the fail-closed side: it costs a verifier run, never a dropped finding.
 - `runId` is not bound: the state report records no run id (`prepare` takes one to name its snapshot directory and `timing` reads one trace, but nothing writes one into the report or the ledger), so a verdict has nothing to be compared with. Recording a run id in the state report would change that contract, which is left for the owner. A verdict is bound to the PR, the base, the verifier depth and count, and a finding of the prior ledger (id, file, claim), not to a run.
 - The state report is an untracked file. The binding stops a verdict from the wrong PR, base, depth or ledger; it does not stop someone who can write the repository's `.ensemble/` directory from forging a report.
 - Only `present` and `filtered` verdicts carry. A `full` range carries nothing.

@@ -158,10 +158,10 @@ describe('planCarry: the baseline carries (every flipped condition below starts 
     expect(planCarry(input).carried).toHaveLength(1);
   });
 
-  test('keys ignore a leading ./ and backslashes on the path, and case and runs of whitespace in the claim', () => {
+  test('keys ignore a leading ./ and backslashes on the path, and runs of whitespace in the claim', () => {
     const input = flipped((i) => {
       i.priorVerdicts[0].file = './src/a.js';
-      i.priorVerdicts[0].claim = 'NULL  deref   on empty\tinput';
+      i.priorVerdicts[0].claim = 'Null  deref   on empty\tinput';
       i.candidates[0].file = 'src\\a.js';
     });
     const result = planCarry(input);
@@ -205,8 +205,8 @@ describe('planCarry: the baseline carries (every flipped condition below starts 
 });
 
 describe('claim identity: every symbol is part of what a claim says', () => {
-  test('normalizeClaim folds case and whitespace and nothing else, and refuses a claim with no word', () => {
-    expect(normalizeClaim('  The   Foo, BAR!! ')).toBe('the foo, bar!!');
+  test('normalizeClaim collapses whitespace and nothing else (case included), and refuses a claim with no word', () => {
+    expect(normalizeClaim('  The   Foo, BAR!! ')).toBe('The Foo, BAR!!');
     expect(normalizeClaim('a\tb\n c')).toBe('a b c');
     expect(normalizeClaim('!!!')).toBeNull();
     expect(normalizeClaim('--- !!! < >')).toBeNull();
@@ -263,8 +263,43 @@ describe('claim identity: every symbol is part of what a claim says', () => {
     }
   );
 
-  test('claims that differ only in case or whitespace are still one claim', () => {
-    expect(normalizeClaim('If (!OK)  Return')).toBe(normalizeClaim('if (!ok) return'));
+  test('claims that differ only in whitespace are still one claim', () => {
+    expect(normalizeClaim('If (!OK)  \t Return')).toBe(normalizeClaim('If (!OK) Return'));
+  });
+
+  test.each([
+    ['Foo is unchecked', 'foo is unchecked'],
+    ['FOO is unchecked', 'Foo is unchecked'],
+    ['If (!OK) return', 'if (!ok) return'],
+    ['Ошибка при пустом вводе', 'ошибка при пустом вводе'],
+    ['Straße is unchecked', 'STRASSE is unchecked'],
+  ])('case is part of what a claim says: "%s" and "%s" are different claims (not only ASCII, not only the first letter)', (a, b) => {
+    expect(normalizeClaim(a)).toBe(a);
+    expect(normalizeClaim(a)).not.toBe(normalizeClaim(b));
+  });
+
+  test('an id-less candidate at identical lines and window whose claim differs only in case does not inherit the verdict: it is a new candidate, the old verdict unmatched', () => {
+    const input = flipped((i) => {
+      i.priorVerdicts[0] = priorOf({ outcome: 'filtered', votes: REJECTED_VOTES, claim: 'Foo is unchecked' });
+      i.priorLedger[0].failureMode = 'Foo is unchecked';
+      i.candidates[0].claim = 'foo is unchecked';
+      delete i.candidates[0].id;
+    });
+    const result = planCarry(input);
+    expect(result.carried).toEqual([]);
+    expect(result.reverify).toHaveLength(1);
+    expect(result.reverify[0].reasons).toEqual([REASONS.NEW_CANDIDATE]);
+    expect(result.unmatched.map((entry) => entry.id)).toEqual(['p1']);
+  });
+
+  test('control: the same id-less candidate with the SAME capitalisation carries the filtered verdict', () => {
+    const input = flipped((i) => {
+      i.priorVerdicts[0] = priorOf({ outcome: 'filtered', votes: REJECTED_VOTES, claim: 'Foo is unchecked' });
+      i.priorLedger[0].failureMode = 'Foo is unchecked';
+      i.candidates[0].claim = 'Foo is unchecked';
+      delete i.candidates[0].id;
+    });
+    expect(planCarry(input).carried).toHaveLength(1);
   });
 });
 
@@ -483,7 +518,7 @@ describe('AC1 new-candidate and candidate-unreadable', () => {
   });
 
   test('two candidates with one key are both verified, even though a prior verdict matches that key', () => {
-    const input = flipped((i) => { i.candidates.push({ ...i.candidates[0], id: 'c1-again', claim: 'null  DEREF on empty input' }); });
+    const input = flipped((i) => { i.candidates.push({ ...i.candidates[0], id: 'c1-again', claim: 'Null  deref on empty input' }); });
     const result = planCarry(input);
     expect(result.carried).toEqual([]);
     expect(result.reverify.map((entry) => entry.id)).toEqual(['p1', 'c1-again']);
@@ -564,7 +599,7 @@ describe('AC1 candidate-head-mismatch: a candidate is hashed at one head, and on
 
 describe('AC1 ambiguous-prior-verdict and id-mismatch', () => {
   test('two prior verdicts for one key: neither is trusted', () => {
-    const input = flipped((i) => { i.priorVerdicts.push({ ...i.priorVerdicts[0], id: 'p1-dup', claim: 'null deref on empty input' }); });
+    const input = flipped((i) => { i.priorVerdicts.push({ ...i.priorVerdicts[0], id: 'p1-dup', claim: 'Null  deref on empty input' }); });
     const result = planCarry(input);
     expect(result.carried).toEqual([]);
     expect(result.reverify[0].reasons).toEqual([REASONS.AMBIGUOUS_PRIOR_VERDICT]);
@@ -904,8 +939,8 @@ describe('binding: a verdict carries only into the PR, base, depth and ledger it
     expectOnlyReverify(flipped(mutate), [REASONS.VERDICT_NOT_IN_LEDGER]);
   });
 
-  test('a ledger finding anchored by `file` (no location) or with a differently spelt claim is still the same finding', () => {
-    expect(planCarry(flipped((i) => { i.priorLedger[0] = { id: 'p1', file: './src/a.js', failureMode: 'NULL deref   on empty input' }; })).carried).toHaveLength(1);
+  test('a ledger finding anchored by `file` (no location) or with a claim spelt with other whitespace is still the same finding', () => {
+    expect(planCarry(flipped((i) => { i.priorLedger[0] = { id: 'p1', file: './src/a.js', failureMode: 'Null deref   on empty input' }; })).carried).toHaveLength(1);
   });
 
   test.each([

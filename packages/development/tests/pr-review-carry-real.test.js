@@ -361,6 +361,25 @@ describe('a stale verdict is never carried: each push below flips the oracle, an
     expect(r.second.plan.unmatched.map((entry) => entry.id)).toEqual(['F-there']);
   });
 
+  test('a claim that differs only in CAPITALISATION on the same hunk is a new finding: `Foo` was filtered, `foo` is real, and the filtered verdict is not inherited', () => {
+    const says = (name) => `${name} is unchecked`;
+    const upper = finding('F-upper', 'src/names.js', 10, says('Foo'), (read) => (has(lineOf(read('src/names.js'), 10), 'Foo(') ? 'real' : 'not-real'));
+    const lower = finding('F-lower', 'src/names.js', 10, says('foo'), (read) => (has(lineOf(read('src/names.js'), 10), 'foo(') ? 'real' : 'not-real'));
+    // round 1 reports only the `Foo` claim: the code calls foo(), so it is not real and is filtered; round 2 reports the `foo` claim, which is real
+    const r = scenario({
+      files: { 'src/names.js': pad(20, { 10: 'foo(input);' }) },
+      findings: [upper],
+      findings2: [lower],
+      push: { 'docs/note.md': 'unrelated\n' },
+    });
+    expect(r.full1).toEqual({ 'F-upper': 'filtered' });
+    expect(r.full2).toEqual({ 'F-lower': 'present' });
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-lower')).toEqual([REASONS.NEW_CANDIDATE]);
+    expect(r.second.outcomes).toEqual({ 'F-lower': 'present' });
+    expect(r.second.plan.unmatched.map((entry) => entry.id)).toEqual(['F-upper']);
+  });
+
   test.each([
     ['Standard into Deep', 'standard', 'deep'],
     ['Deep into Standard', 'deep', 'standard'],

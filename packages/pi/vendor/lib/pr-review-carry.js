@@ -16,11 +16,11 @@
  * at any other head, or at none, is never carried from or recorded: its hashes and dependents describe another tree. That the
  * hashing itself was done honestly at the head it names is the one thing this module cannot check.
  *
- * Identity of a settled candidate: (file, claim). The claim is compared as written -- case folded, runs of whitespace
- * collapsed, NOTHING else erased -- because every symbol is part of what a claim says: `x < y` and `x > y`, `if (!ok)` and
+ * Identity of a settled candidate: (file, claim). The claim is compared as written -- runs of whitespace collapsed, NOTHING
+ * else erased, case INCLUDED -- because every symbol (and every capital: `Foo` and `foo` can be two names) is part of what a claim says: `x < y` and `x > y`, `if (!ok)` and
  * `if (ok)`, `a && b` and `a || b` are opposite claims, and flattening them to their words (the first version did) let one
- * inherit the other's `filtered` verdict with no verifier run. A re-worded or re-punctuated claim is a new candidate; that
- * costs a verifier run, never a dropped finding.
+ * inherit the other's `filtered` verdict with no verifier run. A re-worded, re-punctuated or re-capitalised claim is a new
+ * candidate; that costs a verifier run, never a dropped finding.
  *
  * Whether a verdict still holds is decided by:
  *   - `hunkHash`    the sha256 of the cited hunk at the head, and its location (`line` / `lines`);
@@ -155,13 +155,13 @@ function normalizePath(value) {
 }
 
 /**
- * A claim as compared: lower case, runs of whitespace collapsed, nothing else erased (see the module header: a symbol is
+ * A claim as compared: runs of whitespace collapsed, nothing else erased, case kept (see the module header: a symbol is
  * part of what a claim says). Null when it has no word at all: a claim of only symbols names nothing.
  */
 function normalizeClaim(value) {
   if (!isText(value)) return null;
-  const folded = value.toLowerCase().replace(/\s+/g, ' ').trim();
-  return HAS_WORD.test(folded) ? folded : null;
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  return HAS_WORD.test(collapsed) ? collapsed : null;
 }
 
 /** The identity of a settled candidate, or null when it has no file or no claim words. */
