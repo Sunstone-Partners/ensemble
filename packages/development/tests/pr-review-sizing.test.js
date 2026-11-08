@@ -535,11 +535,12 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(unreleased).toContain('reader-not-planned');
   });
 
-  test('the CHANGELOG entry is the first of Unreleased and says the model is one run and nothing is relaxed', () => {
+  test('the CHANGELOG has the sizing entry in Unreleased and it says the model is one run and nothing is relaxed', () => {
     const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
-    const first = unreleased.slice(unreleased.indexOf('- **packages/development:**'));
-    expect(first).toMatch(/^- \*\*packages\/development:\*\* `review-run` sizes its slices and deadlines to what there is to read \(kata `sfpb`/);
-    const entry = first.slice(0, first.indexOf('- **packages/development:**', 10));
+    const start = unreleased.search(/- \*\*packages\/development:\*\* `review-run` sizes its slices and deadlines to what there is to read \(kata `sfpb`/);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const first = unreleased.slice(start);
+    const entry = first.slice(0, first.indexOf(' - **packages/', 10));
     expect(entry).toMatch(/Nothing is relaxed/);
     expect(entry).toMatch(/one observed run/);
   });

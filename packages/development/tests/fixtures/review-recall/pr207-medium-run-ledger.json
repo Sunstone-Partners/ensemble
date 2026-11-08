@@ -1,0 +1,142 @@
+{
+ "run": "pr207-hi-q3c",
+ "headSha": "48c862c416af218bc1fa32305493fb8855602b31",
+ "ledger": [
+  {
+   "id": "f1",
+   "source": "reviewer-s1-a",
+   "locationOrLink": "packages/e2e-testing/agents/playwright-tester.yaml:61",
+   "severity": "important",
+   "failureMode": "detectE2eFramework (lib/e2e-framework.js:25) labels any project that references the Microsoft.Playwright.Xunit package as 'xunit', but the new sentence here says 'xunit' means there is no PageTest `Page`, while that package's xUnit PageTest base class gives each test a `Page` with no [Collection] fixture needed, so for such a project the authoring agent gets a wrong instruction and spec-writer's scaffoldXunitFile (lib/spec-writer.js:217-223) refuses to create a new spec file because there is no collection name or fixtureType to copy, or, if values are made up, emits a fixture-constructor class with no PageTest base in which a body written against `Page` cannot compile.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f2",
+   "source": "reviewer-s1-a",
+   "locationOrLink": "packages/e2e-testing/commands/author-playwright-tests.yaml:151",
+   "severity": "nit",
+   "failureMode": "When detectE2eFrameworkInDir returns null (both or neither framework found in the .csproj files it scanned, or the directory passed is wider than the E2E project), this action turns 'unknown' into the explicit value \"nunit\" and hands it to the proposal request and to specDetails.framework, so the authoring agent is told to use NUnit `Page` conventions in a project whose sibling tests may be xUnit, and writeOrAppendSpecFile refuses to append to an existing xUnit spec file with 'framework mismatch' instead of inferring [Fact] from that file, which appendTestMethod does only when the framework field is left out.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f4",
+   "source": "reviewer-s1-b",
+   "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:24",
+   "severity": "nit",
+   "failureMode": "detectE2eFramework counts any PackageReference whose lower-cased name starts with 'nunit' as NUnit and any name starting with 'xunit' as xUnit, then returns null when both flags are set. A genuine xUnit E2E project that also references a logger or helper package such as NunitXml.TestLogger is therefore reported as both frameworks, detectE2eFramework returns null, and the command falls back to 'nunit': the authoring agent is told to write NUnit-shaped tests (PageTest Page) and spec-writer scaffolds an NUnit class with a PageTest base class inside an xUnit project. Matching the exact framework package names instead of the 'nunit' prefix would avoid counting those companion packages.",
+   "disposition": "fix"
+  },
+  {
+   "id": "f5",
+   "source": "reviewer-s2-a",
+   "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:12",
+   "severity": "nit",
+   "failureMode": "PACKAGE_RE only matches a double-quoted Include attribute on PackageReference, so a .csproj that writes Include='xunit' (valid MSBuild XML) gives no match, detectE2eFramework returns null, the command forwards 'nunit', and a new xUnit E2E file is scaffolded with NUnit attributes and a PageTest base class.",
+   "disposition": "fix"
+  },
+  {
+   "id": "f7",
+   "source": "reviewer-s2-a",
+   "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:418-424",
+   "severity": "nit",
+   "failureMode": "appendTestMethod only falls back to what the existing file shows when specDetails.framework is omitted, and the command always passes a framework (it forwards 'nunit' when detection returns null); so for an existing xUnit spec file in a project whose detection is null or ambiguous, the append throws 'framework mismatch' instead of appending a [Fact] method, although inferFramework(existingContent) already identifies xunit and would have been right had framework been omitted.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f8",
+   "source": "reviewer-s2-a",
+   "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:240-245",
+   "severity": "nit",
+   "failureMode": "A new xUnit file always declares its injected fixture as a field named _fixture with a constructor parameter named fixture, but nothing tells the author of the test body that name: the body is written the way the project's sibling tests do and only collection and fixtureType are copied from a sibling, so a body that uses the sibling's own field name lands in a class where that name does not exist and fails to compile after the test was already confirmed.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f9",
+   "source": "reviewer-s2-a",
+   "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:168-183",
+   "severity": "nit",
+   "failureMode": "The JSDoc of scaffoldNewSpecFile and appendTestMethod still describes only the NUnit contract (parameters className, baseClass, testName; 'Append a new [Test] method'; throws only for empty content or no class body), although both now take framework, an xUnit scaffold also requires collection and fixtureType (and optional usings), and they throw on an unknown framework, a framework mismatch, or a missing testBody for xunit.",
+   "disposition": "fix"
+  },
+  {
+   "id": "f10",
+   "source": "reviewer-s2-b",
+   "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:419-424",
+   "severity": "nit",
+   "failureMode": "The command carries framework 'nunit' forward whenever detectE2eFrameworkInDir returns null (it only reads files named *.csproj, so package references supplied by Directory.Build.props or a similar shared file give null). That explicit 'nunit' is sent to the authoring agent and to writeOrAppendSpecFile, where appendTestMethod compares it with inferFramework(existing file) and throws 'framework mismatch' against an existing xUnit spec class; leaving framework out would have let the file's own usings and attributes decide. No test covers a null detection followed by an append to an xUnit file, and author-playwright-tests-framework.test.js only pins the wording '\"nunit\" when it returns null'.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f11",
+   "source": "reviewer-s2-b",
+   "locationOrLink": "packages/e2e-testing/tests/author-playwright-tests-framework.test.js:46",
+   "severity": "nit",
+   "failureMode": "The landing step of the command, and the test that pins its wording, name only {collection, fixtureType} as the extra inputs a new xUnit file needs, but scaffoldXunitFile also accepts a usings list and otherwise emits only System.Threading.Tasks, Microsoft.Playwright and Xunit. Nothing outside spec-writer.js asks the caller to pass usings, so a caller following the command leaves it out, and a new xUnit class whose fixture type or helper types sit in another namespace (spec-writer-xunit.test.js itself uses bt.testing.shared as its example) is written without the needed using and will not compile.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f12",
+   "source": "reviewer-s2-b",
+   "locationOrLink": "packages/e2e-testing/tests/e2e-framework.test.js:30",
+   "severity": "nit",
+   "failureMode": "detectE2eFramework reports 'xunit' for a Microsoft.Playwright.Xunit reference (pinned by the test.each at this line), and the playwright-tester instruction then says an xunit test has no PageTest Page. scaffoldXunitFile can only produce the [Collection] class with a constructor-injected fixture and throws unless collection and fixtureType are supplied; a project whose specs derive from a Playwright xUnit PageTest base class has no collection or fixture type to copy, so a new spec file cannot be scaffolded for it, and no test covers that project shape. The detection test therefore reads as broader support than the writer provides.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f13",
+   "source": "reviewer-s3-a",
+   "locationOrLink": "packages/pi/agents/playwright-tester.md:60",
+   "severity": "important",
+   "failureMode": "The Proposal-stage instruction says framework 'xunit' means there is no PageTest Page and that the test body must build its own context and page, but detectE2eFramework returns 'xunit' for any project whose csproj references the Microsoft.Playwright.Xunit package, which ships xUnit base classes (PageTest and siblings) whose tests do have a Page. For such a project the agent is told the wrong thing, and the xunit scaffold in spec-writer (no base class, a mandatory [Collection] name and fixture type to be copied from a sibling spec class) describes a shape the project does not have, so the landing step either refuses with \"collection must be the project's xUnit collection name\" or the model has to invent a collection and a fixture. The NUnit side is consistent (Microsoft.Playwright.NUnit maps to nunit and gets a PageTest scaffold); the xUnit side is not.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f14",
+   "source": "reviewer-s3-a",
+   "locationOrLink": "packages/e2e-testing/tests/spec-writer-xunit.test.js:250",
+   "severity": "nit",
+   "failureMode": "The 'only in a string' row of the inferFramework null-table (source: var s = \"using Xunit;\";) cannot fail even if inferFramework stopped masking string literals: its using-regex is anchored to the start of a line, this line begins with 'var', and the source holds no [Fact] or [Theory], so the row returns null with or without maskLiteralsAndComments. The behaviour the row is named for (a framework token inside a string literal is ignored) is not checked.",
+   "disposition": "fix"
+  },
+  {
+   "id": "f15",
+   "source": "reviewer-s3-a",
+   "locationOrLink": "packages/e2e-testing/tests/spec-writer-xunit.test.js:200",
+   "severity": "nit",
+   "failureMode": "In the test 'infers xunit from the file, so a caller that forgot the framework cannot append a NUnit attribute', the assertion expect(appendTestMethod(EXISTING, details)).toContain('[Fact]') cannot fail: the EXISTING fixture already contains [Fact] on its Homepage_Renders method, so the assertion passes even if appendTestMethod emitted a [Test] method. Only the inferFramework assertion beside it carries the claim in this test.",
+   "disposition": "fix"
+  },
+  {
+   "id": "f17",
+   "source": "reviewer-s3-b",
+   "locationOrLink": "packages/pi/prompts/ensemble-author-playwright-tests.md:181",
+   "severity": "nit",
+   "failureMode": "Phase 4 step 3 action 1 of the command (Land the Confirmed, Passed Test) says a new xunit spec file also needs {collection, fixtureType} copied from a sibling spec class, but scaffoldXunitFile in spec-writer.js always emits only the usings System.Threading.Tasks, Microsoft.Playwright and Xunit and takes any further namespace only from the optional `usings` list in specDetails (the namespace line defaults to Application.E2E.Tests unless specDetails.namespace is given); no instruction in the command, the agent definition, the skill or the changelogs mentions `usings`, so an authored body that depends on other usings a sibling spec has (for example FluentAssertions Should() calls, as the xUnit sibling fixture in spec-writer-xunit.test.js uses) or a fixture type declared in another namespace can be landed as a spec file that does not compile.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f18",
+   "source": "reviewer-range",
+   "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:25",
+   "severity": "important",
+   "failureMode": "detectE2eFramework maps a PackageReference to Microsoft.Playwright.Xunit to 'xunit', but everything that consumes an 'xunit' result assumes the core Microsoft.Playwright shape: playwright-tester.yaml (line 61) tells the authoring agent that framework 'xunit' means no PageTest Page, and spec-writer.js scaffoldXunitFile (lines 217-251) can only emit a constructor-injected [Collection] fixture class with no base class and throws unless collection and fixtureType are supplied. A project on Microsoft.Playwright.Xunit has its own PageTest base class (Page is available) and no collection fixture, so it is classified as supported, the agent is told the wrong thing about Page, and a new spec file cannot be written for it.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f19",
+   "source": "reviewer-range",
+   "locationOrLink": "packages/e2e-testing/commands/author-playwright-tests.yaml:151",
+   "severity": "nit",
+   "failureMode": "Phase 2 step 4 tells the caller to carry framework forward as 'nunit' whenever detectE2eFrameworkInDir returns null, so the Land step always passes spec-writer an explicit framework. In appendTestMethod (spec-writer.js lines 418-424) an explicit framework takes precedence over inferFramework, and a differing inferred one throws 'framework mismatch'. For a project the detector could not classify (both frameworks referenced, or xunit referenced only through a shared props file) appending to an existing xUnit spec therefore fails and a new file is scaffolded as NUnit. Omitting the field, which delegation-contract.js line 52 documents as 'Omit when unknown', would let the new inference pick xunit from the file, so the inference added to appendTestMethod is bypassed in exactly the case it exists for.",
+   "disposition": "adjudicate"
+  },
+  {
+   "id": "f20",
+   "source": "reviewer-range",
+   "locationOrLink": "packages/e2e-testing/commands/author-playwright-tests.yaml:226",
+   "severity": "nit",
+   "failureMode": "The Land step names only {collection, fixtureType} as the extra inputs for a new xUnit file. scaffoldXunitFile (spec-writer.js lines 217-251) writes only the usings System.Threading.Tasks, Microsoft.Playwright and Xunit plus whatever an undocumented specDetails.usings lists, and hard-codes the fixture field as _fixture. A testBody that the authoring agent wrote from sibling tests and that needs another namespace (for example FluentAssertions, which the existing-class example in spec-writer-xunit.test.js imports and uses) or a differently named fixture field lands in a new class that does not compile, which breaks the build of the whole E2E test project.",
+   "disposition": "adjudicate"
+  }
+ ]
+}

@@ -436,6 +436,17 @@ function claimRuleBullet() {
   return `- Each finding's \`failureMode\` and \`locationOrLink\` are handed, word for word, to independent verifiers who must judge the claim for themselves, so the verifier brief refuses anything that could carry a verdict, and a finding it refuses is NOT verified: the run lists it as unbriefable and a person must decide it without a verifier's help. Say what goes wrong in the code in your own words, and name the code (the function, the step, the field) rather than the review machinery. In \`failureMode\` never use these words or phrases, or their other forms: ${words}; no doubled curly braces, no control characters, at most ${rules.maxClaimLength} characters. \`locationOrLink\` must be one \`path:line\` or \`path:start-end\` with a repository-relative path of ${rules.pathGrammar}.`;
 }
 
+/**
+ * What `important` and `nit` mean to a reviewer (kata yg7k). The first measured Medium run gave its reviewers no definition at all: the
+ * contract named the two words and nothing else, and three reviewers graded as `nit` a defect in a new opt-in path that made a documented
+ * call throw, because the path was new and rare. A nit never blocks and is deferred, so a defect graded that way is lost. The wording is
+ * the repository's own (REVIEW.md, "Severity") plus the two rules the run showed were missing: grade by what the user or caller gets, not by
+ * how rare or new the path is, and report one root cause once.
+ */
+function severityBullet() {
+  return '- Severity is about what a user or caller gets, not about how new or rare the path is. `important`: the change is wrong, unsafe or unproven: a call that throws or an artifact that does not compile or run, a wrong result, an input or option the code or its own documentation promises that is silently ignored or dropped, text put in the wrong place, a gate or test that cannot fail, a claim with no check behind it. `nit`: a preference that changes nothing a user or caller gets (naming, wording, ordering, formatting, a clearer comment); a nit never blocks and is deferred. A defect in a new or opt-in feature is `important` when a user who opts in hits it. When a finding changes what a user gets, it is not a nit. Report one root cause once, naming its other locations in the evidence, rather than once per file.';
+}
+
 /** The text a reviewer or the lane writes its result as. */
 function reviewerContract(agent) {
   return [
@@ -459,7 +470,7 @@ function reviewerContract(agent) {
     '- Set `"uncertain": true` on a finding you cannot settle yourself; a person then decides it.',
     '- Do not write `resolution`, `cleared` or `blocking`: they are ignored.',
     '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff and the head: a pre-existing finding whose cited lines are inside a hunk of the diff, whose location it cannot place, whose path is not a regular file at the head (cite the full repository-relative path, spelled exactly; a symlink is not followed) or whose line is past the end of that file is graded Important.',
-    ...(agent.role === 'reviewer' ? [claimRuleBullet()] : []),
+    ...(agent.role === 'reviewer' ? [severityBullet(), claimRuleBullet()] : []),
     `- Write the file atomically: a temp file in the same directory, then rename it to \`${agent.outPath}\`. Finish before ${agent.deadlineAtIso || 'your deadline'}; a result that arrives later is not read.`,
     '',
   ].join('\n');

@@ -1627,6 +1627,32 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
     expect(fs.readFileSync(m.agents[0].briefPath, 'utf8')).toMatch(/pre-existing[^\n]*checks the `file:line` you cite against the diff[^\n]*graded Important/);
   });
 
+  test('what a reviewer may spend is stated from the policy: the default 40 tool calls and 3 snippets, and a REVIEW.md value when it sets one (kata yg7k)', async () => {
+    const plain = await harness().prepare();
+    for (const a of plain.agents.filter((agent) => agent.role === 'reviewer')) {
+      const brief = fs.readFileSync(a.briefPath, 'utf8');
+      expect(brief).toMatch(/^Tool calls: 40$/m);
+      expect(brief).toMatch(/^Throwaway snippets: 3$/m);
+    }
+    const set = await harness({ policyJson: { reviewerToolCalls: 90, reviewerSnippets: 6 } }).prepare();
+    for (const a of set.agents.filter((agent) => agent.role === 'reviewer')) {
+      const brief = fs.readFileSync(a.briefPath, 'utf8');
+      expect(brief).toMatch(/^Tool calls: 90$/m);
+      expect(brief).toMatch(/^Throwaway snippets: 6$/m);
+      expect(brief).not.toMatch(/^Tool calls: 40$/m);
+    }
+  });
+
+  test('the reviewer is given what important and nit mean, by what a user gets and not by how new the path is; the security lane is not handed that guide (kata yg7k)', async () => {
+    const m = await harness().prepare();
+    const reviewer = fs.readFileSync(m.agents.find((a) => a.role === 'reviewer').briefPath, 'utf8');
+    expect(reviewer).toMatch(/Severity is about what a user or caller gets, not about how new or rare the path is/);
+    expect(reviewer).toMatch(/A defect in a new or opt-in feature is `important` when a user who opts in hits it/);
+    expect(reviewer).toMatch(/Report one root cause once/);
+    const lane = m.agents.find((a) => a.role === 'security');
+    if (lane !== undefined) expect(fs.readFileSync(lane.briefPath, 'utf8')).not.toMatch(/Severity is about what a user or caller gets/);
+  });
+
   test('the reviewer is told that a symlink is not followed and that a line past the end of the file is graded Important', async () => {
     const h = harness();
     const m = await h.prepare();

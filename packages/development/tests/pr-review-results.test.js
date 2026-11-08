@@ -167,6 +167,33 @@ describe('policy keys deadlineMinutes and maxConcurrentAgents', () => {
   });
 });
 
+describe('policy keys reviewerToolCalls and reviewerSnippets (kata yg7k)', () => {
+  const load = (policy) =>
+    loadPolicy({ baseSha: BASE_SHA, sourceSha: BASE_SHA, text: `\`\`\`ensemble-review-policy\n${JSON.stringify(policy)}\n\`\`\`\n` });
+
+  test('defaults: 40 tool calls and 3 snippets', () => {
+    expect(DEFAULT_POLICY.reviewerToolCalls).toBe(40);
+    expect(DEFAULT_POLICY.reviewerSnippets).toBe(3);
+  });
+
+  test.each([9, 201, 40.5, '40', null, -1])('reviewerToolCalls = %j is rejected by name and 40 stays', (value) => {
+    const result = load({ reviewerToolCalls: value });
+    expect(result.rejected.map((entry) => entry.key)).toEqual(['reviewerToolCalls']);
+    expect(result.policy.reviewerToolCalls).toBe(40);
+  });
+
+  test.each([0, 11, 1.5, '3', null])('reviewerSnippets = %j is rejected by name and 3 stays', (value) => {
+    const result = load({ reviewerSnippets: value });
+    expect(result.rejected.map((entry) => entry.key)).toEqual(['reviewerSnippets']);
+    expect(result.policy.reviewerSnippets).toBe(3);
+  });
+
+  test('both bounds of each are accepted', () => {
+    expect(load({ reviewerToolCalls: 10, reviewerSnippets: 1 }).policy).toMatchObject({ reviewerToolCalls: 10, reviewerSnippets: 1 });
+    expect(load({ reviewerToolCalls: 200, reviewerSnippets: 10 }).policy).toMatchObject({ reviewerToolCalls: 200, reviewerSnippets: 10 });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // collectResults: classification
 // ---------------------------------------------------------------------------

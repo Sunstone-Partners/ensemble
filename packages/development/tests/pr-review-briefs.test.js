@@ -34,6 +34,8 @@ const CASES = {
     vars: {
       slice: 'S2',
       timeboxMinutes: 20,
+      toolCalls: 40,
+      snippets: 3,
       lens: 'correctness',
       paths: ['lib/a.js', 'lib/b.js'],
       diffPath: '/work/prep/slice-S2.diff',
@@ -42,6 +44,8 @@ const CASES = {
     inputs: [
       'Your slice: S2',
       'Timebox: 20 minutes',
+      'Tool calls: 40',
+      'Throwaway snippets: 3',
       'Your lens: correctness',
       '',
       'Paths in your slice:',
@@ -119,6 +123,8 @@ const CASES = {
     vars: {
       lens: 'correctness',
       timeboxMinutes: 36,
+      toolCalls: 40,
+      snippets: 3,
       paths: ['lib/a.js', 'lib/b.js'],
       diffPath: '/work/prep/range.diff',
       snapshotDir: '/work/snap',
@@ -126,6 +132,8 @@ const CASES = {
     inputs: [
       'Your scope: the whole range, every changed path',
       'Timebox: 36 minutes',
+      'Tool calls: 40',
+      'Throwaway snippets: 3',
       'Your lens: correctness',
       '',
       'Paths in the range:',
@@ -171,8 +179,8 @@ describe('the whole-range reader\'s brief says what it reads and keeps the revie
   });
 
   test('it declares exactly the inputs a whole-range reader has: no slice id, the same kinds as the reviewer\'s', () => {
-    expect(Object.keys(ROLES['range-reviewer'].inputs).sort()).toEqual(['diffPath', 'lens', 'paths', 'snapshotDir', 'timeboxMinutes']);
-    for (const name of ['lens', 'timeboxMinutes', 'paths', 'diffPath', 'snapshotDir']) expect(ROLES['range-reviewer'].inputs[name]).toBe(ROLES.reviewer.inputs[name]);
+    expect(Object.keys(ROLES['range-reviewer'].inputs).sort()).toEqual(['diffPath', 'lens', 'paths', 'snapshotDir', 'snippets', 'timeboxMinutes', 'toolCalls']);
+    for (const name of ['lens', 'timeboxMinutes', 'toolCalls', 'snippets', 'paths', 'diffPath', 'snapshotDir']) expect(ROLES['range-reviewer'].inputs[name]).toBe(ROLES.reviewer.inputs[name]);
   });
 });
 
@@ -272,6 +280,12 @@ describe('AC2: renderBrief refuses what it should not render', () => {
     ['reviewer', 'timeboxMinutes', 0],
     ['reviewer', 'timeboxMinutes', 1.5],
     ['reviewer', 'timeboxMinutes', '20'],
+    ['reviewer', 'toolCalls', 0],
+    ['reviewer', 'toolCalls', '40'],
+    ['reviewer', 'snippets', 0],
+    ['reviewer', 'snippets', 2.5],
+    ['range-reviewer', 'toolCalls', 1001],
+    ['range-reviewer', 'snippets', -1],
     ['reviewer', 'slice', 'S1\nS2'],
     ['classifier', 'range', 'a'.repeat(1025)],
     ['second-assessor', 'sensitivePaths', null],

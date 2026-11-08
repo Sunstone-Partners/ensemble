@@ -97,6 +97,21 @@ const DEFAULT_SLICE_LIMITS = deriveLimits({ baseMinutes: DEFAULT_DEADLINE_MINUTE
  * until the dispatcher does.
  */
 const DEFAULT_MAX_CONCURRENT_AGENTS = 8;
+
+/**
+ * What a reviewer may spend in one pass (kata yg7k). `reviewerToolCalls` is the cap the reviewer and whole-range briefs
+ * state ("at most N tool calls in all"); `reviewerSnippets` is how many throwaway read-only snippets it may run to settle a
+ * claim about what code DOES. The first measured Medium run (PR 207) kept the cap at 40 and the snippets at one: the one snippet
+ * was spent on a nit, and the findings that needed running the code (an input that throws, a pattern that matches too much)
+ * were never raised. More calls and snippets buy deeper reviewers and cost wall time and tokens: a reviewer that uses its whole
+ * budget runs longer, so a maintainer who raises them should raise `deadlineMinutes.reviewer` with them.
+ */
+const DEFAULT_REVIEWER_TOOL_CALLS = 40;
+const REVIEWER_TOOL_CALLS_MIN = 10;
+const REVIEWER_TOOL_CALLS_MAX = 200;
+const DEFAULT_REVIEWER_SNIPPETS = 3;
+const REVIEWER_SNIPPETS_MIN = 1;
+const REVIEWER_SNIPPETS_MAX = 10;
 const MAX_CONCURRENT_AGENTS_MIN = 1;
 const MAX_CONCURRENT_AGENTS_MAX = 32;
 
@@ -133,6 +148,8 @@ const DEFAULT_POLICY = deepFreeze({
   evalCasesDir: DEFAULT_EVAL_CASES_DIR,
   deadlineMinutes: { ...DEFAULT_DEADLINE_MINUTES },
   maxConcurrentAgents: DEFAULT_MAX_CONCURRENT_AGENTS,
+  reviewerToolCalls: DEFAULT_REVIEWER_TOOL_CALLS,
+  reviewerSnippets: DEFAULT_REVIEWER_SNIPPETS,
 });
 
 /** A GitHub login: alphanumerics and single inner hyphens, at most 39 characters. */
@@ -165,6 +182,10 @@ const SIMPLE_KEYS = Object.freeze({
     isNonEmptyString(value) && !value.trim().startsWith('/') && !value.split(/[\\/]/).includes('..'),
   maxConcurrentAgents: (value) =>
     Number.isInteger(value) && value >= MAX_CONCURRENT_AGENTS_MIN && value <= MAX_CONCURRENT_AGENTS_MAX,
+  reviewerToolCalls: (value) =>
+    Number.isInteger(value) && value >= REVIEWER_TOOL_CALLS_MIN && value <= REVIEWER_TOOL_CALLS_MAX,
+  reviewerSnippets: (value) =>
+    Number.isInteger(value) && value >= REVIEWER_SNIPPETS_MIN && value <= REVIEWER_SNIPPETS_MAX,
 });
 
 const KNOWN_KEYS = Object.freeze(['sourceSha', 'roundCap', 'depth', 'deadlineMinutes', ...Object.keys(SIMPLE_KEYS)]);
@@ -363,4 +384,10 @@ module.exports = {
   DEFAULT_MAX_CONCURRENT_AGENTS,
   MAX_CONCURRENT_AGENTS_MIN,
   MAX_CONCURRENT_AGENTS_MAX,
+  DEFAULT_REVIEWER_TOOL_CALLS,
+  REVIEWER_TOOL_CALLS_MIN,
+  REVIEWER_TOOL_CALLS_MAX,
+  DEFAULT_REVIEWER_SNIPPETS,
+  REVIEWER_SNIPPETS_MIN,
+  REVIEWER_SNIPPETS_MAX,
 };
