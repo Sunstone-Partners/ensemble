@@ -272,11 +272,11 @@ describe('what a bead holds', () => {
   test('a link with credentials in it (user:pass@host) is left out of the bead, the rest of the finding is kept (kata mdfr review round 2)', () => {
     const tracker = fakeTracker();
     const withPassword = ['https://ci-user', 'pw123456@github.com/acme/widgets/pull/12#discussion_r345'].join(':');
-    recordSweep(facts([finding({ url: withPassword })], [failure({ url: withPassword })]), tracker, OPTIONS);
-    expect(tracker.issues).toHaveLength(2);
+    const withToken = ['https://tokenvalue123456', 'github.com/acme/widgets/pull/12#discussion_r346'].join('@');
+    recordSweep(facts([finding({ url: withPassword }), finding({ commentId: 346, url: withToken })], [failure({ url: withPassword })]), tracker, OPTIONS);
+    expect(tracker.issues).toHaveLength(3);
     for (const issue of tracker.issues) {
-      expect(issue.title + issue.description).not.toContain('pw123456');
-      expect(issue.description).not.toContain('ci-user');
+      for (const secret of ['pw123456', 'ci-user', 'tokenvalue123456']) expect(issue.title + issue.description).not.toContain(secret);
     }
     expect(tracker.issues[0].description).toContain('Finding: Possible null dereference in foo()');
   });
@@ -763,6 +763,7 @@ describe("sweep(): the checkout must be the pull request's repository (kata mdfr
     const realGit = cli.defaultDeps().repoGit;
     const asked = run({}, { git: (args, options) => (args[0] === 'remote' ? { status: 128, stdout: '', stderr: 'fatal: broken' } : realGit(args, options)) });
     expect(asked.result).toMatchObject({ ...REFUSED, code: 'repository-unknown' });
+    expect(asked.result.reason).toContain('could not be read');
     nothingAsked(asked);
   });
 
@@ -1121,7 +1122,7 @@ describe('the instructions that drive the sweep agree with the code', () => {
     const [before, after] = sweepActions;
     for (const action of sweepActions) {
       expect(action).toContain('SWEEP.md');
-      expect(action).toContain('tracker (br)');
+      expect(action).toMatch(/Beads[^"]*\(br\)/);
     }
     expect(before).toContain('dryRun:true if dry-run');
     expect(before).toContain('report any status but RECORDED; never blocks the merge');
@@ -1147,6 +1148,19 @@ describe('the instructions that drive the sweep agree with the code', () => {
     }
     // What `head-checked-out` really checks (the primary's HEAD contains the head), not "keep the primary on the base branch".
     expect(SWEEP_DOC).toMatch(/whose HEAD\s+already contains the head/);
+    // Wrapped lines do not matter: the statements are read with the whitespace collapsed.
+    const flat = SWEEP_DOC.replace(/\s+/g, ' ');
+    for (const text of [
+      'its `origin` remote, every fetch and push URL of it, names `repo`',
+      'a checkout of a fork is one, whatever other remote names `repo`',
+      'REFUSED `no-primary-worktree`',
+      'never recreates a deleted bead',
+      'its text is never echoed',
+      'or a `PLANNED` dry run that already holds an error',
+      '`REFUSED` and `UNAVAILABLE` included',
+    ]) {
+      expect(flat).toContain(text);
+    }
   });
 
   test('SKILL.md points at SWEEP.md, which sits beside it, and nothing carries the old contract', () => {
