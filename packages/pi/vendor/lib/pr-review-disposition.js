@@ -242,8 +242,16 @@ function summarize({ openBeads, acceptedBlocking, undecidedBlocking, findingsWit
   return `${openBeads} open bead(s); ${accepted}; ${undecidedBlocking.length} blocking finding(s) undecided${closed}${gapsUndecided}${gapsAccepted}`;
 }
 
-/** What Accept means for a gap, said where the operator reads it. */
-const COVERAGE_ACCEPT_NOTE = 'Records that nobody read these paths and you accept merging without that read. The other way out is to run the review again.';
+/** What Accept means for each kind of gap, said where the operator reads it (a gap is not always a path nobody read). */
+const COVERAGE_ACCEPT_NOTES = {
+  slice: 'Records that no reviewer read this slice and you accept merging without that read.',
+  'whole-range': 'Records that the whole-range reader (the one read of an interaction between slices) did not read the whole diff: the slice reviewers read these paths one slice at a time. You accept merging without that read.',
+  uncovered: 'Records that no slice held these paths and no reviewer read them, and you accept merging without that read.',
+  'under-reviewed': 'Records that these paths were read under fewer distinct lenses than the mode requires, and you accept merging with that shorter review.',
+  unnamed: 'Records that the review reported incomplete coverage without saying what it missed, so every changed path counts as not reviewed, and you accept merging without that read.',
+};
+const COVERAGE_ACCEPT_TAIL = ' The other way out is to run the review again.';
+const coverageAcceptNote = (gap) => `${COVERAGE_ACCEPT_NOTES[gap.gapType] || COVERAGE_ACCEPT_NOTES.unnamed}${COVERAGE_ACCEPT_TAIL}`;
 
 /**
  * The operator's list entry for one coverage gap the gate holds open: Accept is its only choice (it is never defaulted, never
@@ -260,7 +268,7 @@ function coverageEntry(gap) {
     closedBeadId: isText(gap.beadId) || !isText(gap.closedBeadId) ? null : gap.closedBeadId,
     group: 'coverage',
     security: false,
-    choices: [{ id: 'accept', label: CHOICE_LABELS.accept, requiresReason: true, batchable: false, default: false, note: COVERAGE_ACCEPT_NOTE }],
+    choices: [{ id: 'accept', label: CHOICE_LABELS.accept, requiresReason: true, batchable: false, default: false, note: coverageAcceptNote(gap) }],
     default: null,
     requiresReason: true,
     reasonPerFinding: true,

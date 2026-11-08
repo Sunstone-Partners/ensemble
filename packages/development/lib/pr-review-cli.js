@@ -141,7 +141,8 @@
  *           (`uncovered` when nobody read it, `underReviewed` when too few lenses did, or when no reviewer's `paths`
  *           names it: a lens counts for the paths it read, never for the rest of its slice) and answers `coverage`, the
  *           coverage record (lib/pr-review-coverage.js) `status` and `gate` take as it is (kata k48x): `complete`, or
- *           `incomplete` with one gap per unread slice, per unplanned path and per under-read path, or `unavailable`.
+ *           `incomplete` with one gap per unread slice, per unplanned path and per under-read path, or `unavailable` (always so
+ *           when `changedPaths` is not given: a plan cannot be held against files it was never cut from).
  *
  * `results` (kata et2k) is the file-based half of the verification subcommands:
  * agents write `out-<name>.json` and this reads them, instead of the orchestrator
@@ -610,6 +611,28 @@ function runSlices(payload) {
     changedPaths: request.changedPaths,
   });
 
+  const changedGiven = Array.isArray(request.changedPaths);
+  // A plan is only as complete as the paths it was cut from: with no `changedPaths` to hold it against, a changed file the plan
+  // never held cannot be seen, so the record is `unavailable` (never complete) instead of graded against the plan's own paths.
+  const unavailable =
+    coverage.ok !== true
+      ? coverage.reason || 'the coverage could not be computed'
+      : changedGiven
+        ? null
+        : 'changedPaths was not given, so the plan cannot be checked against the changed files: a changed file the plan never held would read as covered';
+  // The record `status` and `gate` take: a path nobody read is a named gap there, never a quiet `covered:false` a caller can drop.
+  const record = buildCoverage({
+    changedPaths: changedGiven ? request.changedPaths : plan.slices.flatMap((slice) => slice.paths),
+    slices: plan.slices,
+    unreviewedSlices: coverage.unreviewedSlices,
+    uncovered: coverage.uncovered,
+    underReviewed: coverage.underReviewed,
+    requiredLenses: coverage.requiredLenses,
+    incomplete: coverage.covered !== true,
+    origin: 'slices coverage (reviewedBy)',
+    ...(unavailable === null ? {} : { unavailable }),
+  });
+
   const result = {
     ...plan,
     ok: plan.ok && coverage.ok && coverage.covered,
@@ -620,21 +643,16 @@ function runSlices(payload) {
     reviewedSlices: coverage.reviewedSlices,
     unreviewedSlices: coverage.unreviewedSlices,
     unknownReviewed: coverage.unknownReviewed,
-    // The record `status` and `gate` take: a path nobody read is a named gap there, never a quiet `covered:false` a caller
-    // can drop. Every changed path is every path of the plan when the caller named none.
-    coverage: buildCoverage({
-      changedPaths: Array.isArray(request.changedPaths) ? request.changedPaths : plan.slices.flatMap((slice) => slice.paths),
-      slices: plan.slices,
-      unreviewedSlices: coverage.unreviewedSlices,
-      uncovered: coverage.uncovered,
-      underReviewed: coverage.underReviewed,
-      requiredLenses: coverage.requiredLenses,
-      incomplete: coverage.covered !== true,
-      origin: 'slices coverage (reviewedBy)',
-      ...(coverage.ok === true ? {} : { unavailable: coverage.reason || 'the coverage could not be computed' }),
-    }),
+    coverage: record,
   };
   if (coverage.reason !== undefined) result.coverageReason = coverage.reason;
+  // The verdict and the record must not disagree: with the changed paths in hand, a plan the record does not call complete (no
+  // path at all) is not `covered`.
+  if (changedGiven && coverage.ok === true && coverage.covered === true && record.status !== 'complete') {
+    result.ok = false;
+    result.covered = false;
+    result.coverageReason = record.reason || 'the coverage record lists gaps the verdict did not';
+  }
   return result;
 }
 

@@ -85,8 +85,23 @@ describe('the plan records one bead per open gap', () => {
     const decided = { ...record, gaps: record.gaps.map((gap) => recordOperatorResolution(gap, { reason: 'generated output nobody reads', by: 'ldangelo', headSha: HEAD, at: AT }).finding) };
     const inp = input({ coverage: decided });
     const [create] = creates(planBeads(inp, empty(inp)));
-    expect(create.create.description).toContain('Operator decision: accepted as not reviewed by ldangelo');
+    expect(create.create.description).toContain('Operator decision: accepted by ldangelo');
     expect(create.create.description).toContain('generated output nobody reads');
+  });
+
+  test('what the bead says matches what the gap is: a whole-range gap names the slices that WERE read, an under-reviewed one the lenses it lacks (review of PR 278, round 1)', () => {
+    const made = (over) => {
+      const inp = input({ coverage: gapsFor(over) });
+      return creates(planBeads(inp, empty(inp)))[0].create;
+    };
+    const range = made({ unreviewedSlices: ['whole-range'], uncovered: [] });
+    expect(range.title).toMatch(/^\[Whole-range read missing\]/);
+    expect(range.description).toContain('the slice reviewers read each slice on its own');
+    expect(range.description).not.toMatch(/Paths not reviewed|no reviewer read/);
+    const under = made({ unreviewedSlices: [], uncovered: [], underReviewed: [{ path: 'src/a.js', lenses: ['correctness'] }], requiredLenses: 2 });
+    expect(under.title).toMatch(/^\[Under-reviewed\]/);
+    expect(under.description).toContain('fewer distinct lenses than the mode requires');
+    expect(under.description).not.toMatch(/Paths not reviewed|no reviewer read/);
   });
 
   test('a later head that still has the gap updates the same bead (one note per head), never a second one', () => {

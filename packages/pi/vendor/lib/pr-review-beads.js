@@ -400,21 +400,31 @@ function footer(context) {
   ];
 }
 
-/** The bead of one coverage gap: what nobody read, why, and what the operator decided about it. */
+/** What each kind of gap says about itself in its bead: the title's prefix and the heading over its paths (a gap is not always unread). */
+const GAP_BEAD_WORDS = {
+  slice: { prefix: 'Not reviewed', heading: 'Paths not reviewed (no reviewer read this slice):' },
+  'whole-range': { prefix: 'Whole-range read missing', heading: 'Paths the whole-range read did not cover (the slice reviewers read each slice on its own):' },
+  uncovered: { prefix: 'Not reviewed', heading: 'Paths no slice held and no reviewer read:' },
+  'under-reviewed': { prefix: 'Under-reviewed', heading: 'Paths read under fewer distinct lenses than the mode requires:' },
+  unnamed: { prefix: 'Not reviewed', heading: 'Paths treated as not reviewed (the review named none):' },
+};
+
+/** The bead of one coverage gap: what was not read, why, and what the operator decided about it. */
 function renderGap(entry, context) {
   const gap = entry.finding;
+  const words = GAP_BEAD_WORDS[gap.gapType] || GAP_BEAD_WORDS.unnamed;
   const paths = Array.isArray(gap.paths) ? gap.paths : [];
-  const lines = [`PR review coverage gap (not reviewed) in ${context.repo}, PR #${context.prNumber}`, '', 'Claim: ' + flat(gap.failureMode, CLAIM_MAX), '', 'Paths not reviewed:'];
+  const lines = [`PR review coverage gap in ${context.repo}, PR #${context.prNumber}`, '', 'Claim: ' + flat(gap.failureMode, CLAIM_MAX), '', words.heading];
   paths.slice(0, MEMBERS_LISTED_MAX).forEach((file) => lines.push(`- ${flat(file, 200)}`));
   if (paths.length > MEMBERS_LISTED_MAX) lines.push(`- ... and ${paths.length - MEMBERS_LISTED_MAX} more`);
   if (isText(gap.evidence)) lines.push('', 'Evidence: ' + flat(gap.evidence, EVIDENCE_MAX));
   const resolution = isObject(gap.resolution) ? gap.resolution : null;
   if (resolution !== null && isText(resolution.reason)) {
-    lines.push('', `Operator decision: accepted as not reviewed by ${flat(resolution.by, 80)}${isText(resolution.at) ? ` at ${flat(resolution.at, 40)}` : ''}: ${flat(resolution.reason, 300)}`);
+    lines.push('', `Operator decision: accepted by ${flat(resolution.by, 80)}${isText(resolution.at) ? ` at ${flat(resolution.at, 40)}` : ''}: ${flat(resolution.reason, 300)}`);
   }
   lines.push('', ...footer(context));
   return {
-    title: clean(`[Not reviewed] ${flat(entry.location, 200)}`),
+    title: clean(`[${words.prefix}] ${flat(entry.location, 200)}`),
     description: clean(lines.join('\n')),
     priority: PRIORITY.important,
     type: 'task',

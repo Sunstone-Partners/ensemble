@@ -300,9 +300,12 @@ describe('the status: an unread path is never a complete review', () => {
     expect(deriveStatus(statusFacts({ coverage: incomplete(), reviewOnly: true, headSha: OLD_HEAD, reviewedHeadSha: HEAD })).next).toBe('re-run-review-for-current-head');
   });
 
-  test('nothing the caller adds relaxes it: an override fact and a typed coverage-complete flag are not read', () => {
-    const result = deriveStatus(statusFacts({ coverage: { ...incomplete(), complete: true }, override: true }));
-    expect(result.localPhase).toBe('LOCAL_REVIEW_PENDING');
+  test('nothing the caller adds relaxes it: a typed coverage-complete flag, an unreviewedSlices list or a bare status are refused, never read (review of PR 278, round 1)', () => {
+    for (const coverage of [{ ...incomplete(), complete: true }, { status: 'complete', gaps: [], complete: false }, { status: 'complete', gaps: [], unreviewedSlices: ['s2'] }, { status: 'complete' }, { status: 'complete', gaps: null }]) {
+      const result = deriveStatus(statusFacts({ coverage, override: true }));
+      expect([JSON.stringify(coverage), result.localPhase]).toEqual([JSON.stringify(coverage), 'LOCAL_REVIEW_BLOCKED']);
+      expect(result.reasons[0]).toMatch(/missing or invalid review facts: coverage/);
+    }
   });
 });
 
@@ -425,6 +428,27 @@ describe('the CLI: the `gate`, `status`, `slices` and `carry coverage` subcomman
     expect(evaluateGate(gateInput({ coverage: answer.coverage })).blockers[0].code).toBe('review-data-unavailable');
   });
 
+  test('a plan that never held a changed file cannot read complete: with `changedPaths` the path is a gap, without it the record is unavailable (review of PR 278, round 1)', () => {
+    const paths = [{ path: 'src/a.js', lines: 10 }];
+    const read = (lens, reviewer) => ({ sliceId: 'whole-pr', lens, reviewer, paths: ['src/a.js'] });
+    const reviewedBy = [read('correctness', 's1-correctness'), read('security', 's1-security')];
+    const held = cli.runSlices({ paths, mode: 'standard', reviewedBy, changedPaths: ['src/a.js', 'src/b.js'] });
+    expect(held.coverage.status).toBe('incomplete');
+    expect(held.coverage.gaps.map((gap) => [gap.id, gap.paths])).toEqual([['coverage:uncovered', ['src/b.js']]]);
+    const bare = cli.runSlices({ paths, mode: 'standard', reviewedBy });
+    expect(bare.coverage.status).toBe('unavailable');
+    expect(bare.coverage.reason).toMatch(/changedPaths was not given/);
+    expect(evaluateGate(gateInput({ coverage: bare.coverage })).blockers[0].code).toBe('review-data-unavailable');
+    expect(deriveStatus(statusFacts({ coverage: bare.coverage })).localPhase).toBe('LOCAL_REVIEW_BLOCKED');
+    expect(cli.runSlices({ paths, mode: 'standard', reviewedBy, changedPaths: ['src/a.js'] }).coverage).toEqual(COMPLETE);
+  });
+
+  test('a plan of no path at all is not `covered` beside a record that is not complete', () => {
+    const answer = cli.runSlices({ paths: [], mode: 'standard', reviewedBy: [], changedPaths: [] });
+    expect(answer.coverage.status).not.toBe('complete');
+    expect([answer.ok, answer.covered]).toEqual([false, false]);
+  });
+
   describe('`carry coverage`: a delta round carries what it did not read (real state reports on disk)', () => {
     let dir;
     beforeEach(() => {
@@ -496,5 +520,52 @@ describe('the CLI: the `gate`, `status`, `slices` and `carry coverage` subcomman
       expect(() => cli.runCarry({ action: 'coverage', prId: '42', cwd: dir })).toThrow(/'coverage'/);
       expect(() => cli.runCarry({ action: 'coverage', coverage: COMPLETE })).toThrow(/'prId'/);
     });
+  });
+});
+
+describe('the record\'s contract: a coverage written by hand, or merged from another answer, is refused (review of PR 278, round 1)', () => {
+  const PROBES = [
+    ['a bare complete', { status: 'complete' }],
+    ['complete with the answer\'s `complete: false` beside it', { status: 'complete', gaps: [], complete: false }],
+    ['complete with the answer\'s unreviewedSlices beside it', { status: 'complete', gaps: [], unreviewedSlices: ['s2'] }],
+    ['complete with null gaps', { status: 'complete', gaps: null }],
+    ['incomplete with a key outside the contract', { ...incomplete(), covered: true }],
+    ['incomplete with no gaps array', { status: 'incomplete' }],
+  ];
+
+  test.each(PROBES)('%s: the gate answers review-data-unavailable naming coverage, the status is LOCAL_REVIEW_BLOCKED, and no list is built from it', (_label, coverage) => {
+    const verdict = evaluateGate(gateInput({ coverage }));
+    expect(verdict.mergeable).toBe(false);
+    expect(codes(verdict)).toContain('review-data-unavailable');
+    expect(verdict.blockers[0].missing.join(' ')).toMatch(/coverage/);
+    expect(verdict.coverage.status).toBe('unavailable');
+    expect(deriveStatus(statusFacts({ coverage })).localPhase).toBe('LOCAL_REVIEW_BLOCKED');
+    expect(buildDispositionChoices({ ledger: [], security: { status: 'clean', findings: [] }, headSha: HEAD, coverage }).ok).toBe(false);
+  });
+
+  test('every record a producer writes is inside the contract, so the refusal never fires on a real one', () => {
+    const paths = [{ path: 'src/a.js', lines: 10 }];
+    const records = [
+      COMPLETE,
+      incomplete(),
+      incomplete(READER_LOST),
+      buildCoverage({ changedPaths: [], slices: [], unavailable: 'nothing to read' }),
+      cli.runSlices({ paths, mode: 'standard', reviewedBy: [], changedPaths: ['src/a.js'] }).coverage,
+    ];
+    for (const record of records) expect(Object.keys(record).filter((key) => !['status', 'gaps', 'reason'].includes(key))).toEqual([]);
+    expect(evaluateGate(gateInput({ coverage: incomplete() })).blockers[0].code).toBe('review-coverage-incomplete');
+  });
+
+  test('what Accept says matches what the gap is: a whole-range gap is not "no reviewer read these paths", an under-reviewed one is not unread', () => {
+    const noteOf = (coverage) => buildDispositionChoices({ ledger: [], security: { status: 'clean', findings: [] }, headSha: HEAD, coverage }).dispositionChoices[0].choices[0].note;
+    expect(noteOf(incomplete())).toMatch(/no reviewer read this slice/);
+    const range = noteOf(incomplete(READER_LOST));
+    expect(range).toMatch(/whole-range reader/);
+    expect(range).toMatch(/slice reviewers read these paths one slice at a time/);
+    expect(range).not.toMatch(/nobody read|no reviewer read/);
+    const under = noteOf(incomplete({ unreviewedSlices: [], uncovered: [], underReviewed: [{ path: 'src/a.js', lenses: ['correctness'] }], requiredLenses: 2 }));
+    expect(under).toMatch(/fewer distinct lenses/);
+    expect(under).not.toMatch(/nobody read|no reviewer read/);
+    expect(noteOf(incomplete({ unreviewedSlices: [], uncovered: ['docs/x.md'], changedPaths: [...CHANGED, 'docs/x.md'] }))).toMatch(/no slice held these paths/);
   });
 });

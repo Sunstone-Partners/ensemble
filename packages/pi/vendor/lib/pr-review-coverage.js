@@ -260,6 +260,9 @@ function buildCoverage(input) {
   return gaps.length === 0 ? { status: 'complete', gaps: [] } : { status: 'incomplete', gaps };
 }
 
+/** The keys a coverage record has; any other key means it was written by hand or merged from another answer. */
+const RECORD_KEYS = ['status', 'gaps', 'reason'];
+
 /** What a gap must carry to be read at all: the finding fields, its own kind and source, and at least one path. */
 function gapShapeProblem(gap) {
   if (!isObject(gap)) return 'not an object';
@@ -284,9 +287,20 @@ function gradeCoverage(record, context = {}) {
     out.missing.push('the coverage record');
     return out;
   }
+  // The contract is exactly { status, gaps, reason? }. A key outside it (a `complete` flag, an `unreviewedSlices` list) means the
+  // record was written by hand or merged from another answer: it is refused, never read as saying anything.
+  const extra = Object.keys(record).filter((key) => !RECORD_KEYS.includes(key));
+  if (extra.length > 0) {
+    out.missing.push(`the coverage record (it carries keys outside its contract: ${extra.sort().join(', ')})`);
+    return out;
+  }
   const status = isText(record.status) ? record.status.trim().toLowerCase() : null;
   if (status === null || !COVERAGE_STATUSES.includes(status)) {
     out.missing.push('the coverage status');
+    return out;
+  }
+  if (status !== 'unavailable' && !Array.isArray(record.gaps)) {
+    out.missing.push('the coverage gaps (a complete or incomplete record carries a gaps array, empty when complete)');
     return out;
   }
   out.status = status;
@@ -295,11 +309,7 @@ function gradeCoverage(record, context = {}) {
     out.missing.push(`the coverage result${out.reason === null ? '' : `: ${out.reason}`}`);
     return out;
   }
-  const gaps = record.gaps === undefined || record.gaps === null ? [] : record.gaps;
-  if (!Array.isArray(gaps)) {
-    out.missing.push('the coverage gaps');
-    return out;
-  }
+  const { gaps } = record;
   if (status === 'complete') {
     if (gaps.length > 0) out.missing.push('the coverage record (it says complete and lists gaps)');
     out.settled = out.missing.length === 0;
