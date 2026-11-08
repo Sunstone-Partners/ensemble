@@ -512,9 +512,12 @@ describe('the docs say a round the clear verb was not run at is not read as a fi
 });
 
 describe('the docs name both writers of a cleared mark: the clear verb and carry reconcile (kata n350, qw98)', () => {
-  test('premise: carry reconcile exists and clears with clearFixedFindings, so a delta round has a second writer', () => {
+  test('premise: carry reconcile no longer clears (it does not call clearFixedFindings and answers cleared: [])', () => {
     const cli = fs.readFileSync(path.join(__dirname, '..', 'lib', 'pr-review-cli.js'), 'utf8');
-    expect(cli).toMatch(/reconcile: \{[\s\S]{0,400}clearFixedFindings\(/);
+    const action = cli.slice(cli.indexOf('  reconcile: {'), cli.indexOf('function runCarry'));
+    expect(action).toContain('normalizeLedger(p.ledger)');
+    expect(action).toContain('cleared: []');
+    expect(action).not.toMatch(/clearFixedFindings/);
   });
 
   test('the gate reference, the clear-verb reference and the user guide no longer say the clear verb is the only writer', () => {
