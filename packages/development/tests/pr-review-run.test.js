@@ -2810,7 +2810,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
   describe('a PR the limits cannot hold in one wave: the plan is bigger than the limits and SAYS so', () => {
     const core = (count, lines = 100) => Array.from({ length: count }, (_, index) => `core/f${String(index).padStart(2, '0')}.js`).map((file) => [file, lines]);
     const wideRun = (count, over = {}) => {
-      const entries = core(count);
+      const entries = core(count, over.lines);
       return harness({ changedPaths: entries.map(([file]) => file), numstat: entries.map(([file, lines]) => ({ path: file, added: lines, deleted: 0 })), policyJson: { highPaths: ['core/**'], ...over.policyJson }, rangeDiff: diffOf(entries.map(([file]) => file)) });
     };
 
@@ -2864,6 +2864,19 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(m.sizing.slices).toHaveLength(1);
       expect(m.sizing.slices[0].files).toBe(12);
       expect(m.sizing.warnings.map((warning) => warning.code)).toContain('slice-over-limit');
+    });
+
+    test('a slice over the FILE limit alone (many paths, few lines) is flagged too: a small line count does not excuse it', async () => {
+      const m = await wideRun(12, { lines: 1, policyJson: { maxConcurrentAgents: 1 } }).prepare();
+      expect(m.sizing.slices).toEqual([expect.objectContaining({ files: 12, lines: 12, overLimit: true })]);
+      expect(m.sizing.warnings.map((warning) => warning.code)).toEqual(['slice-over-limit']);
+      expect(m.sizing.warnings[0].message).toMatch(/more than 8 paths or 612 changed lines/);
+    });
+
+    test('a lone path over the line limit is NOT flagged: a path is never cut, so no cap or limit could change that slice', async () => {
+      const m = await wideRun(1, { lines: 1000 }).prepare();
+      expect(m.sizing.slices).toEqual([expect.objectContaining({ files: 1, lines: 1000, overLimit: false })]);
+      expect(m.sizing.warnings).toEqual([]);
     });
   });
 
@@ -3056,6 +3069,17 @@ describe('splitDiffBySlice: the range diff cut into one text per slice', () => {
     expect(textOf(cut, 's1')).toBe(diff(rename));
     expect(textOf(cut, 's2')).toBe(diff(section('a.js'), rename));
     expect(textOf(cut, 's3')).toBe(diff(section('a.js')));
+  });
+
+  test('a renamed file\'s header is not read as ONE name: only its rename lines name it, so a prefix of a name is not placed by it', () => {
+    // `a/dir/aa.js b/x/bb.js` is 21 characters after `diff --git `: read as one name repeated it would be the 8 characters `dir/aa.j`
+    const shorter = ['diff --git a/dir/aa.js b/x/bb.js', 'similarity index 90%', 'rename from dir/aa.js', 'rename to x/bb.js', 'index 1111111..2222222 100644', '--- a/dir/aa.js', '+++ b/x/bb.js', '@@ -1 +1 @@', '-x', '+y'].join('\n');
+    // and the other way round: `a/a.js b/src/b.js` read as one name repeated would be `a.js b`
+    const longer = ['diff --git a/a.js b/src/b.js', 'similarity index 90%', 'rename from a.js', 'rename to src/b.js'].join('\n');
+    const cut = S.splitDiffBySlice(diff(shorter, longer), [{ id: 's1', paths: ['dir/aa.j'] }, { id: 's2', paths: ['a.js b'] }, { id: 's3', paths: ['dir/aa.js', 'src/b.js'] }]);
+    expect(cut[0]).toEqual({ id: 's1', text: '', missing: ['dir/aa.j'] });
+    expect(cut[1]).toEqual({ id: 's2', text: '', missing: ['a.js b'] });
+    expect(cut[2]).toEqual({ id: 's3', text: diff(shorter, longer), missing: [] });
   });
 
   test('binary and mode-only sections have a header and no hunk, and are placed all the same', () => {
