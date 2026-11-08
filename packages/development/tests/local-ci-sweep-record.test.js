@@ -248,6 +248,17 @@ describe('what a bead holds', () => {
     }
   });
 
+  test('a JSON web token in a bot comment never reaches the bead (the git-tracked store), whichever field carries it', () => {
+    const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJ4In0', 'abc123_-DEF456xyz'].join('.');
+    const tracker = fakeTracker();
+    recordSweep(facts([finding({ body: `the bot echoed ${jwt}`, author: jwt })], [failure({ name: `job ${jwt}`, url: `https://example.invalid/?t=${jwt}` })]), tracker, OPTIONS);
+    expect(tracker.issues).toHaveLength(2);
+    for (const issue of tracker.issues) {
+      for (const part of jwt.split('.')) expect(issue.title + issue.description).not.toContain(part);
+      expect(issue.title + issue.description).toContain('[REDACTED]');
+    }
+  });
+
   test('a field that is not text (an object, a list) is ignored, not printed as [object Object]', () => {
     const tracker = fakeTracker();
     recordSweep(facts([finding({ body: { text: 'x' }, author: ['a'], path: {}, url: 7 })], [failure({ name: { n: 1 }, sha: 12, url: [] })]), tracker, OPTIONS);
