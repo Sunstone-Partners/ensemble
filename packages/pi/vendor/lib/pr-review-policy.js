@@ -82,9 +82,10 @@ const DEADLINE_MINUTES_MAX = 60;
 
 /**
  * The sizing defaults (kata sfpb): how many paths and changed lines one reviewer is given, and
- * how many times the modelled reading time an agent's deadline allows. Not chosen here: they
+ * how many times the modelled reading time an agent's deadline allows. Not set here: the limits
  * are what `pr-review-sizing.js` derives from the one real full-mode run, the slice that just
- * fits the base reviewer deadline with that headroom (8 paths, 612 lines, at 15 minutes and 2).
+ * fits the base reviewer deadline with the headroom (8 paths, 612 lines, at 15 minutes and 2),
+ * and the headroom is that file's stated judgement (2), not a measurement.
  */
 const DEFAULT_SLICE_LIMITS = deriveLimits({ baseMinutes: DEFAULT_DEADLINE_MINUTES.reviewer, headroom: DEFAULT_HEADROOM });
 
