@@ -724,6 +724,31 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
       expect(h.readRun().phase).toBe('failed');
       expect(await h.collect()).toMatchObject({ status: 'RUN_FAILED' });
     });
+
+    // The unstated design decision a review of this PR found: before full mode ran in the runner every full PR answered
+    // NEEDS_FULL_MODE and the narrated Steps 1-10 applied; now a full run that cannot be briefed fails closed, and the answer
+    // itself says that, and what the operator may do about it, instead of leaving a bare RUN_FAILED to be read as "blocked".
+    test('that refusal states the decision (never lighter, nothing dispatched, no verdict) and the operator\'s way forward, and every later collect repeats it', async () => {
+      const h = harness({ changedPaths: ['core/a b.js'], policyJson: { highPaths: ['core/**'] } });
+      const out = await h.prepare();
+      expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: expect.stringContaining('brief-refused'), mode: { mode: 'full' }, dispatched: [] });
+      expect(out.decision).toMatch(/never lowered to light mode/);
+      expect(out.decision).toMatch(/nothing was dispatched/);
+      expect(out.decision).toMatch(/no review and no verdict/);
+      expect(out.fallback).toMatch(/rename the path/);
+      expect(out.fallback).toMatch(/narrated Steps 1-10/);
+      expect(out.fallback).toMatch(/start a new run/);
+      expect(h.spans.filter((s) => s.type === 'start' && /^agent:/.test(s.name))).toEqual([]);
+      expect(await h.collect()).toEqual(out);
+      expect(h.stateWrites).toEqual([]);
+    });
+
+    test('the light refusal is not that decision: NEEDS_FULL_MODE carries none, because the narrated procedure is its route', async () => {
+      const out = await harness({ changedPaths: ['src/a b.js'] }).prepare();
+      expect(out).toMatchObject({ ok: false, status: 'NEEDS_FULL_MODE' });
+      expect(out.decision).toBeUndefined();
+      expect(out.fallback).toBeUndefined();
+    });
   });
 
   describe('AC3: the gate, approvals, independence and completeness are the light mode\'s', () => {

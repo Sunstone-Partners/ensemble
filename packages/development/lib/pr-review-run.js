@@ -38,7 +38,9 @@
  *     `selectMode` alone and is stored in the run. Every later call only CHECKS that label against `selectMode` over the tier
  *     the run stores (`modeInvariant`): a label rewritten to light, removed or unknown is RUN_FAILED `mode-invariant`, never a
  *     new mode, so nothing here can lower a full run to light.
- *     NEEDS_FULL_MODE is left for a LIGHT run whose brief the renderer refuses (nothing dispatched; the narrated procedure).
+ *     NEEDS_FULL_MODE is left for a LIGHT run whose brief the renderer refuses (nothing dispatched; the narrated procedure). A
+ *     FULL run whose brief the renderer refuses is RUN_FAILED `brief-refused` and its answer states the decision (`decision`:
+ *     never lowered to light, no verdict) and the way forward (`fallback`): the runner offers no narrated route for it itself.
  *
  * HONEST LIMITS: the runner computes and records agent deadlines and the concurrency cap, and cannot enforce either;
  * whoever dispatches must stop an agent at `deadlineAtIso` and keep to `maxConcurrentAgents`. The tier comes from the
@@ -115,6 +117,18 @@ const TRIAGE_RULES = Object.freeze([
   'Every candidate, yours included, is then settled by independent fresh-context verifiers who are briefed with the claim and its location only. You can not remove, merge away, re-grade, close or waive a candidate, mark a slice reviewed, or decide a verdict: the gate and whether the review is complete are computed by the runner alone.',
   'A `collect` without `triage` repeats this answer; the run cannot reach verification without it.',
 ]);
+
+/**
+ * What a FULL run whose brief the renderer refuses says in its RUN_FAILED answer. Before full mode ran in this runner every
+ * full PR answered NEEDS_FULL_MODE and the narrated Steps 1-10 applied; a full run that cannot be briefed now fails closed
+ * (never lowered to light, never run without briefs), and the answer states that decision and the operator's way forward, so
+ * a bare RUN_FAILED is not left to be read as a dead end. A LIGHT run's NEEDS_FULL_MODE carries neither: the narrated
+ * procedure is its route, and its name says so.
+ */
+const FULL_BRIEF_REFUSED = Object.freeze({
+  decision: 'Full mode fails closed: a run whose brief the renderer refuses is never lowered to light mode and never run without that brief; nothing was dispatched, so this runner gives no review and no verdict for this pull request.',
+  fallback: 'Either change what the renderer refused (for example rename the path it names) and start a new run, or review this pull request by hand with the narrated Steps 1-10 of the pr-review-cycle skill, from the start.',
+});
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -494,12 +508,13 @@ async function prepareRun(input, deps) {
   const cap = run.policy && Number.isInteger(run.policy.maxConcurrentAgents) ? run.policy.maxConcurrentAgents : DEFAULT_MAX_CONCURRENT;
   run.maxConcurrentAgents = cap;
 
-  // 9-11. briefs, waves, deadlines. A brief the renderer refuses cannot be reviewed mechanically: full mode.
+  // 9-11. briefs, waves, deadlines. A brief the renderer refuses cannot be reviewed mechanically: a light run is handed to the
+  // narrated procedure (NEEDS_FULL_MODE); a full run fails closed and says so (FULL_BRIEF_REFUSED), and is never lowered to light.
   let agents;
   try {
     agents = buildReviewAgents(run, deps, { now: startedAt });
   } catch (error) {
-    if (isFull) return terminate(run, 'failed', failure('RUN_FAILED', { runId, headSha, reason: `brief-refused: ${msg(error)}`, mode, tier, dispatched: [], precheck }), 'prepare', startedAt, deps);
+    if (isFull) return terminate(run, 'failed', failure('RUN_FAILED', { runId, headSha, reason: `brief-refused: ${msg(error)}`, ...FULL_BRIEF_REFUSED, mode, tier, dispatched: [], precheck }), 'prepare', startedAt, deps);
     return terminate(run, 'needs-full-mode', failure('NEEDS_FULL_MODE', { runId, headSha, mode: { ...mode, reasons: [...mode.reasons, 'brief-refused'] }, tier, reason: `brief-refused: ${msg(error)}`, dispatched: [], precheck }), 'prepare', startedAt, deps);
   }
   const groups = S.chunk(agents, cap);
