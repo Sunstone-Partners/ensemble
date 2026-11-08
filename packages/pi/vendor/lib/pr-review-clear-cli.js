@@ -25,10 +25,10 @@
  *             verb already moved (`locationAsOf`) is compared from that head instead, unless
  *             `lastReviewedSha` is a LATER head (the verb skipped a round): then that is the baseline
  *   ledger    REQUIRED entries recorded in earlier rounds, as the previous run of this verb returned them
- *   incoming  REQUIRED, the findings the review of `headSha` raised (what was handed to
- *             `ledger recordRound` as `incoming`), `[]` when it raised none. It is never defaulted: without
- *             it a re-raised finding could not be told from a fixed one, and every finding whose line
- *             was touched would be cleared
+ *   incoming  REQUIRED, EVERY finding the review of `headSha` presented, whatever its verdict (the `votes` result's
+ *             `findings`: present, disputed, unverified and filtered alike), `[]` when it presented none. It is never
+ *             defaulted: without it a re-raised finding could not be told from a fixed one, and every finding whose
+ *             line was touched would be cleared; a finding left out of it reads the same way
  * result
  *   DERIVED (exit 0)  { ok, status, headSha, ledger[], cleared[{ id, clearedBy, recordedAt }],
  *                       kept[{ id, reason }] }
@@ -89,8 +89,10 @@
  * nothing; the input is never mutated.
  *
  * Honest limits: a changed location is the AC-008-3 heuristic, not proof the defect is
- * gone; the re-review not raising it again is the other half. A force-push that rewrites
- * the recorded head clears nothing, so such a bead stays open and a person closes it.
+ * gone; the re-review not raising it again is the other half. This verb is the only writer of
+ * `cleared` in the procedure (`carry reconcile` writes none), so a force-push that rewrites the
+ * recorded head, or a `lastReviewedSha` that is not on the PR, clears nothing: such a bead stays
+ * open and a person closes it. A mark written by hand is outside this verb.
  */
 
 const fs = require('fs');
@@ -153,7 +155,7 @@ function movedLocation(entry, hunks) {
 }
 
 const INCOMING_REQUIRED =
-  "'incoming' is required: the findings the review of this head raised, an array of objects ([] when it raised none). It is never defaulted: without it a re-raised finding cannot be told from a fixed one and every finding whose line was touched would be cleared";
+  "'incoming' is required: every finding the review of this head presented, whatever its verdict, an array of objects ([] when it presented none). It is never defaulted: without it a re-raised finding cannot be told from a fixed one and every finding whose line was touched would be cleared";
 
 /**
  * @param {{git?:Function, cwd:string, baseSha:string, headSha:string, lastReviewedSha?:string, ledger:Object[], incoming:Object[], now?:Function}} input

@@ -223,10 +223,10 @@ decision made on an earlier head stops counting and is asked again. **What this
 proves and what it does not:** a reason is present, it names a login (a bot or a
 stranger is refused only when `policy` says so) and it is bound to this head; it
 cannot prove a human typed it, and a session that writes a permitted login into
-`by` defeats it. A `cleared: true` flag is likewise taken at its word: the skill's writers of it
-are `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6), and, in a delta round, `carry
-reconcile`, which clears from the delta's hunks alone; a flag written any other way is outside
-this rule. The control against that is this rule, not the code.
+`by` defeats it. A `cleared: true` flag is likewise taken at its word: the skill's only
+writer of it is `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6); `carry reconcile`
+writes none. A flag written any other way is outside this rule. The control against that is
+this rule, not the code.
 
 **The operator's decision list.** Beside the verdict, `gate` returns
 `dispositionChoices` (one entry per undecided finding: `id`, `severity`,
@@ -304,16 +304,15 @@ overwritten) and appends ONE note per head; the same head reviewed again writes 
 
 **A fix closes a bead, and only a fix does.** After a later head has been reviewed, run
 `node "$PR_REVIEW_CLEAR_CLI"` (`reference/triage-fix-reverify.md`: it derives the `cleared`
-marks from git, needs `incoming`, and is run at every head in order) and pass the ledger it
+marks from git, needs `incoming` (every finding the round presented), and is run at every head in order) and pass the ledger it
 returns on. A finding marked `cleared` (the diff since the prior round's reviewed head changed
 the file and line it cites, and no reviewer raised it again) closes its bead with that commit,
 but only when the recorder itself checks with git that `clearedBy` is a commit on the PR (an
 ancestor of `headSha`, not of `baseSha`): a mark naming any other commit closes nothing and is
 listed under `unverifiedFixes`. **That check is of the commit, not of how the mark was made:**
 a `cleared` mark written by hand that names a commit on the PR still closes the bead. The
-procedure's writers of the mark are `PR_REVIEW_CLEAR_CLI` and, in a delta round, `carry
-reconcile` (it clears from the delta's hunks alone, with no git lookup); the control against a
-hand-written one is that rule, not code.
+procedure's only writer of the mark is `PR_REVIEW_CLEAR_CLI` (`carry reconcile` writes none);
+the control against a hand-written one is that rule, not code.
 
 **A bead is closed only by the pull request that last recorded it.** The bead's key has no pull
 request in it, so two pull requests that raise one claim in one file share one bead, and the
