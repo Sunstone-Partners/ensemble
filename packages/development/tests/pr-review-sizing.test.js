@@ -540,7 +540,10 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     const start = unreleased.search(/- \*\*packages\/development:\*\* `review-run` sizes its slices and deadlines to what there is to read \(kata `sfpb`/);
     expect(start).toBeGreaterThanOrEqual(0);
     const first = unreleased.slice(start);
-    const entry = first.slice(0, first.indexOf(' - **packages/', 10));
+    // the entry ends where the next bullet starts (the file is read with whitespace collapsed, so a bullet is ' - ' + a bold or code opener)
+    const next = first.slice(10).search(/ - (?:\*\*|`)/);
+    expect(next).toBeGreaterThan(0);
+    const entry = first.slice(0, next + 10);
     expect(entry).toMatch(/Nothing is relaxed/);
     expect(entry).toMatch(/one observed run/);
   });

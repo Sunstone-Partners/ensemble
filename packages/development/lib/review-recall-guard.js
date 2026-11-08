@@ -14,7 +14,7 @@
  * REFERENCE (JSON): `{ pr, headSha, items: [ { id, summary, anchors?, terms? } ] }`
  *   - `anchors`: `[ { path, startLine, endLine } ]`; a finding is anchored when its `path:line` falls in a range (plus `slack` lines).
  *   - `terms`: `[ [ "word", "word" ], ... ]`; a finding names the defect when its `failureMode` (and `evidence`, when the ledger carries
- *     it) holds EVERY word of at least one inner list, compared lower case.
+ *     it) holds EVERY word of at least one inner list, compared lower case and as whole words ("slow-mo" is not in "slow-motion").
  *   An item must give at least one of the two. When it gives both, a finding must satisfy both: anchors alone say only "something
  *   Important sits near here", terms alone say "somebody described this", and an item that wants either may simply give one.
  *
@@ -31,7 +31,8 @@
  * never a pass: an empty reference, a duplicate id, an item with neither anchors nor terms, findings that are not a list.
  *
  * It grades only; it runs no model and reads two files. A match is by anchor and wording, not by understanding: a finding that happens to
- * use the words is counted, so the reference's `terms` must be words only the defect uses (the fixture says so per item).
+ * use the words is counted, and a correct finding that paraphrases them is not, so the reference's `terms` should be words only the defect
+ * uses (an item may carry a `note` saying why), several phrasings are listed, and `matchedBy` in the output is to be read, not trusted.
  *
  * Usage: node review-recall-guard.js --reference <file> --findings <file> [--max-false-negative <0..1>] [--slack <n>]
  */
@@ -84,6 +85,12 @@ function findingList(input) {
   return null;
 }
 
+/** `word` in `text` as a whole word: not inside a longer one ("slow-mo" is not in "slow-motion"). Both are lower case already or lowered here. */
+function hasWord(text, word) {
+  const escaped = word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'u').test(text);
+}
+
 function matches(item, finding, slack) {
   const where = parseLocation(finding.locationOrLink);
   if (item.anchors.length > 0) {
@@ -92,7 +99,7 @@ function matches(item, finding, slack) {
   }
   if (item.terms.length > 0) {
     const text = `${isText(finding.failureMode) ? finding.failureMode : ''}\n${isText(finding.evidence) ? finding.evidence : ''}`.toLowerCase();
-    if (!item.terms.some((set) => set.every((word) => text.includes(word.toLowerCase())))) return false;
+    if (!item.terms.some((set) => set.every((word) => hasWord(text, word)))) return false;
   }
   return true;
 }

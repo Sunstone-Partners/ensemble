@@ -7,32 +7,118 @@
     {
       "id": "E1",
       "summary": "Microsoft.Playwright.Xunit (PageTest base class) is classified xunit but the xUnit scaffold cannot write such a project",
-      "terms": [["microsoft.playwright.xunit"], ["pagetest", "xunit"]]
+      "terms": [
+        [
+          "microsoft.playwright.xunit"
+        ],
+        [
+          "pagetest",
+          "xunit"
+        ]
+      ],
+      "note": "The package name is specific; 'pagetest' + 'xunit' also matches a finding about the xUnit scaffold's missing base class."
     },
     {
       "id": "E2",
       "summary": "inferFramework/appendTestMethod probe matches NUnit's [Theory] as well as xUnit's, so an NUnit file reads as xUnit",
-      "terms": [["[theory]", "nunit"], ["theory", "nunit", "matches"]]
+      "terms": [
+        [
+          "[theory]",
+          "nunit"
+        ],
+        [
+          "theory",
+          "nunit",
+          "matches"
+        ]
+      ],
+      "note": "Needs [Theory] and NUnit in one finding; [Theory] alone is mentioned by unrelated test findings."
     },
     {
       "id": "E3",
       "summary": "findClassBodyRange splices a method into the FIRST class of the file, which is a [CollectionDefinition] marker class when one comes first",
-      "terms": [["collectiondefinition"], ["marker class"], ["first class"], ["findclassbodyrange"]]
+      "terms": [
+        [
+          "collectiondefinition"
+        ],
+        [
+          "marker class"
+        ],
+        [
+          "first class"
+        ],
+        [
+          "findclassbodyrange"
+        ]
+      ],
+      "note": "These phrases are specific to the splice position; 'first class' could also appear in an unrelated finding, so read matchedBy."
     },
     {
       "id": "E4",
       "summary": "scaffoldNewSpecFile throws for a new xUnit file because no step supplies collection, fixtureType or usings",
-      "terms": [["usings"]]
+      "terms": [
+        [
+          "usings"
+        ]
+      ],
+      "note": "'usings' is generic: any finding about a usings option matches, so read matchedBy before counting it."
     },
     {
       "id": "E5",
       "summary": "detectE2eFrameworkInDir throws ENOENT/ENOTDIR on a non-existent directory or a file path instead of returning null",
-      "terms": [["enoent"], ["enotdir"], ["readdirsync"], ["non-existent", "directory"], ["nonexistent", "directory"]]
+      "terms": [
+        [
+          "enoent"
+        ],
+        [
+          "enotdir"
+        ],
+        [
+          "readdirsync"
+        ],
+        [
+          "non-existent",
+          "directory"
+        ],
+        [
+          "nonexistent",
+          "directory"
+        ],
+        [
+          "detecte2eframeworkindir",
+          "does not exist"
+        ],
+        [
+          "detecte2eframeworkindir",
+          "no such"
+        ],
+        [
+          "detecte2eframeworkindir",
+          "not a directory"
+        ]
+      ],
+      "note": "Several phrasings: the readdir call, the error codes, or the function named with a does-not-exist wording."
     },
     {
       "id": "E6",
       "summary": "headed / slow-mo overrides are inert for the xUnit shape: the Run request carries no framework",
-      "terms": [["slow-mo"], ["slowmo"], ["headed", "xunit"], ["headed", "inert"]]
+      "terms": [
+        [
+          "slow-mo"
+        ],
+        [
+          "slowmo"
+        ],
+        [
+          "headed",
+          "xunit"
+        ],
+        [
+          "headed",
+          "inert"
+        ]
+      ],
+      "note": "Whole-word match: 'slow-motion' does not match 'slow-mo'."
     }
   ]
 }

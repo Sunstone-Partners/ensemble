@@ -100,6 +100,36 @@ describe('wording: every word of one term list, in the failure mode or the evide
   });
 });
 
+describe('whole words: a word inside a longer one is not a hit (review of PR 283)', () => {
+  const item = ref([{ id: 'A', terms: [['slow-mo']] }]);
+  const status = (failureMode, evidence) => scoreRecall({ reference: item, findings: [finding({ failureMode, evidence })] }).items[0].status;
+
+  test('"slow-motion" does not match "slow-mo"; "the slow-mo flag", "(slow-mo)" and "slow-mo." do', () => {
+    expect(status('nothing', 'a slow-motion screenshot')).toBe('not-raised');
+    expect(status('the slow-mo flag is ignored')).toBe('found');
+    expect(status('(slow-mo)')).toBe('found');
+    expect(status('ignores slow-mo.')).toBe('found');
+  });
+
+  test('regex characters in a word are literal: "[theory]" is not a character class', () => {
+    const r = ref([{ id: 'A', terms: [['[theory]']] }]);
+    expect(scoreRecall({ reference: r, findings: [finding({ failureMode: 'matches t, h or e' })] }).items[0].status).toBe('not-raised');
+    expect(scoreRecall({ reference: r, findings: [finding({ failureMode: 'the [Theory] attribute' })] }).items[0].status).toBe('found');
+  });
+});
+
+describe('the committed fixture is the run\'s own ledger, evidence included (review of PR 283)', () => {
+  test('every entry carries its evidence, because the guard matches on it', () => {
+    expect(ledger.ledger.length).toBe(17);
+    for (const entry of ledger.ledger) expect(typeof entry.evidence === 'string' && entry.evidence.length > 0).toBe(true);
+  });
+
+  test('a paraphrase of E5 that names the function and the missing directory is found', () => {
+    const paraphrase = finding({ failureMode: 'detectE2eFrameworkInDir throws when the directory does not exist' });
+    expect(scoreRecall({ reference, findings: [paraphrase] }).items.find((i) => i.id === 'E5').status).toBe('found');
+  });
+});
+
 describe('anchors: same path, a line in the range plus slack', () => {
   const item = ref([{ id: 'A', anchors: [{ path: 'lib/a.js', startLine: 100, endLine: 110 }] }]);
   const status = (locationOrLink, extra = {}) => scoreRecall({ reference: item, findings: [finding({ locationOrLink })], ...extra }).items[0].status;
