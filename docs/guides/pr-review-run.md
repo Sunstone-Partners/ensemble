@@ -88,8 +88,8 @@ and is only for the `TRIAGE` status.
 | `NEEDS_FULL_MODE` | false | light mode only, a brief the renderer refuses (for example a path with a space): nothing was dispatched and the runner cannot review mechanically; the narrated Steps 1-10 in the skill remain the manual procedure |
 | `RUN_FAILED` | false | a stage failed or a refusal: `head-unreadable` and `pr-not-open` leave a started run retryable; `triage-refused` is not terminal (fix the `triage` payload and call again); `brief-refused` is a full-mode brief the renderer refuses, and its answer carries `decision` and `fallback` (below); `mode-invariant` is a stored run whose mode label, depth, verifier count or lane no longer says what it was prepared as; `cross-repository-head`, `head-repository-unknown`, `pr-not-open` and `base-not-merge-base` at `prepare` mean nothing was run |
 
-An agent that never arrives is reported, never read as having reviewed: its slice is in `notReviewed` and a
-verifier that did not arrive leaves its finding unverified. `REVIEW_COMPLETE` is only ever relayed from the
+An agent that never arrives is reported, never read as having reviewed: its slice is in `notReviewed`, it is a gap of the
+coverage record (below) that stops the merge gate and the local phase, and a verifier that did not arrive leaves its finding unverified. `REVIEW_COMPLETE` is only ever relayed from the
 review status function. Adjudication applies only to items that were listed, records `adjudicatedBy:
 "orchestrator"`, and cannot clear an Important or security finding. `NEEDS_FULL_MODE` (light mode only) means nothing
 was dispatched and the narrated Steps 1-10 in the skill remain the manual procedure; it is never the way into full mode.
@@ -348,6 +348,37 @@ time, and narrow what each reviewer reads (the cross-slice limit below).
   it waited 15. That is the fail-closed cost of the longer deadline.
 - Like every deadline here, the runner computes it and the dispatcher must enforce it.
 
+## Coverage: what nobody read stops the gate (kata `k48x`)
+
+Reporting an unread slice beside a mergeable verdict let a PR merge on a review that never read part of it (the whole-range
+reader of a light run that expired or listed too few paths, a slice whose reviewer did not arrive). The runner now builds one
+record from the stored run, `lib/pr-review-coverage.js`: `{ status: 'complete' | 'incomplete' | 'unavailable', gaps }`, and
+`gate`, `status` and the operator's decision list are all fed from it (the answer shows its effect in `gate.coverage`,
+`reviewStatus.coverage` and the entries of `gate.dispositionChoices`).
+
+- **What counts as incomplete.** A planned slice with a reviewer that expired, failed or listed too few of its paths (the whole
+  slice is unread: `coverage:slice:<id>`); a planned whole-range reader that did the same (`coverage:whole-range`); a changed
+  path no slice held (`coverage:uncovered`); a path read under fewer distinct lenses than the mode requires
+  (`coverage:under-reviewed`; a Quick run needs one lens, so a Quick run whose only reviewer is missing leaves every path
+  unread). A coverage the runner could not compute (an unreadable plan) is `unavailable`: never complete.
+- **What does not.** A reader the plan never made (`reader-not-planned`: a reported limit of the cap, not a read that failed);
+  a candidate the verifier brief refused or that was never verified (it stays in the ledger and blocks by its severity); the
+  security lane (its own mechanism, `security-review-missing`); full mode's `TRIAGE` step (it is a read by the orchestrator, not a
+  reviewer's coverage).
+- **What it stops.** `gate.mergeable` is `false` with one `review-coverage-incomplete` blocker per open gap, naming the slice,
+  its paths and why its reviewers did not arrive; `reviewStatus.localPhase` is `LOCAL_REVIEW_PENDING` with `next:
+  complete-review-coverage` (or `LOCAL_REVIEW_BLOCKED` when the coverage is unavailable). `pr-merge` Phase 5 reads the gate's
+  output, so it stops there too.
+- **The operator's way out is the existing one.** Run the review again on this head (a gap that was read is gone), or decide the
+  gap: the decision list shows it in its own `Not reviewed` group with Accept as its only choice and a reason of its own, and
+  the answer is the same `ledger resolve` record as for a finding (`{ reason, by, headSha, at }`, this head, a person), graded by the
+  same rule; `cleared`, a deferral and a decision for another head close nothing. An accepted gap is reported as
+  `coverage-gap-accepted` and written into the bead the recorder makes for it. An agent never decides it.
+- **Each path.** Light and full runs build it the same way and a Quick run follows the same rule. A finished run replays its stored
+  answer, gap included. The runner always reads the full range, so it carries nothing; a delta round by the narrated procedure
+  carries every gap of the report of the head it resumes (`carry` `coverage`), and only a round of the full range replaces them,
+  so a carried verdict never turns an incomplete coverage into a complete one.
+
 ## Run directory
 
 `<repoRoot>/.ensemble/pr-review/run/<runId>/`: `run.json` (state; phase `review-dispatched`, `verify-dispatched`,
@@ -365,6 +396,17 @@ answer is not returned; nothing is recorded, so it is that commit's answer again
   `prepare`; `lastReviewedSha` feeds the `reReview` decision only, and reviewers read the full range.
 - `prepare` runs the precheck: it posts one PR comment and starts the local-CI gate in the background unless
   `dryRun` or `skipPrecheck` is set.
+  When the gate does not start, the comment and the answer name the real cause (`missing-file`, `unreadable-file`,
+  `parse-error`, `invalid-config`, `missing-dependency`, `validation-failed`, `config-reader-failed`): a checkout without `node_modules` is a
+  `missing-dependency` refusal naming the module, never "no readable .ensemble/local-ci.yaml".
+- An untrusted policy never lowers the tier (kata `vhpf`): when the base's `REVIEW.md` policy block cannot be used (a
+  stale or foreign `sourceSha` is `policy-not-from-base`, an unparseable block is `policy-unparseable`), the strict
+  defaults have no `highPaths`, so `prepare` classifies every changed path High (`policy-untrusted:<reason>` in
+  `facts.paths`, in the tier's `reasons` and as `policyStatus` in the run state) so a stale base never reviews the PR
+  more lightly than current `dev` would. The cost: it can review MORE heavily than current `dev` (a one-file PR goes
+  to full mode), and a light multi-slice PR becomes a full-mode run, which plans no whole-range reader (open owner
+  decision, pinned by a test). A missing `REVIEW.md` or block is still the documented defaults. A rejected
+  `highPaths` key inside an otherwise valid block (`ok:true`) is not covered.
 - The baseline test run executes the head's own test code in a scratch directory. It is not a sandbox; see
   `docs/guides/pr-review-prepare.md`. It runs the relevant test files only. When it produced no usable result (no
   relevant test files, a timeout) the status fact is `tests skipped`, never a pass and never a failure it did not
