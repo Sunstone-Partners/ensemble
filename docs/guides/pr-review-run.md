@@ -146,17 +146,33 @@ Stage spans go to
 (opened by `prepare`, closed by the call that ends the run), `review.head-read` (fetching the base and head and finding
 the merge base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status) and one
 `review.<role>` span per dispatched agent (`review.reviewer`, `review.verifier`, `review.security-lane`) with its `agent`
-name. Each carries `round` (1; 2 when `lastReviewedSha` makes the run a delta re-review). An agent span opens when the
-agent is dispatched and closes when its result is collected, with `last_message_ts` set to the moment its result file
-arrived, so the reader counts the agent to its last message and not to the `collect` call. `precheck` and
-`prepare-head` spans are kept; the reader ignores them. Limits: the root opens after the first read of the PR head (the
-run id depends on it), `turns` and `tool_calls` are not recorded (the runner cannot see the model, so the reader reports
-them missing), and a `Quick` review has no verifier, so its critical path is missing. `traceRunId` defaults to the
-review's own `runId`, so a review writes a trace file of its own, which is what `timing` needs: its spans land in the
-same file as a `/ensemble-pr-merge` run's trace only when the caller passes that run's id as `traceRunId`, and a file that
-holds two `review` roots (two runs sharing a `traceRunId`) has no usable window. Nothing passes it automatically and the
-`/ensemble-pr-merge` prose does not today. A `collect` with `adjudications` re-runs the gate and the verdict after the root
-has closed; those spans lie outside the window and the reader leaves them out of the critical path. Tracing never fails a run.
+name and its `wave`. Each carries `round` (1; 2 when `lastReviewedSha` makes the run a delta re-review). An agent span
+opens when the agent is dispatched and closes when its result is collected, with `last_message_ts` set to the moment its
+result file arrived, so the reader counts the agent to its last message and not to the `collect` call. A result file
+dated well after the `collect` that read it (clock skew) cannot be placed: it is recorded as it is, so the reader refuses
+that agent's interval instead of counting it to the `collect` call, and the answer's `warnings` say so.
+
+Waves. `maxConcurrentAgents` splits a round's agents into waves, and a wave is dispatched only after the one before it
+was collected, so waves run one after another. `wave` is the agent's number among its kind (the review agents, and apart
+from them the verifiers), from 1. The reader's critical path therefore takes the slowest reviewer of each review wave and
+the slowest verifier of each verify wave and sums them (`reviewer wave 1 -> reviewer wave 2 -> verifier -> verdict`), not
+the one slowest agent across the waves. The security lane is not a step of the critical path (the contract names the
+slowest reviewer): a wave that holds only the lane, which a small cap makes, has no step, so its round lists it under
+`uncountedWaves` and the critical path is a lower bound, not passed off as the whole chain.
+
+The verdict is recorded once while the window is open: a `collect` retried after a failed state write derives it again but
+adds no second `review.verdict` span (two inside the window leave the critical path without the verdict that ends its
+chain). A `collect` with `adjudications` re-runs the gate and the verdict after the root has closed and records both
+there; those spans lie outside the window and the reader leaves them out of the critical path. The runner no longer
+writes `precheck` and `prepare-head` spans (the reader never read them).
+
+Limits: the root opens after the first read of the PR head (the run id depends on it), `turns` and `tool_calls` are not
+recorded (the runner cannot see the model, so the reader reports them missing), and a `Quick` review has no verifier, so
+its critical path is missing. `traceRunId` defaults to the review's own `runId`, so a review writes a trace file of its
+own, which is what `timing` needs: its spans land in the same file as a `/ensemble-pr-merge` run's trace only when the
+caller passes that run's id as `traceRunId`, and a file that holds two `review` roots (two runs sharing a `traceRunId`)
+has no usable window. Nothing passes it automatically and the `/ensemble-pr-merge` prose does not today. Tracing never
+fails a run.
 
 ## Left open
 
