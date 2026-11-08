@@ -75,12 +75,19 @@ afterAll(() => {
 
 const pad = (n, marks = {}) => Array.from({ length: n }, (_, i) => marks[i + 1] || `// filler ${i + 1}`).join('\n') + '\n';
 
-/** What the oracle reads: the file at a head (null when absent), through git, never the working tree. */
+/** What the oracle reads: the file at a head (null when absent), through git, never the working tree; a submodule reads as its pointer. */
 const reader = (repo, head) => (file) => {
   try {
     return execFileSync('git', ['show', `${head}:${file}`], { cwd: repo.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
-    return null;
+    // not a blob: a submodule is only a pointer in the superproject, and that pointer is what the oracle can read of it
+    try {
+      const entry = execFileSync('git', ['ls-tree', head, '--', file], { cwd: repo.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const pointer = /^160000 commit ([0-9a-f]+)\t/.exec(entry);
+      return pointer === null ? null : `submodule ${pointer[1]}\n`;
+    } catch {
+      return null;
+    }
   }
 };
 const has = (text, needle) => typeof text === 'string' && text.includes(needle);
@@ -328,6 +335,36 @@ describe('a stale verdict is never carried: each push below flips the oracle, an
     // and why: the producer refused the citation at both heads, so nothing was recorded to be carried
     expect(r.first.candidates[0].hashError).toMatch(/symlinked directory lib\/vendor\.js/);
     expect(r.first.recorded.skipped).toEqual([{ id: 'F-vendor', reason: 'no-hash' }]);
+  });
+
+  test('a SUBMODULE on a specifier path whose pointer moved (G1): the import resolves to nothing the hash can see, so the citation is never hashed or carried', () => {
+    // lib/gl.js is a submodule: git stores its commit id and nothing under it, and the planner keeps delta mode because the
+    // name ends in .js. The oracle reads the pointer, which is all the superproject records of it.
+    const POINTER_A = 'a'.repeat(40);
+    const POINTER_B = 'b'.repeat(40);
+    const f = finding('F-gl', 'lib/core10.js', 3, 'core10 trusts the vendored submodule without a check', (read) => (has(read('lib/gl.js'), POINTER_B) ? 'real' : 'not-real'));
+    const repo = makeRepo({ 'lib/core10.js': pad(10, { 1: "const x = require('./gl.js/x');" }) });
+    const state = scratch('state-');
+    // by hand: `commit()` stages with `add -A`, which would drop an index entry whose path is not in the working tree
+    const pointAt = (sha) => {
+      git(repo.root, ['update-index', '--add', '--cacheinfo', `160000,${sha},lib/gl.js`]);
+      git(repo.root, ['commit', '-q', '-m', 'pointer']);
+      return git(repo.root, ['rev-parse', 'HEAD']);
+    };
+    const h1 = pointAt(POINTER_A);
+    const first = round({ repo, state, head: h1, prior: null, findings: [f] });
+    const h2 = pointAt(POINTER_B);
+    const second = round({ repo, state, head: h2, prior: first, findings: [f] });
+    const full1 = fullReview(repo, h1, [f]);
+    const full2 = fullReview(repo, h2, [f]);
+    expect(full1).toEqual({ 'F-gl': 'filtered' });
+    expect(flippedIds(full1, full2)).toEqual(['F-gl']);
+    // what matters: the carry round is the full re-review, and nothing was carried across the pointer move
+    expect(second.plan.carried).toEqual([]);
+    expect(second.outcomes).toEqual(full2);
+    // and why: the producer refused the citation at both heads, so nothing was recorded to be carried
+    expect(first.candidates[0].hashError).toMatch(/submodule lib\/gl\.js/);
+    expect(first.recorded.skipped).toEqual([{ id: 'F-gl', reason: 'no-hash' }]);
   });
 
   test.each([

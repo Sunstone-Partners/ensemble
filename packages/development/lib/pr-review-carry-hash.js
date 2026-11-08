@@ -28,8 +28,8 @@
  * FAIL CLOSED: a citation that cannot be hashed gets NO hunkHash and NO depHashes plus `hashError` (planCarry reads a missing
  * hash as 'hash-missing' => re-verify). Causes: file absent at head, no/invalid line or range (outside the file), the cited
  * file or a closure member holds a computed specifier or is a symlink or names a specifier that passes through a symlinked
- * directory, the tracked closure exceeds MAX_CLOSURE (200) files, the cited file is source of an unanalyzable type, a
- * git read or scan (the dependents' `git grep`) fails, a
+ * directory or a submodule, the cited path itself passes through one, the tracked closure exceeds MAX_CLOSURE (200) files,
+ * the cited file is source of an unanalyzable type, a git read or scan (the dependents' `git grep`) fails, a
  * path git cannot hand to `cat-file --batch` (contains a newline). Nothing is ever defaulted.
  *
  * HONEST LIMITS: only what the cited file DEPENDS ON is hashed. Its DEPENDENTS are LISTED, not hashed: `dependents` holds the
@@ -39,10 +39,11 @@
  * computed specifier whose text names the cited file. `planCarry` re-verifies a verdict when any of them is in the delta.
  * Direct dependents only, not transitive callers. Bare npm packages (`require('lodash')`) are not hashed: a lockfile change
  * does not invalidate. Symlinks (git mode 120000) are refused, cited or in the closure: git stores the link text, so hashing
- * the blob would not see the target change. So is a specifier whose normalized path passes through a symlinked DIRECTORY (any
- * proper-prefix directory is a symlink entry), in the cited file or in any closure member: git lists the link as one entry and
- * nothing under it, so the specifier resolves to nothing and no hash would see its target move. Resolution is the graph's
- * file-level over-approximation. A
+ * the blob would not see the target change. So is a specifier whose normalized path passes through a symlinked DIRECTORY or a
+ * SUBMODULE (any proper-prefix directory is a symlink entry, mode 120000, or a gitlink entry, mode 160000), in the cited file or
+ * in any closure member, and so is a cited path that does: git lists the link or the submodule as one entry and nothing under
+ * it, so the specifier resolves to nothing and no hash would see its target move (the link text, the submodule's pointer).
+ * Resolution is the graph's file-level over-approximation. A
  * relative specifier that resolves to no tracked file is recorded as an ABSENT dependency: key = its normalized joined path,
  * value = sha256('absent'). A string that merely looks like a path is therefore harmless, and a dangling import is
  * invalidated when the file appears (the key set and hashes change). Absent entries are never read and do not count toward
@@ -63,6 +64,9 @@ const { isObjectId } = require('./pr-review-scope');
 const { parseLsTreeZ, scanReferenceLines, scanNameLines } = require('./pr-review-prepare');
 
 const SYMLINK_MODE = '120000';
+const GITLINK_MODE = '160000';
+/** Entries git lists as ONE entry with nothing under it although they stand for a directory, and what an error calls each. */
+const OPAQUE_DIRECTORY = new Map([[SYMLINK_MODE, 'symlinked directory'], [GITLINK_MODE, 'submodule']]);
 
 const CONTEXT_LINES = 3;
 const MAX_CLOSURE = 200;
@@ -159,15 +163,17 @@ function hunkOf(text, citation) {
 }
 
 /**
- * The first proper-prefix directory of the normalized path `normalized` that git stores as a symlink (mode 120000), or null.
- * Git lists such a directory as ONE entry holding its link text and nothing under it, so a specifier through it resolves to
- * nothing and no hash can see its target move (`./vendor.js/pkg` with `lib/vendor.js` -> real-a, retargeted to real-b).
+ * The first proper-prefix directory of the normalized path `normalized` that git lists as ONE entry with nothing under it, a
+ * symlink (mode 120000) or a submodule (a gitlink, mode 160000): `symlinked directory <path>` or `submodule <path>`; null
+ * when there is none. A specifier through it resolves to nothing, so no hash can see its target move (`./vendor.js/pkg` with
+ * `lib/vendor.js` -> real-a, retargeted to real-b; `./gl.js/x` with `lib/gl.js` a submodule whose pointer moved).
  */
-function symlinkedAncestor(modes, normalized) {
+function opaqueAncestor(modes, normalized) {
   const parts = normalized.split('/');
   for (let i = 1; i < parts.length; i += 1) {
     const prefix = parts.slice(0, i).join('/');
-    if (modes.get(prefix) === SYMLINK_MODE) return prefix;
+    const what = OPAQUE_DIRECTORY.get(modes.get(prefix));
+    if (what !== undefined) return `${what} ${prefix}`;
   }
   return null;
 }
@@ -175,7 +181,7 @@ function symlinkedAncestor(modes, normalized) {
 /**
  * What `file` references: `tracked` (the files it resolves to) and `absent` (the normalized paths of relative specifiers
  * that resolve to no tracked file). A specifier climbing above the repository root is dropped. Throws a HashError on a
- * computed specifier and on a specifier that passes through a symlinked directory.
+ * computed specifier and on a specifier that passes through a symlinked directory or a submodule.
  */
 function dependenciesOf(ctx, file) {
   const text = ctx.blobs.get(file).toString('utf8');
@@ -187,8 +193,8 @@ function dependenciesOf(ctx, file) {
     for (const spec of references.specifiers) {
       const normalized = joinRelative(spec.startsWith('/') ? '' : dirname(file), spec);
       if (normalized === null) continue;
-      const linked = symlinkedAncestor(ctx.modes, normalized);
-      if (linked !== null) throw new HashError(`${file} names '${spec}', which passes through the symlinked directory ${linked}`);
+      const through = opaqueAncestor(ctx.modes, normalized);
+      if (through !== null) throw new HashError(`${file} names '${spec}', which passes through the ${through}`);
       const target = resolveTracked(normalized, ctx.tracked);
       if (target === null) absent.add(normalized);
       else if (target !== file) found.add(target);
@@ -272,6 +278,9 @@ function hashOne(ctx, citation) {
     throw new HashError('file is not a normalized repository-relative path');
   }
   if (ctx.modes.get(file) === SYMLINK_MODE) throw new HashError(`${file} is a symlink`);
+  // git lists nothing under a symlinked directory or a submodule, so a path behind one reads as missing for want of a listing
+  const through = opaqueAncestor(ctx.modes, file);
+  if (through !== null) throw new HashError(`${file} passes through the ${through}`);
   loadBlobs(ctx, [file]);
   const blob = ctx.blobs.get(file);
   if (blob === null || !ctx.tracked.has(file)) throw new HashError(`${file} does not exist at the head`);

@@ -584,6 +584,12 @@ describe('a specifier that passes through a symlinked DIRECTORY is refused (an a
     NO_FIELDS(out);
   });
 
+  test('a CITED path behind the link says it passes through the link: the file does exist, through it, and "does not exist at the head" would misdirect the reader', () => {
+    const out = one(repo, head, { file: 'lib/vendor.js/pkg.js', line: 1 });
+    expect(out.hashError).toBe('lib/vendor.js/pkg.js passes through the symlinked directory lib/vendor.js');
+    NO_FIELDS(out);
+  });
+
   test('control: a specifier through an ORDINARY directory still hashes, resolved or (when nothing is there) absent', () => {
     const ok = one(repo, head, { file: 'lib/ctl.js', line: 3 });
     expect(ok.hashError).toBeUndefined();
@@ -600,6 +606,70 @@ describe('a specifier that passes through a symlinked DIRECTORY is refused (an a
     expect(git(repo.root, ['diff', '--name-only', head, next])).toBe('lib/vendor.js');
     expect(one(repo, next, { file: 'lib/core9.js', line: 3 }).hashError).toMatch(/symlinked directory/);
     expect(one(repo, head, { file: 'lib/core9.js', line: 3 }).hashError).toMatch(/symlinked directory/);
+  });
+});
+
+describe('a specifier that passes through a SUBMODULE is refused (an ancestor with git mode 160000)', () => {
+  const POINTER_A = 'a'.repeat(40);
+  const POINTER_B = 'b'.repeat(40);
+  const repo = makeRepo({
+    'lib/plain/x.js': 'module.exports = 1;\n',
+    // cited files, each reading through another kind of path
+    'lib/core10.js': "const x = require('./gl.js/x');\n" + lines(6),
+    'lib/deep10.js': "const x = require('./gl.js/sub/x');\n" + lines(6),
+    'lib/bare10.js': "const x = require('./gldir/x');\n" + lines(6),
+    'lib/via-member10.js': "require('./member10');\n" + lines(6),
+    'lib/member10.js': "require('./gl.js/x');\n",
+    'lib/ctl10.js': "const x = require('./plain/x');\n" + lines(6),
+  });
+  // two submodules, one named like a module (a name the delta planner sizes), one named like a directory; committed by hand
+  // because `commit()` stages with `add -A`, which would drop an index entry whose path is not in the working tree
+  const pointAt = (sha) => {
+    for (const submodule of ['lib/gl.js', 'lib/gldir']) git(repo.root, ['update-index', '--add', '--cacheinfo', `160000,${sha},${submodule}`]);
+    git(repo.root, ['commit', '-q', '--allow-empty', '-m', 'pointer']);
+    return git(repo.root, ['rev-parse', 'HEAD']);
+  };
+  const head = pointAt(POINTER_A);
+
+  test('git lists the submodule as ONE commit entry (mode 160000) and nothing under it: no hash can see where it points', () => {
+    expect(git(repo.root, ['ls-tree', '-r', head, '--', 'lib/gl.js'])).toMatch(/^160000 commit /);
+    const names = git(repo.root, ['ls-tree', '-r', '--name-only', head]).split('\n');
+    expect(names.filter((name) => name.startsWith('lib/gl.js/'))).toEqual([]);
+  });
+
+  test('an import through a submodule named like a module (./gl.js/x) is hashError and carries no hash fields', () => {
+    const out = one(repo, head, { file: 'lib/core10.js', line: 3 });
+    expect(out.hashError).toMatch(/passes through the submodule lib\/gl\.js/);
+    NO_FIELDS(out);
+  });
+
+  test.each([
+    ['an ancestor two levels up (./gl.js/sub/x)', 'lib/deep10.js', /submodule lib\/gl\.js/],
+    ['a submodule that does not look like a file (./gldir/x)', 'lib/bare10.js', /submodule lib\/gldir/],
+    ['a specifier of a closure MEMBER, not of the cited file', 'lib/via-member10.js', /submodule lib\/gl\.js/],
+  ])('%s is refused too', (_name, file, pattern) => {
+    const out = one(repo, head, { file, line: 3 });
+    expect(out.hashError).toMatch(pattern);
+    NO_FIELDS(out);
+  });
+
+  test('control: a specifier through an ORDINARY directory still hashes next to the submodules', () => {
+    const ok = one(repo, head, { file: 'lib/ctl10.js', line: 3 });
+    expect(ok.hashError).toBeUndefined();
+    expect(Object.keys(ok.depHashes)).toEqual(['lib/plain/x.js']);
+  });
+
+  test('a CITED path behind the submodule says it passes through it, not that the file does not exist', () => {
+    const out = one(repo, head, { file: 'lib/gl.js/x.js', line: 1 });
+    expect(out.hashError).toBe('lib/gl.js/x.js passes through the submodule lib/gl.js');
+    NO_FIELDS(out);
+  });
+
+  test('moving the pointer can no longer leave a stale hash behind: the citation fails closed at both heads', () => {
+    const next = pointAt(POINTER_B);
+    expect(git(repo.root, ['diff', '--name-only', head, next]).split('\n')).toEqual(['lib/gl.js', 'lib/gldir']);
+    expect(one(repo, next, { file: 'lib/core10.js', line: 3 }).hashError).toMatch(/submodule/);
+    expect(one(repo, head, { file: 'lib/core10.js', line: 3 }).hashError).toMatch(/submodule/);
   });
 });
 
