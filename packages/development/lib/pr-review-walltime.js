@@ -253,7 +253,7 @@ function countStats(values, withoutFigure) {
   return {
     prs: values.length,
     prsWithoutFigure: withoutFigure,
-    total: values.reduce((sum, value) => sum + value, 0),
+    total: values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0),
     ...distribution(values),
   };
 }
@@ -388,7 +388,7 @@ function carryEvidence(input) {
  * One row from a `pr-review-cli timing` answer. The wall time is the answer's `wall` (the orchestrator window); a
  * `wall` it could not state is `null` with its reason. `chains` is the number of rounds the trace ran (a trace with
  * none is not a review and is refused). `gate_runs` means what the baseline's does, local-CI gate runs, and a review
- * trace never records those (local-ci keeps its own record), so a row built from one states `null` with that reason, never
+ * trace never records those (the only record of one is the host's commit status), so a row built from one states `null` with that reason, never
  * a guess; the `review.gate` spans it does record are the runner's merge-gate evaluations (one per collect, again after an
  * adjudication), a different thing, counted separately in `review_gate_spans`.
  *
@@ -496,8 +496,13 @@ function gradeStratum(baseline, current) {
 /** The two per-PR counts of a tier, side by side. Reported, never graded: the plan sets no target for them. */
 function compareCount(key, baseline, current) {
   const reasons = [];
-  if (baseline[key].prs < MINIMUMS.prsPerStratum) reasons.push(`baseline-too-few-prs: ${baseline[key].prs} of the ${MINIMUMS.prsPerStratum} needed`);
-  if (current[key].prs < MINIMUMS.prsPerStratum) reasons.push(`current-too-few-prs: ${current[key].prs} of the ${MINIMUMS.prsPerStratum} needed`);
+  for (const [side, stats] of [['baseline', baseline[key]], ['current', current[key]]]) {
+    if (stats.prs >= MINIMUMS.prsPerStratum) continue;
+    // PRs exist but none states the figure: say that, not that there are too few PRs (a count of 0 PRs is not 0 runs).
+    reasons.push(stats.prs === 0 && stats.prsWithoutFigure > 0
+      ? `${side}-no-figure: none of the ${stats.prsWithoutFigure} PR(s) of the tier states it (a row without it counts for nothing)`
+      : `${side}-too-few-prs: ${stats.prs} of the ${MINIMUMS.prsPerStratum} needed`);
+  }
   const compared = reasons.length === 0;
   return {
     status: compared ? 'compared' : 'unknown',
@@ -541,7 +546,16 @@ function compareWalltime(input) {
     for (const run of checked[side].runs) if (isCounted(run)) ids.add(stratumId(run.tier, run.round));
   }
   const baseline = summarize(checked.baseline.runs, [...ids]);
-  const current = summarize(checked.current.runs, [...ids]);
+  // A current gate run count is shown only where the row's trace confirms it. A review trace records no local-CI gate starts, so
+  // a count it does not confirm (a row written when `walltime row` counted its review.gate spans as gate runs, or one nobody
+  // checked) is a number of another meaning and is left out of the per-tier and per-PR gate-run comparison.
+  const confirmed = (run) => isObject(input.traceChecks[run.id]) && input.traceChecks[run.id].ok === true;
+  const currentRuns = input.traceChecks === undefined
+    ? checked.current.runs
+    : checked.current.runs.map((run) => (run.gate_runs === null || confirmed(run)
+      ? run
+      : { ...run, gate_runs: null, gate_runs_reason: 'the row states a gate run count its trace does not confirm (a review trace records no local-CI gate starts), so it is not compared' }));
+  const current = summarize(currentRuns, [...ids]);
 
   const strata = baseline.strata.map((entry, index) => gradeStratum(entry, current.strata[index]));
   const counts = baseline.tiers
@@ -594,6 +608,12 @@ function compareWalltime(input) {
   }
 
   const warnings = [];
+  // A failed trace check is always said, whatever the claim is: it means a row's figures are not what its trace holds.
+  if (input.traceChecks !== undefined) {
+    for (const [id, check] of Object.entries(input.traceChecks)) {
+      if (!(isObject(check) && check.ok === true)) warnings.push(`trace-check-failed: row '${id}' is not what its trace says${isObject(check) && isText(check.reason) ? ` (${check.reason})` : ''}`);
+    }
+  }
   const onBaseline = new Set(baseline.perPr.map((entry) => entry.pr));
   const both = current.perPr.map((entry) => entry.pr).filter((pr) => onBaseline.has(pr));
   if (both.length > 0) warnings.push(`pr-on-both-sides: ${both.join(', ')} appear in the baseline and in the current cohort`);

@@ -131,13 +131,47 @@ function headFile(root, rel, io = fs) {
   return countLines(io, current);
 }
 
-/** The real filesystem deps: private directories, atomic writes (a temp file in the same directory, then a rename). */
-function realFs() {
+/**
+ * The run area of a repository: every run directory lives under it. A symlink anywhere from the area down (a run directory,
+ * `run.json`, `results`, a dangling link) is refused: a link could aim a read or a write outside the area, and nothing in a
+ * run is ever a link. `target` is a path inside `area`; one outside it is not this guard's concern (`null`), a link on the way
+ * throws. Nothing is resolved or followed: each entry is `lstat`ed, so a dangling link is seen too.
+ *
+ * @param {string} area absolute run area
+ * @param {string} target a path
+ * @returns {null} (throws for a link)
+ */
+function refuseLinks(area, target) {
+  const rel = path.relative(area, path.resolve(target));
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  let current = area;
+  for (const name of ['', ...(rel === '' ? [] : rel.split(path.sep))]) {
+    current = name === '' ? area : path.join(current, name);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return null;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) throw new Error(`${current} is a symbolic link: the run area never follows one`);
+  }
+  return null;
+}
+
+/**
+ * The real filesystem deps: private directories, atomic writes (a temp file in the same directory, then a rename). With a
+ * `runArea`, every read, directory and write inside it first refuses a symlink (`refuseLinks`).
+ */
+function realFs({ runArea } = {}) {
+  const guard = (file) => (runArea === undefined ? null : refuseLinks(runArea, file));
   return {
     mkdirp(dir, mode) {
+      guard(dir);
       fs.mkdirSync(dir, { recursive: true, mode });
     },
     writeAtomic(file, text, mode) {
+      guard(file);
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
       const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
       try {
@@ -155,6 +189,7 @@ function realFs() {
       }
     },
     readText(file) {
+      guard(file);
       try {
         return fs.readFileSync(file, 'utf8');
       } catch (error) {
@@ -178,11 +213,12 @@ function buildDeps({ repo, pr, repoRoot }, injected = {}) {
   const now = injected.now || (() => Date.now());
   const base = makeDeps({ repo, pr, repoRoot, run, ...(injected.spawnProcess ? { spawnProcess: injected.spawnProcess } : {}), ...(injected.now ? { now: () => new Date(injected.now()) } : {}) });
   const notices = [];
+  const runArea = path.join(repoRoot, RUN_SUBDIR);
   return {
     notices,
     now,
     redact,
-    fs: realFs(),
+    fs: realFs({ runArea }),
     readPr: () => base.readPr(),
     readReviews: () => base.readReviews(),
     readProtection: (branch) => base.readProtection(branch),
@@ -190,7 +226,10 @@ function buildDeps({ repo, pr, repoRoot }, injected = {}) {
     fetchRefs: ({ headSha, baseRefName }) => base.prepareGate({ headSha, baseRefName }),
     precheck: ({ dryRun }) => runPrecheck({ dryRun }, base),
     prepareReview: injected.prepareReview || ((options) => prepareReview(options)),
-    collectResults: injected.collectResults || ((input) => collectResults(input)),
+    collectResults: injected.collectResults || ((input) => {
+      refuseLinks(runArea, input.dir);
+      return collectResults(input);
+    }),
     renderBrief: injected.renderBrief || ((role, vars) => renderBriefFromFiles(role, vars)),
     writeState: injected.writeState || ((target, state) => writeState(target, state, { cwd: repoRoot })),
     makeTracer: (traceRunId) => (injected.createTracer || createTracer)({ runId: traceRunId, projectRoot: repoRoot, onUnavailable: (reason) => notices.push(`trace unavailable: ${reason}`) }),
@@ -223,13 +262,12 @@ function readStdinJson(fd = 0) {
 /** The repo and pr a collect needs for its host reads come from the run itself; the payload carries neither. */
 function peekRun(payload) {
   // Nothing is read for a runId or repoRoot collect would refuse (traversal, an absolute path, empty, over-long): the shape
-  // is checked here first, and the file must really live inside the run directory (a symlinked run directory or run.json that
-  // points elsewhere is not followed out of it). Anything else is `{}`: collect then answers its own invalid-input / not-found.
+  // is checked first, and no symlink from the run area down is followed (`refuseLinks`, as every later read and write of the
+  // run is). Anything else is `{}`: collect then answers its own invalid-input / run-not-found.
   if (!payload || typeof payload.repoRoot !== 'string' || !path.isAbsolute(payload.repoRoot) || !isValidRunId(payload.runId)) return {};
   try {
-    const base = fs.realpathSync(path.join(payload.repoRoot, RUN_SUBDIR));
-    const file = fs.realpathSync(path.join(base, payload.runId, 'run.json'));
-    if (file !== path.join(base, payload.runId, 'run.json')) return {};
+    const file = path.join(payload.repoRoot, RUN_SUBDIR, payload.runId, 'run.json');
+    refuseLinks(path.join(payload.repoRoot, RUN_SUBDIR), file);
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     return { repo: parsed.repo, pr: parsed.pr };
   } catch (_error) {

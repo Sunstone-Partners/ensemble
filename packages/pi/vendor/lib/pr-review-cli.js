@@ -940,13 +940,13 @@ function checkRowAgainstTrace(run, cwd) {
     : { ok: false, reason: differs.map((key) => `${key} is ${JSON.stringify(run[key])}, its trace says ${JSON.stringify(rebuilt.row[key])}`).join('; ') };
 }
 
-/** `compare`: the module's grade, plus the trace check of every counted real current row that has a wall time. */
+/** `compare`: the module's grade, plus the trace check of every real current row. */
 function walltimeCompare(payload) {
   const cwd = payload.cwd || process.cwd();
   const runs = isObject(payload.current) && Array.isArray(payload.current.runs) ? payload.current.runs : [];
   const traceChecks = {};
   for (const run of runs) {
-    if (isObject(run) && typeof run.id === 'string' && run.origin === 'real' && run.wall_min !== null) traceChecks[run.id] = checkRowAgainstTrace(run, cwd);
+    if (isObject(run) && typeof run.id === 'string' && run.origin === 'real') traceChecks[run.id] = checkRowAgainstTrace(run, cwd);
   }
   return compareWalltime({ baseline: payload.baseline, current: payload.current, traceChecks });
 }

@@ -310,7 +310,8 @@ describe('the statistics: medians and nearest-rank p75 over real runs with a wal
   test('medium and high are always listed per tier, with null (not zero) medians when empty', () => {
     const tiers = computeWalltimeCohort(doc([])).tiers;
     expect(tiers.map((entry) => entry.tier)).toEqual(['medium', 'high']);
-    expect(tiers[0].gateRunsPerPr).toEqual({ prs: 0, prsWithoutFigure: 0, total: 0, median: null, p75: null });
+    // no PR has a count: the total is null, not a 0 that would read as zero gate runs
+    expect(tiers[0].gateRunsPerPr).toEqual({ prs: 0, prsWithoutFigure: 0, total: null, median: null, p75: null });
   });
 
   test('a cohort the schema refuses has no statistics', () => {
@@ -900,7 +901,7 @@ describe('trace checks: a met needs every counted current row of a required stra
     expect(result.fiveX.met).toBe(false);
     expect(result.fiveX.reasons).toEqual(["trace: row 'high-first-501' was not re-derived from its trace (wall_min is 10, its trace says 19.661)"]);
     expect(result.fiveX.attestation.rowsWithoutTraceCheck).toEqual(['high-first-501']);
-    expect(result.warnings).toEqual([]);
+    expect(result.warnings).toEqual(["trace-check-failed: row 'high-first-501' is not what its trace says (wall_min is 10, its trace says 19.661)"]);
   });
 
   test('a row with no check at all is not checked', () => {
