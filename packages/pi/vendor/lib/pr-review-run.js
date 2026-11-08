@@ -395,7 +395,7 @@ function planRunSlices(run, numstat) {
     });
   }
   const sizing = {
-    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run },
+    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run, fixedCostFloorMinutes: SZ.MIN_AGENT_MINUTES },
     limits: { sliceMaxFiles: resolved.maxFiles, sliceTargetLines: resolved.targetLines, slicesAllowed: maxSlices, slicesWanted: wanted.slices.length },
     work: { files: paths.length, lines: plan.totalLines },
     slices,
@@ -453,6 +453,10 @@ function buildReviewAgents(run, deps, ctx) {
       const message = `${label}: reading ${work.files} paths and ${work.lines} changed lines is modelled at ${answer.sizing.modeledMinutes} minutes, over the ${DEADLINE_MINUTES_MAX}-minute maximum, so its deadline is capped at ${DEADLINE_MINUTES_MAX} minutes; if it does not arrive in time it is reported not reviewed`;
       if (!run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-capped', message });
     }
+    if (answer.sizing !== undefined && answer.sizing.overridesPolicy) {
+      const message = answer.warnings.find((warning) => warning.includes('fixed-cost floor'));
+      if (message !== undefined && !run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-floor-over-policy', message });
+    }
     return answer;
   };
   run.slices.forEach((slice, sliceIndex) => {
@@ -504,6 +508,7 @@ function dispatchWave(run, wave, now, deps, tracer) {
     agent.deadlineAt = deadline.deadlineAt;
     agent.deadlineAtIso = deadline.deadlineAtIso;
     agent.deadlineMinutes = deadline.minutes;
+    if (deadline.sizing !== undefined && deadline.sizing.floored === true) agent.deadlineFloored = true;
     agent.prompt = S.agentPrompt(agent);
     const stage = stageOfAgent(agent);
     agent.spanId = tracer.start(stage, STAGE_KINDS[stage], { agent: agent.name, role: agent.role, round: run.round, wave: wave.wave, ...(wave.refill === true ? { refill: true, cap: run.maxConcurrentAgents, running: wave.stillRunning.length } : {}) });
@@ -539,6 +544,7 @@ function manifestOf(run, wave) {
       deadlineAt: a.deadlineAt,
       deadlineAtIso: a.deadlineAtIso,
       ...(a.deadlineMinutes === undefined ? {} : { deadlineMinutes: a.deadlineMinutes }),
+      ...(a.deadlineFloored === true ? { deadlineFloored: true } : {}),
       ...(a.work === undefined ? {} : { work: a.work }),
       ...(a.sliceId !== undefined && a.role === 'reviewer' ? { sliceId: a.sliceId, paths: a.paths } : {}),
       ...(a.candidateIds !== undefined ? { candidateIds: a.candidateIds } : {}),

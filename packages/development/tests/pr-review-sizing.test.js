@@ -540,13 +540,76 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(unreleased).toContain('reader-not-planned');
   });
 
-  test('the sfpb CHANGELOG entry is in Unreleased and says the model is one run and nothing is relaxed (a later entry, kata d9sy and 630v, sits above it)', () => {
+  test('the CHANGELOG entry is in Unreleased and says the model is one run and nothing is relaxed', () => {
+    // the newest entry goes at the top of the list (kata k48x), so this entry is found by its own opening words, not by position
     const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
-    const start = unreleased.indexOf('- **packages/development:** `review-run` sizes its slices and deadlines to what there is to read (kata `sfpb`');
-    expect(start).toBeGreaterThan(-1);
-    const first = unreleased.slice(start);
+    const at = unreleased.indexOf('- **packages/development:** `review-run` sizes its slices and deadlines to what there is to read (kata `sfpb`');
+    expect(at).toBeGreaterThan(-1);
+    const first = unreleased.slice(at);
     const entry = first.slice(0, first.indexOf('- **packages/development:**', 10));
     expect(entry).toMatch(/Nothing is relaxed/);
     expect(entry).toMatch(/one observed run/);
+  });
+});
+
+describe('the fixed cost of an agent: a small slice is not given a deadline its own size says (kata d9sy)', () => {
+  const SMALL_4_PATHS = { files: 4, lines: 280 }; // the slice whose reviewer did not arrive inside 15 minutes (run pr277-first-q3a9)
+  const slowestFinished = Math.max(...OBSERVED_HI_EFFORT.finishedReviewerMinutes);
+  const REAL = { files: OBSERVED.files, lines: OBSERVED.changedLines };
+  const ask = (role, work, extra = {}) => reviewDeadlines({ role, now: T0, work, ...extra });
+
+  test('the defect: the old model gave the 4-path, 280-line slice 15 minutes, and a reviewer measured at 12.8, 14.6 and >15 needed them all', () => {
+    const answer = reviewDeadlines({ role: 'reviewer', now: T0, work: SMALL_4_PATHS });
+    expect(answer.sizing.modeledMinutes).toBe(8); // the model alone: 2 x 3.7 minutes, so the base of 15 decided
+    expect(answer.minutes).toBe(MIN_AGENT_MINUTES);
+    expect(answer.minutes).toBeGreaterThan(Math.max(...OBSERVED_HI_EFFORT.expiredReviewerMinutes) + 5);
+    expect(answer.sizing).toMatchObject({ floored: true, floorMinutes: MIN_AGENT_MINUTES, raised: true });
+    expect(answer.source).toBe('size');
+  });
+
+  test('the floor is derived from the measured reviewers, not typed: the slowest finished one times FLOOR_FACTOR, rounded up', () => {
+    expect(slowestFinished).toBe(14.58);
+    expect(MIN_AGENT_MINUTES).toBe(Math.ceil(slowestFinished * FLOOR_FACTOR));
+    expect(MIN_AGENT_MINUTES).toBe(22);
+    expect(FLOOR_FACTOR).toBeGreaterThanOrEqual(1.5);
+    for (const minutes of OBSERVED_HI_EFFORT.finishedReviewerMinutes) expect(MIN_AGENT_MINUTES).toBeGreaterThan(minutes);
+    // every measured reviewer of a small slice, finished or not, was inside the slice limits: size does not explain the spread
+    expect(Math.max(...OBSERVED_HI_EFFORT.finishedReviewerMinutes)).toBeGreaterThan(2 * Math.min(...OBSERVED_HI_EFFORT.finishedReviewerMinutes));
+  });
+
+  test('the floor binds the sized roles and nothing else: a verifier keeps its 5 minutes and a large read keeps its modelled deadline', () => {
+    expect(reviewDeadlines({ role: 'verifier', now: T0, work: SMALL_4_PATHS }).minutes).toBe(DEFAULT_DEADLINE_MINUTES.verifier);
+    expect(reviewDeadlines({ role: 'verifier', now: T0 }).minutes).toBe(DEFAULT_DEADLINE_MINUTES.verifier);
+    expect(reviewDeadlines({ role: 'security', now: T0, work: SMALL_4_PATHS }).minutes).toBe(MIN_AGENT_MINUTES);
+    expect(ask('security', REAL).minutes).toBe(36); // the model's own deadline is above the floor: unchanged
+    expect(reviewDeadlines({ role: 'reviewer', now: T0 }).minutes).toBe(DEFAULT_DEADLINE_MINUTES.reviewer); // no work: the base alone, as ever
+  });
+
+  test('a policy base above the floor is kept, one below it is raised to it, and the 60-minute maximum still caps', () => {
+    expect(ask('reviewer', SMALL_4_PATHS, { policy: load({ deadlineMinutes: { reviewer: 40 } }).policy })).toMatchObject({ minutes: 40, source: 'policy' });
+    expect(ask('reviewer', SMALL_4_PATHS, { policy: load({ deadlineMinutes: { reviewer: 10 } }).policy }).minutes).toBe(MIN_AGENT_MINUTES);
+    expect(sizing.sizedMinutes({ base: 15, work: SMALL_4_PATHS, headroom: 2, maximum: 20 }).minutes).toBe(20);
+  });
+
+  test('a policy base the floor overrides is NAMED, with the policy value and the floor, and recorded; the default and a larger value are not (independent review round 1)', () => {
+    const over = ask('reviewer', SMALL_4_PATHS, { policy: load({ deadlineMinutes: { reviewer: 10 } }).policy });
+    expect(over.minutes).toBe(MIN_AGENT_MINUTES);
+    expect(over.sizing).toMatchObject({ floored: true, floorMinutes: MIN_AGENT_MINUTES, overridesPolicy: true });
+    expect(over.warnings).toEqual([`policy deadlineMinutes.reviewer (10) is below the ${MIN_AGENT_MINUTES}-minute fixed-cost floor of a reviewer or security agent (kata d9sy); the deadline is ${MIN_AGENT_MINUTES} minutes`]);
+    expect(ask('security', SMALL_4_PATHS, { policy: load({ deadlineMinutes: { security: 3 } }).policy }).warnings.join()).toContain('deadlineMinutes.security (3)');
+    // the default (a loaded policy holds every key, so 15 cannot be told from unset) and values at or above the floor say nothing
+    for (const policy of [load({}).policy, load({ deadlineMinutes: { reviewer: MIN_AGENT_MINUTES } }).policy, load({ deadlineMinutes: { reviewer: 40 } }).policy]) {
+      const quiet = ask('reviewer', SMALL_4_PATHS, { policy });
+      expect(quiet.warnings).toEqual([]);
+      expect(quiet.sizing.overridesPolicy).toBe(false);
+    }
+    // work that needs more than the floor is the model's doing, not the floor's: nothing to name
+    expect(ask('security', REAL, { policy: load({ deadlineMinutes: { security: 5 } }).policy }).warnings).toEqual([]);
+  });
+
+  test('the floor relaxes no rule: the deadline is the floor and no more, and the 60-minute maximum stays above it', () => {
+    const answer = reviewDeadlines({ role: 'reviewer', now: T0, work: SMALL_4_PATHS });
+    expect(answer.deadlineAt).toBe(T0 + MIN_AGENT_MINUTES * 60 * 1000);
+    expect(answer.deadlineAt).toBeLessThan(T0 + DEADLINE_MINUTES_MAX * 60 * 1000);
   });
 });

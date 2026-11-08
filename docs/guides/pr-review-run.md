@@ -318,7 +318,9 @@ headroom, the 60-minute maximum and the run it derives from), `limits` (`sliceMa
 `slicesAllowed` by the cap, `slicesWanted` by the limits), `work` (the whole PR), `slices[]` (`id`, `files`, `lines`,
 `overLimit`, `diff`) and `warnings[]` (`{code, message}`): `slice-over-limit` (the cap holds fewer slices than the limits ask
 for, so a slice is bigger than they say; the message names the `maxConcurrentAgents` that would hold them), `deadline-capped`
-(the modelled need is over 60 minutes, so the agent is given 60 and may not finish) and `invalid-<key>` (a policy value the
+(the modelled need is over 60 minutes, so the agent is given 60 and may not finish), `deadline-floor-over-policy` (a policy
+`deadlineMinutes` below the 22-minute floor was overridden; the message names the value and the floor, `model.fixedCostFloorMinutes`
+records the floor and an agent whose deadline the floor decided carries `deadlineFloored: true`) and `invalid-<key>` (a policy value the
 facts held unreadably; the default applied). Each agent in the manifest carries its `deadlineMinutes` and its `work`.
 
 For the PR the numbers came from, the plan is three slices of 8, 3 and 8 paths (454, 556 and 440 changed lines), six

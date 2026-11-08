@@ -156,33 +156,38 @@ const HEADROOM_MAX = 10;
 /**
  * THE FIXED COST OF AN AGENT (kata d9sy). The size model above is proportional through the origin: it has no cost for starting
  * an agent, and it was derived from agents at the default effort. The first real measurements at effort `hi` (kata q3a9; each
- * line is `run.json`: dispatch to the arrival of the result file) show that a reviewer's time on a SMALL slice is NOT its size:
+ * line is `run.json`: dispatch to the arrival of the result file) show that a reviewer's time on a SMALL slice does not follow its size:
  *
  *   run pr207-hi-q3c   8 paths  77 lines   14.58 min and 9.12 min   (two lenses on one slice)
  *                      6 paths 327 lines   10.62 and 9.39
  *                      4 paths 323 lines    8.24 and 10.62
  *                     18 paths 727 lines   13.87 (the whole-range reader)
  *   run pr277-first    4 paths 280 lines   12.77, and one reviewer NOT arrived at its 15 min deadline (stopped; so >= 15.0)
- *   run pr277-re       4 paths 285 lines    7.17 and 7.27 (the same four paths a re-review later)
+ *   run pr277-re       4 paths 285 lines    7.17 and 7.27 (two other reviewers, one re-review of the same four paths)
  *
- * A 77-line slice took as long as a 727-line one, and the same four paths took 7.2 and more than 15 minutes in two runs: the time
- * is a per-agent cost with a wide spread, not a rate. Nothing ELSE was slow: the dispatch manifest and the first agent start were
- * 11 ms apart (so no wait for a slot was counted against the deadline: one wave of three agents under a cap of 8), and the
- * deadline clock starts at the dispatch. The model's estimate for the 4-path slice is 3.7 minutes, doubled 8, so the 15-minute base
- * decided, with 0.4 minutes of margin over the slowest finished reviewer (14.58) and none over the one that did not arrive.
+ * A 77-line slice took as long as a 727-line one, and the same four paths took 12.8 and more than 15 minutes in one run and 7.2
+ * and 7.3 in a re-review: a per-agent cost with a wide spread, not a rate. What the record does NOT show: the lost reviewer has no
+ * arrival and no last message, so a slow agent cannot be told from a hung one. The floor helps the slow case only; a hung agent
+ * now holds the run 22 minutes instead of 15 and its slice is still reported not reviewed. What it does show is no queueing: the
+ * orchestrator's dispatch logs (run2 and run3 `dispatch.log.jsonl`) put the spawn call 10 to 11 ms after the manifest, in one wave
+ * of three agents under a cap of 8, and the deadline clock starts at the dispatch (the agent's own start is not recorded). The
+ * model's estimate for the 4-path slice is 3.7 minutes, doubled 8, so the 15-minute base decided, with 0.4 minutes of margin over the
+ * slowest finished reviewer (14.58) and none over the one that did not arrive.
  *
  * So a sized agent's deadline has a floor: the slowest reviewer that FINISHED a small slice at effort `hi`, times FLOOR_FACTOR.
  * FLOOR_FACTOR (1.5) is a JUDGEMENT like DEFAULT_HEADROOM: with 10 reviewers measured it is half again the slowest finished and
  * half again the base, and the one that did not arrive needed over 15. It is not a guarantee: a reviewer slower than 22 minutes is
  * still `expired`, its slice still reported not reviewed, and nothing here relaxes that. The floor applies whatever a policy's
- * `deadlineMinutes` says (a policy raises a deadline above it, it cannot lower it below what was measured); the slice limits and
- * the headroom are unchanged, because slicing finer does not shorten a fixed cost.
+ * `deadlineMinutes` says (a policy raises a deadline above it, it cannot lower it below what was measured, and a value of the policy
+ * below it is named in the run's sizing warnings); the slice limits and the headroom are unchanged, because slicing finer does not
+ * shorten a fixed cost. It was measured at effort `hi`; the runner records no effort and applies it at whatever effort the
+ * dispatcher uses.
  */
 const OBSERVED_HI_EFFORT = deepFreeze({
   run: 'q3a9',
   /** Finished reviewers of a slice inside the slice limits, in minutes from dispatch to result. */
   finishedReviewerMinutes: [14.58, 9.12, 10.62, 9.39, 8.24, 10.62, 12.77, 7.17, 7.27],
-  /** Reviewers that had not arrived at their deadline: their time is at least the deadline they were given. */
+  /** Reviewers that had not arrived at their deadline: their time is only bounded below by the deadline they were given (censored), so the floor is not computed from it; the tests assert the floor clears it. */
   expiredReviewerMinutes: [15],
 });
 const SLOWEST_FINISHED_MINUTES = Math.max(...OBSERVED_HI_EFFORT.finishedReviewerMinutes);

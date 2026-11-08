@@ -264,7 +264,11 @@ function reviewDeadlines(input) {
         else warnings.push('policy deadlineHeadroom is out of range; the default applies');
       }
       const sized = sizedMinutes({ base: minutes, work: input.work, headroom, maximum: DEADLINE_MINUTES_MAX });
-      sizing = { files: input.work.files, lines: input.work.lines, baseMinutes: sized.base, estimateMinutes: sized.estimate, headroom: sized.headroom, modeledMinutes: sized.modeled, floorMinutes: sized.floor, floored: sized.floored, raised: sized.raised, capped: sized.capped };
+      // A policy value below the floor is overridden. A loaded policy always holds every key, so a value equal to the default
+      // cannot be told from an unset one and is not named; any other value below the floor is.
+      const overridesPolicy = sized.floored && source === 'policy' && minutes !== DEFAULT_DEADLINE_MINUTES[role];
+      sizing = { files: input.work.files, lines: input.work.lines, baseMinutes: sized.base, estimateMinutes: sized.estimate, headroom: sized.headroom, modeledMinutes: sized.modeled, floorMinutes: sized.floor, floored: sized.floored, overridesPolicy, raised: sized.raised, capped: sized.capped };
+      if (overridesPolicy) warnings.push(`policy deadlineMinutes.${role} (${minutes}) is below the ${sized.floor}-minute fixed-cost floor of a reviewer or security agent (kata d9sy); the deadline is ${sized.floor} minutes`);
       if (sized.capped) warnings.push(`the modelled need of ${sized.modeled} minutes for this ${role} is over the ${DEADLINE_MINUTES_MAX}-minute maximum; the deadline is capped at ${DEADLINE_MINUTES_MAX}`);
       if (sized.raised) source = 'size';
       minutes = sized.minutes;

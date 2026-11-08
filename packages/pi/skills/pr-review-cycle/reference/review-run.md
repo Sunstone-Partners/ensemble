@@ -147,7 +147,9 @@ agents the manifest names and stop each at its own `deadlineAtIso`; the deadline
   (`overLimit`, `diff`) and `warnings[]`. Report every warning with the run: `slice-over-limit` (the cap holds fewer slices
   than the limits ask for; the message names the `maxConcurrentAgents` that would hold them), `reader-not-planned` (the cap
   holds the slices but not a whole-range reader beside them; the message names the cap that would), `deadline-capped` (a modelled
-  need over 60 minutes: that agent may not finish) and `invalid-<key>` (an unreadable policy value; the default applied).
+  need over 60 minutes: that agent may not finish), `deadline-floor-over-policy` (a policy `deadlineMinutes` below the 22-minute
+  floor was overridden; `model.fixedCostFloorMinutes` records the floor, `deadlineFloored` marks an agent it decided) and
+  `invalid-<key>` (an unreadable policy value; the default applied).
 * Nothing is relaxed. An agent that arrives after its (larger) deadline is `expired`, and a reviewer that lists fewer paths
   than its slice leaves that slice not reviewed: both are reported in `notReviewed`, never hidden by a bigger deadline or a
   smaller slice.

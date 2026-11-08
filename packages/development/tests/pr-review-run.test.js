@@ -3100,7 +3100,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(sizesOf(m)).toEqual([[8, 454], [3, 556], [8, 440]]);
       expect(m.sizing.slices.map((slice) => [slice.id, slice.overLimit])).toEqual([['whole-pr~1', false], ['whole-pr~2', false], ['whole-pr~3', false]]);
       expect(m.sizing.warnings).toEqual([]);
-      expect(m.sizing.model).toEqual({ minutesPerFile: 0.934, minutesPer100Lines: 1.224, headroom: 2, maxMinutes: 60, derivedFrom: 'real271' });
+      expect(m.sizing.model).toEqual({ minutesPerFile: 0.934, minutesPer100Lines: 1.224, headroom: 2, maxMinutes: 60, derivedFrom: 'real271', fixedCostFloorMinutes: 22 });
       // two lenses on each of three slices, and the lane, all dispatched together under the default cap of 8
       expect(m.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'reviewer-s2-a', 'reviewer-s2-b', 'reviewer-s3-a', 'reviewer-s3-b', 'security-lane']);
       expect(m.agents.length).toBeLessThanOrEqual(m.maxConcurrentAgents);
@@ -3668,7 +3668,10 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(m.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 30)).toBe(true);
       // a base below the measured fixed-cost floor (22) is raised to it, not honoured (kata d9sy)
       const belowFloor = await real271({ policyJson: { deadlineMinutes: { reviewer: 20 } } }).prepare();
-      expect(belowFloor.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 22)).toBe(true);
+      expect(belowFloor.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 22 && a.deadlineFloored === true)).toBe(true);
+      // ... and it is SAID: the manifest's sizing records the floor and names the policy value it overrode (independent review round 1)
+      expect(belowFloor.sizing.model.fixedCostFloorMinutes).toBe(22);
+      expect(belowFloor.sizing.warnings).toEqual([{ code: 'deadline-floor-over-policy', message: expect.stringContaining('policy deadlineMinutes.reviewer (20) is below the 22-minute fixed-cost floor') }]);
       const lower = await real271({ policyJson: { deadlineMinutes: { security: 5 } } }).prepare();
       expect(agentOf(lower, 'security-lane').deadlineMinutes).toBe(36);
     });
