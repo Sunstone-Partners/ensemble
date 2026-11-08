@@ -78,7 +78,10 @@
  * shorter chain than the real one, with nothing here to say so). It must also dispatch the agents of a wave together: spans
  * that carry ONE wave number but start further apart than CLOCK_SKEW_TOLERANCE_MS are the spans of more than one wave
  * under a mis-stamped number, and that step is MISSING and names the wave (one slowest span of them would pass a shorter
- * chain off as the whole). HONEST LIMIT: the steps are reviewers, verifiers and the verdict, as the contract says, so the
+ * chain off as the whole). VERIFY REFILLS (kata 630v): `review-run` may dispatch verifiers into slots a wave freed while the wave
+ * still runs; those spans carry the attr `refill` (true), and then the verifier stage of the round is ONE step, `rolling: true`,
+ * from the first verifier's start to the last one's end, with `waves` counting the waves; overlapping waves WITHOUT the mark are
+ * refused as above, and only the verifier stage rolls. HONEST LIMIT: the steps are reviewers, verifiers and the verdict, as the contract says, so the
  * security lane (or the classifier, or the second assessor) is never a step. The chain is then a lower bound whenever such an
  * agent may have lengthened it, and the round says which: `outlasted` lists each one that ended after the slowest reviewer
  * of its wave (an agent naming no wave, or a wave no reviewer step has, is compared with the last reviewer step), with the
@@ -325,6 +328,41 @@ function startSpread(spans) {
   return starts.length < 2 ? 0 : Math.max(...starts) - Math.min(...starts);
 }
 
+/** A verifier span of a refill wave (`review-run` dispatched it while agents of an earlier wave were still running). */
+const isRefill = (span) => isObject(span.attrs) && (span.attrs.refill === true || span.attrs.refill === 'true');
+
+/**
+ * The verifier stage of a round that was dispatched in overlapping waves (kata 630v): a refill wave starts while the wave before
+ * it is still running, so the waves do not run one after another and the stage is ONE step, from the first verifier's start to
+ * the last one's end (the time the round held the verification), with every wave's spans counted. Nothing is summed per wave,
+ * which would count the overlap twice. An unusable span makes the step a lower bound, as it does elsewhere; none usable is a
+ * missing step.
+ */
+function rollingStep(stage, spans, window) {
+  let start = Infinity;
+  let end = -Infinity;
+  let unusable = 0;
+  let cut = false;
+  for (const span of spans) {
+    const found = intervalOf(span);
+    if (!found.ok) {
+      unusable += 1;
+      continue;
+    }
+    const interval = clipTo(found, window);
+    if (interval === null) continue;
+    if (found.end - found.start - (interval.end - interval.start) > WALL_CLOCK_RESOLUTION_MS) cut = true;
+    start = Math.min(start, interval.start);
+    end = Math.max(end, interval.end);
+  }
+  if (!Number.isFinite(start)) {
+    return { label: stage, wave: null, step: { stage, ...missing(`every ${stage} span is unusable (unfinished, inconsistent or outside the window)`) }, interval: null };
+  }
+  const waves = new Set(spans.map(waveOf)).size;
+  const extra = { rolling: true, waves, ...(unusable > 0 ? { unusable } : {}), ...(unusable > 0 || cut ? { lowerBound: true } : {}) };
+  return { label: stage, wave: null, step: { stage, ...known(end - start, extra) }, interval: { start, end } };
+}
+
 /**
  * The steps one stage contributes to a round's chain, each `{label, wave, step, interval}`. A stage dispatched in several
  * waves is one step per wave (that wave's slowest span), in wave order, because the waves ran one after another; a stage in
@@ -335,6 +373,7 @@ function startSpread(spans) {
  * are not checked (a narrated dispatch staggers its agents).
  */
 function stagePicks(stage, spans, window, warnings, roundLabel) {
+  if (stage === 'verifier' && spans.some(isRefill)) return [rollingStep(stage, spans, window)];
   const waves = [...new Set(spans.map(waveOf))].sort(nullLast);
   if (waves.length > 1 && waves.includes(null)) warnings.push(`round ${roundLabel}: some ${stage} spans carry a wave and some do not; the unnumbered ones are one extra wave`);
   if (waves.length === 0) return [{ label: stage, wave: null, ...slowestStep(stage, spans, window) }];

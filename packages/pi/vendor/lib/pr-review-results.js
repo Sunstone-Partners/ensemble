@@ -208,13 +208,15 @@ function deadlineFailure(reason) {
  *   `deadlineMinutes[role]` overrides the default when it is a 1..60 integer, and its
  *   `deadlineHeadroom` sets how many times the modelled reading time `work` is given.
  * @param {{files:number, lines:number}} [input.work]  What the agent is asked to read, as whole non-negative counts.
- *   With it, a reviewer's and the security lane's deadline is the larger of the base above and the modelled reading time
- *   with its headroom (`pr-review-sizing.js`), at most 60 minutes; without it, or for a verifier, the base alone.
+ *   With it, a reviewer's and the security lane's deadline is the larger of the base above, the modelled reading time with its
+ *   headroom and the fixed-cost floor of an agent (`MIN_AGENT_MINUTES`, kata d9sy), at most 60 minutes; without it, or for a
+ *   verifier, the base alone.
  * @returns {{ok:boolean, role?:string, dispatchedAt?:number, deadlineAt:number|null, deadlineAtIso?:string, budgetMs:number,
  *   minutes?:number, source?:'default'|'policy'|'size', sizing?:Object, tier?:string, depth?:string, warnings:string[], reason?:string}}
- *   `source` is `size` only when the model set `minutes` above the base. `sizing` (present when `work` was used) is
- *   `{files, lines, baseMinutes, estimateMinutes, headroom, modeledMinutes, raised, capped}`: `capped` says the
- *   modelled need is over the 60-minute maximum and the agent is given the maximum, which is less than the model says.
+ *   `source` is `size` only when the size model or the floor set `minutes` above the base. `sizing` (present when `work` was used) is
+ *   `{files, lines, baseMinutes, estimateMinutes, headroom, modeledMinutes, floorMinutes, floored, raised, capped}`: `floored` says
+ *   the floor decided the deadline; `capped` says the modelled need is over the 60-minute maximum and the agent is given the maximum,
+ *   which is less than the model says it needs.
  */
 function reviewDeadlines(input) {
   if (!isObject(input)) return deadlineFailure('invalid-input');
@@ -262,7 +264,7 @@ function reviewDeadlines(input) {
         else warnings.push('policy deadlineHeadroom is out of range; the default applies');
       }
       const sized = sizedMinutes({ base: minutes, work: input.work, headroom, maximum: DEADLINE_MINUTES_MAX });
-      sizing = { files: input.work.files, lines: input.work.lines, baseMinutes: sized.base, estimateMinutes: sized.estimate, headroom: sized.headroom, modeledMinutes: sized.modeled, raised: sized.raised, capped: sized.capped };
+      sizing = { files: input.work.files, lines: input.work.lines, baseMinutes: sized.base, estimateMinutes: sized.estimate, headroom: sized.headroom, modeledMinutes: sized.modeled, floorMinutes: sized.floor, floored: sized.floored, raised: sized.raised, capped: sized.capped };
       if (sized.capped) warnings.push(`the modelled need of ${sized.modeled} minutes for this ${role} is over the ${DEADLINE_MINUTES_MAX}-minute maximum; the deadline is capped at ${DEADLINE_MINUTES_MAX}`);
       if (sized.raised) source = 'size';
       minutes = sized.minutes;

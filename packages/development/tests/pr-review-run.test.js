@@ -1877,6 +1877,140 @@ describe('the verify round', () => {
   });
 });
 
+describe('rolling verification (kata 630v): freed slots take the next verifiers, the plan and the cap are untouched', () => {
+  // 6 candidates x 3 verifiers = 6 verifiers (at most 3 claims each) at a cap of 4: two barrier waves (4 + 2) before, a rolling round now.
+  const SIX = (n) => (n === 'reviewer-s1-a' ? [0, 1, 2, 3, 4, 5].map((i) => finding({ locationOrLink: `src/a.js:${i + 1}`, failureMode: `distinct defect number ${i} in a different subsystem ${'x'.repeat(i)}` })) : []);
+  const toVerify = async (h) => {
+    const m1 = await h.prepare();
+    answerReview(m1, { findingsFor: SIX, lane: { findings: [], pathsReviewed: allPaths(h) } });
+    return h.collect();
+  };
+  const vote = (agents) => voteAll({ agents }, () => 'real');
+  const nameOf = (a) => a.name;
+
+  test('a verifier that arrives frees its slot at once: the next verifier is dispatched while the others still run, never past the cap', async () => {
+    const h = harness({ policyJson: { maxConcurrentAgents: 4 } });
+    const v1 = await toVerify(h);
+    expect(v1).toMatchObject({ status: 'DISPATCH', round: 'verify', wave: '1 of 2', maxConcurrentAgents: 4 });
+    expect(v1.agents.map(nameOf)).toEqual(['verifier-1', 'verifier-2', 'verifier-3', 'verifier-4']);
+    expect(v1.refill).toBeUndefined();
+
+    // nobody has arrived: no slot is free, so the answer is PENDING and nothing new is dispatched
+    expect(await h.collect()).toMatchObject({ status: 'PENDING', round: 'verify', waitingOn: ['verifier-1', 'verifier-2', 'verifier-3', 'verifier-4'] });
+
+    // verifier-1 arrives: ONE slot is free, so verifier-5 starts (the plan's next verifier) and says which agents still run
+    vote([v1.agents[0]]);
+    const v2 = await h.collect();
+    expect(v2).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true, wave: '2 of 3', maxConcurrentAgents: 4 });
+    expect(v2.agents.map(nameOf)).toEqual(['verifier-5']);
+    expect(v2.stillRunning).toEqual(['verifier-2', 'verifier-3', 'verifier-4']);
+    expect(v2.stillRunning.length + v2.agents.length).toBeLessThanOrEqual(4);
+
+    // verifier-2 and verifier-5 arrive: two slots are free, one verifier is left
+    vote([v1.agents[1], v2.agents[0]]);
+    const v3 = await h.collect();
+    expect(v3).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true, wave: '3 of 3' });
+    expect(v3.agents.map(nameOf)).toEqual(['verifier-6']);
+    expect(v3.stillRunning).toEqual(['verifier-3', 'verifier-4']);
+    expect(v3.stillRunning.length + v3.agents.length).toBeLessThanOrEqual(4);
+
+    // the rest arrive: the round is over and the run finishes
+    vote([v1.agents[2], v1.agents[3], v3.agents[0]]);
+    const out = await h.collect();
+    expect(out.status).toBe('DONE');
+
+    // the plan is the one made before the first dispatch: every verifier once, each candidate settled by 3 DISTINCT verifiers, none its raiser
+    const run = h.readRun();
+    const dispatched = [v1, v2, v3].flatMap((m) => m.agents);
+    expect(dispatched.map(nameOf)).toEqual(run.verifyAgents.map(nameOf));
+    expect(dispatched.map((a) => a.candidateIds)).toEqual(run.verifyAgents.map((a) => a.candidateIds));
+    const byCandidate = new Map();
+    for (const a of dispatched) for (const id of a.candidateIds) byCandidate.set(id, [...(byCandidate.get(id) || []), a.name]);
+    expect([...byCandidate.keys()]).toHaveLength(6);
+    for (const verifiers of byCandidate.values()) {
+      expect(new Set(verifiers).size).toBe(3);
+      expect(verifiers).not.toContain('reviewer-s1-a');
+    }
+    expect(out.votes.outcomes).toHaveLength(6);
+    expect(out.votes.outcomes.every((o) => o.outcome === 'present')).toBe(true);
+    expect(run.waves.filter((w) => w.round === 'verify').map((w) => [w.wave, w.of, w.status, w.refill === true])).toEqual([[1, 3, 'collected', false], [2, 3, 'collected', true], [3, 3, 'collected', true]]);
+  });
+
+  test('a refill agent is given ITS OWN deadline, from the collect that dispatched it, never the first wave\'s', async () => {
+    const h = harness({ policyJson: { maxConcurrentAgents: 4 } });
+    const v1 = await toVerify(h);
+    vote([v1.agents[0]]);
+    const later = v1.agents[0].dispatchedAt + 3 * 60 * 1000;
+    const v2 = await h.collect({ now: later });
+    expect(v2.refill).toBe(true);
+    expect(v2.agents[0].dispatchedAt).toBe(later);
+    expect(v2.agents[0].deadlineAt).toBe(later + 5 * 60 * 1000);
+    expect(v2.agents[0].deadlineAt).toBeGreaterThan(v1.agents[0].deadlineAt);
+  });
+
+  test('a wave whose agents have all arrived or expired is followed by the planned next wave exactly as before: no refill, and the expiry is recorded', async () => {
+    const h = harness({ policyJson: { maxConcurrentAgents: 4 } });
+    const v1 = await toVerify(h);
+    vote(v1.agents.slice(0, 2));
+    // after the 5-minute deadline of verifier-3 and verifier-4 (which never wrote): both are expired, nothing of the wave still runs
+    const after = v1.agents[0].deadlineAt + 1000;
+    const v2 = await h.collect({ now: after });
+    expect(v2).toMatchObject({ status: 'DISPATCH', round: 'verify', wave: '2 of 2' });
+    expect(v2.refill).toBeUndefined();
+    expect(v2.stillRunning).toBeUndefined();
+    expect(v2.agents.map(nameOf)).toEqual(['verifier-5', 'verifier-6']);
+    const states = Object.fromEntries(h.readRun().waves.filter((w) => w.round === 'verify' && w.status === 'collected').flatMap((w) => w.agents).map((a) => [a.name, a.state]));
+    expect(states).toEqual({ 'verifier-1': 'arrived', 'verifier-2': 'arrived', 'verifier-3': 'expired', 'verifier-4': 'expired' });
+  });
+
+  test('a refill is at least a quarter of the cap: one freed slot of eight waits for a second, a lone remaining verifier does not', async () => {
+    const h = harness({ policyJson: { maxConcurrentAgents: 8 } });
+    const m1 = await h.prepare();
+    const NINE = (n) => (n === 'reviewer-s1-a' ? Array.from({ length: 11 }, (_, i) => finding({ locationOrLink: `src/a.js:${i + 1}`, failureMode: `distinct defect number ${i} in a different subsystem ${'x'.repeat(i)}` })) : []);
+    answerReview(m1, { findingsFor: NINE, lane: { findings: [], pathsReviewed: allPaths(h) } });
+    const v1 = await h.collect();
+    expect(v1.agents).toHaveLength(8); // 11 verifiers, cap 8
+    vote([v1.agents[0]]);
+    expect((await h.collect()).status).toBe('PENDING'); // 1 free slot < floor(8 / 4) = 2
+    vote([v1.agents[1]]);
+    const v2 = await h.collect();
+    expect(v2).toMatchObject({ status: 'DISPATCH', refill: true });
+    expect(v2.agents.map(nameOf)).toEqual(['verifier-9', 'verifier-10']);
+    expect(v2.stillRunning).toHaveLength(6);
+    vote(v1.agents.slice(2, 3));
+    // one slot free, one verifier left: the last verifier goes at once
+    const v3 = await h.collect();
+    expect(v3).toMatchObject({ status: 'DISPATCH', refill: true });
+    expect(v3.agents.map(nameOf)).toEqual(['verifier-11']);
+  });
+
+  test('read back through the real recorder and reader, the overlapping waves are ONE verifier step, not a refusal and not a sum', async () => {
+    const h = harness({ policyJson: { maxConcurrentAgents: 4 } });
+    h.deps.makeTracer = (runId) => createTracer({ runId, projectRoot: h.repoRoot });
+    const pause = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
+    const v1 = await toVerify(h);
+    await pause();
+    vote([v1.agents[0]]);
+    const v2 = await h.collect();
+    await pause();
+    vote([v1.agents[1], v2.agents[0]]);
+    const v3 = await h.collect();
+    await pause();
+    vote([v1.agents[2], v1.agents[3], v3.agents[0]]);
+    expect((await h.collect()).status).toBe('DONE');
+    const timing = loadReviewTiming({ runId: 'run1', projectRoot: h.repoRoot });
+    expect(timing.ok).toBe(true);
+    const verifier = timing.criticalPath.rounds[0].steps.find((s) => s.stage === 'verifier');
+    expect(verifier).toMatchObject({ missing: false, rolling: true, waves: 3 });
+    expect(timing.criticalPath.rounds[0].steps.filter((s) => s.stage === 'verifier')).toHaveLength(1);
+    expect(timing.criticalPath.missing).toBe(false);
+    // the step is the span of time the round held verification: longer than any one verifier, shorter than the verifiers added up
+    const spans = timing.agents.byRole.verifier;
+    expect(spans.count).toBe(6);
+    expect(verifier.ms).toBeGreaterThanOrEqual(spans.slowest.ms);
+  });
+});
+
 describe('a candidate the verifier brief refuses (kata 0g9n): never verified, never dropped, never read as verified', () => {
   // Reviewers of review infrastructure write these words about the code; the verifier brief refuses them in a claim (by design:
   // the claim must be reworded by whoever wrote it), so the candidate cannot be put to a verifier. The REAL renderer is used.
@@ -2949,11 +3083,11 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       for (const lenses of lensesByPath.values()) expect(new Set(lenses).size).toBe(2);
     });
 
-    test('every reviewer is given 15 minutes for at most 8 paths and 612 lines; the lane is given 36, which is 2x the 17m45s it needed', async () => {
+    test('every reviewer is given 22 minutes (the fixed-cost floor; the model alone says 15) for at most 8 paths and 612 lines; the lane is given 36, which is 2x the 17m45s it needed', async () => {
       const m = await real271().prepare();
       for (const a of m.agents.filter((agent) => agent.role === 'reviewer')) {
-        expect(a.deadlineMinutes).toBe(15);
-        expect(minutesBetween(a)).toBe(15);
+        expect(a.deadlineMinutes).toBe(22);
+        expect(minutesBetween(a)).toBe(22);
         expect(a.work.files).toBeLessThanOrEqual(8);
         expect(a.work.lines).toBeLessThanOrEqual(612);
         expect(a.work).toEqual({ files: a.paths.length, lines: m.sizing.slices.find((slice) => slice.id === a.sliceId).lines });
@@ -2971,7 +3105,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       const slices = h.readRun().slices;
       for (const a of m.agents.filter((agent) => agent.role === 'reviewer')) {
         const brief = briefOf(a);
-        expect(brief).toContain('Timebox: 15 minutes');
+        expect(brief).toContain('Timebox: 22 minutes');
         const slice = slices.find((s) => s.id === a.sliceId);
         for (const file of slice.paths) expect(brief).toContain(`- ${file}\n`);
         for (const file of allPaths(h).filter((f) => !slice.paths.includes(f))) expect(brief).not.toContain(`- ${file}\n`);
@@ -3003,7 +3137,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(m).toMatchObject({ status: 'DISPATCH', wave: '1 of 1', mode: { mode: 'light' }, depth: { mode: 'standard' } });
       expect(sizesOf(m)).toEqual([[8, 454], [3, 556], [8, 440]]);
       expect(agentOf(m, 'security-lane').deadlineMinutes).toBe(36);
-      expect(m.agents.filter((a) => /^reviewer-s\d/.test(a.name)).every((a) => a.deadlineMinutes === 15)).toBe(true);
+      expect(m.agents.filter((a) => /^reviewer-s\d/.test(a.name)).every((a) => a.deadlineMinutes === 22)).toBe(true);
     });
   });
 
@@ -3134,7 +3268,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       for (const file of allPaths(h)) expect(brief).toContain(`- ${file}\n`);
       expect(brief).not.toMatch(/You are reviewing one slice|Your slice:|Diff for your slice/);
       for (const a of m.agents.filter((agent) => /^reviewer-s\d/.test(agent.name))) {
-        expect(a.deadlineMinutes).toBe(15);
+        expect(a.deadlineMinutes).toBe(22);
         expect(briefOf(a)).toMatch(/^You are reviewing one slice of a pull request/);
       }
     });
@@ -3437,7 +3571,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(m.sizing.slices.map((slice) => slice.files)).toEqual([6, 6, 6, 6, 6, 6, 4]);
       expect(m.sizing.slices.some((slice) => slice.overLimit)).toBe(false);
       expect(m.sizing.warnings.map((warning) => warning.code)).toEqual(['deadline-capped']);
-      expect(m.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 15)).toBe(true);
+      expect(m.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 22)).toBe(true);
     });
 
     test('a cap too small for the lane and one slice still plans every path: one slice, never a PR with no reviewer', async () => {
@@ -3499,9 +3633,12 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
     });
 
     test('deadlineMinutes is a floor: a larger base is kept, and a smaller one is raised by the model', async () => {
-      const m = await real271({ policyJson: { deadlineMinutes: { security: 45, reviewer: 20 } } }).prepare();
+      const m = await real271({ policyJson: { deadlineMinutes: { security: 45, reviewer: 30 } } }).prepare();
       expect(agentOf(m, 'security-lane').deadlineMinutes).toBe(45);
-      expect(m.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 20)).toBe(true);
+      expect(m.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 30)).toBe(true);
+      // a base below the measured fixed-cost floor (22) is raised to it, not honoured (kata d9sy)
+      const belowFloor = await real271({ policyJson: { deadlineMinutes: { reviewer: 20 } } }).prepare();
+      expect(belowFloor.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 22)).toBe(true);
       const lower = await real271({ policyJson: { deadlineMinutes: { security: 5 } } }).prepare();
       expect(agentOf(lower, 'security-lane').deadlineMinutes).toBe(36);
     });
@@ -3546,7 +3683,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       // the reviewer handed the whole diff is sized for the whole diff (36 minutes, 19 paths, 1450 lines), the others for their slice
       expect(agentOf(m, 'reviewer-s1-a')).toMatchObject({ deadlineMinutes: 36, work: { files: 19, lines: 1450 } });
       expect(briefOf(agentOf(m, 'reviewer-s1-a'))).toContain('Timebox: 36 minutes');
-      expect(agentOf(m, 'reviewer-s2-a')).toMatchObject({ deadlineMinutes: 15, work: { files: 3, lines: 556 } });
+      expect(agentOf(m, 'reviewer-s2-a')).toMatchObject({ deadlineMinutes: 22, work: { files: 3, lines: 556 } });
     });
 
     test('a range diff that cannot be read leaves every slice the whole range diff, and the run is still planned and dispatched', async () => {
@@ -3580,14 +3717,14 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
   });
 
   describe('what is unchanged', () => {
-    test('a one-slice PR is planned as before: one slice, 15 minutes each, its work recorded', async () => {
+    test('a one-slice PR is planned as before: one slice, 22 minutes each (the floor), its work recorded', async () => {
       const h = harness();
       const m = await h.prepare();
       expect(m).toMatchObject({ wave: '1 of 1' });
       expect(m.sizing.slices).toEqual([{ id: 'whole-pr', files: 1, lines: 12, overLimit: false, diff: 'whole-range' }]);
       expect(m.sizing.limits).toEqual({ sliceMaxFiles: 8, sliceTargetLines: 612, slicesAllowed: 3, slicesWanted: 1 });
       expect(m.sizing.warnings).toEqual([]);
-      for (const a of m.agents) expect(a).toMatchObject({ deadlineMinutes: 15, work: { files: 1, lines: 12 } });
+      for (const a of m.agents) expect(a).toMatchObject({ deadlineMinutes: 22, work: { files: 1, lines: 12 } });
     });
 
     test('a verifier is given its 5 minutes whatever the PR\'s size, and the verify manifest carries no sizing', async () => {

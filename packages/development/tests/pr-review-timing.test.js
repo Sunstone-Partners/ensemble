@@ -1388,3 +1388,61 @@ describe('the entry points', () => {
     expect(JSON.parse(res.stdout).orchestratorOnly.pct).toBe(70);
   });
 });
+
+describe('verifier waves dispatched while the wave before is still running (kata 630v): one step from the first start to the last end', () => {
+  const verdict = (start, end, attrs = { round: 1 }) => span(STAGES.verdict, start, end, attrs);
+  const w = (wave, extra = {}) => ({ round: 1, wave, ...extra });
+  // verifiers of wave 1 at 31..51 s and 31..41 s; a refill dispatched at 41 s (the slot VerB freed) runs 41..60 s, the next at 51 s runs 51..58 s
+  const rolling = (refill) => [
+    root(0, 300),
+    agent('reviewer', 0, 30, { agent: 'RevA', ...w(1) }),
+    agent('verifier', 31, 51, { agent: 'VerA', ...w(1) }),
+    agent('verifier', 31, 41, { agent: 'VerB', ...w(1) }),
+    agent('verifier', 41, 60, { agent: 'VerC', ...w(2, refill ? { refill: true } : {}) }),
+    agent('verifier', 51, 58, { agent: 'VerD', ...w(3, refill ? { refill: true } : {}) }),
+    verdict(60, 61),
+  ];
+
+  test('the stage is ONE step of the interval the round held verification (31 s to 60 s = 29 s), not a per-wave sum and not a refusal', () => {
+    const { criticalPath } = computeReviewTiming(rolling(true));
+    expect(criticalPath.rounds[0].steps.map((s) => [s.stage, s.ms, s.rolling, s.waves])).toEqual([
+      ['reviewer', 30000, undefined, undefined],
+      ['verifier', 29000, true, 3],
+      ['verdict', 1000, undefined, undefined],
+    ]);
+    expect(criticalPath).toMatchObject({ ms: 60000, missing: false });
+    // longer than the slowest verifier (20 s), shorter than the per-wave sum the barrier model would give (20 + 19 + 7 = 46 s)
+    expect(29000).toBeGreaterThan(20000);
+    expect(29000).toBeLessThan(46000);
+  });
+
+  test('the SAME spans without the refill mark are still overlapping waves: the total stays MISSING (the guard against mis-stamped waves is not loosened)', () => {
+    const { criticalPath } = computeReviewTiming(rolling(false));
+    expect(criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(criticalPath.reason).toContain('verifier wave 2 starts');
+  });
+
+  test('a mark recorded as the string `true` (what `trace start --attr refill=true` writes) counts too', () => {
+    const asStrings = rolling(true).map((s) => (s.attrs.refill === true ? { ...s, attrs: { ...s.attrs, refill: 'true' } } : s));
+    expect(computeReviewTiming(asStrings).criticalPath.rounds[0].steps[1]).toMatchObject({ rolling: true, ms: 29000 });
+  });
+
+  test('only the verifier stage rolls: a refill mark on review waves changes nothing (they run one after another, and are summed)', () => {
+    const { criticalPath } = computeReviewTiming([
+      root(0, 200),
+      agent('reviewer', 0, 40, { agent: 'RevA', ...w(1, { refill: true }) }),
+      agent('reviewer', 41, 61, { agent: 'RevC', ...w(2, { refill: true }) }),
+      agent('verifier', 62, 72, { agent: 'VerA', ...w(1) }),
+      verdict(72, 73),
+    ]);
+    expect(criticalPath.rounds[0].steps.map((s) => [s.stage, s.wave, s.ms, s.rolling])).toEqual([['reviewer', 1, 40000, undefined], ['reviewer', 2, 20000, undefined], ['verifier', undefined, 10000, undefined], ['verdict', undefined, 1000, undefined]]);
+  });
+
+  test('an unusable verifier span among them makes the step a lower bound; no usable span is a missing step', () => {
+    const some = computeReviewTiming([...rolling(true).slice(0, 5), agent('verifier', 55, null, { agent: 'VerE', ...w(3, { refill: true }) }), verdict(60, 61)]);
+    expect(some.criticalPath.rounds[0].steps[1]).toMatchObject({ rolling: true, lowerBound: true, unusable: 1 });
+    const none = computeReviewTiming([root(0, 300), agent('reviewer', 0, 30, w(1)), agent('verifier', 31, null, w(2, { refill: true })), verdict(60, 61)]);
+    expect(none.criticalPath.missing).toBe(true);
+    expect(none.criticalPath.reason).toContain('verifier: every verifier span is unusable');
+  });
+});
