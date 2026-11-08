@@ -401,7 +401,10 @@ describe('dryRun', () => {
 // A REAL repository: what the trust checks and the fix verification read
 // ---------------------------------------------------------------------------
 
-const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
+// The fixture repositories must never see a GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) of the process that
+// runs the tests.
+const GIT_ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))), GIT_TERMINAL_PROMPT: '0' };
+const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV }).trim();
 const numbered = (n) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
 const CLEAR_CLI = path.join(__dirname, '..', 'lib', 'pr-review-clear-cli.js');
 const sandboxes = [];

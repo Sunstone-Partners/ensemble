@@ -10,8 +10,12 @@ const { defaultGit } = require('../lib/review-record-runtime');
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-clear-cli.js');
 const roots = [];
 
+// The fixture repositories must never see a GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) of the process that
+// runs the tests: the verb strips them from its own git child, and so does this helper.
+const GIT_ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))), GIT_TERMINAL_PROMPT: '0' };
+
 function sh(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout.trim();
 }
