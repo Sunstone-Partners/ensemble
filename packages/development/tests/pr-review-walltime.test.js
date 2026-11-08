@@ -927,3 +927,15 @@ describe('the 5x boundary is judged on the values, not on their three-decimal di
     expect(grade.status).toBe('not-met');
   });
 });
+
+describe('the p75 boundary is judged on the value too', () => {
+  test('a current p75 a hair above a fifth of the baseline p75 is not met although it displays as exactly a fifth', () => {
+    const current = [...currentRuns().filter((run) => !run.id.startsWith('high-first')), ...stratum('high', 'first', [10, 10, 16.4004], 500)];
+    const grade = stratumOf(compare(baselineRuns(), current), 'high/first');
+    expect(grade.current).toMatchObject({ medianMin: 10, p75Min: 16.4 });
+    expect(grade.target.p75Min).toBe(16.4);
+    expect(grade.medianMet).toBe(true);
+    expect(grade.p75Met).toBe(false);
+    expect(grade.status).toBe('not-met');
+  });
+});
