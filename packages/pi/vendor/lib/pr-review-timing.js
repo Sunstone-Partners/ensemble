@@ -73,10 +73,16 @@
  * step then carries its `wave`; a stage in one wave, or in spans that name none, is one step as ever, and spans that name
  * none beside spans that do are one extra wave, with a warning. A recorder that dispatches in waves must name them: spans
  * that name none cannot be told apart, so agents that ran in several waves under such a recorder are measured as one (a
- * shorter chain than the real one, with nothing here to say so). HONEST LIMIT: the steps are reviewers, verifiers and the
- * verdict, as the contract says, so the security lane is never a step: a lane that outlasts the reviewers of its wave is
- * not counted, and a wave that holds no reviewer (the lane alone in it, which a small cap makes) has no step at all, so the
- * round says so (`uncountedWaves`, `lowerBound`) instead of passing a shorter chain off as the whole. The critical path
+ * shorter chain than the real one, with nothing here to say so). It must also dispatch the agents of a wave together: spans
+ * that carry ONE wave number but start further apart than CLOCK_SKEW_TOLERANCE_MS are the spans of more than one wave
+ * under a mis-stamped number, and that step is MISSING and names the wave (one slowest span of them would pass a shorter
+ * chain off as the whole). HONEST LIMIT: the steps are reviewers, verifiers and the verdict, as the contract says, so the
+ * security lane (or the classifier, or the second assessor) is never a step. The chain is then a lower bound whenever such an
+ * agent may have lengthened it, and the round says which: `outlasted` lists each one that ended after the slowest reviewer
+ * of its wave (an agent naming no wave, or a wave no reviewer step has, is compared with the last reviewer step), with the
+ * excess `byMs`, or the reason its length is unknown (`unusable`); `uncountedWaves` lists the numbered waves in which no
+ * reviewer ran (the lane alone in a wave, which a small cap makes), which no step counts at all. Either sets `lowerBound`,
+ * so a shorter chain is not passed off as the whole. The critical path
  * needs a usable orchestrator window. The total is missing when ANY step is missing (a wave whose every span is unusable
  * is a missing step that names the wave), when a round has more than one verdict span (which one ends the chain is not
  * known), and when the steps overlap or run out of order (each wave must end before the next starts, the last reviewer wave
@@ -302,33 +308,78 @@ function stepLabel(step) {
   return step.wave === null ? `${step.stage} (unnumbered wave)` : `${step.stage} wave ${step.wave}`;
 }
 
-/**
- * The steps one stage contributes to a round's chain. A stage dispatched in several waves is one step per wave (that wave's
- * slowest span), in wave order, because the waves ran one after another; a stage in one wave, or in spans that name none, is
- * one step as ever. Spans that name no wave beside spans that do are one extra wave, last, with a warning.
- */
-function stagePicks(stage, spans, window, warnings, roundLabel) {
-  const waves = [...new Set(spans.map(waveOf))].sort(nullLast);
-  if (waves.length <= 1) return [{ label: stage, ...slowestStep(stage, spans, window) }];
-  if (waves.includes(null)) warnings.push(`round ${roundLabel}: some ${stage} spans carry a wave and some do not; the unnumbered ones are one extra wave`);
-  return waves.map((wave) => {
-    const picked = slowestStep(stage, spans.filter((s) => waveOf(s) === wave), window);
-    const step = { ...picked.step, wave };
-    return { label: stepLabel(step), step, interval: picked.interval };
-  });
+/** How far apart the first and the last start of `spans` lie (0 when fewer than two have a readable `start_ts`). */
+function startSpread(spans) {
+  const starts = spans.map((s) => parseMs(s.start_ts)).filter(Number.isFinite);
+  return starts.length < 2 ? 0 : Math.max(...starts) - Math.min(...starts);
 }
 
 /**
- * The waves of a round that no step of its chain counts. The chain's review steps are reviewers, so a wave in which only the
- * security lane (or another agent role) ran has none: the chain is short by that wave and the round says so. Waves can only
- * be told apart when the reviewers name theirs.
+ * The steps one stage contributes to a round's chain, each `{label, wave, step, interval}`. A stage dispatched in several
+ * waves is one step per wave (that wave's slowest span), in wave order, because the waves ran one after another; a stage in
+ * one wave, or in spans that name none, is one step as ever. Spans that name no wave beside spans that do are one extra
+ * wave, last, with a warning. The agents of a wave are dispatched together, so spans that carry one wave number but start
+ * further apart than the clock tolerance are not one wave: the number was stamped on spans of several, one slowest span of
+ * them would pass a shorter chain off as the whole, and the step is MISSING and names the wave. Spans that name no wave
+ * are not checked (a narrated dispatch staggers its agents).
  */
-function uncountedWaves(spans, round) {
-  const inRound = spans.filter((s) => AGENT_NAMES.has(s.name) && roundOf(s) === round);
-  const counted = new Set(inRound.filter((s) => s.name === STAGES.reviewer).map(waveOf));
-  if (counted.has(null)) return [];
-  const others = inRound.filter((s) => s.name !== STAGES.reviewer && s.name !== STAGES.verifier).map(waveOf);
-  return [...new Set(others)].filter((wave) => wave !== null && !counted.has(wave)).sort((a, b) => a - b);
+function stagePicks(stage, spans, window, warnings, roundLabel) {
+  const waves = [...new Set(spans.map(waveOf))].sort(nullLast);
+  if (waves.length > 1 && waves.includes(null)) warnings.push(`round ${roundLabel}: some ${stage} spans carry a wave and some do not; the unnumbered ones are one extra wave`);
+  if (waves.length === 0) return [{ label: stage, wave: null, ...slowestStep(stage, spans, window) }];
+  return waves.map((wave) => {
+    const own = spans.filter((s) => waveOf(s) === wave);
+    const several = waves.length > 1;
+    const spread = wave === null ? 0 : startSpread(own);
+    if (spread > CLOCK_SKEW_TOLERANCE_MS) {
+      const reason = `its spans start ${fmtMs(spread)} apart, more than the ${fmtMs(CLOCK_SKEW_TOLERANCE_MS)} within which the agents of one wave are dispatched, so the wave number is stamped on spans of more than one wave`;
+      const step = { stage, wave, ...missing(reason) };
+      return { label: stepLabel(step), wave, step, interval: null };
+    }
+    const picked = slowestStep(stage, own, window);
+    const step = several ? { ...picked.step, wave } : picked.step;
+    return { label: several ? stepLabel(step) : stage, wave, step, interval: picked.interval };
+  });
+}
+
+/** The role of a dispatched-agent span (`review.security-lane` -> `security-lane`). */
+const roleOf = (span) => AGENT_ROLES.find((role) => STAGES[role] === span.name);
+
+/**
+ * The agents of a round that are no step of its chain (the security lane, the classifier, the second assessor) and that the
+ * chain may therefore understate, from the round's reviewer steps (`picks`, every one with an interval):
+ *   uncountedWaves  numbered waves in which no reviewer ran, so no step counts them (a cap of 2 on two reviewers and the lane
+ *                   leaves the lane alone in wave 2);
+ *   outlasted       agents that ended after the slowest reviewer of their wave, `{stage, name, wave?, byMs}`: the next step
+ *                   waited for them, and no step counts the excess. An agent that names no wave, or whose wave has no
+ *                   reviewer step, is compared with the end of the last reviewer step; one whose length is unknown is
+ *                   listed with its `unusable` reason, since it may have outlasted them.
+ * The chain stays the contract's (slowest reviewer, slowest verifier, verdict); this says when it is a lower bound.
+ */
+function unsteppedAgents(spans, round, picks, window) {
+  const lastEnd = Math.max(...picks.map((p) => p.interval.end));
+  const waves = new Set();
+  const outlasted = [];
+  for (const span of spans) {
+    const role = roleOf(span);
+    if (role === undefined || role === 'reviewer' || role === 'verifier' || roundOf(span) !== round) continue;
+    const wave = waveOf(span);
+    const own = picks.find((p) => p.wave === wave);
+    if (own === undefined && wave !== null) {
+      waves.add(wave);
+      continue;
+    }
+    const who = { stage: role, name: agentLabel(span), ...(wave === null ? {} : { wave }) };
+    const found = intervalOf(span);
+    if (!found.ok) {
+      outlasted.push({ ...who, unusable: found.reason });
+      continue;
+    }
+    const inside = clipTo(found, window);
+    const reference = own === undefined ? lastEnd : own.interval.end;
+    if (inside !== null && inside.end > reference) outlasted.push({ ...who, byMs: inside.end - reference });
+  }
+  return { uncountedWaves: [...waves].sort((a, b) => a - b), outlasted };
 }
 
 const CHAIN = Object.freeze(['reviewer', 'verifier', 'verdict']);
@@ -379,10 +430,11 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
   const rounds = keys.map((round) => {
     const inRound = (stage) => byStage[stage].filter((s) => roundOf(s) === round);
     // reviewer waves, then verifier waves, then the verdict: the order the steps must run in
+    const reviewerPicks = stagePicks('reviewer', inRound('reviewer'), cutTo, warnings, labelOf(round));
     const picks = [
-      ...stagePicks('reviewer', inRound('reviewer'), cutTo, warnings, labelOf(round)),
+      ...reviewerPicks,
       ...stagePicks('verifier', inRound('verifier'), cutTo, warnings, labelOf(round)),
-      { label: 'verdict', ...slowestStep('verdict', inRound('verdict'), cutTo) },
+      { label: 'verdict', wave: null, ...slowestStep('verdict', inRound('verdict'), cutTo) },
     ];
     const steps = picks.map((p) => p.step);
     const gaps = steps.filter((s) => s.missing);
@@ -399,9 +451,10 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
     const overlap = firstOverlap(chain);
     if (overlap) return { round, steps, ...missing(overlapReason(overlap)) };
     chains.push(chain.map((step) => ({ ...step, label: `round ${labelOf(round)} ${step.label}` })));
-    const uncounted = uncountedWaves(spans, round);
-    const lowerBound = uncounted.length > 0 || steps.some((s) => s.lowerBound);
-    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), { ...(lowerBound ? { lowerBound: true } : {}), ...(uncounted.length > 0 ? { uncountedWaves: uncounted } : {}) }) };
+    const { uncountedWaves, outlasted } = unsteppedAgents(spans, round, reviewerPicks, cutTo);
+    const lowerBound = uncountedWaves.length > 0 || outlasted.length > 0 || steps.some((s) => s.lowerBound);
+    const bounds = { ...(lowerBound ? { lowerBound: true } : {}), ...(uncountedWaves.length > 0 ? { uncountedWaves } : {}), ...(outlasted.length > 0 ? { outlasted } : {}) };
+    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), bounds) };
   });
   const gaps = rounds.filter((r) => r.missing);
   if (gaps.length > 0) {
@@ -629,8 +682,14 @@ function formatReviewTiming(timing) {
       .map((s) => `${stepLabel(s)} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}${s.clippedMs ? ` [cut to the window by ${fmtMs(s.clippedMs)}]` : ''}`}`)
       .join(' -> ');
     const why = round.missing && round.steps.every((s) => !s.missing) ? `  [MISSING: ${round.reason}]` : '';
-    const uncounted = Array.isArray(round.uncountedWaves) ? `  [lower bound: no reviewer in review wave ${round.uncountedWaves.join(', ')}, so no step counts it]` : '';
-    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}${uncounted}`);
+    const unstepped = [
+      ...(Array.isArray(round.uncountedWaves) ? [`no reviewer in review wave ${round.uncountedWaves.join(', ')}, so no step counts it`] : []),
+      ...(Array.isArray(round.outlasted)
+        ? round.outlasted.map((o) => (o.unusable ? `${o.name} has no usable length (${o.unusable}), so it may have outlasted the reviewers, which no step counts` : `${o.name} ran ${fmtMs(o.byMs)} past the slowest reviewer${o.wave === undefined ? '' : ` of its wave ${o.wave}`}, which no step counts`))
+        : []),
+    ];
+    const lowerBound = unstepped.length > 0 ? `  [lower bound: ${unstepped.join('; ')}]` : '';
+    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}${lowerBound}`);
   }
   out.push(`  dispatched agents: ${timing.agents.count} (${timing.agents.unusable.length} unusable)`);
   if (timing.agents.lingerMs > 0) out.push(`  idle linger after the agents' last messages, not counted: ${fmtMs(timing.agents.lingerMs)}`);
