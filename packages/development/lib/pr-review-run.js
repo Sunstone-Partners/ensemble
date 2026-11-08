@@ -44,19 +44,23 @@
  * STAGE SPANS (kata k0sh): the run records, through `makeTracer`, exactly the span names `lib/pr-review-timing.js` reads (its
  * STAGES and STAGE_KINDS are imported, never respelled here): one `review` root per run (opened by prepare, closed by the call
  * that ends the run, so it is the orchestrator window), `review.head-read` (fetching the base and head and finding the merge
- * base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status) and one `review.<role>`
+ * base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status and recording it: the state
+ * report, `final.json` and the run file) and one `review.<role>`
  * span per dispatched agent with its `agent` name and its `wave`. Every one carries `round` (1, or 2 when `lastReviewedSha`
  * makes it a delta re-review; the runner cannot know how many re-reviews came before). `wave` is the agent's place among the
  * dispatch groups of its kind (the review agents, then the verifiers): the cap splits a round's agents into waves, each
  * dispatched only after the one before was collected, so the reader sums the slowest reviewer of every review wave and the
- * slowest verifier of every verify wave instead of taking one slowest across them. An agent span opens when the agent is
- * dispatched and closes when its result is collected, with
+ * slowest verifier of every verify wave instead of taking one slowest across them (the security lane is no step of that
+ * chain: the reader names a lane that outlasts the reviewers of its wave and makes the total a lower bound). An agent span
+ * opens when the agent is dispatched and closes when its result is collected, with
  * `last_message_ts` = the moment its result file arrived, so the agent counts to its last message and never to the collect
- * call or the session's exit; a result dated well after the collect call that read it (clock skew) cannot be placed, so it is
- * stamped as it is, the reader refuses that agent's interval, and `deps.notices` says so. The verdict is recorded once while
- * the window is open: a collect retried after a failed state write derives it again but adds no second verdict span (two inside
- * the window leave the critical path without the verdict that ends its chain); an adjudication after the root has closed
- * re-runs the gate and the verdict outside the window, which the reader leaves out. HONEST LIMITS: the root opens after the
+ * call or the session's exit. A result dated before the agent was dispatched is no message of this dispatch (a stale file):
+ * none is stamped. One dated well after the collect call that read it (clock skew) cannot be placed, so it is stamped as it
+ * is, the reader refuses that agent's interval, and `deps.notices` says so in both cases. The verdict span ends ok when the
+ * verdict was recorded and error when that attempt did not get that far (a failed state write, a throw); the reader takes an
+ * error span for no verdict, so a collect retried after a failure leaves ONE verdict in the window (two would leave the
+ * critical path without the verdict that ends its chain). An adjudication after the root has closed re-runs the gate and the
+ * verdict outside the window, which the reader leaves out. HONEST LIMITS: the root opens after the
  * first read of the PR head (the run id depends on it), and does not record `turns` or `tool_calls` (the runner cannot see the
  * model). A trace file that already holds another `review` root (a second run sharing `traceRunId`) has no usable window: give
  * each run its own trace.
@@ -572,33 +576,43 @@ function notify(deps, text) {
 
 /**
  * The span attr that ends an agent at its last message: the arrival of its result file. An agent that never arrived has none
- * (its span ends where the collect call found it). A change time a little past the call's own clock reading is the clock's
- * resolution and is read as the call. One further past cannot be placed: it is stamped as it is, so the reader refuses that
- * agent's interval instead of counting the agent to the collect call, and the agent is listed in `unplaced`.
+ * (its span ends where the collect call found it). A change time before the agent was dispatched is no message of this
+ * dispatch (a stale file of an earlier round): none is stamped, the agent is listed in `problems.before`, and the span ends
+ * at the collect call as it does for an agent that never arrived. A change time a little past the call's own clock reading
+ * is the clock's resolution and is read as the call. One further past cannot be placed: it is stamped as it is, so the
+ * reader refuses that agent's interval instead of counting the agent to the collect call, and the agent is listed in
+ * `problems.after`.
  */
-function lastMessageOf(agent, record, closedAt, unplaced) {
+function lastMessageOf(agent, record, closedAt, problems) {
   if (!Number.isFinite(record.arrivedAt)) return {};
   let at = record.arrivedAt;
+  if (at < agent.dispatchedAt) {
+    problems.before.push(agent.name);
+    return {};
+  }
   if (at > closedAt) {
     if (at - closedAt <= ARRIVAL_JITTER_MS) at = closedAt;
-    else unplaced.push(agent.name);
+    else problems.after.push(agent.name);
   }
   return { last_message_ts: new Date(at).toISOString() };
 }
 
 /** Records one collected wave in the run and ends its agents' spans. */
 function recordWave(run, wave, collected, now, tracer, deps) {
-  const unplaced = [];
+  const problems = { before: [], after: [] };
   for (const record of collected.agents) {
     const agent = wave.agents.find((a) => a.name === record.name);
     agent.state = record.state;
     agent.reason = record.reason;
     if (Number.isFinite(record.arrivedAt)) agent.arrivedAt = record.arrivedAt;
-    const lastMessage = lastMessageOf(agent, record, deps.now(), unplaced);
+    const lastMessage = lastMessageOf(agent, record, deps.now(), problems);
     tracer.end(agent.spanId, record.state === 'arrived' ? 'ok' : record.state, { state: record.state, reason: record.reason, ...lastMessage });
   }
-  if (unplaced.length > 0) {
-    notify(deps, `trace: the result file of ${unplaced.join(', ')} is dated more than ${ARRIVAL_JITTER_MS / 1000} s after the collect call that read it (clock skew?), so its last message cannot be placed: the span is recorded as it is and \`pr-review-cli timing\` will refuse that agent's interval rather than count it to the collect call`);
+  if (problems.before.length > 0) {
+    notify(deps, `trace: the result file of ${problems.before.join(', ')} is dated before the agent was dispatched (a stale file of an earlier round?), so no last message is recorded for it: its span ends at the collect call`);
+  }
+  if (problems.after.length > 0) {
+    notify(deps, `trace: the result file of ${problems.after.join(', ')} is dated more than ${ARRIVAL_JITTER_MS / 1000} s after the collect call that read it (clock skew?), so its last message cannot be placed: the span is recorded as it is and \`pr-review-cli timing\` will refuse that agent's interval rather than count it to the collect call`);
   }
   wave.status = 'collected';
   wave.collectedAt = now;
@@ -805,35 +819,38 @@ async function gateStage(run, built, deps, tracer) {
   const disposition = buildDispositionChoices({ ledger: built.ledger, security: run.security, votes: built.tally, policy, headSha: run.headSha });
   tracer.end(span, gate.mergeable === true ? 'ok' : 'blocked', { mergeable: gate.mergeable, blockers: gate.blockers.length });
   const gated = { ...gate, dispositionChoices: disposition.dispositionChoices, dispositionGroups: disposition.groups, mergeConfirmation: disposition.mergeConfirmation, ...(disposition.ok === true ? {} : { dispositionReason: disposition.reason }) };
+  const protection = assessProtection(protectionRead, run.baseRefName, { required: approvals.humansRequired });
 
-  // The verdict is recorded once while the window is open: a collect retried after a failed state write derives it again, but a
-  // second verdict span inside the window would leave the critical path without the verdict that ends its chain. After the root
-  // has closed (an adjudication) the re-run lies outside the window, which the reader leaves out, and is recorded as before.
-  const recordVerdict = run.verdictRecorded !== true || run.rootEnded === true;
-  const verdictSpan = recordVerdict ? tracer.start(STAGES.verdict, STAGE_KINDS[STAGES.verdict], { headSha: run.headSha, round: run.round }) : null;
-  const actionable = built.ledger.filter((entry) => isActionable(entry)).length;
-  const deferred = built.ledger.filter((entry) => !isActionable(entry) && entry.disposition === 'deferred').length;
-  const tests = testsFact(run.baseline);
-  const reviewStatus = deriveStatus({
-    baseSha: run.baseSha,
-    headSha: run.headSha,
-    reviewedHeadSha: run.headSha,
-    ...(headTreeSha === undefined ? {} : { reviewedTreeSha: headTreeSha, headTreeSha }),
-    findingCounts: { total: built.ledger.length, actionable, deferred },
-    // No usable baseline (no relevant test files, a timed-out run, none at all) is a run that did not happen, never a
-    // failure it did not have: recorded as skipped, so the status reads `tests skipped` and can never be complete.
-    tests: tests === undefined ? { skipped: true, command: 'none: the baseline run produced no usable result (no relevant test files, a timed-out run or no run)' } : tests,
-    roundsUsed: 0,
-    ...(run.policy && Number.isInteger(run.policy.roundCap) ? { roundCap: run.policy.roundCap } : {}),
-    reportPath: statePath(run.pr, run.repoRoot),
-  });
-  tracer.end(verdictSpan, 'ok', { status: isObject(reviewStatus) ? reviewStatus.status : undefined });
-  if (verdictSpan !== null) {
-    // Saved here, not with the answer: a failed state write returns before the run is saved again, and the retry must find it.
-    run.verdictRecorded = true;
-    saveRun(deps, run);
+  // The verdict span covers the verdict from deriving the status to recording it, and `finalise` ends it: ok when the verdict
+  // was recorded, error when this attempt did not get that far (a failed state write, a throw). The reader takes an error
+  // span for no verdict, so a collect retried after a failure leaves ONE verdict in the window; two would leave the critical
+  // path without the verdict that ends its chain. After the root has closed (an adjudication) the re-run lies outside the
+  // window, which the reader leaves out.
+  const verdictSpan = tracer.start(STAGES.verdict, STAGE_KINDS[STAGES.verdict], { headSha: run.headSha, round: run.round });
+  let reviewStatus;
+  let tests;
+  try {
+    const actionable = built.ledger.filter((entry) => isActionable(entry)).length;
+    const deferred = built.ledger.filter((entry) => !isActionable(entry) && entry.disposition === 'deferred').length;
+    tests = testsFact(run.baseline);
+    reviewStatus = deriveStatus({
+      baseSha: run.baseSha,
+      headSha: run.headSha,
+      reviewedHeadSha: run.headSha,
+      ...(headTreeSha === undefined ? {} : { reviewedTreeSha: headTreeSha, headTreeSha }),
+      findingCounts: { total: built.ledger.length, actionable, deferred },
+      // No usable baseline (no relevant test files, a timed-out run, none at all) is a run that did not happen, never a
+      // failure it did not have: recorded as skipped, so the status reads `tests skipped` and can never be complete.
+      tests: tests === undefined ? { skipped: true, command: 'none: the baseline run produced no usable result (no relevant test files, a timed-out run or no run)' } : tests,
+      roundsUsed: 0,
+      ...(run.policy && Number.isInteger(run.policy.roundCap) ? { roundCap: run.policy.roundCap } : {}),
+      reportPath: statePath(run.pr, run.repoRoot),
+    });
+  } catch (error) {
+    tracer.end(verdictSpan, 'error', { error: msg(error) });
+    throw error;
   }
-  return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection: assessProtection(protectionRead, run.baseRefName, { required: approvals.humansRequired }), unavailable, warnings, headState: head.pr.state };
+  return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection, unavailable, warnings, headState: head.pr.state, verdictSpan };
 }
 
 function reducedReviewNotice(run, built, notReviewed, stage) {
@@ -861,11 +878,33 @@ function notReviewedOf(run) {
   };
 }
 
-/** The final computation, from a run whose waves are all collected. `ledger`/`tally` may come from an adjudication. */
+/**
+ * The final computation, from a run whose waves are all collected. `ledger`/`tally` may come from an adjudication. The verdict
+ * span opened by the gate stage ends here: ok once the verdict is recorded, error when this attempt did not get that far, so
+ * that a retried collect leaves one verdict in the window (the reader takes an error span for no verdict). The root span
+ * closes right after the verdict that ends the run.
+ */
 async function finalise(run, built, deps, now, startedAt, tracer, extra) {
   const stage = await gateStage(run, built, deps, tracer);
   if (stage.invalid) return { invalid: stage.invalid, moved: stage.moved === true };
+  let outcome;
+  try {
+    outcome = await recordFinal(run, built, stage, deps, now, startedAt, extra);
+  } catch (error) {
+    tracer.end(stage.verdictSpan, 'error', { error: msg(error) });
+    throw error;
+  }
+  if (outcome.answer === undefined) {
+    tracer.end(stage.verdictSpan, 'error', { reason: outcome.invalid.reason });
+    return outcome;
+  }
+  tracer.end(stage.verdictSpan, 'ok', { status: isObject(stage.reviewStatus) ? stage.reviewStatus.status : undefined });
+  if (outcome.closesRoot) endRoot(tracer, run.rootSpanId, 'ok', { phase: 'done' });
+  return { answer: outcome.answer };
+}
 
+/** Records the verdict of a run: the state report, `final.json` and the run file. `{invalid, moved}` when the state report cannot be written. */
+async function recordFinal(run, built, stage, deps, now, startedAt, extra) {
   const notReviewed = notReviewedOf(run);
   const adjudicate = S.adjudicateList(built.ledger);
   const reducedReview = reducedReviewNotice(run, built, notReviewed, stage);
@@ -925,8 +964,12 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
   run.finalLedger = built.ledger;
   run.metrics = metrics;
   if (extra.adjudications) run.adjudications = extra.adjudications;
+  // The root span closes right after the verdict (`finalise` ends it), and the run file records that in THIS write: a second
+  // save for it could fail after the review was recorded, and the caller would see a failure for a review that completed.
+  const closesRoot = run.rootSpanId !== null && run.rootSpanId !== undefined && run.rootEnded !== true;
+  if (closesRoot) run.rootEnded = true;
   saveRun(deps, run);
-  return { answer };
+  return { answer, closesRoot };
 }
 
 /** Validates and applies adjudications; only findings that were LISTED can be decided, and no decision closes an Important. */
@@ -961,7 +1004,9 @@ const TERMINAL_PHASES = Object.freeze(['done', 'invalidated', 'needs-full-mode',
 
 /**
  * Collect. The `review` root span stays open across PENDING and DISPATCH answers and is closed by the call after which the
- * run is over (a finished, invalidated or failed run), once: the run records that it did.
+ * run is over, once: the run records that it did. A finished run closes it in `finalise`, in the write that records the
+ * verdict; this closes it for a run that ended without one (invalidated, failed) and records that in a write of its own,
+ * which is trace bookkeeping: a failure of it never changes the answer of a call whose run is already over.
  */
 async function collectRun(input, deps) {
   const ctx = { tracer: null, run: null };
@@ -970,7 +1015,11 @@ async function collectRun(input, deps) {
   if (run !== null && run.rootSpanId !== null && run.rootSpanId !== undefined && run.rootEnded !== true && TERMINAL_PHASES.includes(run.phase)) {
     endRoot(tracer, run.rootSpanId, run.phase === 'done' ? 'ok' : 'error', { phase: run.phase });
     run.rootEnded = true;
-    saveRun(deps, run);
+    try {
+      saveRun(deps, run);
+    } catch (_error) {
+      // the root is closed in the trace; a later collect tries the bookkeeping again
+    }
   }
   return answer;
 }

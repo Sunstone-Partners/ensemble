@@ -1811,7 +1811,7 @@ describe('metrics and the acvv recorder', () => {
     expect(timing.criticalPath.ms + timing.orchestratorOnly.ms).toBeLessThanOrEqual(timing.wall.ms);
   });
 
-  describe('a collect retried after a failed state write (review of PR 270, round 1)', () => {
+  describe('a collect retried after a failure ends the failed verdict span in error: ONE verdict in the window (review of PR 270, rounds 1 and 2)', () => {
     /** The harness's state writer, failing its first write. */
     function failOnce(h) {
       const write = h.deps.writeState;
@@ -1821,8 +1821,27 @@ describe('metrics and the acvv recorder', () => {
         return attempts === 1 ? { ok: false, reason: 'disk full' } : write(target, state);
       };
     }
+    /** The harness's file writer, throwing once when it is asked to write a file whose path ends with `suffix`. */
+    function throwOnce(h, suffix) {
+      const { writeAtomic } = h.deps.fs;
+      let thrown = false;
+      h.deps.fs = {
+        ...h.deps.fs,
+        writeAtomic: (file, text, mode) => {
+          if (!thrown && file.endsWith(suffix)) {
+            thrown = true;
+            throw new Error('disk full');
+          }
+          return writeAtomic(file, text, mode);
+        },
+      };
+    }
+    const verdictsOf = (h) => {
+      const ends = new Map(h.spans.filter((s) => s.type === 'end').map((s) => [s.id, s]));
+      return h.spans.filter((s) => s.type === 'start' && s.name === 'review.verdict').map((s) => ends.get(s.id));
+    };
 
-    test('records ONE verdict while the window is open: a second would leave the critical path without the verdict that ends its chain', async () => {
+    test('a failed state write ends that attempt\'s verdict in error and the retry records the verdict: the window keeps one, and the root stays open until the retry', async () => {
       const h = harness();
       failOnce(h);
       const m = await h.prepare();
@@ -1831,18 +1850,40 @@ describe('metrics and the acvv recorder', () => {
       const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
       expect(h.spans.some((s) => s.type === 'end' && s.id === root.id)).toBe(false); // not over: the retry is part of the same window
       expect((await h.collect()).status).toBe('DONE');
+      const [failed, recorded] = verdictsOf(h);
+      expect(verdictsOf(h)).toHaveLength(2);
+      expect(failed).toMatchObject({ status: 'error', attrs: { reason: 'state-write-failed' } });
+      expect(recorded.status).toBe('ok'); // the retry's own derivation, not the first attempt's
       const started = h.spans.filter((s) => s.type === 'start');
-      expect(started.filter((s) => s.name === 'review.verdict')).toHaveLength(1);
       expect(started.filter((s) => s.name === 'review.gate')).toHaveLength(2); // the gate did run twice, and its span says so
       expect(h.spans.filter((s) => s.type === 'end')).toHaveLength(started.length); // every span closed once
       expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
-      expect(h.readRun().verdictRecorded).toBe(true);
+      // no bookkeeping in the run file for the guard: it rests on the trace, which no failed write of the run file can reopen
+      expect(h.readRun().verdictRecorded).toBeUndefined();
     });
 
-    test('read back through the real recorder and reader, the critical path of the retried run is computed, not MISSING for two verdicts', async () => {
+    test('a throw after the state report was written (final.json cannot be written) ends the verdict in error too: nothing in the run file decides it', async () => {
+      const h = harness();
+      throwOnce(h, 'final.json');
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      await expect(h.collect()).rejects.toThrow('disk full');
+      expect((await h.collect()).status).toBe('DONE');
+      const [failed, recorded] = verdictsOf(h);
+      expect(verdictsOf(h)).toHaveLength(2);
+      expect(failed).toMatchObject({ status: 'error', attrs: { error: 'disk full' } });
+      expect(recorded.status).toBe('ok');
+      const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
+      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
+    });
+
+    test.each([
+      ['a failed state write', failOnce],
+      ['a throw after the state report was written', (h) => throwOnce(h, 'final.json')],
+    ])('read back through the real recorder and reader, the critical path after %s is computed, not MISSING for two verdicts', async (_, failure) => {
       const h = harness();
       h.deps.makeTracer = (runId) => createTracer({ runId, projectRoot: h.repoRoot });
-      failOnce(h);
+      failure(h);
       const m = await h.prepare();
       await pause();
       answerReview(m, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding()] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
@@ -1851,12 +1892,13 @@ describe('metrics and the acvv recorder', () => {
       await pause();
       voteAll(verify, () => 'real');
       await pause();
-      expect(await h.collect()).toMatchObject({ status: 'RUN_FAILED', reason: 'state-write-failed' });
+      const failed = await h.collect().catch((error) => ({ status: 'THREW', reason: error.message }));
+      expect(['RUN_FAILED', 'THREW']).toContain(failed.status);
       expect((await h.collect()).status).toBe('DONE');
       const timing = loadReviewTiming({ runId: 'run1', projectRoot: h.repoRoot });
       expect(timing).toMatchObject({ ok: true, warnings: [] });
       expect(timing.criticalPath).toMatchObject({ missing: false });
-      expect(timing.stages['review.verdict'].count).toBe(1);
+      expect(timing.stages['review.verdict'].count).toBe(2); // the failed attempt's (error) and the recorded one
       expect(timing.stages['review.gate'].count).toBe(2);
     });
 
@@ -1874,6 +1916,51 @@ describe('metrics and the acvv recorder', () => {
       expect(verdicts).toHaveLength(2);
       expect(h.spans.indexOf(verdicts[0])).toBeLessThan(rootEnd);
       expect(h.spans.indexOf(verdicts[1])).toBeGreaterThan(rootEnd);
+      expect(verdictsOf(h).map((v) => v.status)).toEqual(['ok', 'ok']);
+    });
+  });
+
+  describe('the end of the root is trace bookkeeping: it never turns a finished review into a failure (review of PR 270, round 2)', () => {
+    /** Makes every write of `run.json` after the first one that records `phase` throw: the disk fills up once the run is over. */
+    function failRunFileAfter(h, phase) {
+      const { writeAtomic } = h.deps.fs;
+      let over = false;
+      h.deps.fs = {
+        ...h.deps.fs,
+        writeAtomic: (file, text, mode) => {
+          if (file.endsWith('run.json')) {
+            if (over) throw new Error('disk full');
+            if (JSON.parse(text).phase === phase) over = true;
+          }
+          return writeAtomic(file, text, mode);
+        },
+      };
+    }
+
+    test('a finished run records the end of the root in the same write as its verdict: a later write that fails changes nothing, and the root is closed once', async () => {
+      const h = harness();
+      failRunFileAfter(h, 'done');
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      expect((await h.collect()).status).toBe('DONE');
+      expect(h.readRun()).toMatchObject({ phase: 'done', rootEnded: true }); // one write holds both
+      const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
+      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'ok', attrs: { phase: 'done' } }]);
+      // and it closes after the verdict that ends the run, which is what keeps that verdict inside the window
+      const verdict = h.spans.find((s) => s.type === 'start' && s.name === 'review.verdict');
+      const verdictEnd = h.spans.findIndex((s) => s.type === 'end' && s.id === verdict.id);
+      expect(h.spans.findIndex((s) => s.type === 'end' && s.id === root.id)).toBeGreaterThan(verdictEnd);
+    });
+
+    test('a run that ended without a verdict keeps its answer when the write that records the end of its root fails', async () => {
+      const h = harness();
+      failRunFileAfter(h, 'invalidated');
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      h.head = MOVED;
+      expect((await h.collect()).status).toBe('RUN_INVALIDATED');
+      const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
+      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'error', attrs: { phase: 'invalidated' } }]);
     });
   });
 
@@ -1910,6 +1997,39 @@ describe('metrics and the acvv recorder', () => {
         expect(Date.parse(lastMessages[name])).toBeLessThan(at);
         expect(at - Date.parse(lastMessages[name])).toBeLessThanOrEqual(1000);
       }
+    });
+
+    /** A run whose collector reports `reviewer-s1-a` as having arrived `offsetMs` after its dispatch (negative: before it). */
+    async function arrivedAt(offsetMs) {
+      const h = harness();
+      h.deps.notices = [];
+      h.deps.collectResults = (input) => {
+        const answer = collectResults(input);
+        return { ...answer, agents: answer.agents.map((a) => (a.name === 'reviewer-s1-a' ? { ...a, arrivedAt: a.dispatchedAt + offsetMs } : a)) };
+      };
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      expect((await h.collect()).status).toBe('DONE');
+      const ends = new Map(h.spans.filter((s) => s.type === 'end').map((s) => [s.id, s]));
+      const byAgent = Object.fromEntries(h.spans.filter((s) => s.type === 'start' && s.kind === 'agent').map((s) => [s.attrs.agent, ends.get(s.id).attrs]));
+      return { h, byAgent, dispatchedAt: m.agents.find((a) => a.name === 'reviewer-s1-a').dispatchedAt };
+    }
+
+    test('a result dated before the agent was dispatched is no message of this dispatch (a stale file): no last_message_ts, a notice that names it, and the other agents are untouched (review of PR 270, round 2)', async () => {
+      const { h, byAgent } = await arrivedAt(-500);
+      expect(byAgent['reviewer-s1-a'].last_message_ts).toBeUndefined(); // stamped before its span started, the reader would blame the recorder
+      expect(byAgent['reviewer-s1-b'].last_message_ts).toEqual(expect.any(String));
+      expect(byAgent['security-lane'].last_message_ts).toEqual(expect.any(String));
+      expect(h.deps.notices).toHaveLength(1);
+      expect(h.deps.notices[0]).toContain('reviewer-s1-a');
+      expect(h.deps.notices[0]).not.toContain('reviewer-s1-b');
+      expect(h.deps.notices[0]).toContain('before the agent was dispatched');
+    });
+
+    test('a result dated exactly at the dispatch is this dispatch\'s: it is stamped, with no notice', async () => {
+      const { h, byAgent, dispatchedAt } = await arrivedAt(0);
+      expect(byAgent['reviewer-s1-a'].last_message_ts).toBe(new Date(dispatchedAt).toISOString());
+      expect(h.deps.notices).toEqual([]);
     });
   });
 
