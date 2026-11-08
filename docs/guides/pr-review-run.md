@@ -21,7 +21,8 @@ tier, label, depth and lane were all rewritten together.
 Full mode differs from light in four ways, and the fourth is only a record: (1) Deep depth always (at least 2 reviewers
 per slice and 5 verifiers per finding, whatever the tier word says); (2) the security lane always; (3) a
 model-orchestrator `TRIAGE` stop between the review round and the verify round; (4) the re-review scope rule
-(`reReview`, below), which is recorded and changes nothing a reviewer reads: reviewers read the whole range in both modes
+(`reReview`, below), which is recorded and changes nothing a reviewer reads: the reviewers between them read the whole
+range (each its own slice of it, see Slices and deadlines) in both modes
 today. Briefs are still generated from templates, and the gate, the approvals, the independence of reviewers and
 verifiers, REVIEW_COMPLETE (relayed from the CLI only) and "a path nobody reviewed is reported as not reviewed" are
 identical to light mode.
@@ -78,7 +79,7 @@ and is only for the `TRIAGE` status.
 
 | status | ok | meaning |
 |---|---|---|
-| `DISPATCH` | true | manifest: `runId`, `round` (`review` or `verify`), `wave`, `headSha`, `mode`, `tier`, `depth`, `maxConcurrentAgents`, `agents[]` (`name`, `role`, `briefPath`, `outPath`, `prompt`, `dispatchedAt`, `deadlineAt`, `deadlineAtIso`, and `sliceId`, `paths`, `candidateIds` where they apply), `next`, `rules` |
+| `DISPATCH` | true | manifest: `runId`, `round` (`review` or `verify`), `wave`, `headSha`, `mode`, `tier`, `depth`, `maxConcurrentAgents`, `sizing` (the review round only: the size model, limits, slices and warnings, see Slices and deadlines), `agents[]` (`name`, `role`, `briefPath`, `outPath`, `prompt`, `dispatchedAt`, `deadlineAt`, `deadlineAtIso`, `deadlineMinutes`, and `sliceId`, `paths`, `work`, `candidateIds` where they apply), `next`, `rules` |
 | `PENDING` | true | agents still outstanding: `waitingOn`, `retryAfterMs`, `earliestDeadlineAt`; call `collect` again |
 | `TRIAGE` | true | full mode only. After the last review wave is collected the runner has deduplicated the candidates and planned verification, and dispatched nothing. The answer carries the candidate list (`id`, `locationOrLink`, `severity`, `failureMode`, `source`), the coverage (`unreviewedSlices`, uncovered paths), the security lane status, the `reReview` decision and the rules. Call `collect` again with `triage` |
 | `DONE` | true | `gate`, `reviewStatus`, `ledger`, `votes`, `notReviewed`, `precheck`, `statePath`, `metrics`, `mode`, `reReview`, `triage` (`{turns, additionalCandidateIds}`) |
@@ -128,10 +129,104 @@ delta-only read path yet (carry-over of verdicts is kata qw98, PR #268), so ever
 range, the superset. `reReview.appliedRange` is always `full-range` today; the field records the decision for the
 carry-over work to consume.
 
+## Slices and deadlines (the size model)
+
+What an agent has to read decides how it is planned (kata `sfpb`). The first real full-mode run (PR 271: 19 paths, 1450
+changed lines, under the 1500-line threshold) was one `whole-pr` slice with a flat 15-minute deadline for every agent. The
+security lane, which must read every changed path, arrived 2m45s late and was recorded `expired`; one of the two reviewers
+listed 5 of the 19 paths, and a slice counts as reviewed only when every reviewer of it covered every path, so the slice
+was reported not reviewed. The runner failed closed, correctly. What was wrong was the plan it was given: nothing in it
+depended on how much there was to read. Now it does.
+
+**The numbers are that run's own.** `lib/pr-review-sizing.js` holds the observation (`OBSERVED`: `arrivedAt - dispatchedAt`
+from the run's `run.json`, and the paths each agent listed in `pathsReviewed`) and derives everything else from it:
+
+| what | value | where it comes from |
+|---|---|---|
+| the security lane | 17.75 min for 19 paths and 1450 lines, on a 15 min deadline | the run |
+| reviewer-s1-a | 7.84 min, listed all 19 paths | the run |
+| reviewer-s1-b | 4.62 min, listed 5 paths (318 lines), left 14 (1132 lines) | the run |
+| minutes per path | 0.934 | the slowest agent that read every path (the lane), over its 19 paths |
+| minutes per 100 changed lines | 1.224 | the same agent, over its 14.5 hundred lines |
+| headroom | 2 | the larger of 1.18 (the lane's overrun, 17.75 / 15) and 1.70 (two reviewers on one assignment, 7.84 / 4.62), rounded up to a half |
+| `sliceMaxFiles` | 8 | `floor(15 / (2 x 0.934))`: the largest slice the slowest observed reader finishes in half the reviewer deadline |
+| `sliceTargetLines` | 612 | `floor(15 / (2 x 1.224 / 100))`, the same model solved for lines |
+
+Only an agent that read every path gives a time to read a whole slice, so the partial reviewer is no rate. The model is
+`estimate(work) = max(paths x 0.934, changed lines / 100 x 1.224)` minutes: a path costs a read however few lines it holds,
+and a long file costs by its length, so whichever term is larger for the slice is the one that binds.
+
+**Slices.** Every PR is cut by size, at every size, in path order, into slices of at most `sliceMaxFiles` paths and about
+`sliceTargetLines` changed lines (policy keys; the defaults above). A path is never cut, so one 355-line file is one slice,
+and every path is in exactly one slice and is read under at least two distinct lenses (Standard and Deep). The number of
+slices is held to what lets the WHOLE review round run in one wave: `floor((maxConcurrentAgents - 1 for the lane) / lenses
+per slice)`, which is 3 slices (six reviewers and the lane) at the default cap of 8. The lane is the longest agent, so it
+never queues behind a wave of reviewers. Quick is still one reviewer and one slice, whatever the size. `sliceThreshold` no
+longer decides whether the runner cuts a PR: it is the area-split trigger of `planSlices`, and the runner passes no areas,
+so it only names the one slice (`whole-pr` under it, `(repository root)` over it).
+
+**What a reviewer reads.** With more than one slice, each reviewer's brief names a diff of ITS slice
+(`slices/slice-<n>.diff` in the run directory): the sections of the range diff that name its paths, in the diff's order. A
+slice whose paths cannot all be placed in the range diff (a path with no section in it), a range diff that cannot be read
+and a slice file that cannot be written leave that slice the WHOLE range diff: more to read, never less
+(`sizing.slices[n].diff` is `slice` or `whole-range`). With one slice the range diff is the slice's, and it is not read at
+`prepare`. The security lane always reads the whole range diff.
+
+**Deadlines.** For a reviewer and for the lane the policy's `deadlineMinutes` (15) is a BASE: the deadline is
+`clamp(ceil(estimate x headroom), base, 60)` minutes, so the model only ever raises it. The reviewer's work is its slice;
+the lane's is every changed path. A verifier settles at most three claims whatever the PR's size and keeps its 5 minutes.
+`deadlineMinutes` is a floor and not a pin because a loaded policy always holds every key, set or defaulted, and an explicit
+value cannot be told from the default. The brief's timebox is the deadline the agent is given.
+
+| agent | work | deadline |
+|---|---|---|
+| a reviewer on a slice at the limits (8 paths, 612 lines) | 7.49 min | 15 (the base: modelled 14.98) |
+| the security lane of the real run (19 paths, 1450 lines) | 17.75 min | 36 (2.03 x what it took; it was given 15) |
+| a verifier | not sized | 5 |
+
+**The record.** The DISPATCH manifest of the review round and `run.json` carry `sizing`: `model` (the two rates, the
+headroom, the 60-minute maximum and the run it derives from), `limits` (`sliceMaxFiles`, `sliceTargetLines`,
+`slicesAllowed` by the cap, `slicesWanted` by the limits), `work` (the whole PR), `slices[]` (`id`, `files`, `lines`,
+`overLimit`, `diff`) and `warnings[]` (`{code, message}`): `slice-over-limit` (the cap holds fewer slices than the limits ask
+for, so a slice is bigger than they say; the message names the `maxConcurrentAgents` that would hold them), `deadline-capped`
+(the modelled need is over 60 minutes, so the agent is given 60 and may not finish) and `invalid-<key>` (a policy value the
+facts held unreadably; the default applied). Each agent in the manifest carries its `deadlineMinutes` and its `work`.
+
+For the PR the numbers came from, the plan is three slices of 8, 3 and 8 paths (454, 556 and 440 changed lines), six
+reviewers at 15 minutes and the lane at 36, all in one wave.
+
+**Nothing is relaxed.** An agent that arrives after its deadline is `expired` whatever the deadline is: the lane that
+arrives at minute 37 of 36 is not clean and the gate still names `security-review-missing`. A reviewer that lists fewer
+paths than its slice leaves that slice not reviewed (`paths-not-reviewed`) and its paths uncovered; the other slices stay
+reviewed. A slice or a deadline the limits cannot hold is a recorded warning, never a pass. The limits only ever add
+reviewers and time.
+
+**Honest limits.**
+
+- ONE run. The rates are one completed read by one agent on one PR with one model, and the only measure of spread is two
+  reviewers on one slice. The model is proportional through the origin (no fixed cost for starting an agent), so it
+  over-states a tiny slice and says nothing about a shape the run did not have. Elapsed time is dispatch to the arrival
+  of the result file, so it holds start-up and queueing, and it is that run's model and tools: a slower model needs a
+  larger `deadlineHeadroom`. Recalibrating is an edit of `OBSERVED` with a new run's numbers, in review.
+- Time is not the only way a reviewer misses a path. reviewer-s1-b stopped 10.4 minutes inside its deadline having listed
+  5 paths and 318 lines, fewer than a slice may hold; the result files do not say whether the brief's 40-call limit or its
+  own choice ended it. Smaller slices and a diff holding only the slice make reaching every path feasible, and nothing here
+  can make a reviewer do it. If live runs keep stopping short of their slice, lower `sliceMaxFiles` and `sliceTargetLines`
+  and raise `maxConcurrentAgents`, which is what holds the number of slices. Whether reviewers now reach every path on a
+  live run has not been measured.
+- The lane is one agent over the whole PR. Its modelled deadline passes the 60-minute maximum at about 32 paths or 2,450
+  changed lines; beyond that the deadline is capped and said, and a lane that does not arrive leaves the security review
+  missing. Cutting the lane by slice is not built.
+- A reviewer reads its slice's diff, not the PR's: an interaction between two slices is for the lane (security only) and
+  the `TRIAGE` step to catch. Slices are contiguous runs of paths in path order, so a source file and its vendored mirror
+  are usually in different slices.
+- Like every deadline here, the runner computes it and the dispatcher must enforce it.
+
 ## Run directory
 
 `<repoRoot>/.ensemble/pr-review/run/<runId>/`: `run.json` (state; phase `review-dispatched`, `verify-dispatched`,
-`done`, or `needs-full-mode`, `invalidated`, `failed`), `briefs/`, `results/<round>/` (agents write
+`done`, or `needs-full-mode`, `invalidated`, `failed`), `briefs/`, `slices/` (a review round of several slices: one
+`slice-<n>.diff` each), `results/<round>/` (agents write
 `out-<name>.json` there, atomically: temp file, then rename) and `final.json`. Files are written atomically with
 mode 0600 (directories 0700). `collect` on a finished run re-reads the PR first and returns the stored result only while
 the head is still the reviewed one on an open PR. A head that moved after `DONE` is `RUN_INVALIDATED` and the stored
@@ -267,11 +362,9 @@ What kata znd1 asked for and this runner does not do (none is claimed):
 - Deadlines and the concurrency cap are the dispatcher's to enforce. Tier kinds come from paths, not from a classifier agent.
   Carry-over of verdicts, delta-only reading and sharding are not built.
 
-Known defects the one real full-mode run found. None is fixed in this change; each is tracked on its own:
+Known defects the one real full-mode run found. The 15-minute deadline (kata `sfpb`) is fixed by the size model (Slices and
+deadlines, above); the other two are not fixed in this change and are tracked on their own:
 
-- The default 15-minute deadline for a reviewer or the security lane is too short for a large whole-PR slice. A Deep
-  run's security lane can arrive late, be recorded `expired` and leave the gate on `security-review-missing` (kata `sfpb`).
-  In the real run the lane needed 17m45s and the gate named `security-review-missing`.
 - The verifier brief refuses a claim that names the orchestrator or a verdict, and a path with whitespace (kata `0g9n`). A
   reviewer-raised candidate like that stays `unverified`, listed under `notReviewed.unbriefable`, and blocks the gate. An
   entry the orchestrator adds is refused at triage instead, so it can be reworded in the same run.

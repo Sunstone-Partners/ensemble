@@ -14,6 +14,9 @@
  * list. Those are pinned through the runner in pr-review-run.test.js; here the model, the keys and the deadline function.
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const sizing = require('../lib/pr-review-sizing');
 const { DEFAULT_POLICY, loadPolicy, DEADLINE_MINUTES_MAX, DEFAULT_DEADLINE_MINUTES, KNOWN_KEYS } = require('../lib/pr-review-policy');
 const { reviewDeadlines } = require('../lib/pr-review-results');
@@ -416,5 +419,67 @@ describe('the defect on the real run, and the plan that fixes it', () => {
   test('the three slices and the lane are seven agents: the whole review round fits one wave at the default cap of 8', () => {
     expect(plan().reviewerAssignments.length + 1).toBe(7);
     expect(DEFAULT_POLICY.maxConcurrentAgents).toBe(8);
+  });
+});
+
+describe('the docs state the numbers the code derives: a number that drifts fails here (the way AC8 pins the deadline docs)', () => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  const read = (...parts) => fs.readFileSync(path.join(repoRoot, ...parts), 'utf8').replace(/\s+/g, ' ');
+  const guide = read('docs', 'guides', 'pr-review-run.md');
+  const reference = read('packages', 'development', 'skills', 'pr-review-cycle', 'reference', 'review-run.md');
+  const userGuide = fs.readFileSync(path.join(repoRoot, 'docs', 'guides', 'user-guide.md'), 'utf8');
+  const changelog = read('CHANGELOG.md');
+  const row = (key) => userGuide.split('\n').find((line) => line.startsWith(`| \`${key}\` |`));
+
+  test('every policy key has a row in the user guide that ends with its default', () => {
+    expect(row('sliceMaxFiles')).toMatch(new RegExp(`\\| \`${DEFAULT_POLICY.sliceMaxFiles}\` \\|$`));
+    expect(row('sliceTargetLines')).toMatch(new RegExp(`\\| \`${DEFAULT_POLICY.sliceTargetLines}\` \\|$`));
+    expect(row('deadlineHeadroom')).toMatch(new RegExp(`\\| \`${DEFAULT_POLICY.deadlineHeadroom}\` \\|$`));
+  });
+
+  test('the deadlineMinutes row says it is a BASE and a floor, and keeps what AC8 pins about the subcommand', () => {
+    expect(row('deadlineMinutes')).toMatch(/\*\*base\*\*/);
+    expect(row('deadlineMinutes')).toMatch(/floor and not a pin/);
+    expect(row('deadlineMinutes')).toMatch(/no skill or command calls the subcommand yet/);
+  });
+
+  test('the maxConcurrentAgents row says the runner reads it for the slices and still that it is not enforced', () => {
+    expect(row('maxConcurrentAgents')).toMatch(/one wave/);
+    expect(row('maxConcurrentAgents')).toMatch(/not enforced yet/);
+  });
+
+  test.each([['the guide', guide], ['the reference', reference]])('%s states the rates, the headroom, the limits and the real run\'s plan', (_name, text) => {
+    expect(text).toContain(String(MODEL.minutesPerFile));
+    expect(text).toContain(String(MODEL.minutesPer100Lines));
+    // the default sits beside the key, in a table cell or in brackets
+    expect(text).toMatch(new RegExp(`\`sliceMaxFiles\`[^0-9]{1,6}${DEFAULT_POLICY.sliceMaxFiles}\\b`));
+    expect(text).toMatch(new RegExp(`\`sliceTargetLines\`[^0-9]{1,6}${DEFAULT_POLICY.sliceTargetLines}\\b`));
+    expect(text).toContain('three slices of 8, 3 and 8 paths');
+    expect(text).toContain('36');
+  });
+
+  test('the guide gives the derivation of every number from the observation', () => {
+    expect(guide).toContain('17.75 min for 19 paths and 1450 lines, on a 15 min deadline');
+    expect(guide).toContain('4.62 min, listed 5 paths (318 lines), left 14 (1132 lines)');
+    expect(guide).toContain(`floor(15 / (2 x ${MODEL.minutesPerFile}))`);
+    expect(guide).toContain(`floor(15 / (2 x ${MODEL.minutesPer100Lines} / 100))`);
+    expect(guide).toContain('1.18');
+    expect(guide).toContain('1.70');
+  });
+
+  test('the sfpb defect is no longer listed as unfixed anywhere the docs list defects', () => {
+    expect(guide).not.toContain('None is fixed in this change');
+    expect(guide).toMatch(/The 15-minute deadline \(kata `sfpb`\) is fixed by the size model/);
+    expect(reference).not.toContain('are NOT fixed here and are tracked on their own: (a)');
+    expect(reference).toMatch(/Two are NOT fixed here and are tracked on their own: \(b\)/);
+  });
+
+  test('the CHANGELOG entry is the first of Unreleased and says the model is one run and nothing is relaxed', () => {
+    const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
+    const first = unreleased.slice(unreleased.indexOf('- **packages/development:**'));
+    expect(first).toMatch(/^- \*\*packages\/development:\*\* `review-run` sizes its slices and deadlines to what there is to read \(kata `sfpb`/);
+    const entry = first.slice(0, first.indexOf('- **packages/development:**', 10));
+    expect(entry).toMatch(/Nothing is relaxed/);
+    expect(entry).toMatch(/one observed run/);
   });
 });
