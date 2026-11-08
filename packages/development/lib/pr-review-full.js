@@ -7,17 +7,23 @@
  * NO side effects, NO shell, NO network, NO file reads: plain JSON in, plain JSON out, like the other pr-review-*
  * libraries. `pr-review-run.js` calls these over the facts it already holds.
  *
- * One runner, two modes. Full mode differs from light in exactly four things and nothing else:
+ * One runner, two modes. Full mode differs from light in exactly four things and nothing else, and the fourth changes what
+ * the runner RECORDS, not what a reviewer reads: reviewers read the whole range in both modes until verdict carry-over
+ * (kata qw98) lands.
  *   1. Deep depth always (`FULL_DEPTH_TIER`): at least 2 reviewers per slice and 5 verifiers per finding, whatever the
  *      tier word says -- an unreadable tier has no depth of its own, and the runner must not hand it a lighter one;
  *   2. the security lane always;
  *   3. a model-orchestrator TRIAGE stop between the review round and the verify round (`validateTriage`): the one
  *      place the orchestrator may act, and it may only ADD candidates the reviewers missed;
- *   4. the re-review scope rule (`planReReview`): delta only when nothing makes a delta unsafe, a full re-read otherwise.
+ *   4. the re-review scope rule (`planReReview`): delta only when nothing makes a delta unsafe, a full re-read otherwise;
+ *      recorded in the run and in the answers, with `appliedRange` always `full-range` today.
  *
- * `modeInvariant` is the guard behind "no code path downgrades a full run": it reads the stored run, and a full run whose
- * depth, security lane or verifier count is below what full mode requires is not continued.
+ * `modeInvariant` is the guard behind "no code path downgrades a full run": it reads the stored run, refuses a mode label
+ * that is not what `selectMode` says for the tier the run stores (rewritten to light, removed or unknown), and refuses a
+ * full run whose depth, security lane or verifier count is below what full mode requires.
  */
+
+const { selectMode } = require('./pr-review-mode');
 
 /** The tier the full mode plans its depth from, whatever the record says. */
 const FULL_DEPTH_TIER = 'high';
@@ -136,15 +142,31 @@ function validateTriage(triage) {
 }
 
 /**
- * Why a stored run is no longer a full run, or null. A full run has Deep depth, at least the full reviewer and verifier
- * counts and the security lane; a record of a full run that says otherwise was written by something that downgraded it, and
- * it is not continued. Light runs are not checked here: only the downgrade of a full run is.
+ * Why a stored run is no longer the run `prepare` made, or null.
  *
- * @param {Object} run  A stored run (`run.mode.mode`, `run.depth`, `run.securityLane`).
+ * The mode LABEL is part of the invariant. Every later call reads `run.mode.mode` (stop at TRIAGE or not, which mode an
+ * answer reports), so a label that was rewritten, removed or is unknown is refused: the stored label must be what
+ * `selectMode` says for the tier the run itself stores, which is how `prepare` chose it. This only CHECKS the label: the
+ * stored mode is still the only mode there is, and nothing here picks or changes one. The same check refuses a tier that was
+ * lowered under a full label.
+ *
+ * A full run must also still have what full mode requires: Deep depth, at least the full reviewer and verifier counts and the
+ * security lane. A light run is checked for its label only; its depth is its own tier's.
+ *
+ * The honest limit: `run.json` is local state nobody authenticates. This refuses a record that contradicts itself, so an edit
+ * of the label, the depth, the lane or the tier alone is caught; whoever can write the run directory can still rewrite the
+ * tier, label, depth and lane together into a consistent light run.
+ *
+ * @param {Object} run  A stored run (`run.mode.mode`, `run.tier`, `run.depth`, `run.securityLane`).
  * @returns {string|null}
  */
 function modeInvariant(run) {
-  if (!isObject(run) || !isObject(run.mode) || run.mode.mode !== 'full') return null;
+  const stored = isObject(run) && isObject(run.mode) ? run.mode.mode : undefined;
+  const selected = selectMode(isObject(run) ? run.tier : undefined).mode;
+  if (stored !== selected) {
+    return `the run records ${stored === undefined ? 'no mode' : `mode ${JSON.stringify(stored)}`}, but the tier it stores selects ${selected}: a stored mode is only ever selectMode's answer for its tier, so this record was edited after prepare (or written by a version with other rules); start a new run`;
+  }
+  if (selected !== 'full') return null;
   const depth = isObject(run.depth) ? run.depth : {};
   if (depth.mode !== 'deep') return `full mode requires deep depth, the run records ${JSON.stringify(depth.mode)}`;
   if (!Number.isInteger(depth.reviewersPerSlice) || depth.reviewersPerSlice < FULL_MIN_REVIEWERS) return `full mode requires at least ${FULL_MIN_REVIEWERS} reviewers per slice, the run records ${JSON.stringify(depth.reviewersPerSlice)}`;

@@ -35,7 +35,9 @@
  *     `unverified`, a missing security lane is not `clean`.
  *   - An unreadable, ambiguous, raised, High or sensitive tier selects FULL mode, which runs in this same runner (Deep depth,
  *     the security lane, a model-orchestrator TRIAGE stop, the re-review scope rule: pr-review-full.js). The mode comes from
- *     `selectMode` alone, is stored in the run and is never recomputed: nothing here can lower a full run to light.
+ *     `selectMode` alone and is stored in the run. Every later call only CHECKS that label against `selectMode` over the tier
+ *     the run stores (`modeInvariant`): a label rewritten to light, removed or unknown is RUN_FAILED `mode-invariant`, never a
+ *     new mode, so nothing here can lower a full run to light.
  *     NEEDS_FULL_MODE is left for a LIGHT run whose brief the renderer refuses (nothing dispatched; the narrated procedure).
  *
  * HONEST LIMITS: the runner computes and records agent deadlines and the concurrency cap, and cannot enforce either;
@@ -43,9 +45,11 @@
  * changed paths alone (no classifier or second assessor), so a path-only reading can raise a tier but never lower one.
  * Coverage is the agents' own report (`pathsReviewed`) and their read-only access an instruction nobody here enforces. The
  * baseline test run (head code) happens inside prepare, before the tier is known. `agentAuthored` is the caller's word.
- * `run.json` is local, unauthenticated state: `modeInvariant` refuses a stored FULL run whose depth, verifier count or lane was
- * lowered, but it cannot tell a run whose mode label was rewritten to light from a light run, so whoever can write the run
- * directory can choose the mode of a run that has not finished. The mode of a NEW run is only ever `selectMode`'s.
+ * `run.json` is local, unauthenticated state: `modeInvariant` refuses a stored run whose mode label is not `selectMode`'s answer
+ * for the tier it stores, and a FULL run whose depth, verifier count or lane was lowered. It cannot tell a run whose tier,
+ * label, depth and lane were all rewritten together from an honest light run, so whoever can write the run directory can
+ * still choose the mode of a run that has not finished by rewriting all of them. The mode of a NEW run is only ever
+ * `selectMode`'s.
  *
  * deps (every function may be async):
  *   now()                                    epoch ms
@@ -974,7 +978,8 @@ async function collectRun(input, deps) {
 
   if (['invalidated', 'needs-full-mode', 'failed'].includes(run.phase)) return run.result;
 
-  // A full run is never continued below what full mode requires (the stored mode is the only mode there is).
+  // Every other call, in every stored phase (a finished run's replay included), first checks the record against its own mode:
+  // the stored label must be selectMode's answer for the stored tier, and a full run must still be Deep, with its lane.
   const downgraded = F.modeInvariant(run);
   if (downgraded !== null) return terminate(run, 'failed', failure('RUN_FAILED', { reason: 'mode-invariant', error: downgraded, runId: run.runId }), 'collect', startedAt, deps);
   if (input.triage !== undefined && run.phase !== 'triage') return failure('RUN_FAILED', { reason: 'triage-not-pending', error: `run ${run.runId} is not waiting for triage (phase ${run.phase})`, runId: run.runId });

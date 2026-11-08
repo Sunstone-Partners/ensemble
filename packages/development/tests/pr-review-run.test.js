@@ -660,6 +660,12 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
       ['fewer verifiers', (run) => { run.depth.verifiersPerCandidate = 3; }],
       ['one reviewer per slice', (run) => { run.depth.reviewersPerSlice = 1; }],
       ['no security lane', (run) => { run.securityLane = false; }],
+      // The mode label is what every later call reads, so it is part of the invariant: a stored label is only ever what
+      // selectMode says for the tier the run stores (a review of this PR rewrote it to light and got DONE, mode light).
+      ['its mode label rewritten to light', (run) => { run.mode.mode = 'light'; }],
+      ['no mode label', (run) => { delete run.mode.mode; }],
+      ['an unknown mode label', (run) => { run.mode.mode = 'turbo'; }],
+      ['no mode record', (run) => { delete run.mode; }],
     ];
     for (const [name, mutate] of tampered) {
       test(`a stored full run with ${name} is not continued: RUN_FAILED mode-invariant, and it stays failed`, async () => {
@@ -672,6 +678,42 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
         expect(await h.collect()).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'mode-invariant' });
         expect(await h.collect()).toMatchObject({ ok: false, reason: 'mode-invariant' });
         expect(h.stateWrites).toEqual([]);
+      });
+    }
+
+    test('a label-only rewrite to light does not skip TRIAGE or relabel the run: it is refused by name, and nothing is finalised', async () => {
+      const h = sensitive();
+      const manifest = await h.prepare();
+      answerReview(manifest, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const stored = h.readRun();
+      expect(stored.mode.mode).toBe('full');
+      stored.mode.mode = 'light';
+      fs.writeFileSync(path.join(h.runDir(), 'run.json'), JSON.stringify(stored));
+      const out = await h.collect();
+      expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'mode-invariant', error: expect.stringMatching(/mode "light".*selects full/) });
+      expect(h.readRun().phase).toBe('failed');
+      expect(fs.existsSync(path.join(h.runDir(), 'final.json'))).toBe(false);
+      expect(h.stateWrites).toEqual([]);
+    });
+
+    // Every stored phase is checked, not only the first collect: the label is rewritten after the run reached the phase.
+    const phases = [
+      ['waiting for triage', async (h) => { await toTriage(h, { findingsFor: onlyA }); }],
+      ['in its verify round', async (h) => { await toTriage(h, { findingsFor: onlyA }); await h.collect({ triage: {} }); }],
+      ['that has finished', async (h) => {
+        await toTriage(h, { findingsFor: onlyA });
+        voteAll(await h.collect({ triage: {} }), () => 'real');
+        expect((await h.collect()).status).toBe('DONE');
+      }],
+    ];
+    for (const [name, advance] of phases) {
+      test(`a mode label rewritten to light on a run ${name} is refused at the next collect, never continued or replayed as a light run`, async () => {
+        const h = sensitive();
+        await advance(h);
+        const stored = h.readRun();
+        stored.mode.mode = 'light';
+        fs.writeFileSync(path.join(h.runDir(), 'run.json'), JSON.stringify(stored));
+        expect(await h.collect()).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'mode-invariant' });
       });
     }
 

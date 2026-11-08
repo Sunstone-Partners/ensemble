@@ -6,6 +6,7 @@
  */
 
 const { planReReview, validateTriage, modeInvariant, MAX_ADDITIONAL_CANDIDATES } = require('../lib/pr-review-full');
+const { selectMode } = require('../lib/pr-review-mode');
 
 const LAST = '1'.repeat(40);
 const entry = (path, over = {}) => ({ path, sensitive: false, high: false, declarationFile: false, ...over });
@@ -108,7 +109,16 @@ describe('validateTriage', () => {
 });
 
 describe('modeInvariant', () => {
-  const run = (over = {}) => ({ mode: { mode: 'full' }, depth: { mode: 'deep', reviewersPerSlice: 2, verifiersPerCandidate: 5 }, securityLane: true, ...over });
+  // The tier records a stored run carries (selectMode's own input): one it calls light and one it calls full.
+  const LIGHT_TIER = { ok: true, tier: 'medium', effectiveTier: 'medium', raised: [], paths: { sensitive: [], high: [], uncited: [] }, reasons: [], warnings: [] };
+  const FULL_TIER = { ...LIGHT_TIER, tier: 'high', effectiveTier: 'high', paths: { sensitive: ['secure/key.js'], high: [], uncited: [] } };
+  const run = (over = {}) => ({ mode: { mode: 'full' }, tier: FULL_TIER, depth: { mode: 'deep', reviewersPerSlice: 2, verifiersPerCandidate: 5 }, securityLane: true, ...over });
+  const lightRun = (over = {}) => ({ mode: { mode: 'light' }, tier: LIGHT_TIER, depth: { mode: 'standard', reviewersPerSlice: 2, verifiersPerCandidate: 3 }, securityLane: true, ...over });
+
+  test('the fixtures are what selectMode says they are (so a failure below is the guard, not a fixture)', () => {
+    expect(selectMode(LIGHT_TIER).mode).toBe('light');
+    expect(selectMode(FULL_TIER).mode).toBe('full');
+  });
 
   test('a full run at Deep with the lane holds', () => {
     expect(modeInvariant(run())).toBeNull();
@@ -125,8 +135,29 @@ describe('modeInvariant', () => {
     expect(modeInvariant(run(over))).toMatch(reason);
   });
 
-  test('light runs and unreadable records are not this guard\'s business', () => {
-    expect(modeInvariant({ mode: { mode: 'light' }, depth: { mode: 'standard' } })).toBeNull();
-    expect(modeInvariant(null)).toBeNull();
+  // The label is part of the invariant: it is what every later call reads, and it is only ever selectMode's answer for the
+  // tier the run stores. Before this, a label other than "full" was simply not checked (a review of kata dqcs rewrote it to
+  // light and the run finished as DONE, mode light, with no TRIAGE).
+  test.each([
+    ['its label rewritten to light', run({ mode: { mode: 'light' } }), /mode "light".*selects full/],
+    ['its label removed', run({ mode: {} }), /no mode.*selects full/],
+    ['no mode record', run({ mode: undefined }), /no mode.*selects full/],
+    ['an unknown label', run({ mode: { mode: 'turbo' } }), /mode "turbo".*selects full/],
+    ['a label of the wrong type', run({ mode: { mode: 1 } }), /mode 1.*selects full/],
+    ['a full label on a tier that selects light (the record contradicts itself)', run({ tier: LIGHT_TIER }), /mode "full".*selects light/],
+    ['a light label and no readable tier (an unreadable tier selects full, never light)', lightRun({ tier: undefined }), /mode "light".*selects full/],
+    ['a light label on a tier that selects full', lightRun({ tier: FULL_TIER }), /mode "light".*selects full/],
+  ])('a stored run with %s does not hold', (_name, stored, reason) => {
+    expect(modeInvariant(stored)).toMatch(reason);
+  });
+
+  test('a light run whose label is what its tier selects holds, at the depth its own tier gives it', () => {
+    expect(modeInvariant(lightRun())).toBeNull();
+    expect(modeInvariant(lightRun({ depth: { mode: 'quick', reviewersPerSlice: 1, verifiersPerCandidate: 0 }, securityLane: false }))).toBeNull();
+  });
+
+  test('a record that is not an object records no mode', () => {
+    expect(modeInvariant(null)).toMatch(/no mode/);
+    expect(modeInvariant('full')).toMatch(/no mode/);
   });
 });
