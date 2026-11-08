@@ -126,7 +126,7 @@
     "sessions": {
       "root": "~/.omp/agent/sessions/-Development-Sunstone-ensemble.local-ci/2026-10-24T23-07-57-756Z_01a1702b-bfbc-73ff-9648-26dd9df425c6",
       "layout": "one <Orchestrator>.jsonl per review orchestrator and <Orchestrator>/<Agent>.jsonl per dispatched agent; <root>.jsonl records each orchestrator's task result and duration",
-      "method": "an interval runs from the first record of a session file to its last record of type 'message', never to 'session_exit' (the idle linger after the final yield, exactly 7:00: plan correction C01). The plan's figures are the task results' durations cut to whole minutes",
+      "method": "The interval of each check is stated on the check, because its end point differs. Merge225, Merge228 and Merge229: the first record of the orchestrator's session file to its last record of type 'message'. Merge233 round 1: the first record of its file to the report that ended the first stage (the same file goes on into the re-review, so its own last message is hours later and is not the figure). The #233 re-review chain: the earliest first record among the chain's agent files to the latest 'message' among them, never to 'session_exit' (the idle linger after the final yield, exactly 7:00: plan correction C01). The plan's figures are the task results' durations cut to whole minutes. Every wall figure is derivable from record timestamps and record types alone (no message content). The gate-run counts of #228 and #233 are counted from the session's gate service starts, that is from session content; only #225's and #229's are also stated in the plan's text.",
       "available_to_ci": false,
       "checked_on": "2026-11-07",
       "checks": [
@@ -137,7 +137,8 @@
           "minutes": 66.6,
           "task_result": "1h6m",
           "tier": "medium",
-          "gate_runs": 3
+          "gate_runs": 3,
+          "gate_runs_source": "the plan's text ('#225 needed 3 runs') and the session's three gate service starts (gate225, gate225b, gate225c)"
         },
         {
           "run": "pr228-first",
@@ -146,7 +147,8 @@
           "minutes": 39.3,
           "task_result": "39m21s",
           "tier": "high",
-          "gate_runs": 1
+          "gate_runs": 1,
+          "gate_runs_source": "the session's gate service start (gate228) only: the plan states no count for #228"
         },
         {
           "run": "pr229-first",
@@ -155,33 +157,37 @@
           "minutes": 55.4,
           "task_result": "55m21s",
           "tier": "high",
-          "gate_runs": 2
+          "gate_runs": 2,
+          "gate_runs_source": "the plan's text ('#229 needed 2') and the session's two gate service starts (gate229, gate229b)"
         },
         {
           "run": "pr233-first",
           "session": "Merge233",
-          "interval": "first record to the report of the first stage",
+          "interval": "first record (2026-11-04T18:00:23.161Z) to the report of the first stage (2026-11-04T19:22:43.595Z); the file goes on into the re-review, so its own last message (22:36:28Z, 276.1 min) is not this figure",
           "minutes": 82.3,
           "task_result": "1h22m",
           "tier": "high",
-          "gate_runs": 2
+          "gate_runs": 2,
+          "gate_runs_source": "the session's gate service starts (gate1-pr233, gate2-pr233) only: the plan states no count"
         },
         {
           "run": "pr233-rereview-1",
-          "session": "Merge233 (Rev233R3A-D, Sec233R3, Ver233R3A-E)",
-          "interval": "first R3 agent start to the last verifier's last message",
+          "session": "Merge233 (Cls233R3, Second233R3, Rev233R3A-D, Sec233R3, Ver233R3A-E)",
+          "interval": "first R3 agent start (2026-11-04T21:25:13.744Z, Cls233R3) to the last verifier's last message (2026-11-04T22:35:39.343Z, Ver233R3C), over the agents' own session files",
           "minutes": 70.4,
           "minutes_if_session_exit_were_used": 77.4,
           "tier": "high",
-          "gate_runs": 1
+          "gate_runs": 1,
+          "gate_runs_source": "the session's gate service start (gate3-pr233) only: the plan states no count"
         },
         {
           "run": "pr233-rereview-2",
           "session": "Merge233R4",
-          "interval": "first record to last message (aborted: not used as a wall time)",
+          "interval": "first record (2026-11-05T00:02:43.696Z) to last message (2026-11-05T00:50:05.298Z): aborted, not used as a wall time",
           "minutes": 47.4,
           "tier": "high",
-          "gate_runs": 1
+          "gate_runs": 1,
+          "gate_runs_source": "the session's gate service start (gate-r4-1) only: the plan states no count"
         }
       ]
     }

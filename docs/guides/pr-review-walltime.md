@@ -47,17 +47,23 @@ Where the plan's own figure is ambiguous the baseline takes the **smaller** (har
 current side is the whole orchestrator window (the larger reading), so the comparison cannot flatter
 the new pipeline.
 
+A real review that dispatches a model agent cannot finish in under a minute, so a `real` row whose wall
+time is under `MINIMUMS.wallMin` (1 min) is a typo, a unit slip (seconds for minutes) or a stand-in: it is
+listed under `excluded` with that reason and never enters a median, a count or the carry evidence.
+
 ### The 5x claim (`fiveX`)
 
-`fiveX.claim` is `met` only when **every required stratum is `met` and the current cohort holds a real
-re-review in which verdicts were carried across heads** (a row with `origin: "real"`,
-`round: "re-review"`, a wall time and `carry.carried` of at least 1). That is the plan's section 5 rule:
-"Do not claim the 5x target met until PR 4 has run on a real re-review" (PR 4 is the `carry` child,
-`qw98`). Otherwise:
+`fiveX.claim` is `met` only when **every required stratum is `met`**, **the current cohort holds a real
+high-tier re-review in which verdicts were carried across heads**, and **every counted current row of a
+required stratum was re-derived from its own trace** (section 5). The carried re-review is a row of the
+`high/re-review` stratum itself: `origin: "real"`, tier `high`, round `re-review`, a wall time and
+`carry.carried` of at least 1; a carried re-review of another tier does not stand in for it. That is the
+plan's section 5 rule: "Do not claim the 5x target met until PR 4 has run on a real re-review" (PR 4 is the
+`carry` child, `qw98`). Otherwise:
 
 - any required stratum `not-met` is `not-met`;
-- anything else (a required stratum `unknown`, or no carried re-review) is `unknown`, and
-  `fiveX.reasons` names each missing piece.
+- anything else (a required stratum `unknown`, no carried high re-review, or a row whose trace was not
+  re-derived) is `unknown`, and `fiveX.reasons` names each missing piece.
 
 A stratum that is not required (a `low` tier, a `medium/re-review`) is graded and reported, and a miss
 is a warning, but the claim does not depend on it.
@@ -83,11 +89,11 @@ What it supports, and what it does not:
   `medium/first` has one PR (#225) and `high/re-review` has one (#233), so a compare against either is
   `unknown` until pre-speedup runs are added or the minimum is changed in code. This is the honest size
   of the data the plan measured, not a defect of the schema.
-- **The tiers are the CLI's, not the plan table's.** The plan's section 2 gives Medium as 40 to 65 min,
-  which matches the span of #225, #228 and #229 (39 to 66 min). By `pr-review-cli tier` only #225 was
-  medium; #228 and #229 were high (#229 raised from medium by the second assessment). The measured high
-  first reviews are 39, 55 and 82 min, and 20% of their median is 11 min, below the plan's 16 to 24 min
-  target that came from an estimated 80 to 120 min.
+- **The tiers are the CLI's.** The plan labels no PR's tier: its section 1 groups #225, #228 and #229 in one
+  row, and its section 2 gives a Medium PR 40 to 65 min, a band that matches the span of their times (39 to
+  66 min). By `pr-review-cli tier` only #225 was medium; #228 was high (a sensitive path) and #229 was high
+  (raised from medium by the second assessment). The measured high first reviews are 39, 55 and 82 min, and
+  20% of their median is 11 min, below the plan's 16 to 24 min target that came from an estimated 80 to 120 min.
 - **#233 is four chains, one of them with no wall time.** Round 1 spans two heads (the PR's head moved
   mid-run), the re-review is the third chain, and the fourth (`Merge233R4`) was aborted before any
   verdict, so it counts as a chain and a gate run but has no wall time.
@@ -110,25 +116,46 @@ checks them:
 - **The omp session files.** The plan's numbers were measured from the omp session of the interactive
   agent that dispatched the orchestrators. Those files are on a maintainer's machine, not in the
   repository, so CI cannot read them; `provenance.sessions.checks` records what they gave when they
-  were re-read on 2026-11-07 (orchestrator window first record to last `message`: 66.6, 39.3, 55.4 and
-  82.3 min; 70.4 min for the #233 re-review, or 77.4 min measured to `session_exit`; tier and gate runs
-  per PR). The test checks that those agree with the rows: the plan's whole minutes are the sessions'
-  task durations cut to the minute.
+  were re-read on 2026-11-07, with the end point of each interval and where each gate-run count comes
+  from. The test checks that those agree with the rows (the plan's whole minutes are the sessions' task
+  durations cut to the minute); it does not read the sessions.
+- **What is derivable from timestamps, and what is not.** Every wall figure comes from record
+  timestamps and record types alone (never message content). The gate-run counts of #228 (1) and #233
+  (2, 1 and 1) are counted from the sessions' gate service starts, which is session content: the plan
+  states a count only for #225 (3) and #229 (2), so the others cannot be re-derived without the
+  sessions.
 
-To re-run one of those checks, point this at a session file (the interval is the first record to the
-last record of type `message`, never `session_exit`, which is a 7:00 idle linger after the final
-yield):
+The end point differs per row, so one recipe does not fit all:
+
+| Row | Start | End |
+|---|---|---|
+| `pr225-first`, `pr228-first`, `pr229-first` | first record of `Merge225`, `Merge228`, `Merge229` | last record of type `message` of the same file |
+| `pr233-first` | first record of `Merge233` (2026-11-04T18:00:23Z) | the report that ended the first stage (19:22:43Z), so cut at 19:22:44Z: the file goes on into the re-review and its own last message is hours later (276.1 min) |
+| `pr233-rereview-1` | earliest first record among the chain's agent files (`Merge233/Merge233.*R3*.jsonl`: 21:25:13Z, the classifier) | latest `message` among those files (22:35:39Z, the last verifier) |
+| `pr233-rereview-2` | first record of `Merge233R4` | last `message` (47.4 min; aborted, so not used as a wall time) |
+
+Never `session_exit`: it is a 7:00 idle linger after the final yield (plan correction C01), which is why
+measuring the re-review chain to it reads 77.4 min, not 70.4. The recipe below takes a cut-off (`-` for
+none) and one or more session files, and prints the first record to the last `message` at or before the
+cut-off, over all the files:
 
 ```bash
 SESSIONS=~/.omp/agent/sessions/-Development-Sunstone-ensemble.local-ci/2026-10-24T23-07-57-756Z_01a1702b-bfbc-73ff-9648-26dd9df425c6
-node -e '
-const rows = require("fs").readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean)
-  .map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+rec() { node -e '
+const fs = require("fs");
+const until = process.argv[1] === "-" ? Infinity : Date.parse(process.argv[1]);
+const rows = process.argv.slice(2).flatMap((file) => fs.readFileSync(file, "utf8").split("\n").filter(Boolean)
+  .map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean));
 const time = (row) => Date.parse(row.timestamp);
 const first = Math.min(...rows.map(time).filter(Number.isFinite));
-const last = Math.max(...rows.filter((row) => row.type === "message").map(time).filter(Number.isFinite));
-console.log(((last - first) / 60000).toFixed(1), "min");
-' "$SESSIONS/Merge225.jsonl"
+const last = Math.max(...rows.filter((row) => row.type === "message").map(time).filter((t) => Number.isFinite(t) && t <= until));
+console.log(((last - first) / 60000).toFixed(1), "min", new Date(first).toISOString(), new Date(last).toISOString());
+' "$@"; }
+
+rec - "$SESSIONS/Merge225.jsonl"                       # 66.6 (Merge228: 39.3, Merge229: 55.4)
+rec 2026-11-04T19:22:44Z "$SESSIONS/Merge233.jsonl"    # 82.3 (without the cut-off: 276.1)
+rec - "$SESSIONS"/Merge233/Merge233.*R3*.jsonl         # 70.4
+rec - "$SESSIONS/Merge233R4.jsonl"                     # 47.4
 ```
 
 Never edit this baseline in place: a baseline that moves proves nothing. To add pre-speedup runs,
@@ -155,13 +182,15 @@ jq -n '{action: "row", runId: "RUN-ID", pr: 271, tier: "high", round: "first", o
   | node "$CLI" walltime
 
 # 4.3 The comparison. `current` is a cohort file of rows from 4.2: {"schema": "review-walltime-cohort/1", "runs": [...]}
+#     Every counted current row is re-derived from the trace its `run_id` names, under <cwd>/.ensemble/state/toolchain/
+#     (`cwd` defaults to the working directory), and a 5x `met` needs that to hold for every one of them (section 5).
 jq -n --slurpfile baseline "$BASELINE" --slurpfile current CURRENT.json \
-  '{action: "compare", baseline: $baseline[0], current: $current[0]}' | node "$CLI" walltime
+  '{action: "compare", baseline: $baseline[0], current: $current[0], cwd: "."}' | node "$CLI" walltime
 ```
 
 ### Building the current cohort
 
-Collect one `row` answer per real post-change review (`.row` of the answer) into a `runs` array.
+Collect one `row` answer per real post-change review (`.row` of the answer, which carries the trace's `run_id`: `compare` needs it to re-derive the row) into a `runs` array.
 Each run needs the PR, the tier the CLI assigned, the round, and `origin: "real"` for a review of a
 real PR by model agents (`stand-in` for scripted agents and `fixture` for a recorded fixture are kept
 in the file and listed as excluded, never counted).
@@ -180,18 +209,23 @@ another head; see [`pr-review-carry.md`](pr-review-carry.md)). The row then stor
 | `strata[]` | Per stratum: `baseline` and `current` (`runs`, `prs`, `runsWithoutWall`, `medianMin`, `p75Min`), the `target` (a fifth of the baseline median and p75), `status` (`met`, `not-met`, `unknown`), `medianMet` and `p75Met`, `speedup` (only when graded) and `reasons`. |
 | `counts[]` | Per tier, gate runs and review chains per PR, baseline against current, with the change in the median and p75. Reported, never graded (the plan sets no target); `unknown` under the same three-PR minimum. |
 | `perPr` | The per-PR delivery on each side: its runs, review chains, gate runs and total wall time (`null` with a reason when a run has none). |
-| `carry` | Whether a real carried re-review is in the current cohort, and the rows that show it. |
-| `fiveX` | `claim` (`met`, `not-met`, `unknown`), `met`, and `reasons`. |
-| `excluded` | Rows left out of every statistic because their origin is not `real`. |
-| `warnings` | A PR on both sides; a non-required stratum that was not met. |
+| `carry` | Whether a real carried HIGH-tier re-review (a run of the `high/re-review` stratum) is in the current cohort, and the rows that show it. |
+| `fiveX` | `claim` (`met`, `not-met`, `unknown`), `met`, `reasons` and `attestation` (`tracesChecked`, `rowsWithoutTraceCheck`, and the statement of what a `met` rests on). |
+| `excluded` | Rows left out of every statistic: an origin that is not `real`, or a real row whose wall time is under the one-minute floor. |
+| `warnings` | A PR on both sides; a non-required stratum that was not met; on every `met`, `claim-met-attested` (what it rests on). |
 
 ## 5. Honest limits
 
-- `origin` is the caller's statement. Nothing signs a row, so this code cannot tell a real review
-  from a typed one. What it does: leave `stand-in` and `fixture` rows out of every statistic and out
-  of the carry evidence, and require carry evidence to name a count of carried verdicts and two
-  different full object ids. A state report is an untracked file, so the evidence is attested, not
-  proven.
+- **Trust model: what a `met` rests on.** Nothing signs a row. `origin`, the tier and the
+  carried-verdict evidence are what the row's writer states: this code cannot tell a real review from a
+  typed one, and a state report is an untracked file, so that evidence is attested, not proven.
+  `walltime compare` therefore re-derives every counted current row of a required stratum from the trace
+  its `run_id` names (the derivation `walltime row` uses: wall time, chains, gate runs) and withholds
+  `met` unless all of them agree. A hand-typed row, or one whose trace is missing or disagrees, leaves the
+  claim `unknown` with the row named. What stays attested is stated in `fiveX.attestation` and in a
+  `claim-met-attested` warning on every `met`. On its own the code leaves `stand-in`, `fixture` and
+  below-the-floor rows out of every statistic and out of the carry evidence, and requires carry evidence
+  to name a count of carried verdicts and two different full object ids.
 - A stratum compares run times. It does not normalise for the size of the PRs in it, and three PRs is
   a floor, not a significance test.
 - Metrics describe a cohort; they do not establish cause. A faster review alongside a pipeline change

@@ -165,7 +165,7 @@ describe('row from a trace on disk, exactly as `timing` reads it', () => {
     expect(out.row.wall_min).toBe(19.661);
   });
 
-  test('carry evidence is read from the state report verdicts', () => {
+  test('carry evidence is derived from the verdicts array in the payload: the CLI does not read a state report', () => {
     const verdicts = [{ id: 'F-1', head: sha('b'), carriedFrom: sha('a') }];
     const { out } = walltime(request({ cwd: dir, round: 're-review', carry: { headSha: sha('b'), verdicts } }));
     expect(out.row.carry).toEqual({ carried: 1, head_sha: sha('b'), from_heads: [sha('a')] });

@@ -109,7 +109,7 @@ describe('AC1: reproducible from the stated sources', () => {
     expect(entry.gateRuns).toBe(4);
   });
 
-  test('the figures recomputed from the omp session files agree with the rows (the plan truncates to whole minutes)', () => {
+  test('the recorded session checks agree with the rows (the plan truncates to whole minutes); the session files themselves are not readable in CI', () => {
     const { sessions } = baseline.provenance;
     expect(sessions.available_to_ci).toBe(false);
     expect(sessions.method).toContain("never to 'session_exit'");
@@ -126,6 +126,24 @@ describe('AC1: reproducible from the stated sources', () => {
     }
     expect(sessions.checks.map((entry) => entry.run).sort()).toEqual(baseline.runs.map((run) => run.id).sort());
   });
+
+  test('each session check states where its interval ends and where its gate-run count comes from (the end point differs per row)', () => {
+    const { sessions } = baseline.provenance;
+    expect(sessions.method).toContain('The interval of each check is stated on the check');
+    for (const check of sessions.checks) {
+      expect(typeof check.interval).toBe('string');
+      expect(typeof check.gate_runs_source).toBe('string');
+    }
+    const checkOf = (run) => sessions.checks.find((entry) => entry.run === run);
+    expect(checkOf('pr233-first').interval).toContain('2026-11-04T19:22:43.595Z');
+    expect(checkOf('pr233-first').interval).toContain('is not this figure');
+    expect(checkOf('pr233-rereview-1').interval).toContain('2026-11-04T21:25:13.744Z');
+    expect(checkOf('pr233-rereview-1').interval).toContain('2026-11-04T22:35:39.343Z');
+    expect(checkOf('pr225-first').gate_runs_source).toContain("the plan's text");
+    expect(checkOf('pr229-first').gate_runs_source).toContain("the plan's text");
+    expect(checkOf('pr228-first').gate_runs_source).toContain('only');
+    expect(checkOf('pr233-first').gate_runs_source).toContain('only');
+  });
 });
 
 describe('the baseline does not claim more than it measured', () => {
@@ -138,7 +156,7 @@ describe('the baseline does not claim more than it measured', () => {
     expect(perPr.wallMinTotalReason).toContain('pr233-rereview-2');
   });
 
-  test('the tier of each PR is what pr-review-cli tier said in the review, not what the plan section 2 table suggests', () => {
+  test('the tier recorded for each PR is the one pr-review-cli tier gave in the review sessions (pinned here, not re-derived)', () => {
     expect(baseline.metrics.perPr.map((pr) => [pr.pr, pr.tier])).toEqual([
       [225, 'medium'],
       [228, 'high'],
