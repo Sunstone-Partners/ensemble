@@ -23,6 +23,8 @@ const { classifyPaths } = require('../lib/pr-review-paths');
 const { loadPolicy } = require('../lib/pr-review-policy');
 const { realFs, headFile } = require('../lib/review-run-cli');
 const { redact, statePath } = require('../lib/pr-review-state');
+const { createTracer } = require('../lib/run-trace');
+const { loadReviewTiming } = require('../lib/pr-review-timing');
 
 const SCRATCH = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'znd1', 'scratch');
 const HEAD = 'a'.repeat(40);
@@ -228,6 +230,8 @@ function voteAll(manifest, verdictFor = () => 'real', skip = []) {
     writeResult(agent, { votes: agent.candidateIds.map((id) => ({ candidateId: id, verdict: verdictFor(agent.name, id), evidence: 'checked' })) });
   }
 }
+
+const pause = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('prepare: the dispatch manifest', () => {
   test('a Medium PR dispatches two reviewers and the security lane with generated briefs and prompts', async () => {
@@ -1658,11 +1662,11 @@ describe('metrics and the acvv recorder', () => {
     const h = harness();
     await reviewRound(h);
     const started = h.spans.filter((s) => s.type === 'start');
-    expect(started.map((s) => s.name)).toEqual(['review', 'precheck', 'review.head-read', 'prepare-head', 'review.reviewer', 'review.reviewer', 'review.security-lane', 'review.gate', 'review.verdict']);
-    expect(Object.fromEntries(started.filter((s) => s.name.startsWith('review')).map((s) => [s.name, s.kind]))).toEqual({ review: 'phase', 'review.head-read': 'io', 'review.reviewer': 'agent', 'review.security-lane': 'agent', 'review.gate': 'gate', 'review.verdict': 'phase' });
+    expect(started.map((s) => s.name)).toEqual(['review', 'review.head-read', 'review.reviewer', 'review.reviewer', 'review.security-lane', 'review.gate', 'review.verdict']);
+    expect(Object.fromEntries(started.map((s) => [s.name, s.kind]))).toEqual({ review: 'phase', 'review.head-read': 'io', 'review.reviewer': 'agent', 'review.security-lane': 'agent', 'review.gate': 'gate', 'review.verdict': 'phase' });
     expect(started.filter((s) => s.kind === 'agent').map((s) => s.attrs.agent)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
-    // every contract span names its round: the verdict is only a step of a round's critical path when it carries one
-    for (const span of started.filter((s) => s.name.startsWith('review'))) expect(span.attrs.round).toBe(1);
+    // every span names its round: the verdict is only a step of a round's critical path when it carries one
+    for (const span of started) expect(span.attrs.round).toBe(1);
     const ended = h.spans.filter((s) => s.type === 'end');
     expect(ended).toHaveLength(started.length);
     // the root is one span and it closes last
@@ -1734,6 +1738,179 @@ describe('metrics and the acvv recorder', () => {
     const contract = h.spans.filter((s) => s.type === 'start' && s.name.startsWith('review'));
     expect(contract.length).toBeGreaterThan(0);
     for (const span of contract) expect(span.attrs.round).toBe(2);
+  });
+
+  test('an agent span names its wave: the review agents and the verifiers are numbered apart, each from 1, and carry no second round-like attr (review of PR 270, round 1)', async () => {
+    // a cap of 2: the review is two waves (both reviewers, then the lane) and the three verifiers are two more
+    const h = harness({ policyJson: { maxConcurrentAgents: 2 } });
+    const m1 = await h.prepare();
+    answerReview(m1, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding()] : []) });
+    const m2 = await h.collect();
+    answerReview(m2, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+    const v1 = await h.collect();
+    voteAll(v1, () => 'real');
+    const v2 = await h.collect();
+    expect([m1.wave, m2.wave, v1.wave, v2.wave]).toEqual(['1 of 2', '2 of 2', '1 of 2', '2 of 2']);
+    voteAll(v2, () => 'real');
+    expect((await h.collect()).status).toBe('DONE');
+    const agents = h.spans.filter((s) => s.type === 'start' && s.kind === 'agent');
+    expect(agents.map((s) => [s.name, s.attrs.wave])).toEqual([
+      ['review.reviewer', 1],
+      ['review.reviewer', 1],
+      ['review.security-lane', 2],
+      ['review.verifier', 1],
+      ['review.verifier', 1],
+      ['review.verifier', 2],
+    ]);
+    for (const span of agents) {
+      expect(span.attrs.round).toBe(1);
+      expect(span.attrs).not.toHaveProperty('stage'); // whether it is a review or a verify wave is the span's name; a second round-like attr misleads
+    }
+  });
+
+  test('read back through the real recorder and reader, a run whose agents ran in several waves has a critical path step per wave, and the lane alone in its wave is named as uncounted (review of PR 270, round 1)', async () => {
+    // a cap of 1: the review is three waves (reviewer-s1-a, reviewer-s1-b, the security lane) and the verification three more
+    const h = harness({ policyJson: { maxConcurrentAgents: 1 } });
+    h.deps.makeTracer = (runId) => createTracer({ runId, projectRoot: h.repoRoot });
+    const answerWave = async (manifest, answer) => {
+      await pause(); // the agents work
+      answer(manifest);
+      await pause(); // their results wait for the dispatcher's collect
+      return h.collect();
+    };
+    let m = await h.prepare();
+    expect(m).toMatchObject({ round: 'review', wave: '1 of 3' });
+    m = await answerWave(m, (x) => answerReview(x, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding()] : []) }));
+    m = await answerWave(m, (x) => answerReview(x, {}));
+    m = await answerWave(m, (x) => answerReview(x, { lane: { findings: [], pathsReviewed: allPaths(h) } }));
+    expect(m).toMatchObject({ status: 'DISPATCH', round: 'verify', wave: '1 of 3' });
+    m = await answerWave(m, (x) => voteAll(x, () => 'real'));
+    m = await answerWave(m, (x) => voteAll(x, () => 'real'));
+    expect((await answerWave(m, (x) => voteAll(x, () => 'real'))).status).toBe('DONE');
+
+    const timing = loadReviewTiming({ runId: 'run1', projectRoot: h.repoRoot });
+    expect(timing).toMatchObject({ ok: true, warnings: [] });
+    expect(timing.agents).toMatchObject({ count: 6, unusable: [] });
+    const [round] = timing.criticalPath.rounds;
+    expect(round.steps.map((s) => [s.stage, s.wave])).toEqual([
+      ['reviewer', 1],
+      ['reviewer', 2],
+      ['verifier', 1],
+      ['verifier', 2],
+      ['verifier', 3],
+      ['verdict', undefined],
+    ]);
+    // each wave ran at least as long as its agents worked, and a wave of the review that holds only the lane is no step
+    expect(round.steps.every((s) => !s.missing && (s.stage === 'verdict' || s.ms >= 10))).toBe(true);
+    expect(round.uncountedWaves).toEqual([3]);
+    expect(timing.criticalPath).toMatchObject({ missing: false, lowerBound: true });
+    // the chain is the SUM of its steps, so it is longer than any one of them (one slowest reviewer across the waves was the longest alone)
+    expect(timing.criticalPath.ms).toBe(round.steps.reduce((n, s) => n + s.ms, 0));
+    expect(timing.criticalPath.ms).toBeGreaterThan(Math.max(...round.steps.map((s) => s.ms)));
+    expect(timing.orchestratorOnly.missing).toBe(false);
+    expect(timing.criticalPath.ms + timing.orchestratorOnly.ms).toBeLessThanOrEqual(timing.wall.ms);
+  });
+
+  describe('a collect retried after a failed state write (review of PR 270, round 1)', () => {
+    /** The harness's state writer, failing its first write. */
+    function failOnce(h) {
+      const write = h.deps.writeState;
+      let attempts = 0;
+      h.deps.writeState = async (target, state) => {
+        attempts += 1;
+        return attempts === 1 ? { ok: false, reason: 'disk full' } : write(target, state);
+      };
+    }
+
+    test('records ONE verdict while the window is open: a second would leave the critical path without the verdict that ends its chain', async () => {
+      const h = harness();
+      failOnce(h);
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      expect(await h.collect()).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'state-write-failed' });
+      const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
+      expect(h.spans.some((s) => s.type === 'end' && s.id === root.id)).toBe(false); // not over: the retry is part of the same window
+      expect((await h.collect()).status).toBe('DONE');
+      const started = h.spans.filter((s) => s.type === 'start');
+      expect(started.filter((s) => s.name === 'review.verdict')).toHaveLength(1);
+      expect(started.filter((s) => s.name === 'review.gate')).toHaveLength(2); // the gate did run twice, and its span says so
+      expect(h.spans.filter((s) => s.type === 'end')).toHaveLength(started.length); // every span closed once
+      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
+      expect(h.readRun().verdictRecorded).toBe(true);
+    });
+
+    test('read back through the real recorder and reader, the critical path of the retried run is computed, not MISSING for two verdicts', async () => {
+      const h = harness();
+      h.deps.makeTracer = (runId) => createTracer({ runId, projectRoot: h.repoRoot });
+      failOnce(h);
+      const m = await h.prepare();
+      await pause();
+      answerReview(m, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding()] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
+      await pause();
+      const verify = await h.collect();
+      await pause();
+      voteAll(verify, () => 'real');
+      await pause();
+      expect(await h.collect()).toMatchObject({ status: 'RUN_FAILED', reason: 'state-write-failed' });
+      expect((await h.collect()).status).toBe('DONE');
+      const timing = loadReviewTiming({ runId: 'run1', projectRoot: h.repoRoot });
+      expect(timing).toMatchObject({ ok: true, warnings: [] });
+      expect(timing.criticalPath).toMatchObject({ missing: false });
+      expect(timing.stages['review.verdict'].count).toBe(1);
+      expect(timing.stages['review.gate'].count).toBe(2);
+    });
+
+    test('an adjudication after the root has closed is another matter: it re-runs the gate and the verdict outside the window and records both there', async () => {
+      const h = harness();
+      const m = await h.prepare();
+      answerReview(m, { findingsFor: (name) => (name === 'reviewer-s1-a' ? [finding({ uncertain: true })] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const verify = await h.collect();
+      voteAll(verify, () => 'real');
+      expect((await h.collect()).status).toBe('ADJUDICATE');
+      expect((await h.collect({ adjudications: [{ id: 'f1', disposition: 'fix', reason: 'will fix' }] })).status).toBe('DONE');
+      const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
+      const rootEnd = h.spans.findIndex((s) => s.type === 'end' && s.id === root.id);
+      const verdicts = h.spans.filter((s) => s.type === 'start' && s.name === 'review.verdict');
+      expect(verdicts).toHaveLength(2);
+      expect(h.spans.indexOf(verdicts[0])).toBeLessThan(rootEnd);
+      expect(h.spans.indexOf(verdicts[1])).toBeGreaterThan(rootEnd);
+    });
+  });
+
+  describe('an agent ends at its last message, and a last message the runner cannot place is said so (review of PR 270, round 1)', () => {
+    /** A run whose collect reads its clock `skewMs` BEFORE the result files were written (skew between the file system and the process). */
+    async function skewedCollect(skewMs) {
+      const h = harness();
+      h.deps.notices = [];
+      let skew = 0;
+      h.deps.now = () => Date.now() - skew;
+      const m = await h.prepare();
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const arrived = Object.fromEntries(m.agents.map((a) => [a.name, Math.round(fs.statSync(a.outPath).ctimeMs)]));
+      skew = skewMs;
+      expect((await h.collect()).status).toBe('DONE');
+      const ends = new Map(h.spans.filter((s) => s.type === 'end').map((s) => [s.id, s]));
+      const lastMessages = Object.fromEntries(h.spans.filter((s) => s.type === 'start' && s.kind === 'agent').map((s) => [s.attrs.agent, ends.get(s.id).attrs.last_message_ts]));
+      return { h, arrived, lastMessages };
+    }
+
+    test('a result file dated well after the collect call that read it cannot be placed: it is warned about and stamped as it is, so the reader refuses that agent', async () => {
+      const { h, arrived, lastMessages } = await skewedCollect(60000);
+      expect(h.deps.notices).toHaveLength(1);
+      expect(h.deps.notices[0]).toContain('reviewer-s1-a, reviewer-s1-b, security-lane');
+      expect(h.deps.notices[0]).toContain('cannot be placed');
+      // stamped as it is (outside the span, which the reader reports as unusable), never dropped to fall back to the collect call
+      for (const [name, at] of Object.entries(arrived)) expect(lastMessages[name]).toBe(new Date(at).toISOString());
+    });
+
+    test('a change time a moment past the collect call is the clock resolution: no warning, and the span ends at the call', async () => {
+      const { h, arrived, lastMessages } = await skewedCollect(200);
+      expect(h.deps.notices).toEqual([]);
+      for (const [name, at] of Object.entries(arrived)) {
+        expect(Date.parse(lastMessages[name])).toBeLessThan(at);
+        expect(at - Date.parse(lastMessages[name])).toBeLessThanOrEqual(1000);
+      }
+    });
   });
 
   test('tracing never fails the run: a tracer that throws on everything changes nothing', async () => {

@@ -271,7 +271,6 @@ describe('the real CLI process on a real git fixture', () => {
     const run = spawnSync(process.execPath, [PR_REVIEW_CLI, 'timing'], { input: JSON.stringify({ runId: 'timed', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root });
     expect(run.status).toBe(0);
     const timing = JSON.parse(run.stdout);
-    process.stderr.write(`\nSMOKE timing: ${JSON.stringify({ wall: timing.wall.ms, criticalPath: timing.criticalPath.ms, orchestratorOnly: timing.orchestratorOnly.ms, agents: timing.agents.count, steps: timing.criticalPath.rounds })}\n`);
     expect(timing.ok).toBe(true);
     expect(timing.wall.missing).toBe(false);
     expect(timing.warnings).toEqual([]);
@@ -293,10 +292,15 @@ describe('the real CLI process on a real git fixture', () => {
     expect(timing.beforeFirstDispatch.missing).toBe(false);
     expect(timing.criticalPath.ms + timing.orchestratorOnly.ms).toBeLessThanOrEqual(timing.wall.ms);
     // the stage spans, not the runner's own names, are what the reader found: nothing of the old scheme is needed
-    const names = fs.readFileSync(path.join(fx.work, '.ensemble', 'state', 'toolchain', 'trace-timed.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'span_start').map((r) => r.name);
+    const starts = fs.readFileSync(path.join(fx.work, '.ensemble', 'state', 'toolchain', 'trace-timed.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'span_start');
+    const names = starts.map((r) => r.name);
     expect(names.filter((n) => n === 'review')).toHaveLength(1);
     expect(names).not.toContain('gate');
     expect(names.some((n) => n.startsWith('agent:'))).toBe(false);
+    // the spans the reader never knew (`precheck`, `prepare-head`) are gone, not kept beside the contract names
+    expect(names.filter((n) => !n.startsWith('review'))).toEqual([]);
+    // every agent span names its round and its wave (one wave of each kind here: the cap is 8)
+    expect(starts.filter((r) => r.kind === 'agent').map((r) => [r.attrs.round, r.attrs.wave])).toEqual(Array(6).fill([1, 1]));
     // adjudicating re-runs the gate and the verdict after the root has closed: those spans lie outside the window, so the answer is unchanged
     expect(coll('timed', { adjudications: [{ id: 'f1', disposition: 'fix', reason: 'will fix' }] }).out.status).toBe('DONE');
     const again = JSON.parse(spawnSync(process.execPath, [PR_REVIEW_CLI, 'timing'], { input: JSON.stringify({ runId: 'timed', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root }).stdout);
