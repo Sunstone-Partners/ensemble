@@ -90,7 +90,7 @@ const TRUST_STATEMENT =
 
 /** Keys a row may carry. Anything else is refused, so a misspelt key is never read as an absent one. */
 const ROW_KEYS = Object.freeze([
-  'id', 'pr', 'tier', 'round', 'origin', 'wall_min', 'wall_min_reason', 'chains', 'gate_runs', 'gate_runs_reason',
+  'id', 'pr', 'tier', 'round', 'origin', 'wall_min', 'wall_min_reason', 'chains', 'gate_runs', 'gate_runs_reason', 'review_gate_spans',
   'source', 'notes', 'run_id', 'carry',
 ]);
 const CARRY_KEYS = Object.freeze(['carried', 'head_sha', 'from_heads']);
@@ -153,6 +153,8 @@ function rowErrors(run, where) {
   } else if (hasOwn(run, 'gate_runs_reason')) {
     errors.push(`${where} has gate_runs_reason although gate_runs is known`);
   }
+
+  if (hasOwn(run, 'review_gate_spans') && !isCount(run.review_gate_spans)) errors.push(`${where} needs review_gate_spans to be a non-negative integer`);
 
   if (hasOwn(run, 'notes') && !isText(run.notes)) errors.push(`${where} has notes that are not text`);
   if (hasOwn(run, 'run_id') && !isText(run.run_id)) errors.push(`${where} has a run_id that is not text`);
@@ -385,8 +387,10 @@ function carryEvidence(input) {
 /**
  * One row from a `pr-review-cli timing` answer. The wall time is the answer's `wall` (the orchestrator window); a
  * `wall` it could not state is `null` with its reason. `chains` is the number of rounds the trace ran (a trace with
- * none is not a review and is refused); `gate_runs` is the number of `review.gate` spans (none recorded is `null`:
- * a stage nobody recorded is not zero runs).
+ * none is not a review and is refused). `gate_runs` means what the baseline's does, local-CI gate runs, and a review
+ * trace never records those (local-ci keeps its own record), so a row built from one states `null` with that reason, never
+ * a guess; the `review.gate` spans it does record are the runner's merge-gate evaluations (one per collect, again after an
+ * adjudication), a different thing, counted separately in `review_gate_spans`.
  *
  * @param {{timing: Object, pr: number, tier: string, round: string, origin: string,
  *          id?: string, source?: string, notes?: string, carry?: {headSha: string, verdicts: Object[]}}} input
@@ -406,7 +410,7 @@ function rowFromTiming(input) {
   const wall = isObject(timing.wall) ? timing.wall : { missing: true, reason: 'the timing answer has no wall' };
   const wallKnown = wall.missing === false && typeof wall.ms === 'number' && Number.isFinite(wall.ms) && wall.ms > 0;
   const gate = isObject(timing.stages) && isObject(timing.stages[STAGES.gate]) ? timing.stages[STAGES.gate] : { count: 0 };
-  const gateRuns = isCount(gate.count) && gate.count > 0 ? gate.count : null;
+  const reviewGateSpans = isCount(gate.count) ? gate.count : 0;
   const runId = isText(timing.runId) ? timing.runId : undefined;
 
   const row = {
@@ -418,8 +422,9 @@ function rowFromTiming(input) {
     wall_min: wallKnown ? round3(wall.ms / 60000) : null,
     ...(wallKnown ? {} : { wall_min_reason: isText(wall.reason) ? wall.reason : 'the timing answer states no usable wall time' }),
     chains: rounds.length,
-    gate_runs: gateRuns,
-    ...(gateRuns === null ? { gate_runs_reason: `no '${STAGES.gate}' span was recorded` } : {}),
+    gate_runs: null,
+    gate_runs_reason: `a review trace records no local-CI gate starts (its '${STAGES.gate}' spans are merge-gate evaluations, see review_gate_spans)`,
+    review_gate_spans: reviewGateSpans,
     source: isText(input.source) ? input.source : `pr-review-cli timing${runId ? ` on run ${runId}` : ''}`,
     ...(isText(input.notes) ? { notes: input.notes } : {}),
     ...(runId ? { run_id: runId } : {}),

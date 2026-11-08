@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync, execFileSync } = require('child_process');
 
-const { execute, main, buildDeps } = require('../lib/review-run-cli');
+const { execute, main, buildDeps, peekRun } = require('../lib/review-run-cli');
 const { defaultDeps: prepareGit } = require('../lib/review-prepare-runtime');
 const { prepareReview } = require('../lib/pr-review-prepare');
 
@@ -908,5 +908,79 @@ describe('in-process: every process the runner starts is recorded', () => {
     expect(code).toBe(1);
     expect(JSON.parse(text)).toMatchObject({ ok: false, reason: 'invalid-input' });
     expect(buildDeps({ repo: 'o/r', pr: 1, repoRoot: fx.work }, {}).notices).toEqual([]);
+  });
+});
+
+describe('collect reads nothing for a runId collect would refuse (kata yz76: peekRun before validateCollect)', () => {
+  const SCRATCH = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'yz76', `t${process.pid}`);
+  const root = path.join(SCRATCH, 'repo');
+  const runBase = path.join(root, '.ensemble', 'pr-review', 'run');
+  const outside = path.join(SCRATCH, 'outside');
+  const canary = JSON.stringify({ repo: 'evil/evil', pr: 99 });
+  let reads;
+  let spy;
+
+  beforeEach(() => {
+    fs.rmSync(SCRATCH, { recursive: true, force: true });
+    fs.mkdirSync(runBase, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'run.json'), canary);
+    fs.mkdirSync(path.join(runBase, 'real'));
+    fs.writeFileSync(path.join(runBase, 'real', 'run.json'), JSON.stringify({ repo: 'o/r', pr: 7 }));
+    reads = [];
+    const original = fs.readFileSync;
+    spy = jest.spyOn(fs, 'readFileSync').mockImplementation((file, ...rest) => {
+      if (typeof file === 'string' && file.startsWith(SCRATCH)) reads.push(file);
+      return original.call(fs, file, ...rest);
+    });
+  });
+  afterEach(() => {
+    spy.mockRestore();
+    fs.rmSync(SCRATCH, { recursive: true, force: true });
+  });
+
+  const collectOf = (payload) => execute('collect', { readJson: () => payload });
+  const peeked = () => reads.filter((file) => file.endsWith('run.json'));
+
+  test.each([
+    ['dot-dot segments', '../../../../outside'],
+    ['a dot-dot reaching the outside run.json', `../../../../../outside`],
+    ['a nested path', 'real/../real'],
+    ['an absolute path', outside],
+    ['a backslash path', '..\\outside'],
+    ['a dotted name', 'real.json'],
+    ['empty', ''],
+    ['over-long (129 characters)', 'a'.repeat(129)],
+    ['a NUL byte', 'real\0x'],
+    ['not text', 7],
+  ])('%s: invalid-input and run.json is never read', async (_label, runId) => {
+    const answer = await collectOf({ repoRoot: root, runId });
+    expect(answer.code).toBe(1);
+    expect(answer.result).toMatchObject({ ok: false, reason: 'invalid-input' });
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a relative repoRoot is not read from either', async () => {
+    const answer = await collectOf({ repoRoot: path.relative(process.cwd(), root), runId: 'real' });
+    expect(answer.result).toMatchObject({ ok: false, reason: 'invalid-input' });
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a run directory that is a symlink out of the run area is not followed', async () => {
+    fs.symlinkSync(outside, path.join(runBase, 'linked'));
+    expect(peekRun({ repoRoot: root, runId: 'linked' })).toEqual({});
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a run.json that is a symlink to a file elsewhere is not read', async () => {
+    fs.mkdirSync(path.join(runBase, 'sneaky'));
+    fs.symlinkSync(path.join(outside, 'run.json'), path.join(runBase, 'sneaky', 'run.json'));
+    expect(peekRun({ repoRoot: root, runId: 'sneaky' })).toEqual({});
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a real run is still peeked (the guard does not refuse good input)', async () => {
+    expect(peekRun({ repoRoot: root, runId: 'real' })).toEqual({ repo: 'o/r', pr: 7 });
+    expect(peeked()).toEqual([path.join(fs.realpathSync(runBase), 'real', 'run.json')]);
   });
 });

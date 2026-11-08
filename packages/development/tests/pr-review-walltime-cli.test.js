@@ -136,7 +136,8 @@ describe('row from a trace on disk, exactly as `timing` reads it', () => {
         wall_min: 19.661,
         chains: 1,
         gate_runs: null,
-        gate_runs_reason: "no 'review.gate' span was recorded",
+        gate_runs_reason: "a review trace records no local-CI gate starts (its 'review.gate' spans are merge-gate evaluations, see review_gate_spans)",
+        review_gate_spans: 0,
         source: 'pr-review-cli timing on run review-pr234',
         run_id: 'review-pr234',
       },
@@ -268,6 +269,24 @@ describe('compare re-derives each counted current row from its trace, and a met 
     const { out } = compareIn(current, { cwd: dir });
     expect(out.fiveX.claim).toBe('unknown');
     expect(out.fiveX.reasons).toEqual(["trace: row 'h-501' was not re-derived from its trace (wall_min is 3, its trace says 19.661)"]);
+  });
+
+  test('a row that counts review.gate spans as gate_runs is refused against its trace (kata 755m)', () => {
+    const current = tracedCurrent();
+    const edited = current.runs.find((run) => run.id === 'h-501');
+    edited.gate_runs = 2;
+    delete edited.gate_runs_reason;
+    const { out } = compareIn(current, { cwd: dir });
+    expect(out.fiveX.claim).toBe('unknown');
+    expect(out.fiveX.reasons).toEqual([expect.stringContaining("gate_runs is 2, its trace says null")]);
+  });
+
+  test('a row whose review_gate_spans differs from its trace is named, one that carries none is not', () => {
+    const current = tracedCurrent();
+    current.runs.find((run) => run.id === 'h-501').review_gate_spans = 2;
+    current.runs.find((run) => run.id === 'h-502').review_gate_spans = 0;
+    const { out } = compareIn(current, { cwd: dir });
+    expect(out.fiveX.reasons).toEqual([expect.stringContaining("review_gate_spans is 2, its trace says 0")]);
   });
 
   test('a row that names no trace is not re-derived', () => {

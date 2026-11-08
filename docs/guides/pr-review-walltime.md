@@ -24,9 +24,10 @@ interchangeable.
 | **wall_min** | The run's wall time in minutes: the plan's section 1 figure for a baseline row, `timing.wall` (the orchestrator window) for a row built from a trace. `null` with a reason when the run never reached a verdict or the figure was not recorded. |
 | **chains** | Review chains the run covers. A head change restarts the whole reviewer, verifier and verdict chain, so a run that went through two heads is two chains. |
 | **gate_runs** | Local-CI gate runs the run needed (a flake re-run counts). `null` with a reason when it was not recorded, never zero. |
+| **review_gate_spans** | Optional. The `review.gate` spans a review trace holds: the runner's merge-gate evaluations (one per `collect` that reaches the gate, again after an adjudication), so 2 for a run with one adjudication. It is not `gate_runs` and `compare` never reads it. A row built by `walltime row` carries it; the baseline's rows do not. |
 | **origin** | `real` (a real review of a real PR), `stand-in` (scripted agents) or `fixture`. Only `real` rows count. |
 
-A PR's gate runs and review chains are the sums over its rows. A median is taken over runs; the
+`walltime row` states `gate_runs: null` with a reason: a review trace never records local-CI gate starts (local-ci keeps its own record), so the figure is not guessed from `review.gate` spans, so `compare` shows no current gate runs for such rows (`unknown`, never a number of another meaning). The trace check refuses a row whose `gate_runs` is not what its trace says (`null`). A PR's gate runs and review chains are the sums over its rows. A median is taken over runs; the
 minimum below is counted over distinct PRs.
 
 ## 2. The rule for `met`, `not-met` and `unknown`

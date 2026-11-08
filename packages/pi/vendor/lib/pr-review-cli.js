@@ -933,7 +933,7 @@ function checkRowAgainstTrace(run, cwd) {
     return { ok: false, reason: `trace '${run.run_id}' cannot be read: ${error.message}` };
   }
   if (!rebuilt.ok) return { ok: false, reason: `trace '${run.run_id}' is not a readable review: ${rebuilt.reason}` };
-  const differs = ['wall_min', 'chains', 'gate_runs'].filter((key) => rebuilt.row[key] !== run[key]);
+  const differs = ['wall_min', 'chains', 'gate_runs', 'review_gate_spans'].filter((key) => (key === 'review_gate_spans' && !Object.prototype.hasOwnProperty.call(run, key) ? false : rebuilt.row[key] !== run[key]));
   const same = differs.length === 0;
   return same
     ? { ok: true }

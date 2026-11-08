@@ -51,6 +51,7 @@ const { renderBriefFromFiles } = require('./pr-review-brief-files');
 const { writeState, redact } = require('./pr-review-state');
 const { createTracer } = require('./run-trace');
 const { prepareRun, collectRun, RUN_SUBDIR } = require('./pr-review-run');
+const { isValidRunId } = require('./toolchain/run-id');
 
 const MAX_STDIN_BYTES = 4 * 1024 * 1024;
 const COMMANDS = Object.freeze(['prepare', 'collect']);
@@ -221,9 +222,15 @@ function readStdinJson(fd = 0) {
 
 /** The repo and pr a collect needs for its host reads come from the run itself; the payload carries neither. */
 function peekRun(payload) {
+  // Nothing is read for a runId or repoRoot collect would refuse (traversal, an absolute path, empty, over-long): the shape
+  // is checked here first, and the file must really live inside the run directory (a symlinked run directory or run.json that
+  // points elsewhere is not followed out of it). Anything else is `{}`: collect then answers its own invalid-input / not-found.
+  if (!payload || typeof payload.repoRoot !== 'string' || !path.isAbsolute(payload.repoRoot) || !isValidRunId(payload.runId)) return {};
   try {
-    if (!payload || typeof payload.repoRoot !== 'string' || typeof payload.runId !== 'string') return {};
-    const parsed = JSON.parse(fs.readFileSync(path.join(payload.repoRoot, RUN_SUBDIR, payload.runId, 'run.json'), 'utf8'));
+    const base = fs.realpathSync(path.join(payload.repoRoot, RUN_SUBDIR));
+    const file = fs.realpathSync(path.join(base, payload.runId, 'run.json'));
+    if (file !== path.join(base, payload.runId, 'run.json')) return {};
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     return { repo: parsed.repo, pr: parsed.pr };
   } catch (_error) {
     return {};
@@ -265,7 +272,7 @@ async function main(argv = process.argv.slice(2), injected = {}, write = (text) 
   return code;
 }
 
-module.exports = { main, execute, buildDeps, realFs, headFile, defaultRun, COMMANDS };
+module.exports = { main, execute, peekRun, buildDeps, realFs, headFile, defaultRun, COMMANDS };
 
 if (require.main === module) {
   main().then((code) => process.exit(code));
