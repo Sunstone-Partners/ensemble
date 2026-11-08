@@ -134,7 +134,8 @@ function verify(repo, head, findings, depth, ledgerHead) {
 
 /**
  * One round at `head` through the real pipeline. `prior` is the previous round (null for the first). `findings` are the
- * candidates this round presents (every open finding, re-presented, plus any new one).
+ * candidates this round presents (every open finding, re-presented, plus any new one). `mutatePlan(payload, context)` may
+ * replace what the plan call is given (`context`: `{ repo, prior, head, citations }`), to hand it facts of another head.
  */
 function round({ repo, state, head, prior, findings, depth = 'standard', prId = PR, baseSha = BASE, mutatePlan = (p) => p }) {
   const citations = findings.map((f) => ({ id: f.id, file: f.file, line: f.line, claim: f.claim }));
@@ -152,7 +153,7 @@ function round({ repo, state, head, prior, findings, depth = 'standard', prId = 
     plan = HANDLERS.carry(mutatePlan({
       action: 'plan', prId, cwd: state, headSha: head, lastReviewedSha: prior.head, baseSha, depth,
       deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates,
-    }));
+    }, { repo, prior, head, citations }));
     expect(plan.ok).toBe(true);
     const carriedIds = new Set(plan.carried.map((record) => String(record.id)));
     for (const record of plan.carried) outcomes[record.id] = record.outcome;
@@ -224,6 +225,39 @@ describe('a stale verdict is never carried: each push below flips the oracle, an
     // the planner's own read set does NOT list the callee (it lists callers of changed files), so only the reverse edge catches it
     expect(r.second.plan.carried).toEqual([]);
     expect(reasonsOf(r, 'F-callee')).toContain(REASONS.DEPENDENT_CHANGED);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  const guardedCallers = (read) => ['lib/caller.js', 'lib/new-caller.js'].every((file) => read(file) === null || has(read(file), 'if (!i)'));
+  const callerOf = (guard) => pad(8, { 1: "const callee = require('./callee');", 5: `module.exports = (i) => { ${guard}return callee(i); };` });
+  const newCallerScenario = (mutatePlan) => scenario({
+    files: { 'lib/callee.js': pad(20, { 10: 'module.exports = (input) => input.value;' }), 'lib/caller.js': callerOf('if (!i) return null; ') },
+    findings: [finding('F-new-caller', 'lib/callee.js', 10, 'callee reads input.value with no null check', (read) => (guardedCallers(read) ? 'not-real' : 'real'))],
+    push: { 'lib/new-caller.js': callerOf('') },
+    mutatePlan,
+  });
+
+  test('a NEW unguarded caller of an unchanged cited file: candidates hashed at the new head list it, so the filtered verdict is verified again', () => {
+    const r = newCallerScenario();
+    expect(r.full1).toEqual({ 'F-new-caller': 'filtered' });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-new-caller']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-new-caller')).toEqual([REASONS.DEPENDENT_CHANGED]);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  test('the same push with candidates hashed at the PREVIOUS head (they cannot list the new caller): the head stamp stops the carry, and the round still equals the full re-review', () => {
+    let staleDependents;
+    const r = newCallerScenario((plan, { repo, prior, citations }) => {
+      const candidates = hashCitations({ repoRoot: repo.root, headSha: prior.head, citations }).candidates;
+      staleDependents = candidates[0].dependents;
+      return { ...plan, candidates };
+    });
+    // not vacuous: the stale hashes really do lack the new caller, and every hash they hold is still right for the cited file
+    expect(staleDependents).toEqual(['lib/caller.js']);
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-new-caller']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(reasonsOf(r, 'F-new-caller')).toEqual([REASONS.CANDIDATE_HEAD_MISMATCH]);
     expect(r.second.outcomes).toEqual(r.full2);
   });
 

@@ -12,7 +12,9 @@
  * Pure: NO shell, NO file reads, NO network. The hashes and the dependents are inputs: the caller hashed the cited hunk and
  * each dependency file at the head being reviewed and listed the files that use the cited file (lib/pr-review-carry-hash.js
  * does both over git), exactly as `paths` takes the CODEOWNERS text the caller read. A fact this module is not given is a
- * fact that does not match.
+ * fact that does not match. The hash step stamps every candidate with the head it hashed (`headSha`), and a candidate hashed
+ * at any other head, or at none, is never carried from or recorded: its hashes and dependents describe another tree. That the
+ * hashing itself was done honestly at the head it names is the one thing this module cannot check.
  *
  * Identity of a settled candidate: (file, claim). The claim is compared as written -- case folded, runs of whitespace
  * collapsed, NOTHING else erased -- because every symbol is part of what a claim says: `x < y` and `x > y`, `if (!ok)` and
@@ -50,6 +52,7 @@
  * Per candidate:
  *   new-candidate           no prior verdict for it;
  *   candidate-unreadable    no file, or a claim with no words, or a duplicate of another candidate's key;
+ *   candidate-head-mismatch the candidate's `headSha` (the head the hash step hashed it at) is missing or is not `headSha`;
  *   ambiguous-prior-verdict two prior verdicts for one key;
  *   id-mismatch             the candidate's id is not the id of the verdict it would inherit;
  *   head-unknown            the verdict's own head (or its `carriedFrom`) is not a full object id;
@@ -101,6 +104,7 @@ const REASONS = Object.freeze({
   PRIOR_STATE_UNAVAILABLE: 'prior-state-unavailable',
   NEW_CANDIDATE: 'new-candidate',
   CANDIDATE_UNREADABLE: 'candidate-unreadable',
+  CANDIDATE_HEAD_MISMATCH: 'candidate-head-mismatch',
   AMBIGUOUS_PRIOR_VERDICT: 'ambiguous-prior-verdict',
   ID_MISMATCH: 'id-mismatch',
   HEAD_NOT_LAST_REVIEWED: 'head-not-last-reviewed',
@@ -277,9 +281,9 @@ function unreadable(reason) {
  *                                          votes[{verifier, verdict}], prId, baseSha, depth, expectedVerifiers }` as
  *                                          `recordVerdicts` stamped them in the previous round.
  * @param {Object[]} input.priorLedger    The findings ledger of that round: every verdict must be about one of its findings.
- * @param {Object[]} input.candidates     `{ id?, file, claim, line|lines, hunkHash, depHashes, dependents }` at `headSha`: every
- *                                        candidate this round has, hashed at the head. A prior verdict is only ever carried
- *                                        onto one of these.
+ * @param {Object[]} input.candidates     `{ id?, file, claim, line|lines, hunkHash, depHashes, dependents, headSha }`: every
+ *                                        candidate this round has, hashed at `headSha` (the hash step stamps the head it
+ *                                        hashed at on each one). A prior verdict is only ever carried onto one of these.
  * @returns {{ok:boolean, carried:Object[], reverify:Object[], unmatched:Object[], reasons:string[]}}
  */
 function planCarry(input) {
@@ -342,12 +346,15 @@ function planCarry(input) {
     const key = keyOf(candidate);
     const base = { file: isText(candidate.file) ? candidate.file : null, claim: typeof candidate.claim === 'string' ? candidate.claim : null };
     if (candidate.id !== undefined) base.id = candidate.id;
+    // A candidate hashed at another head, or at none, says nothing about this one: its hashes and its dependents describe
+    // another tree (a caller added since is not among them), so nothing here may rest on them.
+    const stale = sameId(candidate.headSha, headSha) ? [] : [REASONS.CANDIDATE_HEAD_MISMATCH];
     if (key === null) {
-      reverify.push({ ...base, reasons: [...new Set([...global, REASONS.CANDIDATE_UNREADABLE])] });
+      reverify.push({ ...base, reasons: [...new Set([...global, REASONS.CANDIDATE_UNREADABLE, ...stale])] });
       continue;
     }
     matched.add(key);
-    const reasons = [...global];
+    const reasons = [...global, ...stale];
     if (candidateCount.get(key) > 1) reasons.push(REASONS.CANDIDATE_UNREADABLE);
 
     const priors = priorsByKey.get(key) || [];
@@ -446,9 +453,9 @@ function refused(reason) {
 /**
  * The verdict records of a finished round: the settled findings of the `votes` result, each joined to the hashed citation
  * of the same id and stamped with what `planCarry` binds a verdict to (`prId`, `baseSha`, `depth`, `expectedVerifiers`) and
- * the head it was settled on. A finding that is not settled, has no usable hash, cites another file or claim than its
- * ledger entry says, or whose votes do not give its outcome under the round's verifier count is `skipped` with the reason
- * and recorded NOWHERE: the next round verifies it again.
+ * the head it was settled on. A finding that is not settled, has no usable hash, was hashed at another head than `headSha`,
+ * cites another file or claim than its ledger entry says, or whose votes do not give its outcome under the round's
+ * verifier count is `skipped` with the reason and recorded NOWHERE: the next round verifies it again.
  *
  * @param {Object} input
  * @param {string|number} input.prId
@@ -457,7 +464,8 @@ function refused(reason) {
  * @param {string} input.depth
  * @param {number} [input.expectedVerifiers]
  * @param {Object[]} input.findings    The `findings` of the `votes` result (ledger entries with `outcome` and `votes`).
- * @param {Object[]} input.candidates  The hash step's `candidates` for this head, matched to the findings by `id`.
+ * @param {Object[]} input.candidates  The hash step's `candidates` for this head, matched to the findings by `id`; each is
+ *                                     stamped with the head it was hashed at, which must be `headSha`.
  * @returns {{ok:true, verdicts:Object[], skipped:Array<{id:*, reason:string}>}|{ok:false, verdicts:[], skipped:[], reason:string}}
  */
 function recordVerdicts(input) {
@@ -489,6 +497,7 @@ function recordVerdicts(input) {
     const candidate = byId.get(id);
     if (candidate === undefined) { skip('no-candidate'); continue; }
     if (candidate === null) { skip('ambiguous-candidate'); continue; }
+    if (!sameId(candidate.headSha, headSha)) { skip(REASONS.CANDIDATE_HEAD_MISMATCH); continue; }
     const depHashes = readDepHashes(candidate.depHashes);
     const lines = locationOf(candidate);
     if (depHashes === null || lines === null || !SHA256_HEX.test(String(candidate.hunkHash))) { skip('no-hash'); continue; }

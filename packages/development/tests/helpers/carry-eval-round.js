@@ -81,6 +81,7 @@ function simulateCarryRound(scenario) {
     hunkHash: hunkHashOf(finding, changedHunkFiles),
     depHashes: {},
     dependents: [],
+    headSha: NEW_HEAD,
   }));
   const plan = planCarry({
     prId: PR, baseSha: BASE, headSha: NEW_HEAD, lastReviewedSha: PRIOR_HEAD, depth: 'standard', deltaPlan, deltaPaths, highPaths, priorVerdicts, priorLedger, candidates,

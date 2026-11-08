@@ -323,6 +323,51 @@ describe('request validation and the CLI', () => {
   });
 });
 
+describe('every candidate carries the head it was hashed at (the stamp planCarry and recordVerdicts check)', () => {
+  const repo = makeRepo({ 'src/a.js': lines(10), 'src/dyn.js': 'require(pick());\n' + lines(5) });
+  const h1 = repo.head;
+  const h2 = repo.commit({ 'src/a.js': lines(10, { 1: '// edited' }) });
+  const CITATIONS = [
+    { id: 'ok', file: 'src/a.js', line: 5 },
+    { id: 'gone', file: 'src/missing.js', line: 1 },
+    { id: 'computed', file: 'src/dyn.js', line: 3 },
+    { id: 'noline', file: 'src/a.js' },
+  ];
+
+  test.each([['the first head', h1], ['the second head', h2]])('at %s every candidate, hashed or refused, is stamped with it', (_name, head) => {
+    const out = hashCitations({ repoRoot: repo.root, headSha: head, citations: CITATIONS });
+    expect(out.ok).toBe(true);
+    expect(out.candidates.map((c) => ('hashError' in c ? 'refused' : 'hashed'))).toEqual(['hashed', 'refused', 'refused', 'refused']);
+    for (const candidate of out.candidates) expect(candidate.headSha).toBe(head);
+  });
+
+  test('a candidate whose git read failed is stamped as well', () => {
+    const failing = (args, opts) => (args[0] === 'grep' ? { status: 2, stdout: '', stderr: 'boom' } : realGit(args, opts));
+    const out = hashCitations({ repoRoot: repo.root, headSha: h2, citations: [{ id: 'ok', file: 'src/a.js', line: 5 }] }, { git: failing });
+    expect(out.candidates[0].hashError).toMatch(/^git read failed/);
+    expect(out.candidates[0].headSha).toBe(h2);
+  });
+
+  test('a citation cannot bring a head of its own: the request is refused, so the stamp is always the hashed head', () => {
+    const out = hashCitations({ repoRoot: repo.root, headSha: h2, citations: [{ file: 'src/a.js', line: 5, headSha: h1 }] });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/unknown citation key\(s\): headSha/);
+  });
+
+  test('the CLI output keeps the stamp (redaction does not touch a head) on hashed and refused candidates alike', () => {
+    const writes = [];
+    const spy = jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => { writes.push(String(chunk)); return true; });
+    try {
+      expect(main({ readJson: () => ({ repoRoot: repo.root, headSha: h2, citations: CITATIONS }) })).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const printed = JSON.parse(writes.join(''));
+    expect(printed.headSha).toBe(h2);
+    expect(printed.candidates.map((c) => c.headSha)).toEqual([h2, h2, h2, h2]);
+  });
+});
+
 describe('contract with planCarry', () => {
   const BASE = 'e'.repeat(40);
   /** The planCarry input of one round: prior verdicts hashed at h1, candidates hashed at h2, `deltaPaths` changed between. */
@@ -337,7 +382,7 @@ describe('contract with planCarry', () => {
       deltaPlan: { mode: 'delta', readSet: deltaPaths.map((p) => ({ path: p, reasons: ['changed'] })) },
       deltaPaths,
       highPaths: [],
-      priorVerdicts: prior.map((c) => ({ ...c, ...stamp, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'real' }] })),
+      priorVerdicts: prior.map(({ headSha: _hashedAt, ...c }) => ({ ...c, ...stamp, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'real' }] })),
       priorLedger: prior.map((c) => ({ id: c.id, file: c.file, failureMode: c.claim })),
       candidates: at(h2),
       ...overrides,
@@ -397,6 +442,28 @@ describe('contract with planCarry', () => {
     expect(plan.carried.map((c) => c.id)).toEqual(['B']);
     expect(plan.reverify[0]).toMatchObject({ id: 'A' });
     expect(plan.reverify[0].reasons).toContain(REASONS.DEPENDENT_CHANGED);
+  });
+
+  test('candidates hashed at the PREVIOUS head cannot see a NEW caller: they are not carried from (candidate-head-mismatch), though every hash they hold is right for the file', () => {
+    const repo = makeRepo({
+      'lib/core.js': lines(10),
+      'lib/caller.js': "require('./core');\n" + lines(5),
+    });
+    const h1 = repo.head;
+    const citations = [{ id: 'A', file: 'lib/core.js', line: 5, claim: 'core is wrong' }];
+    const h2 = repo.commit({ 'lib/new-caller.js': "require('./core');\n" + lines(5) });
+    const deltaPaths = changedBetween(repo, h1, h2);
+    expect(deltaPaths).toEqual(['lib/new-caller.js']);
+    // control: candidates hashed at the head under review list the new caller
+    const fresh = planCarry(round(repo, h1, h2, citations, deltaPaths));
+    expect(fresh.carried).toEqual([]);
+    expect(fresh.reverify[0].reasons).toEqual([REASONS.DEPENDENT_CHANGED]);
+    // hashed at h1 they do not, so without the head stamp the planner saw a delta that touches none of their dependents
+    const stale = hashCitations({ repoRoot: repo.root, headSha: h1, citations }).candidates;
+    expect(stale[0].dependents).toEqual(['lib/caller.js']);
+    const plan = planCarry(round(repo, h1, h2, citations, deltaPaths, { candidates: stale }));
+    expect(plan.carried).toEqual([]);
+    expect(plan.reverify[0].reasons).toEqual([REASONS.CANDIDATE_HEAD_MISMATCH]);
   });
 
   test('a citation that could not be hashed at the new head is re-verified (hash-missing), never carried', () => {

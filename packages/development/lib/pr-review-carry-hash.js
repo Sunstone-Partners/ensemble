@@ -8,8 +8,9 @@
  * pr-review-prepare.js takes), so it is a module of its own and NOT part of the pure pr-review-cli.js.
  *
  *   hashCitations({ repoRoot?, headSha, citations:[{ id?, file, line?, lines?:[start,end], claim? }] }, deps?)
- *     -> { ok, headSha, candidates:[{ ...the citation verbatim, hunkHash?, depHashes?, dependents?, hashError? }] }
- *     (a `hashError` candidate carries none of hunkHash, depHashes, dependents)
+ *     -> { ok, headSha, candidates:[{ ...the citation verbatim, headSha, hunkHash?, depHashes?, dependents?, hashError? }] }
+ *     (a `hashError` candidate carries none of hunkHash, depHashes, dependents. EVERY candidate, that one included, carries
+ *     `headSha`, the head it was hashed at: `planCarry` and `recordVerdicts` refuse a candidate stamped with any other head)
  *
  * Everything is read AT `headSha` from git objects (`git ls-tree -r` for the tracked paths, `git cat-file --batch` for blob
  * bytes), never from the working tree. Subprocess count is small: one ls-tree plus one cat-file per closure level, blobs
@@ -285,12 +286,15 @@ function hashCitations(request, deps = {}) {
   } catch (err) {
     return { ok: false, error: `cannot list the tracked files at the head: ${err.message}` };
   }
+  // Every candidate is stamped with the head it was hashed at, one that could not be hashed included. A citation cannot bring a
+  // `headSha` of its own (it is not a citation key), so the stamp is always the head this call read.
+  const stamp = { headSha: request.headSha };
   const candidates = request.citations.map((citation) => {
     try {
-      return { ...citation, ...hashOne(ctx, citation) };
+      return { ...citation, ...stamp, ...hashOne(ctx, citation) };
     } catch (err) {
-      if (err instanceof HashError) return { ...citation, hashError: err.message };
-      return { ...citation, hashError: `git read failed: ${err.message}` };
+      if (err instanceof HashError) return { ...citation, ...stamp, hashError: err.message };
+      return { ...citation, ...stamp, hashError: `git read failed: ${err.message}` };
     }
   });
   return { ok: true, headSha: request.headSha, candidates };

@@ -1850,7 +1850,7 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     id, file: `src/${id}.js`, claim: `${CLAIM} ${id}`, lines: [10, 10], hunkHash: SHA(id), depHashes: { 'src/dep.js': SHA('d') }, head: LAST,
     outcome: 'present', votes, prId: PR, baseSha: BASE, depth: 'standard', expectedVerifiers: 3, ...over,
   });
-  const candidate = (id, over = {}) => ({ id, file: `src/${id}.js`, claim: `${CLAIM} ${id}`, lines: [10, 10], hunkHash: SHA(id), depHashes: { 'src/dep.js': SHA('d') }, dependents: [], ...over });
+  const candidate = (id, over = {}) => ({ id, file: `src/${id}.js`, claim: `${CLAIM} ${id}`, lines: [10, 10], hunkHash: SHA(id), depHashes: { 'src/dep.js': SHA('d') }, dependents: [], headSha: HEAD, ...over });
   /** The state report round 1 wrote for PR 268 at LAST: two findings, each with a settled verdict. */
   const round1 = () => ({ headSha: LAST, reviewedHeadSha: LAST, baseSha: BASE, ledger: [finding('a'), finding('b')], verdicts: [prior('a'), prior('b')] });
   const writeRound = (cwd, state = round1(), prId = PR) => {
@@ -1984,6 +1984,34 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     });
   });
 
+  test('candidates hashed at another head than the one planned carry nothing and say candidate-head-mismatch, through the real executable', () => {
+    const cwd = tmpCwd();
+    writeRound(cwd);
+    const unchanged = (stale) => plan(cwd, { candidates: [candidate('a', stale ? { headSha: LAST } : {}), candidate('b')] });
+    // control: both candidates are hashed at HEAD and nothing they depend on changed, so both carry
+    const control = JSON.parse(cli(unchanged(false)).stdout);
+    expect(control.carried.map((record) => record.id)).toEqual(['a', 'b']);
+    // `a` was hashed at LAST: its hashes and dependents may be those of another tree, so it is verified again and is not stamped
+    const res = cli(unchanged(true));
+    expect(res.status).toBe(0);
+    const out = JSON.parse(res.stdout);
+    expect(out.ok).toBe(true);
+    expect(out.reasons).toEqual([]);
+    expect(out.carried.map((record) => record.id)).toEqual(['b']);
+    expect(out.reverify).toEqual([{ id: 'a', file: 'src/a.js', claim: `${CLAIM} a`, reasons: [REASONS.CANDIDATE_HEAD_MISMATCH] }]);
+    expect(out.unmatched).toEqual([]);
+    expect(out.ledger.map((f) => [f.id, f.headSha, f.carriedFrom])).toEqual([['a', LAST, undefined], ['b', HEAD, LAST]]);
+  });
+
+  test('a candidate with no head stamp is stale too: nothing the planner is given may be of unknown origin', () => {
+    const cwd = tmpCwd();
+    writeRound(cwd);
+    const { headSha: _unstamped, ...bare } = candidate('a');
+    const out = run(plan(cwd, { candidates: [bare, candidate('b')] }));
+    expect(out.carried.map((record) => record.id)).toEqual(['b']);
+    expect(out.reverify.map((entry) => [entry.id, entry.reasons])).toEqual([['a', [REASONS.CANDIDATE_HEAD_MISMATCH]]]);
+  });
+
   test.each([
     ['an unknown action', { action: 'apply' }, /Unknown carry action 'apply'/],
     ['no action', { action: undefined }, /Unknown carry action/],
@@ -2044,9 +2072,16 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
       expect(out.skipped).toEqual([{ id: 'b', reason: 'not-settled' }]);
     });
 
+    test('a candidate hashed at another head is skipped, never recorded: a verdict cannot be built from the hashes of a different head', () => {
+      const out = run(recordRequest({ findings: [settled('a'), settled('b')], candidates: [candidate('a', { headSha: LAST }), candidate('b')] }));
+      expect(out.ok).toBe(true);
+      expect(out.verdicts.map((record) => record.id)).toEqual(['b']);
+      expect(out.skipped).toEqual([{ id: 'a', reason: REASONS.CANDIDATE_HEAD_MISMATCH }]);
+    });
+
     test('what record writes is what plan reads: written to a report at HEAD it carries into the next round', () => {
       const cwd = tmpCwd();
-      const recorded = run(recordRequest({ headSha: LAST, findings: [settled('a')], candidates: [candidate('a')] }));
+      const recorded = run(recordRequest({ headSha: LAST, findings: [settled('a')], candidates: [candidate('a', { headSha: LAST })] }));
       writeRound(cwd, { headSha: LAST, baseSha: BASE, ledger: [finding('a')], verdicts: recorded.verdicts });
       const out = run(plan(cwd, { candidates: [candidate('a')] }));
       expect(out.carried.map((record) => record.id)).toEqual(['a']);

@@ -105,8 +105,10 @@ verification contract.
 1. **Hash.** Present as candidates the prior ledger's open findings, each with its own `id`, its `failureMode` verbatim as
    `claim` and its `file` and `line` or `lines` (from `locationOrLink`), plus this round's new ones. Run
    `node "$PR_REVIEW_CARRY_HASH_CLI"` (`pr-review-carry-hash-cli.js`, in the same directory as the `$PR_REVIEW_CLI` you
-   resolved; `{ repoRoot?, headSha, citations }`) at the new head. Each candidate comes back with `hunkHash`, `depHashes`
-   and `dependents`, or with `hashError` and no hash: that one is verified again.
+   resolved; `{ repoRoot?, headSha, citations }`) at the new head. Each candidate comes back stamped with the `headSha` it
+   was hashed at, with `hunkHash`, `depHashes` and `dependents`, or with `hashError` and no hash: that one is verified
+   again. Pass the candidates to `plan` and `record` exactly as answered, and hash again after any push: a candidate
+   stamped with another head is `candidate-head-mismatch`, never carried and never recorded.
 2. **Plan.** Run `node "$PR_REVIEW_CLI" carry` with `{ action: "plan", prId, cwd?, headSha, lastReviewedSha, baseSha,
    depth, expectedVerifiers?, deltaPlan, deltaPaths, highPaths, candidates }`: `deltaPlan` and `deltaPaths` are the facts'
    `deltaPlan` and `delta.changedPaths` verbatim, `highPaths` the High and sensitive paths of `paths`, `baseSha` the base

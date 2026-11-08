@@ -219,18 +219,22 @@
  *                             `ledger` is the prior ledger with exactly those findings stamped (`stampLedger`; refused,
  *                             `ok:false`, when it already holds a finding stamped with this head); a `reverify` entry lists
  *                             every reason (the module header has the table). A missing, discarded or corrupt report
- *                             carries nothing (`prior-state-unavailable`).
+ *                             carries nothing (`prior-state-unavailable`). `candidates` are the hash step's answer as it gave
+ *                             it: each is stamped with the `headSha` it was hashed at, and one stamped with another head (or
+ *                             none) is verified again (`candidate-head-mismatch`), never carried.
  *                record     { prId, baseSha, headSha, depth, expectedVerifiers?, findings[], candidates[] } -- the verdict
  *                             records of a finished round (`recordVerdicts`): the settled findings of the `votes` result
  *                             joined to their hashed citations and stamped with the binding `plan` checks. Answers
  *                             { ok, verdicts[], skipped[{id, reason}] }; write the verdicts to the state report's `verdicts`.
+ *                             A candidate stamped with another head than `headSha` is skipped (`candidate-head-mismatch`).
  *                reconcile  { ledger[], changedLocations[], headSha, observations[] } -- `clearFixedFindings` with EVERY
  *                             observation of this round as `reReported`: a finding no reviewer reported again whose cited
  *                             location the push changed is cleared; one that was observed again, whatever its verdict, is
  *                             not. Answers { ok, ledger[], cleared[] }.
  *              `deltaPlan`, `deltaPaths`, `highPaths`, heads, `baseSha`, `depth` and every hash are graded in-band and a
  *              missing one means re-verification (exit 0). HONEST LIMITS: it never hashes anything -- `hunkHash`,
- *              `depHashes` and `dependents` are inputs the caller computed (lib/pr-review-carry-hash-cli.js); only
+ *              `depHashes` and `dependents` are inputs the caller computed (lib/pr-review-carry-hash-cli.js; the `headSha`
+ *              stamp names the head that step read, it cannot show the output was passed on unaltered); only
  *              `present`/`filtered` verdicts carry; a High or sensitive path touched by the delta carries nothing; a
  *              `full` range carries nothing; the state report is untracked and writable by whoever can write the
  *              repository, so binding stops a verdict from the wrong PR, base, depth or ledger, not a forged report.

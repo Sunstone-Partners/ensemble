@@ -13,7 +13,9 @@
  *
  *   payload  { repoRoot?, headSha, citations:[{ id?, file, line?, lines?:[start,end], claim? }] }
  *            `repoRoot` defaults to the current directory; every other key is refused. Output:
- *            { ok, headSha, candidates:[{ ...citation, hunkHash?, depHashes?, dependents?, hashError? }] } -- or { ok:false, error }.
+ *            { ok, headSha, candidates:[{ ...citation, headSha, hunkHash?, depHashes?, dependents?, hashError? }] } -- or { ok:false, error }.
+ *            Every candidate carries `headSha`, the head it was hashed at (also one with a `hashError`); `planCarry` and `record`
+ *            refuse a candidate stamped with another head, so hash again after any push.
  *            Contract, hunk definition and limits: pr-review-carry-hash.js (dependencies are hashed; dependents -- importers,
  *            name-matched tests, computed-specifier files naming it -- are listed, not hashed, and planCarry re-verifies when
  *            one is in the delta; direct dependents only; bare npm packages are not hashed; symlinks are refused; the closure

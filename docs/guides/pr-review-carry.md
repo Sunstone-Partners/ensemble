@@ -21,7 +21,7 @@ reads git objects at the head under review.
 
 1. `review-range` answers `delta` and the prepare facts' `deltaPlan.mode` is `delta`. Otherwise nothing carries: verify everything.
 2. Build the candidates: the open findings of the prior ledger, re-presented with their own `id`, `claim` = the ledger finding's `failureMode` verbatim, and `file` and `line`/`lines` from its `locationOrLink`; plus the new candidates of this round.
-3. Hash them at the new head: `node "$PR_REVIEW_CARRY_HASH_CLI"` with `{ repoRoot?, headSha, citations }`. Each answered candidate carries `hunkHash`, `depHashes` and `dependents` (or `hashError`).
+3. Hash them at the new head: `node "$PR_REVIEW_CARRY_HASH_CLI"` with `{ repoRoot?, headSha, citations }`. Each answered candidate carries `headSha` (the head it was hashed at), `hunkHash`, `depHashes` and `dependents` (or `hashError`). Pass the candidates on exactly as answered, and hash again after any push.
 4. Run `carry` with `action: "plan"`.
 5. Use the answer's `ledger` as the round's existing ledger. It is the prior ledger with the carried findings stamped; never stamp by hand.
 6. Verify only the `reverify` candidates and the new ones, with the unchanged verification contract.
@@ -43,7 +43,7 @@ one means re-verification (`plan`) or a refusal (`record`), exit 0.
 | Key | Required | Meaning |
 |---|---|---|
 | `prId` | request parameter | The PR; also names the state report to read. |
-| `candidates` | request parameter | Every candidate this round has, hashed at `headSha`. A prior verdict is only ever carried onto one of these. |
+| `candidates` | request parameter | Every candidate this round has, hashed at `headSha`. A prior verdict is only ever carried onto one of these. Each carries the head the hash step hashed it at; one stamped with another head, or none, is verified again (`candidate-head-mismatch`). |
 | `cwd` | optional | Where the state report is looked up (default: the current directory). |
 | `headSha`, `lastReviewedSha` | in band | Full object ids: the head under review and the head the previous round reviewed (the delta's start). |
 | `baseSha` | in band | The base the round reviews against (full object id). |
@@ -60,7 +60,7 @@ are read from the state report, never from stdin.
 | Key | Required | Meaning |
 |---|---|---|
 | `findings` | request parameter | The `findings` of the `votes` result (ledger entries with `outcome` and `votes`). |
-| `candidates` | request parameter | The hash step's candidates for this head, matched to the findings by `id`. |
+| `candidates` | request parameter | The hash step's candidates for this head, matched to the findings by `id`. One hashed at another head is skipped (`candidate-head-mismatch`). |
 | `prId`, `baseSha`, `headSha`, `depth`, `expectedVerifiers` | in band | As for `plan`; an unreadable one is answered `ok:false` with the reason. |
 
 `reconcile` (all four keys are request parameters):
@@ -83,9 +83,11 @@ three lines of context; `depHashes` is `{ path: sha256 }` of the transitive
 relative imports of the cited file (`{}` is "no dependencies"; absent or
 unreadable is "missing").
 
-Candidate: `{ id?, file, claim, line|lines, hunkHash, depHashes, dependents }`;
+Candidate: `{ id?, file, claim, line|lines, hunkHash, depHashes, dependents, headSha }`;
 exactly one of `line` and `lines`. `dependents` is the sorted list of files that
-use the cited file at the head.
+use the cited file at the head. `headSha` is the head the candidate was hashed
+at: the hash step stamps it on every candidate it answers, `hashError` ones
+included.
 
 Answers:
 
@@ -124,6 +126,7 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 | `prior-state-unavailable` | Whole-round gate (added by the CLI). The PR's state report at `lastReviewedSha` is missing, discarded, corrupt or unreadable. |
 | `new-candidate` | No prior verdict for it. |
 | `candidate-unreadable` | No file, or a claim with no words, or a duplicate of another candidate's key. |
+| `candidate-head-mismatch` | The candidate's `headSha` (the head the hash step hashed it at) is missing or is not this round's `headSha`: its hashes and its `dependents` describe another tree (a caller added since is not among them). `record` skips such a candidate with the same reason. |
 | `ambiguous-prior-verdict` | Two prior verdicts for one key. |
 | `id-mismatch` | The candidate's id is not the id of the verdict it would inherit. |
 | `head-not-last-reviewed` | The verdict was last confirmed on a head other than the delta's start, so the delta does not cover everything that changed since (a carried verdict is re-stamped with each head it passes). |
@@ -145,7 +148,7 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 
 ## Honest limits
 
-- `carry plan` never hashes: `hunkHash`, `depHashes` and `dependents` are inputs, and it trusts them; it cannot tell a wrong hash from a right one.
+- `carry plan` never hashes: `hunkHash`, `depHashes` and `dependents` are inputs, and it trusts them; it cannot tell a wrong hash from a right one. They must be taken at `headSha`: the hash step stamps each candidate with the head it read, and `plan` and `record` refuse a candidate stamped with another head, so a candidate list from before the push cannot carry. The stamp is only as honest as the step that wrote it: nothing proves the hashing was done at the head it names, or that the output was passed on unaltered.
 - Direct dependents only: the files that use the cited file (importers, name-matched tests, computed-specifier files naming it) are listed and a changed one re-verifies; callers of callers are not covered. Anything the cited file reads at run time that no relative specifier names is not covered either.
 - A relative specifier that resolves to no tracked file (a directory, a glob, a dangling path) is recorded as absent: it invalidates a verdict only when a file at exactly that path appears. A cited file that reads a directory's contents therefore keeps its verdict when a file under that directory changes (it is not a dependent of the files under the directory).
 - Bare npm packages (`require('lodash')`) are not hashed: an upgraded third-party dependency invalidates nothing.

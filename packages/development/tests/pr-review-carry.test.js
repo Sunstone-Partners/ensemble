@@ -57,6 +57,7 @@ const candidateOf = (over = {}) => ({
   hunkHash: HUNK,
   depHashes: { 'src/dep.js': DEP },
   dependents: ['src/caller.js'],
+  headSha: H2,
   ...over,
 });
 
@@ -88,6 +89,14 @@ function withDelta(input, paths, extra = []) {
 function flipped(mutate) {
   const input = baseline();
   mutate(input);
+  return input;
+}
+
+/** The round is at `head` (after `last` when given): its candidates were hashed there. */
+function atHead(input, head, last = input.lastReviewedSha) {
+  input.headSha = head;
+  input.lastReviewedSha = last;
+  for (const candidate of input.candidates) candidate.headSha = head;
   return input;
 }
 
@@ -131,7 +140,7 @@ describe('planCarry: the baseline carries (every flipped condition below starts 
     const first = planCarry(flipped((input) => { input.priorVerdicts[0] = priorOf({ outcome: 'filtered', votes: REJECTED_VOTES }); }));
     expect(first.carried).toHaveLength(1);
     expect(first.carried[0].outcome).toBe('filtered');
-    const second = planCarry({ ...baseline(), headSha: H3, lastReviewedSha: H2, priorVerdicts: first.carried });
+    const second = planCarry({ ...atHead(baseline(), H3, H2), priorVerdicts: first.carried });
     expect(second.carried).toHaveLength(1);
     expect(second.carried[0].head).toBe(H3);
     expect(second.carried[0].carriedFrom).toBe(H1);
@@ -303,7 +312,7 @@ describe('AC1 head-not-last-reviewed', () => {
   test('a verdict from two heads back is not carried even when its hashes still match', () => {
     const round1 = planCarry(baseline());
     // round 2 carried it to H2; round 3's delta starts at H3, which this verdict was never confirmed on
-    const result = planCarry({ ...baseline(), headSha: OTHER, lastReviewedSha: H3, priorVerdicts: round1.carried });
+    const result = planCarry({ ...atHead(baseline(), OTHER, H3), priorVerdicts: round1.carried });
     expect(result.carried).toEqual([]);
     expect(result.reverify[0].reasons).toEqual([REASONS.HEAD_NOT_LAST_REVIEWED]);
   });
@@ -393,6 +402,77 @@ describe('AC1 new-candidate and candidate-unreadable', () => {
     expect(result.carried).toEqual([]);
     expect(result.reverify.map((entry) => entry.id)).toEqual(['p1', 'c1-again']);
     for (const entry of result.reverify) expect(entry.reasons).toEqual([REASONS.CANDIDATE_UNREADABLE, REASONS.ID_MISMATCH].filter((reason) => entry.id !== 'p1' || reason === REASONS.CANDIDATE_UNREADABLE));
+  });
+});
+
+describe('AC1 candidate-head-mismatch: a candidate is hashed at one head, and only one hashed at THIS head can carry a verdict', () => {
+  // The reviewer's repro. A verdict was settled at H1 for src/a.js: the claim was filtered because every caller guards the input.
+  // The push to H2 adds src/new-caller.js, an UNGUARDED caller, so the delta lists it and the claim is real again. Candidates hashed
+  // at H2 list the new caller as a dependent. Candidates hashed at H1 cannot, and used to carry the stale verdict with no reason.
+  const newCallerRound = (over = {}) => withDelta(flipped((i) => {
+    i.priorVerdicts[0] = priorOf({ outcome: 'filtered', votes: REJECTED_VOTES });
+    i.candidates[0].dependents = ['src/caller.js', 'src/new-caller.js'];
+    Object.assign(i.candidates[0], over);
+  }), ['src/new-caller.js']);
+
+  test('control: candidates hashed at the head under review list the new caller, so the filtered verdict is verified again (dependent-changed)', () => {
+    expectOnlyReverify(newCallerRound(), [REASONS.DEPENDENT_CHANGED]);
+  });
+
+  test('the same delta with candidates hashed at the PREVIOUS head (the new caller is not among their dependents) carries nothing: candidate-head-mismatch', () => {
+    const result = expectOnlyReverify(newCallerRound({ headSha: H1, dependents: ['src/caller.js'] }), [REASONS.CANDIDATE_HEAD_MISMATCH]);
+    // a per-candidate reason: the round itself is readable, and the finding is verified again, never dropped
+    expect(result.reasons).toEqual([]);
+    expect(result.unmatched).toEqual([]);
+  });
+
+  test.each([
+    ['no head', { headSha: undefined }],
+    ['a null head', { headSha: null }],
+    ['a blank head', { headSha: '' }],
+    ['an abbreviated head', { headSha: 'abc' }],
+    ['a head that is not hex', { headSha: 'g'.repeat(40) }],
+    ['a head that is a number', { headSha: 42 }],
+    ['the head of the previous round', { headSha: H1 }],
+    ['some other head', { headSha: OTHER }],
+  ])('a candidate stamped with %s is candidate-head-mismatch and never carried', (_name, patch) => {
+    expectOnlyReverify(flipped((i) => { Object.assign(i.candidates[0], patch); }), [REASONS.CANDIDATE_HEAD_MISMATCH]);
+  });
+
+  test('a candidate with no `headSha` key at all is the same', () => {
+    expectOnlyReverify(flipped((i) => { delete i.candidates[0].headSha; }), [REASONS.CANDIDATE_HEAD_MISMATCH]);
+  });
+
+  test('the comparison ignores the case of the object id', () => {
+    expect(planCarry(flipped((i) => { i.candidates[0].headSha = H2.toUpperCase(); })).carried).toHaveLength(1);
+  });
+
+  test('only the stale candidate is verified again: a fresh one beside it still carries', () => {
+    const result = planCarry(flipped((i) => {
+      i.priorVerdicts.push(priorOf({ id: 'p2', file: 'src/b.js', claim: 'Other defect' }));
+      i.priorLedger.push(ledgerEntry('p2', 'src/b.js', 10, 'Other defect'));
+      i.candidates.push(candidateOf({ id: 'p2', file: 'src/b.js', claim: 'Other defect', headSha: H1 }));
+    }));
+    expect(result.carried.map((record) => record.id)).toEqual(['p1']);
+    expect(result.reverify.map((entry) => [entry.id, entry.reasons])).toEqual([['p2', [REASONS.CANDIDATE_HEAD_MISMATCH]]]);
+  });
+
+  test('a stale candidate that is also new, or unreadable, lists the head mismatch beside its other reason', () => {
+    const result = planCarry(flipped((i) => {
+      i.candidates.push(candidateOf({ id: 'c2', file: 'src/new.js', claim: 'Brand new', headSha: H1 }));
+      i.candidates.push(candidateOf({ id: 'c3', file: undefined, headSha: H1 }));
+    }));
+    expect(result.carried.map((record) => record.id)).toEqual(['p1']);
+    expect(result.reverify.map((entry) => [entry.id, entry.reasons])).toEqual([
+      ['c2', [REASONS.CANDIDATE_HEAD_MISMATCH, REASONS.NEW_CANDIDATE]],
+      ['c3', [REASONS.CANDIDATE_UNREADABLE, REASONS.CANDIDATE_HEAD_MISMATCH]],
+    ]);
+  });
+
+  test('the stale candidate is still the one that re-presents the verdict: the verdict is not "unmatched", it is verified again', () => {
+    const result = planCarry(flipped((i) => { i.candidates[0].headSha = H1; }));
+    expect(result.unmatched).toEqual([]);
+    expect(result.reverify.map((entry) => entry.id)).toEqual(['p1']);
   });
 });
 
@@ -904,6 +984,7 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
     readSet: ['none', 'caller-of', 'test-of', 'names', 'changed-only'],
     dependents: ['clean', 'changed', 'missing'],
     location: ['same', 'moved'],
+    candidateHead: ['same', 'other', 'missing'],
   };
   const PRODUCT = Object.values(FACTORS).reduce((n, values) => n * values.length, 1);
 
@@ -935,6 +1016,8 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
     if (f.dependents === 'changed') { paths.push('src/caller.js'); }
     if (f.dependents === 'missing') delete input.candidates[0].dependents;
     if (f.location === 'moved') input.candidates[0].lines = [30, 32];
+    if (f.candidateHead === 'other') input.candidates[0].headSha = H1;
+    if (f.candidateHead === 'missing') delete input.candidates[0].headSha;
     return withDelta(input, paths, extra);
   }
 
@@ -956,7 +1039,8 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
       Array.isArray(candidate.dependents) && candidate.dependents.every((dependent) => !delta.has(dependent)) &&
       !delta.has(candidate.file) &&
       (radius.get(candidate.file) || []).every((why) => why === 'changed') &&
-      JSON.stringify(prior.lines) === JSON.stringify(candidate.lines)
+      JSON.stringify(prior.lines) === JSON.stringify(candidate.lines) &&
+      typeof candidate.headSha === 'string' && candidate.headSha.toLowerCase() === input.headSha.toLowerCase()
     );
   }
 
@@ -987,7 +1071,7 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
 
 describe('recordVerdicts: the one producer of verdict records, and what it stamps', () => {
   const finding = (over = {}) => ({ id: 'p1', locationOrLink: 'src/a.js:10', failureMode: CLAIM, severity: 'Important', outcome: 'present', votes: VOTES, ...over });
-  const hashed = (over = {}) => ({ id: 'p1', file: 'src/a.js', lines: [10, 12], claim: CLAIM, hunkHash: HUNK, depHashes: { 'src/dep.js': DEP }, dependents: [], ...over });
+  const hashed = (over = {}) => ({ id: 'p1', file: 'src/a.js', lines: [10, 12], claim: CLAIM, hunkHash: HUNK, depHashes: { 'src/dep.js': DEP }, dependents: [], headSha: H1, ...over });
   const request = (over = {}) => ({ prId: PR, baseSha: BASE, headSha: H1, depth: 'standard', findings: [finding()], candidates: [hashed()], ...over });
 
   test('a settled finding becomes a record stamped with the PR, base, depth, verifier count and head', () => {
@@ -1036,7 +1120,10 @@ describe('recordVerdicts: the one producer of verdict records, and what it stamp
     ['a finding with no id', { findings: [finding({ id: undefined })] }, 'no-id'],
     ['no hashed candidate of that id', { candidates: [hashed({ id: 'p9' })] }, 'no-candidate'],
     ['two hashed candidates of that id', { candidates: [hashed(), hashed()] }, 'ambiguous-candidate'],
-    ['a candidate that could not be hashed', { candidates: [{ id: 'p1', file: 'src/a.js', line: 10, claim: CLAIM, hashError: 'boom' }] }, 'no-hash'],
+    ['a candidate that could not be hashed', { candidates: [{ id: 'p1', file: 'src/a.js', line: 10, claim: CLAIM, headSha: H1, hashError: 'boom' }] }, 'no-hash'],
+    ['a candidate hashed at another head', { candidates: [hashed({ headSha: H2 })] }, 'candidate-head-mismatch'],
+    ['a candidate with no head', { candidates: [hashed({ headSha: undefined })] }, 'candidate-head-mismatch'],
+    ['a candidate whose head is abbreviated', { candidates: [hashed({ headSha: H1.slice(0, 7) })] }, 'candidate-head-mismatch'],
     ['a candidate with no dependency hashes', { candidates: [hashed({ depHashes: undefined })] }, 'no-hash'],
     ['a candidate with no location', { candidates: [hashed({ lines: undefined })] }, 'no-hash'],
     ['a candidate that cites another file than the finding', { candidates: [hashed({ file: 'src/b.js' })] }, 'candidate-differs'],
@@ -1059,6 +1146,23 @@ describe('recordVerdicts: the one producer of verdict records, and what it stamp
     }));
     expect(result.verdicts.map((record) => record.id)).toEqual(['p1']);
     expect(result.skipped).toEqual([{ id: 'p2', reason: 'not-settled' }]);
+  });
+
+  test('the very candidates that record at the head they were hashed at are skipped at any other head: no record is built from another head\'s hashes', () => {
+    expect(recordVerdicts(request()).verdicts).toHaveLength(1);
+    const elsewhere = recordVerdicts(request({ headSha: H2 }));
+    expect(elsewhere.ok).toBe(true);
+    expect(elsewhere.verdicts).toEqual([]);
+    expect(elsewhere.skipped).toEqual([{ id: 'p1', reason: REASONS.CANDIDATE_HEAD_MISMATCH }]);
+  });
+
+  test('the comparison ignores the case of the object id; one stale candidate does not stop a fresh one', () => {
+    const result = recordVerdicts(request({
+      findings: [finding(), finding({ id: 'p2', locationOrLink: 'src/b.js:10', failureMode: 'Other defect' })],
+      candidates: [hashed({ headSha: H1.toUpperCase() }), hashed({ id: 'p2', file: 'src/b.js', claim: 'Other defect', headSha: H2 })],
+    }));
+    expect(result.verdicts.map((record) => record.id)).toEqual(['p1']);
+    expect(result.skipped).toEqual([{ id: 'p2', reason: REASONS.CANDIDATE_HEAD_MISMATCH }]);
   });
 
   test.each([
