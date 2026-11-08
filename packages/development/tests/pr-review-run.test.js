@@ -345,7 +345,7 @@ describe('prepare: the dispatch manifest', () => {
     expect((await h.prepare()).status).toBe('DISPATCH');
     expect(await h.prepare()).toMatchObject({ ok: false, reason: 'run-exists' });
     expect(PREPARE_KEYS).toContain('stateRoot');
-    expect(COLLECT_KEYS).toEqual(['repoRoot', 'runId', 'now', 'adjudications']);
+    expect(COLLECT_KEYS).toEqual(['repoRoot', 'runId', 'now', 'adjudications', 'triage']);
     expect(await h.collect({ extra: 1 })).toMatchObject({ ok: false, reason: 'invalid-input' });
   });
 });
@@ -408,39 +408,342 @@ describe('prepare: a head from outside this repository is refused before anythin
   });
 });
 
-describe('fail closed: the tier selects full mode and nothing is dispatched (AC4)', () => {
-  const expectFull = async (h, reason) => {
-    const out = await h.prepare();
-    expect(out).toMatchObject({ ok: false, status: 'NEEDS_FULL_MODE', dispatched: [] });
-    expect(out.reason).toMatch(reason);
-    expect(out.mode.mode).toBe('full');
-    const run = h.readRun();
-    expect(run.phase).toBe('needs-full-mode');
-    expect(run.waves).toEqual([]);
-    expect(fs.existsSync(path.join(h.runDir(), 'briefs'))).toBe(false);
-    expect(h.stateWrites).toEqual([]);
-    // later calls repeat the answer and dispatch nothing
-    expect(await h.collect()).toMatchObject({ ok: false, status: 'NEEDS_FULL_MODE' });
-    return out;
-  };
+describe('full mode (kata dqcs): the same runner, with Deep depth, the security lane and a triage stop', () => {
+  /** prepare -> answer every agent of the review round -> collect: the TRIAGE answer of a full run. */
+  async function toTriage(h, { findingsFor, lane, prepare, collect } = {}) {
+    const manifest = await h.prepare(prepare);
+    expect(manifest).toMatchObject({ ok: true, status: 'DISPATCH', mode: { mode: 'full' } });
+    answerReview(manifest, { findingsFor, lane: lane || { findings: [], pathsReviewed: allPaths(h) } });
+    const triage = await h.collect(collect);
+    return { manifest, triage };
+  }
+  const sensitive = () => harness({ changedPaths: ['secure/key.js'], policyJson: { sensitivePaths: ['secure/**'] } });
+  const keyFinding = (over = {}) => finding({ locationOrLink: 'secure/key.js:3', originalTextOrLink: 'secure/key.js:3', ...over });
+  const onlyA = (n) => (n.endsWith('-a') ? [keyFinding()] : []);
+  const LATE = () => Date.now() + 6 * 3600 * 1000;
 
-  test('a sensitive path', async () => {
-    await expectFull(harness({ changedPaths: ['secure/key.js'], policyJson: { sensitivePaths: ['secure/**'] } }), /sensitive-path/);
+  describe('AC1: anything that is not clearly light selects full and runs the full path end to end', () => {
+    const causes = [
+      ['a sensitive path', () => harness({ changedPaths: ['secure/key.js'], policyJson: { sensitivePaths: ['secure/**'] } }), /sensitive-path/],
+      ['an owner-declared High path', () => harness({ changedPaths: ['core/x.js'], policyJson: { highPaths: ['core/**'] } }), /high-path/],
+      ['an unreadable path classification (the tier module answers High and not ok)', () => {
+        const facts = makeFacts({ changedPaths: ['src/a.js'], numstat: [{ path: 'src/a.js', added: 1, deleted: 0 }] });
+        delete facts.paths;
+        return harness({ facts });
+      }, /tier-result-not-ok|paths-unreadable|unknown|high/i],
+    ];
+    for (const [name, make, reason] of causes) {
+      test(`${name}: Deep depth, five verifiers per finding, the security lane, then TRIAGE, a verify wave and DONE`, async () => {
+        const h = make();
+        const manifest = await h.prepare();
+        expect(manifest).toMatchObject({ ok: true, status: 'DISPATCH', round: 'review', mode: { mode: 'full' }, depth: { mode: 'deep', verifiersPerCandidate: 5 } });
+        expect(manifest.depth.reviewersPerSlice).toBeGreaterThanOrEqual(2);
+        expect(manifest.mode.reasons.join(',')).toMatch(reason);
+        expect(manifest.agents.map((a) => a.role)).toContain('security');
+        expect(manifest.agents.filter((a) => a.role === 'reviewer').length).toBeGreaterThanOrEqual(2);
+        for (const a of manifest.agents) expect(fs.readFileSync(a.briefPath, 'utf8')).toContain('Output contract');
+        const at = `${allPaths(h)[0]}:3`;
+        answerReview(manifest, { findingsFor: (n) => (n.endsWith('-a') ? [finding({ locationOrLink: at, originalTextOrLink: at })] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
+        const triage = await h.collect();
+        expect(triage).toMatchObject({ ok: true, status: 'TRIAGE', dispatched: [], mode: { mode: 'full' } });
+        expect(triage.candidates).toHaveLength(1);
+        const verify = await h.collect({ triage: {} });
+        expect(verify).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify' });
+        expect(verify.agents.length).toBeGreaterThanOrEqual(5);
+        voteAll(verify, () => 'real');
+        const done = await h.collect();
+        expect(done).toMatchObject({ ok: true, status: 'DONE', mode: { mode: 'full' }, depth: { mode: 'deep', verifiersPerCandidate: 5 } });
+        expect(done.gate.mergeable).toBe(false);
+        expect(h.stateWrites[h.stateWrites.length - 1].state).toMatchObject({ mode: 'full' });
+      });
+    }
+
+    // HONEST LIMIT: prepareRun passes assignTier no second assessment and no proposed tier, so no runner input can raise a
+    // tier today. This feeds the runner a tier record that carries a raise (the shape the tier module emits) and proves the
+    // runner honours selectMode's answer for it; selectMode's own raised-tier rule is covered in pr-review-mode.test.js.
+    test('a tier record that carries a raise (injected: the runner has no input that raises a tier): full, end to end', async () => {
+      let isolated;
+      jest.isolateModules(() => {
+        jest.doMock('../lib/pr-review-tier', () => {
+          const real = jest.requireActual('../lib/pr-review-tier');
+          return { ...real, tierRecord: (args) => ({ ...real.tierRecord(args), raised: [{ from: 'medium', to: 'high', reason: 'second-assessor' }] }) };
+        });
+        isolated = require('../lib/pr-review-run');
+      });
+      jest.dontMock('../lib/pr-review-tier');
+      const h = harness();
+      const manifest = await isolated.prepareRun({ repo: 'o/r', pr: 7, repoRoot: h.repoRoot, runId: 'run1', agentAuthored: false }, h.deps);
+      expect(manifest).toMatchObject({ ok: true, status: 'DISPATCH', mode: { mode: 'full' }, depth: { mode: 'deep', verifiersPerCandidate: 5 } });
+      expect(manifest.mode.reasons).toContain('tier-raised');
+      answerReview(manifest, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      expect(await isolated.collectRun({ repoRoot: h.repoRoot, runId: 'run1' }, h.deps)).toMatchObject({ ok: true, status: 'TRIAGE' });
+      const done = await isolated.collectRun({ repoRoot: h.repoRoot, runId: 'run1', triage: {} }, h.deps);
+      expect(done).toMatchObject({ ok: true, status: 'DONE', mode: { mode: 'full', reasons: expect.arrayContaining(['tier-raised']) } });
+    });
+
+    test('a PR with no changed paths cites no kind: ambiguity selects full (never light); a review with nothing to brief is RUN_FAILED, never NEEDS_FULL_MODE or a verdict', async () => {
+      const h = harness({ changedPaths: [], numstat: [] });
+      const out = await h.prepare();
+      expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', mode: { mode: 'full' }, dispatched: [] });
+      expect(out.mode.reasons.join(',')).toMatch(/no-kinds-cited|uncited|unreadable/);
+      expect(out.reason).toMatch(/^brief-refused/);
+      expect(h.readRun()).toMatchObject({ phase: 'failed', mode: { mode: 'full' } });
+      expect(h.stateWrites).toEqual([]);
+    });
+
+    test('a light PR is untouched: standard depth, no TRIAGE, the verify wave follows the review round directly', async () => {
+      const h = harness();
+      const m = await h.prepare();
+      expect(m).toMatchObject({ mode: { mode: 'light' }, depth: { mode: 'standard', verifiersPerCandidate: 3 } });
+      expect(m.reReview).toBeUndefined();
+      answerReview(m, { findingsFor: (n) => (n.endsWith('-a') ? [finding()] : []), lane: { findings: [], pathsReviewed: allPaths(h) } });
+      expect(await h.collect()).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    });
   });
 
-  test('an owner-declared High path', async () => {
-    await expectFull(harness({ changedPaths: ['core/x.js'], policyJson: { highPaths: ['core/**'] } }), /high-path/);
+  describe('triage: the model orchestrator may add candidates and nothing else', () => {
+    test('TRIAGE dispatches nothing and repeats until the orchestrator answers; it lists the candidates, coverage and security lane', async () => {
+      const h = sensitive();
+      const { triage } = await toTriage(h, { findingsFor: onlyA });
+      expect(triage).toMatchObject({ status: 'TRIAGE', dispatched: [], maxAdditionalCandidates: 20, security: { status: 'clean' }, coverage: { complete: true, uncovered: [] } });
+      expect(triage.candidates).toEqual([expect.objectContaining({ id: 'f1', locationOrLink: 'secure/key.js:3', source: 'reviewer-s1-a' })]);
+      expect(triage.rules.join(' ')).toMatch(/can only ADD/);
+      const wavesBefore = h.readRun().waves.length;
+      expect(await h.collect()).toMatchObject({ status: 'TRIAGE' });
+      expect(h.readRun().waves.length).toBe(wavesBefore);
+      expect(h.readRun().phase).toBe('triage');
+    });
+
+    test('an added candidate is verified by five independent verifiers from a brief that carries the claim and location only, and lands in the ledger as the orchestrator\'s', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      const verify = await h.collect({ triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'the key is compared with == so a type-juggled value passes', severity: 'important', evidence: 'ORCHESTRATOR-CONCLUSION-MUST-NOT-LEAK' }] } });
+      expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+      const byCandidate = new Map();
+      for (const a of verify.agents) for (const id of a.candidateIds) byCandidate.set(id, [...(byCandidate.get(id) || []), a.name]);
+      expect([...byCandidate.keys()].sort()).toEqual(['f1', 'f2']);
+      for (const names of byCandidate.values()) expect(new Set(names).size).toBe(5);
+      for (const a of verify.agents) {
+        const brief = fs.readFileSync(a.briefPath, 'utf8');
+        expect(brief).not.toContain('ORCHESTRATOR-CONCLUSION-MUST-NOT-LEAK');
+        expect(brief).not.toMatch(/orchestrator/i);
+      }
+      expect(fs.readFileSync(verify.agents.find((a) => a.candidateIds.includes('f2')).briefPath, 'utf8')).toContain('type-juggled');
+      voteAll(verify, () => 'real');
+      const done = await h.collect();
+      expect(done.status).toBe('DONE');
+      expect(done.ledger.map((e) => [e.id, e.source])).toEqual([['f1', 'reviewer-s1-a'], ['f2', 'orchestrator']]);
+      expect(done.ledger[1].verification).toMatchObject({ outcome: expect.any(String) });
+      expect(done.triage).toMatchObject({ requested: 1, additionalCandidateIds: ['f2'] });
+      expect(done.metrics.triageCalls).toBe(2); // the call that answered TRIAGE and the one that submitted it; later calls are the protocol's own
+      expect(done.gate.mergeable).toBe(false);
+    });
+
+    test('submitting triage is what leads to verification: a full run with candidates never skips straight to the ledger', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      const next = await h.collect({ triage: {} });
+      expect(next).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+      expect(h.readRun().waves.filter((w) => w.round === 'verify')).toHaveLength(1);
+    });
+
+    test('a full run with no candidates still stops at TRIAGE, and finishes DONE on an empty triage', async () => {
+      const h = sensitive();
+      const { triage } = await toTriage(h);
+      expect(triage).toMatchObject({ status: 'TRIAGE', candidates: [] });
+      const done = await h.collect({ triage: {} });
+      expect(done).toMatchObject({ status: 'DONE', mode: { mode: 'full' }, ledger: [] });
+    });
+
+    const refusals = [
+      ['an unknown key (nothing can remove or close a candidate)', { dismiss: ['f1'] }, /unknown triage key "dismiss"/],
+      ['a candidate key that re-grades or closes', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'x y z', resolution: 'resolved' }] }, /unknown key "resolution"/],
+      ['a pre-existing label', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'x y z', severity: 'pre-existing' }] }, /severity must be one of important, nit/],
+      ['a location a verifier cannot be briefed with', { additionalCandidates: [{ locationOrLink: 'secure/key.js', failureMode: 'x y z' }] }, /path\/to\/file:line/],
+      ['no failure mode', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9' }] }, /failureMode/],
+      ['more than 20 candidates', { additionalCandidates: Array.from({ length: 21 }, (_, i) => ({ locationOrLink: `secure/key.js:${i + 1}`, failureMode: 'something is wrong here' })) }, /at most 20/],
+    ];
+    for (const [name, payload, reason] of refusals) {
+      test(`${name} is refused, not terminal, and changes nothing; a correct retry then works`, async () => {
+        const h = sensitive();
+        await toTriage(h, { findingsFor: onlyA });
+        const before = h.readRun();
+        const refused = await h.collect({ triage: payload });
+        expect(refused).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'triage-refused' });
+        expect(refused.error).toMatch(reason);
+        const after = h.readRun();
+        expect(after.phase).toBe('triage');
+        expect(after.candidates).toEqual(before.candidates);
+        expect(after.waves).toHaveLength(before.waves.length);
+        expect(await h.collect({ triage: {} })).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+      });
+    }
+
+    test('triage outside the triage stop is refused (a verify wave in flight, a finished run, a run still in its review round)', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      const verify = await h.collect({ triage: {} });
+      expect(await h.collect({ triage: {} })).toMatchObject({ ok: false, reason: 'triage-not-pending' });
+      voteAll(verify, () => 'real');
+      expect((await h.collect()).status).toBe('DONE');
+      expect(await h.collect({ triage: {} })).toMatchObject({ ok: false, reason: 'triage-not-pending' });
+      const early = sensitive();
+      expect((await early.prepare()).status).toBe('DISPATCH');
+      expect(await early.collect({ triage: {} })).toMatchObject({ ok: false, reason: 'triage-not-pending' });
+    });
+
+    test('a head that moves during triage invalidates the run: no verify wave, no ledger, no state report', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      h.head = MOVED;
+      expect(await h.collect({ triage: {} })).toMatchObject({ ok: false, status: 'RUN_INVALIDATED', reason: 'head-moved' });
+      expect(h.stateWrites).toEqual([]);
+      expect(h.readRun().waves.filter((w) => w.round === 'verify')).toEqual([]);
+    });
   });
 
-  test('an unreadable path classification (the tier module answers High and not ok)', async () => {
-    const facts = makeFacts({ changedPaths: ['src/a.js'], numstat: [{ path: 'src/a.js', added: 1, deleted: 0 }] });
-    delete facts.paths;
-    await expectFull(harness({ facts }), /not-ok|tier-result-not-ok|unknown|unreadable|high/i);
+  describe('AC2: no code path downgrades a full run', () => {
+    test('the mode comes from the tier alone: a payload cannot ask for one', async () => {
+      const h = sensitive();
+      expect(await h.prepare({ mode: 'light' })).toMatchObject({ ok: false, reason: 'invalid-input', error: expect.stringContaining('"mode"') });
+      expect(await h.prepare({ depth: 'quick' })).toMatchObject({ ok: false, reason: 'invalid-input' });
+    });
+
+    test('a full run keeps Deep depth, five verifiers and the lane in every stored phase, whatever happens to its agents', async () => {
+      const h = sensitive();
+      const manifest = await h.prepare();
+      // the security lane never arrives: the run reports the gap, it does not lighten itself
+      answerReview(manifest, { skip: ['security-lane'], findingsFor: onlyA });
+      const triage = await h.collect({ now: LATE() });
+      expect(triage).toMatchObject({ status: 'TRIAGE', security: { status: 'not-run' } });
+      const verify = await h.collect({ triage: {} });
+      expect(verify.depth).toMatchObject({ mode: 'deep', verifiersPerCandidate: 5 });
+      expect(new Set(verify.agents.map((a) => a.name)).size).toBe(5);
+      expect(h.readRun()).toMatchObject({ mode: { mode: 'full' }, depth: { mode: 'deep', verifiersPerCandidate: 5 }, securityLane: true });
+      voteAll(verify, () => 'real');
+      const done = await h.collect();
+      expect(done).toMatchObject({ status: 'DONE', mode: { mode: 'full' } });
+      expect(done.coverage.complete).toBe(false); // the lane did not run: reported, never read as covered
+      expect(done.gate.mergeable).toBe(false);
+    });
+
+    const tampered = [
+      ['a lighter depth', (run) => { run.depth.mode = 'standard'; }],
+      ['fewer verifiers', (run) => { run.depth.verifiersPerCandidate = 3; }],
+      ['one reviewer per slice', (run) => { run.depth.reviewersPerSlice = 1; }],
+      ['no security lane', (run) => { run.securityLane = false; }],
+    ];
+    for (const [name, mutate] of tampered) {
+      test(`a stored full run with ${name} is not continued: RUN_FAILED mode-invariant, and it stays failed`, async () => {
+        const h = sensitive();
+        const manifest = await h.prepare();
+        answerReview(manifest, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+        const stored = h.readRun();
+        mutate(stored);
+        fs.writeFileSync(path.join(h.runDir(), 'run.json'), JSON.stringify(stored));
+        expect(await h.collect()).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'mode-invariant' });
+        expect(await h.collect()).toMatchObject({ ok: false, reason: 'mode-invariant' });
+        expect(h.stateWrites).toEqual([]);
+      });
+    }
+
+    test('a brief the renderer refuses in a full run is RUN_FAILED brief-refused, never NEEDS_FULL_MODE and never a lighter run', async () => {
+      const h = harness({ changedPaths: ['core/a b.js'], policyJson: { highPaths: ['core/**'] } });
+      const out = await h.prepare();
+      expect(out).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: expect.stringContaining('brief-refused'), dispatched: [] });
+      expect(h.readRun().phase).toBe('failed');
+      expect(await h.collect()).toMatchObject({ status: 'RUN_FAILED' });
+    });
   });
 
-  test('a PR with no changed paths cites no kind: ambiguity is full, never light', async () => {
-    await expectFull(harness({ changedPaths: [], numstat: [] }), /no-kinds-cited|uncited|unreadable/);
+  describe('AC3: the gate, approvals, independence and completeness are the light mode\'s', () => {
+    test('an Important finding the verifiers confirm blocks the gate and is listed open; the review is not complete', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      const verify = await h.collect({ triage: {} });
+      voteAll(verify, () => 'real');
+      const done = await h.collect();
+      expect(done.gate.mergeable).toBe(false);
+      expect(done.gate.findings.open).toEqual(['f1']);
+      expect(done.gate.blockers.map((b) => b.code)).toContain('open-important-finding');
+      expect(done.reviewStatus.complete).not.toBe(true);
+    });
+
+    test('no verifier is a reviewer, the security lane or the orchestrator', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      const verify = await h.collect({ triage: {} });
+      expect(verify.agents.map((a) => a.name).some((n) => /^reviewer|^security|orchestrator/.test(n))).toBe(false);
+    });
+
+    test('a slice nobody reviewed is reported as not reviewed in the TRIAGE answer and the final answer', async () => {
+      const h = sensitive();
+      const manifest = await h.prepare();
+      answerReview(manifest, { skip: ['reviewer-s1-b'], lane: { findings: [], pathsReviewed: allPaths(h) } });
+      const triage = await h.collect({ now: LATE() });
+      expect(triage).toMatchObject({ status: 'TRIAGE', coverage: { complete: false } });
+      expect(triage.coverage.unreviewedSlices).toEqual(['whole-pr']);
+      const done = await h.collect({ triage: {} });
+      expect(done.status).toBe('DONE');
+      expect(done.notReviewed.unreviewedSlices).toEqual(['whole-pr']);
+      expect(done.gate.mergeable).toBe(false);
+    });
   });
+
+  describe('the re-review scope rule is recorded for a full run', () => {
+    const lastReviewedSha = '1'.repeat(40);
+    const deltaFacts = () => {
+      const facts = makeFacts({ changedPaths: ['secure/key.js', 'src/a.js'], numstat: [{ path: 'secure/key.js', added: 3, deleted: 1 }, { path: 'src/a.js', added: 3, deleted: 1 }], policyJson: { sensitivePaths: ['secure/**'] } });
+      return { ...facts, delta: { lastReviewedSha, reviewedHeadSha: lastReviewedSha, reviewedBaseSha: BASE, changedPaths: ['src/a.js'] }, deltaPlan: { mode: 'delta', reasons: ['delta-since-last-review'], readSet: [] } };
+    };
+    const deltaHarness = (facts) => {
+      const h = harness({
+        facts,
+        prepareOverride: async (options) => {
+          const dir = path.join(h.root, 'prepared');
+          return { ok: true, status: 'PREPARED', reused: false, dir, manifestPath: path.join(dir, 'manifest.json'), headSha: options.headSha, baseSha: options.baseSha, mode: 'delta', absent: {}, artifacts: { snapshot: { path: path.join(dir, 'snapshot') }, 'range.diff': { path: path.join(dir, 'range.diff') }, 'facts.json': { path: path.join(dir, 'facts.json') }, 'baseline.json': { path: path.join(dir, 'baseline.json') } } };
+        },
+      });
+      return h;
+    };
+
+    test('no previous head: first-review', async () => {
+      const m = await sensitive().prepare();
+      expect(m.reReview).toMatchObject({ scope: 'first-review', reasons: ['no-previous-head'] });
+    });
+
+    test('a delta that touches no High or sensitive path, on a head the CLI has seen: delta (and the run still reads the whole range)', async () => {
+      const h = deltaHarness(deltaFacts());
+      const m = await h.prepare({ lastReviewedSha });
+      expect(m).toMatchObject({ status: 'DISPATCH', mode: { mode: 'full' }, reReview: { scope: 'delta', reasons: [], appliedRange: 'full-range' } });
+      expect(h.readRun().reReview).toMatchObject({ scope: 'delta' });
+    });
+
+    test('a delta that touches a sensitive path is a full re-read, even when the plan said delta', async () => {
+      const facts = deltaFacts();
+      facts.delta.changedPaths = ['secure/key.js'];
+      const m = await deltaHarness(facts).prepare({ lastReviewedSha });
+      expect(m.reReview).toMatchObject({ scope: 'full', reasons: expect.arrayContaining(['sensitive-path-touched']) });
+    });
+
+    test('a head the CLI has never seen is a full re-read', async () => {
+      const facts = deltaFacts();
+      facts.delta.reviewedHeadSha = '2'.repeat(40);
+      const m = await deltaHarness(facts).prepare({ lastReviewedSha });
+      expect(m.reReview).toMatchObject({ scope: 'full', reasons: expect.arrayContaining(['head-never-seen']) });
+    });
+
+    test('the TRIAGE and final answers carry the decision', async () => {
+      const h = deltaHarness(deltaFacts());
+      const m = await h.prepare({ lastReviewedSha });
+      answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+      expect(await h.collect()).toMatchObject({ status: 'TRIAGE', reReview: { scope: 'delta' } });
+      expect(await h.collect({ triage: {} })).toMatchObject({ status: 'DONE', reReview: { scope: 'delta' }, triage: { requested: 0 } });
+    });
+  });
+});
+
+describe('fail closed: what light mode still refuses, and what is not escalated', () => {
 
   test('a brief the renderer refuses (a path with a space) cannot be reviewed mechanically: full mode', async () => {
     const h = harness({ changedPaths: ['src/a b.js'] });

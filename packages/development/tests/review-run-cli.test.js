@@ -292,18 +292,36 @@ describe('the real CLI process on a real git fixture', () => {
     expect(done.out.gate.blockers.map((b) => b.code)).toContain('open-important-finding');
   });
 
-  test('a High path is NEEDS_FULL_MODE: exit 1, nothing dispatched, no briefs, later calls repeat it', () => {
+  test('a High (sensitive) path runs in full mode through the real process: DISPATCH, TRIAGE, a five-verifier wave, DONE, the repository untouched', () => {
     setGh({ head: fx.high });
+    const before = snapshotRepo();
     const r = prep({ runId: 'high' });
-    expect(r.code).toBe(1);
-    expect(r.out).toMatchObject({ ok: false, status: 'NEEDS_FULL_MODE', dispatched: [] });
-    expect(r.out.reason).toMatch(/sensitive-path/);
-    expect(r.out.mode.mode).toBe('full');
-    expect(fs.existsSync(path.join(runDir('high'), 'briefs'))).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(runDir('high'), 'run.json'), 'utf8')).phase).toBe('needs-full-mode');
-    const again = coll('high');
-    expect(again.code).toBe(1);
-    expect(again.out).toMatchObject({ status: 'NEEDS_FULL_MODE' });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatchObject({ ok: true, status: 'DISPATCH', mode: { mode: 'full' }, depth: { mode: 'deep', verifiersPerCandidate: 5 }, reReview: { scope: 'first-review' } });
+    expect(r.out.mode.reasons).toContain('sensitive-path');
+    expect(r.out.agents.map((a) => a.role)).toContain('security');
+    expect(r.out.agents.filter((a) => a.role === 'reviewer').length).toBeGreaterThanOrEqual(2);
+    answerReview(r.out, { changed: ['secure/key.js'], findings: { 'reviewer-s1-a': [reviewerFinding({ locationOrLink: 'secure/key.js:1', originalTextOrLink: 'secure/key.js:1', failureMode: 'the key is a constant string that is committed to the repository' })] } });
+    const triage = coll('high');
+    expect(triage.code).toBe(0);
+    expect(triage.out).toMatchObject({ ok: true, status: 'TRIAGE', dispatched: [], security: { status: 'clean' }, coverage: { complete: true } });
+    expect(triage.out.candidates.map((c) => c.id)).toEqual(['f1']);
+    expect(coll('high').out.status).toBe('TRIAGE'); // no triage payload: nothing advances
+    const verify = coll('high', { triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:1', failureMode: 'the module exports the secret to every importer without any access check', severity: 'important' }] } });
+    expect(verify.code).toBe(0);
+    expect(verify.out).toMatchObject({ status: 'DISPATCH', round: 'verify', mode: { mode: 'full' } });
+    const perCandidate = {};
+    for (const a of verify.out.agents) for (const id of a.candidateIds) perCandidate[id] = (perCandidate[id] || 0) + 1;
+    expect(perCandidate).toEqual({ f1: 5, f2: 5 });
+    answerVotes(verify.out, 'real');
+    const done = coll('high');
+    expect(done.code).toBe(0);
+    expect(done.out).toMatchObject({ status: 'DONE', mode: { mode: 'full' }, triage: { requested: 1, additionalCandidateIds: ['f2'] } });
+    expect(done.out.gate.mergeable).toBe(false);
+    expect(done.out.ledger.map((e) => e.source)).toEqual(['reviewer-s1-a', 'orchestrator']);
+    expect(JSON.parse(fs.readFileSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), 'utf8'))).toMatchObject({ mode: 'full' });
+    process.stderr.write(`\nSMOKE full-mode: ${JSON.stringify({ wallMs: done.out.metrics.wallMs, orchestratorTurns: done.out.metrics.orchestratorTurns.atLeast, triageCalls: done.out.metrics.triageCalls, agents: done.out.metrics.agentsByRole })}\n`);
+    expect(snapshotRepo()).toEqual(before);
   });
 
   test('a head that moves between prepare and collect is RUN_INVALIDATED: exit 1, no ledger, no gate, no state report', () => {
