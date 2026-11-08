@@ -995,14 +995,37 @@ describe('the instructions that drive the sweep agree with the code', () => {
     expect(documented.sort()).toEqual([...answered].sort());
   });
 
-  test('pr-merge runs the sweep before and after the merge, points at SWEEP.md, and passes dryRun only where a dry run can reach', () => {
+  test('pr-merge runs the sweep before and after the merge, points BOTH at SWEEP.md with the report rule, and passes dryRun only where a dry run can reach (kata mdfr review F4)', () => {
     expect(sweepActions).toHaveLength(2);
     const [before, after] = sweepActions;
-    expect(before).toContain('SWEEP.md');
+    for (const action of sweepActions) {
+      expect(action).toContain('SWEEP.md');
+      expect(action).toContain('tracker (br)');
+    }
     expect(before).toContain('dryRun:true if dry-run');
-    expect(before).toContain('never blocks the merge');
+    expect(before).toContain('report any status but RECORDED; never blocks the merge');
+    // The post-merge action names the same report rule instead of repeating it, and SWEEP.md states it.
+    expect(after).toContain('report rule');
+    expect(SWEEP_DOC).toContain('Report any status but `RECORDED`');
     // After the merge there is no dry run: the run stopped before it.
     expect(after).not.toContain('dryRun');
+  });
+
+  test('the pre-merge sweep sits before the merge, the post-merge sweep after it and before the source branch is deleted', () => {
+    const at = (re) => mergeActions.findIndex((a) => re.test(a));
+    const [before, after] = sweepActions.map((a) => mergeActions.indexOf(a));
+    expect(at(/^Merge: run node/)).toBeGreaterThan(-1);
+    expect(before).toBeLessThan(at(/^Merge: run node/));
+    expect(at(/^Merge: run node/)).toBeLessThan(after);
+    expect(after).toBeLessThan(at(/delete the source branch unless it is long-lived/));
+  });
+
+  test('SWEEP.md documents what this sweep adds to the recorder it reuses: the repository binding, held-not-listed, unverified facts', () => {
+    for (const text of ['repository-mismatch', 'repository-unknown', 'held-not-listed', 'claims the caller read']) {
+      expect(SWEEP_DOC).toContain(text);
+    }
+    // What `head-checked-out` really checks (the primary's HEAD contains the head), not "keep the primary on the base branch".
+    expect(SWEEP_DOC).toMatch(/whose HEAD\s+already contains the head/);
   });
 
   test('SKILL.md points at SWEEP.md, which sits beside it, and nothing carries the old contract', () => {
