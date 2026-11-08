@@ -498,6 +498,19 @@ describe('the docs say where beads are recorded: the merge gate in full mode, no
   });
 });
 
+describe('the docs say a round the clear verb was not run at is not read as a fix (kata n350)', () => {
+  const roundThree = (...parts) => flatten(readRepo(...parts).split('\n').find((line) => /hird review of the PR-review bead recorder/.test(line)));
+
+  test('the reference, the user guide and both changelogs say the next run moves each line through the skipped round instead of reading its edits as a fix', () => {
+    expect(TRIAGE).toContain("A round the verb was not run at reads the same way: the next run moves the line through that round's edits, it does not take them for a fix.");
+    expect(GUIDE_RULE).toContain("A round it was not run at is not read as a fix: the next run moves each line through that round's edits first.");
+    expect(GUIDE_RULE).toContain("(a skipped round's edit included)");
+    for (const entry of [roundThree('CHANGELOG.md'), roundThree('packages', 'development', 'CHANGELOG.md')]) {
+      expect(entry).toContain("A round the verb was not run at is not read as a fix either: an entry stamped at a head older than `lastReviewedSha` is moved through that round's edits first");
+    }
+  });
+});
+
 describe('the docs say /ensemble:pr-merge follows the no-fix rule (kata 6k8d)', () => {
   test('the user guide and both changelogs say pr-merge follows it and no longer carry the "not yet true" note', () => {
     expect(GUIDE_RULE).toContain('> **`/ensemble:pr-merge` follows this.**');
