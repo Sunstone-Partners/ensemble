@@ -273,7 +273,13 @@ none. Wiring the recorder into the runner is not part of this change.
 recorder asks the HOST (its pull-request view) about the pull request and refuses, by name, a head on a
 fork (`cross-repository-head`), a head whose repository the host did not state
 (`head-repository-unknown`) and a pull request it could not read (`pr-unreadable`), as the
-precheck and the review runner do. It runs the tracker in the repository's PRIMARY checkout,
+precheck and the review runner do. It also binds itself to what the host reports: `headSha` must
+be the pull request's current head (`head-not-pr-head`; `head-unverified` when the host stated
+none) and `baseSha` must be on the host's base branch (`base-not-on-base-branch`;
+`base-unverified` when the host stated no tip, `base-tip-unavailable` when that tip is not in
+the repository, so fetch it): a commit the pull request does not hold, or one it authored and
+named as the base, is not the review's, and its own `.ensemble/toolchain.yaml` would choose the
+tracker. It runs the tracker in the repository's PRIMARY checkout,
 never in the head's worktree or a clone of it, and refuses a primary checkout that holds the head
 or work built on it (`head-checked-out`; also `no-primary-worktree`, `head-checkout-unknown`):
 that checkout's `.beads` would be the head's own. It reads which tracker to use from
@@ -296,22 +302,41 @@ overwritten) and appends ONE note per head; the same head reviewed again writes 
 
 **A fix closes a bead, and only a fix does.** After a later head has been reviewed, run
 `node "$PR_REVIEW_CLEAR_CLI"` (`reference/triage-fix-reverify.md`: it derives the `cleared`
-marks from git) and pass the ledger it returns on. A finding marked `cleared` (the diff since the
-prior round's reviewed head changed the file and line it cites, and no reviewer raised it again)
-closes its bead with that commit, but only when the recorder itself checks with git that
-`clearedBy` is a commit on the PR (an ancestor of `headSha`, not of `baseSha`): a hand-written
-mark naming any other commit closes nothing and is listed under `unverifiedFixes`. A finding that
-is merely missing from the next review leaves its bead open, so after a force-push no bead is
-orphaned (they are found by key, not by commit, and a rewritten history clears nothing) and a
-person closes the ones whose finding is gone. A live finding whose bead this recorder closed as a
-fix is a regression: the bead is reopened, rewritten and noted. A bead anyone else closed stays
-closed and is reported as `closedBeadId`.
+marks from git, needs `incoming`, and is run at every head in order) and pass the ledger it
+returns on. A finding marked `cleared` (the diff since the prior round's reviewed head changed
+the file and line it cites, and no reviewer raised it again) closes its bead with that commit,
+but only when the recorder itself checks with git that `clearedBy` is a commit on the PR (an
+ancestor of `headSha`, not of `baseSha`): a mark naming any other commit closes nothing and is
+listed under `unverifiedFixes`. **That check is of the commit, not of how the mark was made:**
+a `cleared` mark written by hand that names a commit on the PR still closes the bead. The
+procedure's only writer of the mark is `PR_REVIEW_CLEAR_CLI`; the control against a hand-written
+one is that rule, not code.
+
+**A bead is closed only by the pull request that last recorded it.** The bead's key has no pull
+request in it, so two pull requests that raise one claim in one file share one bead, and the
+later one to record it owns it: its description's `Last confirmed: <repo> PR #<n> at head <sha>`
+footer names that pull request. A fix from any other pull request leaves the bead open
+(`skip` / `recorded-by-other-pr`, with `recordedBy {repo, prNumber}`, in the answer) because the
+other pull request still raises the claim, and a footer the recorder cannot read fails closed
+(`recorded-pr-unknown`). The same pull request at any of its earlier heads still closes it.
+A finding that is merely missing from the next review leaves its bead open, so after a
+force-push no bead is orphaned (they are found by key, not by commit, and a rewritten history
+clears nothing) and a person closes the ones whose finding is gone. A live finding whose bead
+this recorder closed as a fix is a regression: the bead is reopened, rewritten and noted. **The
+recorder recognises its own close by the shape of the close reason** (`Fixed: ... changed at
+<sha> and was not reported again at <sha> (<repo> PR #<n>).`), so a person who pastes a reason
+of that shape gets the bead reopened by the next live finding; a plain close records `done` and
+stays closed. A bead anyone else closed stays closed and is reported as `closedBeadId`.
 
 More Nits (or Pre-existing findings) in one file than the decision list's collapse threshold
 become ONE bead for that file, counted over the findings that have no bead yet: a finding that
 already has its own bead keeps it (only a fix closes a bead), so Nits that arrive a few reviews at
-a time can leave a file with more beads than the threshold, and a one-member collapsed bead is
-never made. Important and security findings are never collapsed. `followOnIds` carries the
+a time can leave a file with more beads than the threshold. A collapsed bead is made only for
+more than the threshold, but once a file has one, later findings join it even if the count has
+dropped (the choice is sticky, so a count moving around the threshold cannot flip a file between
+one bead and many): a collapsed bead can therefore come to hold a single member, and its title
+then reads `1 Nit finding`, without `(collapsed)`. Important and security findings are never
+collapsed. `followOnIds` carries the
 findings the OPERATOR chose to defer (their beads get the `follow-on` label, also after the beads
 exist); an agent never fills it.
 

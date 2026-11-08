@@ -454,7 +454,7 @@ describe('the bead recorder the skill names is a real entry point', () => {
     for (const needle of ['PR_REVIEW_BEADS_CLI', 'PR_REVIEW_CLEAR_CLI', 'UNAVAILABLE', 'REFUSED', 'PARTIAL', 'FAILED', 'closedBeadId', 'unverifiedFixes']) {
       expect(flat).toContain(needle);
     }
-    for (const code of ['cross-repository-head', 'head-repository-unknown', 'pr-unreadable', 'no-primary-worktree', 'head-checked-out', 'head-checkout-unknown', 'base-unavailable', 'base-config-unreadable']) {
+    for (const code of ['cross-repository-head', 'head-repository-unknown', 'pr-unreadable', 'head-unverified', 'head-not-pr-head', 'no-primary-worktree', 'head-checked-out', 'head-checkout-unknown', 'base-unavailable', 'base-unverified', 'base-not-on-base-branch', 'base-tip-unavailable', 'base-config-unreadable']) {
       expect(source).toContain(`'${code}'`);
       expect(flat).toContain(code);
     }
