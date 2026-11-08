@@ -427,12 +427,33 @@ describe('facts.json', () => {
       expect(facts.paths.high.length).toBe(facts.changedPaths.length);
       expect(facts.paths.warnings).toContain('policy-untrusted-all-high:policy-unparseable');
     });
-    it('a trusted policy keeps its own highPaths, and no policy file is not "untrusted"', () => {
+    it('a trusted policy keeps its own highPaths and is not untrusted', () => {
       const good = '# Review\n\n```ensemble-review-policy\n{"highPaths":["lib/**"]}\n```\n';
       const facts = factsOf(makeFixture({ extra: { 'REVIEW.md': good } }));
       expect(facts.policy.ok).toBe(true);
       expect(facts.paths.high).toContain('lib/thing.js');
       expect(facts.paths.high).not.toContain('a b.txt');
+      expect(facts.paths.warnings.some((w) => w.startsWith('policy-untrusted'))).toBe(false);
+    });
+    it('a base with NO REVIEW.md is the documented defaults, never untrusted: no High path, no policy-untrusted warning', () => {
+      const fx = makeFixture();
+      git(fx.root, ['rm', '-q', '--cached', 'REVIEW.md']);
+      git(fx.root, ['commit', '-q', '-m', 'drop review']);
+      const nextBase = git(fx.root, ['rev-parse', 'HEAD']);
+      write(fx.root, 'x.txt', 'x\n');
+      git(fx.root, ['add', 'x.txt']);
+      git(fx.root, ['commit', '-q', '-m', 'more']);
+      const head = git(fx.root, ['rev-parse', 'HEAD']);
+      const r = prepareReview(opts(fx, { baseSha: nextBase, headSha: head, headRef: undefined, lastReviewedSha: undefined, remediationShas: undefined }));
+      const facts = JSON.parse(fs.readFileSync(r.artifacts['facts.json'].path, 'utf8'));
+      expect(facts.policy).toMatchObject({ ok: true, source: 'defaults' });
+      expect(facts.paths.high).toEqual([]);
+      expect(facts.paths.warnings.some((w) => w.startsWith('policy-untrusted'))).toBe(false);
+    });
+    it('a REVIEW.md with no policy fence is the defaults too, never untrusted', () => {
+      const facts = factsOf(makeFixture({ extra: { 'REVIEW.md': '# Review\n\nprose only, no fence\n' } }));
+      expect(facts.policy).toMatchObject({ ok: true, source: 'defaults' });
+      expect(facts.paths.high).toEqual([]);
       expect(facts.paths.warnings.some((w) => w.startsWith('policy-untrusted'))).toBe(false);
     });
   });
