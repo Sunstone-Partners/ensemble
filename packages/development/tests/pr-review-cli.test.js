@@ -1860,6 +1860,7 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
   const plan = (cwd, over = {}) => ({
     action: 'plan', prId: PR, cwd, headSha: HEAD, lastReviewedSha: LAST, baseSha: BASE, depth: 'standard',
     deltaPlan: { mode: 'delta', readSet: [{ path: 'src/c.js', reasons: ['changed'] }] }, deltaPaths: ['src/c.js'], highPaths: [],
+    deltaRange: { headSha: HEAD, lastReviewedSha: LAST },
     candidates: [candidate('a'), candidate('b', { hunkHash: SHA('c') })], ...over,
   });
   const cli = (payload, raw) => spawnSync('node', [CLI, 'carry'], { input: raw !== undefined ? raw : JSON.stringify(payload), encoding: 'utf8' });
@@ -2010,6 +2011,29 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     const out = run(plan(cwd, { candidates: [bare, candidate('b')] }));
     expect(out.carried.map((record) => record.id)).toEqual(['b']);
     expect(out.reverify.map((entry) => [entry.id, entry.reasons])).toEqual([['a', [REASONS.CANDIDATE_HEAD_MISMATCH]]]);
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['not an object', 'x'],
+    ['without the last reviewed head', { headSha: HEAD }],
+    ['the range of the previous push (its head is LAST)', { headSha: LAST, lastReviewedSha: HEAD }],
+    ['another head', { headSha: '9'.repeat(40), lastReviewedSha: LAST }],
+    ['another last reviewed head', { headSha: HEAD, lastReviewedSha: '9'.repeat(40) }],
+  ])('a deltaRange that is %s carries nothing, in band (exit 0): delta-range-mismatch, and the ledger is not stamped', (_name, deltaRange) => {
+    const cwd = tmpCwd();
+    writeRound(cwd);
+    const both = { candidates: [candidate('a'), candidate('b')] };
+    // control: the very request with its own range carries both findings
+    expect(JSON.parse(cli(plan(cwd, both)).stdout).carried.map((record) => record.id)).toEqual(['a', 'b']);
+    const res = cli(plan(cwd, { ...both, deltaRange }));
+    expect(res.status).toBe(0);
+    const out = JSON.parse(res.stdout);
+    expect(out.ok).toBe(true);
+    expect(out.carried).toEqual([]);
+    expect(out.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(out.reverify.map((entry) => entry.reasons)).toEqual([[REASONS.DELTA_RANGE_MISMATCH], [REASONS.DELTA_RANGE_MISMATCH]]);
+    expect(out.ledger.map((f) => [f.id, f.headSha, f.carriedFrom])).toEqual([['a', LAST, undefined], ['b', LAST, undefined]]);
   });
 
   test.each([

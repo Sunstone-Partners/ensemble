@@ -109,8 +109,10 @@ verification contract.
    again. Pass the candidates to `plan` and `record` exactly as answered, and hash again after any push: a candidate
    stamped with another head is `candidate-head-mismatch`, never carried and never recorded.
 2. **Plan.** Run `node "$PR_REVIEW_CLI" carry` with `{ action: "plan", prId, cwd?, headSha, lastReviewedSha, baseSha,
-   depth, expectedVerifiers?, deltaPlan, deltaPaths, highPaths, candidates }`: `deltaPlan` and `deltaPaths` are the facts'
-   `deltaPlan` and `delta.changedPaths` verbatim, `highPaths` the High and sensitive paths of `paths`, `baseSha` the base
+   depth, expectedVerifiers?, deltaPlan, deltaPaths, deltaRange, highPaths, candidates }`: `deltaPlan` and `deltaPaths` are
+   the facts' `deltaPlan` and `delta.changedPaths` verbatim, `deltaRange` is `{ headSha: facts.headSha, lastReviewedSha:
+   facts.delta.lastReviewedSha }` copied from those same facts (the facts of THIS head: those of an earlier push are
+   `delta-range-mismatch` and nothing carries), `highPaths` the High and sensitive paths of `paths`, `baseSha` the base
    of the range, and `depth` and `expectedVerifiers` the very ones Step 3b runs `votes` with. Never pass `priorVerdicts`
    or `priorLedger`: `plan` reads them from the report written for `lastReviewedSha` (the report `state-read` returns for
    that head) and refuses a payload that has them. `priorState` other than `read` (no report, a discarded or a corrupt

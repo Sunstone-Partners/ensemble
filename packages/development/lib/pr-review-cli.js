@@ -210,10 +210,13 @@
  *              `changedLocations`, `headSha` and `observations` for reconcile) are required, as `ledger`'s keys are: an absent or
  *              misspelt one is exit 1. Every other fact is graded in band (re-verification, exit 0):
  *                plan       { prId, headSha, lastReviewedSha, baseSha, depth, expectedVerifiers?, deltaPlan, deltaPaths[],
- *                             highPaths[], candidates[], cwd? } -- which settled verdicts of the prior round still stand
+ *                             deltaRange, highPaths[], candidates[], cwd? } -- which settled verdicts of the prior round still stand
  *                             after a fix push. The prior verdicts and the prior ledger are NOT payload keys (one is refused):
  *                             the CLI reads them from the PR's own state report at `lastReviewedSha` (state-read's rule), so
  *                             a verdict can only come from a report written for this PR at the head the delta starts from.
+ *                             `deltaRange` is `{ headSha: facts.headSha, lastReviewedSha: facts.delta.lastReviewedSha }`, the
+ *                             range `deltaPlan` and `deltaPaths` were computed for, and it must be this round's `headSha` and
+ *                             `lastReviewedSha`: a missing, malformed or different one carries nothing (`delta-range-mismatch`).
  *                             Answers { ok, carried[], reverify[], unmatched[], reasons[], ledger[], priorState }: a carried
  *                             record keeps its verdict and votes, is stamped `head` = this head and keeps `carriedFrom`;
  *                             `ledger` is the prior ledger with exactly those findings stamped (`stampLedger`; refused,
@@ -231,10 +234,12 @@
  *                             observation of this round as `reReported`: a finding no reviewer reported again whose cited
  *                             location the push changed is cleared; one that was observed again, whatever its verdict, is
  *                             not. Answers { ok, ledger[], cleared[] }.
- *              `deltaPlan`, `deltaPaths`, `highPaths`, heads, `baseSha`, `depth` and every hash are graded in-band and a
+ *              `deltaPlan`, `deltaPaths`, `deltaRange`, `highPaths`, heads, `baseSha`, `depth` and every hash are graded in-band and a
  *              missing one means re-verification (exit 0). HONEST LIMITS: it never hashes anything -- `hunkHash`,
  *              `depHashes` and `dependents` are inputs the caller computed (lib/pr-review-carry-hash-cli.js; the `headSha`
- *              stamp names the head that step read, it cannot show the output was passed on unaltered); only
+ *              stamp names the head that step read, it cannot show the output was passed on unaltered), and the content of
+ *              `deltaPlan` and `deltaPaths` is taken to be what `prepare` computed for `deltaRange` (only their agreement with
+ *              each other and with the range is checked); only
  *              `present`/`filtered` verdicts carry; a High or sensitive path touched by the delta carries nothing; a
  *              `full` range carries nothing; the state report is untracked and writable by whoever can write the
  *              repository, so binding stops a verdict from the wrong PR, base, depth or ledger, not a forged report.
@@ -628,7 +633,7 @@ function runMode(payload) {
  *   - `reconcile` runs `clearFixedFindings` with every observation of the round as `reReported`.
  * The REQUEST parameters of each action (`prId`, `candidates`, `findings`, `ledger`, ...) are checked here (a missing or
  * misspelt key is an error, exit 1, never read as empty); every fact `planCarry` grades (heads, `baseSha`, `depth`,
- * `deltaPlan`, `deltaPaths`, `highPaths`, a hash) is graded in-band and a missing one means re-verification (exit 0).
+ * `deltaPlan`, `deltaPaths`, `deltaRange`, `highPaths`, a hash) is graded in-band and a missing one means re-verification (exit 0).
  */
 
 /** What the PR's state report said about the round the delta starts from. */

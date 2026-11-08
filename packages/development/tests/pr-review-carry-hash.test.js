@@ -381,6 +381,7 @@ describe('contract with planCarry', () => {
       lastReviewedSha: h1,
       deltaPlan: { mode: 'delta', readSet: deltaPaths.map((p) => ({ path: p, reasons: ['changed'] })) },
       deltaPaths,
+      deltaRange: { headSha: h2, lastReviewedSha: h1 },
       highPaths: [],
       priorVerdicts: prior.map(({ headSha: _hashedAt, ...c }) => ({ ...c, ...stamp, head: h1, outcome: 'present', votes: [{ verifier: 'v1', verdict: 'real' }] })),
       priorLedger: prior.map((c) => ({ id: c.id, file: c.file, failureMode: c.claim })),

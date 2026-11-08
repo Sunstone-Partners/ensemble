@@ -22,7 +22,7 @@ reads git objects at the head under review.
 1. `review-range` answers `delta` and the prepare facts' `deltaPlan.mode` is `delta`. Otherwise nothing carries: verify everything.
 2. Build the candidates: the open findings of the prior ledger, re-presented with their own `id`, `claim` = the ledger finding's `failureMode` verbatim, and `file` and `line`/`lines` from its `locationOrLink`; plus the new candidates of this round.
 3. Hash them at the new head: `node "$PR_REVIEW_CARRY_HASH_CLI"` with `{ repoRoot?, headSha, citations }`. Each answered candidate carries `headSha` (the head it was hashed at), `hunkHash`, `depHashes` and `dependents` (or `hashError`). Pass the candidates on exactly as answered, and hash again after any push.
-4. Run `carry` with `action: "plan"`.
+4. Run `carry` with `action: "plan"`, giving it the `deltaPlan`, `deltaPaths` and `deltaRange` of the prepare facts for THIS head (`deltaRange` = `{ headSha: facts.headSha, lastReviewedSha: facts.delta.lastReviewedSha }`).
 5. Use the answer's `ledger` as the round's existing ledger. It is the prior ledger with the carried findings stamped; never stamp by hand.
 6. Verify only the `reverify` candidates and the new ones, with the unchanged verification contract.
 7. Run `carry` with `action: "record"` for the findings of the `votes` result.
@@ -49,7 +49,8 @@ one means re-verification (`plan`) or a refusal (`record`), exit 0.
 | `baseSha` | in band | The base the round reviews against (full object id). |
 | `depth`, `expectedVerifiers` | in band | The round's verifier depth word and, optionally, its verifier count override (the `votes` inputs). |
 | `deltaPlan` | in band | The `deltaPlan` of `facts.json`; only `mode: 'delta'` carries, and its `readSet` must be readable. |
-| `deltaPaths` | in band | The paths changed between the two heads (`facts.delta.changedPaths`); they must equal the read set's `changed` entries. |
+| `deltaPaths` | in band | The `facts.delta.changedPaths` of the same facts. The code checks only that they equal the read set's `changed` entries and, through `deltaRange`, that the facts are of this round's range; it cannot check that they are the paths changed between the two heads. |
+| `deltaRange` | in band, required | `{ headSha, lastReviewedSha }`: the range `deltaPlan` and `deltaPaths` were computed for (`facts.headSha`, `facts.delta.lastReviewedSha`). It must be this round's `headSha` and `lastReviewedSha` (full object ids, compared without regard to case); a missing, malformed or different one carries nothing (`delta-range-mismatch`). |
 | `highPaths` | in band | The High or sensitive paths from `paths`, changed or not. |
 
 A payload carrying `priorVerdicts` or `priorLedger` is refused (exit 1): they
@@ -114,6 +115,7 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 |---|---|
 | `range-not-delta` | Whole-round gate. The delta plan is not a readable `delta`: a full range carries nothing. |
 | `head-unknown` | Whole-round gate: the head or the last reviewed head is not a full object id. Per candidate: the verdict's own head (or its `carriedFrom`) is not a full object id. |
+| `delta-range-mismatch` | Whole-round gate. `deltaRange` (the head and last reviewed head the delta facts were computed for) is missing, malformed, or is not this round's `headSha` and `lastReviewedSha`: the delta is of another range, and says nothing of what this push changed (a caller it added, an edit to the cited file outside the cited window). |
 | `delta-paths-unreadable` | Whole-round gate. The delta's changed paths are not a list of paths. |
 | `high-paths-unreadable` | Whole-round gate. The High/sensitive paths are not a list of paths. |
 | `high-path-touched` | Whole-round gate. The delta touched a High or sensitive path. |
@@ -149,6 +151,7 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 ## Honest limits
 
 - `carry plan` never hashes: `hunkHash`, `depHashes` and `dependents` are inputs, and it trusts them; it cannot tell a wrong hash from a right one. They must be taken at `headSha`: the hash step stamps each candidate with the head it read, and `plan` and `record` refuse a candidate stamped with another head, so a candidate list from before the push cannot carry. The stamp is only as honest as the step that wrote it: nothing proves the hashing was done at the head it names, or that the output was passed on unaltered.
+- The delta is bound to its range, not checked for content: `deltaRange` must be this round's `headSha` and `lastReviewedSha`, but `deltaPlan` and `deltaPaths` are taken to be what `prepare` computed for that range. The code checks only that the changed paths equal the read set's `changed` entries and that the range matches; it cannot tell a delta that was computed for the range from one that was edited or computed wrongly.
 - Direct dependents only: the files that use the cited file (importers, name-matched tests, computed-specifier files naming it) are listed and a changed one re-verifies; callers of callers are not covered. Anything the cited file reads at run time that no relative specifier names is not covered either.
 - A relative specifier that resolves to no tracked file (a directory, a glob, a dangling path) is recorded as absent: it invalidates a verdict only when a file at exactly that path appears. A cited file that reads a directory's contents therefore keeps its verdict when a file under that directory changes (it is not a dependent of the files under the directory).
 - Bare npm packages (`require('lodash')`) are not hashed: an upgraded third-party dependency invalidates nothing.

@@ -84,7 +84,8 @@ function simulateCarryRound(scenario) {
     headSha: NEW_HEAD,
   }));
   const plan = planCarry({
-    prId: PR, baseSha: BASE, headSha: NEW_HEAD, lastReviewedSha: PRIOR_HEAD, depth: 'standard', deltaPlan, deltaPaths, highPaths, priorVerdicts, priorLedger, candidates,
+    prId: PR, baseSha: BASE, headSha: NEW_HEAD, lastReviewedSha: PRIOR_HEAD, depth: 'standard', deltaPlan, deltaPaths,
+    deltaRange: { headSha: NEW_HEAD, lastReviewedSha: PRIOR_HEAD }, highPaths, priorVerdicts, priorLedger, candidates,
   });
 
   const carriedIds = new Set(plan.carried.map((record) => record.id));

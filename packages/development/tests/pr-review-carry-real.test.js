@@ -101,7 +101,10 @@ const ledgerOf = (f, head) => ({
   evidence: `evidence ${f.id}`, originalTextOrLink: `https://example.test/${f.id}`,
 });
 
-/** The delta plan the prepare step would write: the real import graph of the new head and the planner over it. */
+/**
+ * The delta facts the prepare step would write for `lastHead..head`: the real import graph of the new head and the planner
+ * over it, with the range they were computed for (`facts.headSha` and `facts.delta.lastReviewedSha`, which `plan` takes as `deltaRange`).
+ */
 function deltaFacts(repo, lastHead, head) {
   const deltaPaths = git(repo.root, ['diff', '--name-only', lastHead, head]).split('\n').filter(Boolean).sort();
   const filePaths = parseLsTreeZ(execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', head], { cwd: repo.root, encoding: 'utf8' })).map((entry) => entry.path);
@@ -117,7 +120,7 @@ function deltaFacts(repo, lastHead, head) {
     nameLines,
   });
   expect(deltaPlan.mode).toBe('delta');
-  return { deltaPaths, deltaPlan };
+  return { deltaPaths, deltaPlan, deltaRange: { headSha: head, lastReviewedSha: lastHead } };
 }
 
 /** `votes` over fresh verification of `findings` at `head`: what a full re-review reports for them. */
@@ -152,7 +155,7 @@ function round({ repo, state, head, prior, findings, depth = 'standard', prId = 
     const facts = deltaFacts(repo, prior.head, head);
     plan = HANDLERS.carry(mutatePlan({
       action: 'plan', prId, cwd: state, headSha: head, lastReviewedSha: prior.head, baseSha, depth,
-      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates,
+      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, deltaRange: facts.deltaRange, highPaths: [], candidates,
     }, { repo, prior, head, citations }));
     expect(plan.ok).toBe(true);
     const carriedIds = new Set(plan.carried.map((record) => String(record.id)));
@@ -348,6 +351,85 @@ describe('a stale verdict is never carried: each push below flips the oracle, an
   });
 });
 
+describe('the delta must be the one of THIS range: facts of an earlier push never decide a carry', () => {
+  // Three commits. C0 is where the scenario starts, C1 is the head round 1 reviewed (a push that changed only a note) and C2 is
+  // the push under review. `prepare` computed round 1's facts for C0..C1; the plan at C2 must be given those of C1..C2, and
+  // `deltaRange` says which range the facts it is given were computed for. `staleFacts` hands it round 1's instead.
+  function threeCommits({ files, findings, push, staleFacts }) {
+    const repo = makeRepo(files);
+    const state = scratch('state-');
+    const c0 = repo.head;
+    const c1 = repo.commit({ 'docs/note.md': 'round one\n' });
+    const first = round({ repo, state, head: c1, prior: null, findings });
+    const c2 = repo.commit(push);
+    let handed;
+    const second = round({
+      repo,
+      state,
+      head: c2,
+      prior: first,
+      findings,
+      mutatePlan: staleFacts ? (plan) => {
+        handed = deltaFacts(repo, c0, c1);
+        return { ...plan, deltaPlan: handed.deltaPlan, deltaPaths: handed.deltaPaths, deltaRange: handed.deltaRange };
+      } : undefined,
+    });
+    return { repo, c0, c1, c2, first, second, handed, full1: fullReview(repo, c1, findings), full2: fullReview(repo, c2, findings) };
+  }
+
+  const callerOf = (guard) => pad(8, { 1: "const callee = require('./callee');", 5: `module.exports = (i) => { ${guard}return callee(i); };` });
+  const guardedCallers = (read) => ['lib/caller.js', 'lib/new-caller.js'].every((file) => read(file) === null || has(read(file), 'if (!i)'));
+  const newCaller = (staleFacts) => threeCommits({
+    files: { 'lib/callee.js': pad(20, { 10: 'module.exports = (input) => input.value;' }), 'lib/caller.js': callerOf('if (!i) return null; ') },
+    findings: [finding('F-callee', 'lib/callee.js', 10, 'callee reads input.value with no null check', (read) => (guardedCallers(read) ? 'not-real' : 'real'))],
+    push: { 'lib/new-caller.js': callerOf('') },
+    staleFacts,
+  });
+
+  test('a NEW unguarded caller: with the facts of this push it is dependent-changed; with the previous push\'s, which cannot know it, the range binding stops the carry', () => {
+    const control = newCaller(false);
+    expect(control.full1).toEqual({ 'F-callee': 'filtered' });
+    expect(flippedIds(control.full1, control.full2)).toEqual(['F-callee']);
+    expect(control.second.plan.carried).toEqual([]);
+    expect(reasonsOf(control, 'F-callee')).toEqual([REASONS.DEPENDENT_CHANGED]);
+    expect(control.second.outcomes).toEqual(control.full2);
+
+    const r = newCaller(true);
+    // not vacuous: the facts handed over really are the previous push's, and they do not list the new caller
+    expect(r.handed.deltaPaths).toEqual(['docs/note.md']);
+    expect(r.handed.deltaRange).toEqual({ headSha: r.c1, lastReviewedSha: r.c0 });
+    expect(r.second.plan.carried).toEqual([]);
+    expect(r.second.plan.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(reasonsOf(r, 'F-callee')).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+
+  const windowed = (staleFacts) => threeCommits({
+    files: { 'lib/win.js': pad(30, { 4: 'const out = run(input);', 14: 'validate(input);' }) },
+    findings: [finding('F-window', 'lib/win.js', 4, 'win.js runs its input unvalidated', (read) => (has(lineOf(read('lib/win.js'), 14), 'validate(') ? 'not-real' : 'real'))],
+    push: { 'lib/win.js': pad(30, { 4: 'const out = run(input);' }) },
+    staleFacts,
+  });
+
+  test('an edit to the cited file OUTSIDE the cited window: this push\'s delta lists the file (cited-file-in-delta, the only guard the hunk hash leaves), the previous push\'s does not, so the range binding stops the carry', () => {
+    const control = windowed(false);
+    expect(control.full1).toEqual({ 'F-window': 'filtered' });
+    expect(flippedIds(control.full1, control.full2)).toEqual(['F-window']);
+    // the edit is on line 14, the citation on line 4: the hunk hash (lines 1-7) cannot see it
+    expect(control.second.candidates[0].hunkHash).toBe(control.first.candidates[0].hunkHash);
+    expect(control.second.plan.carried).toEqual([]);
+    expect(reasonsOf(control, 'F-window')).toEqual([REASONS.CITED_FILE_IN_DELTA]);
+    expect(control.second.outcomes).toEqual(control.full2);
+
+    const r = windowed(true);
+    expect(r.handed.deltaPaths).toEqual(['docs/note.md']);
+    expect(r.second.plan.carried).toEqual([]);
+    expect(r.second.plan.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(reasonsOf(r, 'F-window')).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(r.second.outcomes).toEqual(r.full2);
+  });
+});
+
 describe('what may carry does carry: a push that cannot change a finding saves its verification, and the answer is still the full re-review\'s', () => {
   const real = (file, n) => (read) => (has(lineOf(read(file), n), 'eval(') ? 'real' : 'not-real');
   const FILES = {
@@ -426,7 +508,7 @@ describe('a verdict is bound to its PR, base and report: nothing carries across 
     const candidates = hashCitations({ repoRoot: repo.root, headSha: h2, citations: [{ id: 'F-ctl', file: 'src/ctl.js', line: 10, claim: f.claim }] }).candidates;
     const plan = HANDLERS.carry({
       action: 'plan', prId: PR, cwd: state, headSha: h2, lastReviewedSha: r1.head, baseSha: BASE, depth: 'standard',
-      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates,
+      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, deltaRange: facts.deltaRange, highPaths: [], candidates,
     });
     expect(plan.carried).toEqual([]);
     expect(plan.reverify[0].reasons).toEqual([REASONS.VERDICT_OTHER_PR]);
@@ -442,7 +524,7 @@ describe('a verdict is bound to its PR, base and report: nothing carries across 
     const forged = { ...r1.verdicts[0], outcome: 'filtered' };
     expect(() => HANDLERS.carry({
       action: 'plan', prId: PR, cwd: state, headSha: h2, lastReviewedSha: r1.head, baseSha: BASE, depth: 'standard',
-      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, highPaths: [], candidates, priorVerdicts: [forged],
+      deltaPlan: facts.deltaPlan, deltaPaths: facts.deltaPaths, deltaRange: facts.deltaRange, highPaths: [], candidates, priorVerdicts: [forged],
     })).toThrow(/priorVerdicts/);
   });
 });

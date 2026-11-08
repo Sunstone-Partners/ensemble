@@ -31,6 +31,10 @@
  *                   is not on the list;
  *   - the delta plan's `readSet` (`planDeltaReview`): a candidate whose file the planner puts in front of a reviewer for any
  *                   reason other than `changed` (`caller-of`, `test-of`, `names`) is verified again;
+ *   - the range of the delta (`deltaRange`): `deltaPlan` and `deltaPaths` are the delta of the range `prepare` computed them
+ *                   for, `{ headSha, lastReviewedSha }`, and that range must be this round's own. The facts of an earlier push
+ *                   are consistent inside themselves and say nothing of what THIS push changed (a caller it added, an edit to
+ *                   the cited file outside the cited window). That their content is what `prepare` computed is trusted;
  *   - the binding of the verdict to THIS round: the PR (`prId`), the base (`baseSha`), the verifier depth and count it was
  *                   settled under (`depth`, `expectedVerifiers`) and the ledger finding it is about (`priorLedger`).
  * What is NOT checked: callers of callers, bare npm packages, and anything the cited file reads at run time that no
@@ -40,6 +44,8 @@
  * holds, NOTHING carries:
  *   range-not-delta         the delta plan is not a readable `delta`: a full range carries nothing;
  *   head-unknown            the head or the last reviewed head is not a full object id;
+ *   delta-range-mismatch    `deltaRange` (the head and last reviewed head the delta facts were computed for) is missing,
+ *                           malformed, or is not this round's `headSha` and `lastReviewedSha`: the delta is of another range;
  *   delta-paths-unreadable  the delta's changed paths are not a list of paths;
  *   high-paths-unreadable   the High/sensitive paths are not a list of paths;
  *   high-path-touched       the delta touched a High or sensitive path;
@@ -92,6 +98,7 @@ const { majorityOf, resolveExpected, VERDICTS } = require('./pr-review-votes');
 const REASONS = Object.freeze({
   RANGE_NOT_DELTA: 'range-not-delta',
   HEAD_UNKNOWN: 'head-unknown',
+  DELTA_RANGE_MISMATCH: 'delta-range-mismatch',
   DELTA_PATHS_UNREADABLE: 'delta-paths-unreadable',
   HIGH_PATHS_UNREADABLE: 'high-paths-unreadable',
   HIGH_PATH_TOUCHED: 'high-path-touched',
@@ -276,6 +283,8 @@ function unreadable(reason) {
  *                                        (`planDeltaReview`); only `mode: 'delta'` carries and its `readSet` must be readable.
  * @param {string[]} input.deltaPaths     The paths changed between `lastReviewedSha` and `headSha` (`facts.delta.changedPaths`);
  *                                        they must be the read set's `changed` entries.
+ * @param {{headSha:string, lastReviewedSha:string}} input.deltaRange  The range `deltaPlan` and `deltaPaths` were computed for
+ *                                        (`facts.headSha`, `facts.delta.lastReviewedSha`); it must be `headSha` and `lastReviewedSha`.
  * @param {string[]} input.highPaths      The paths classified High or sensitive (the `paths` result), changed or not.
  * @param {Object[]} input.priorVerdicts  `{ id, file, claim, lines, hunkHash, depHashes, head, carriedFrom?, outcome,
  *                                          votes[{verifier, verdict}], prId, baseSha, depth, expectedVerifiers }` as
@@ -288,7 +297,7 @@ function unreadable(reason) {
  */
 function planCarry(input) {
   if (!isObject(input)) return unreadable('invalid-input');
-  const { prId, baseSha, headSha, lastReviewedSha, depth, expectedVerifiers, deltaPlan, deltaPaths, highPaths, priorVerdicts, priorLedger, candidates } = input;
+  const { prId, baseSha, headSha, lastReviewedSha, depth, expectedVerifiers, deltaPlan, deltaPaths, deltaRange, highPaths, priorVerdicts, priorLedger, candidates } = input;
   if (!Array.isArray(priorVerdicts) || !priorVerdicts.every(isObject)) return unreadable('priorVerdicts must be an array of objects');
   if (!Array.isArray(candidates) || !candidates.every(isObject)) return unreadable('candidates must be an array of objects');
 
@@ -297,6 +306,9 @@ function planCarry(input) {
   const isDelta = isObject(deltaPlan) && deltaPlan.mode === 'delta';
   if (!isDelta) global.push(REASONS.RANGE_NOT_DELTA);
   if (!isObjectId(headSha) || !isObjectId(lastReviewedSha)) global.push(REASONS.HEAD_UNKNOWN);
+  // The delta handed in must be the one `prepare` computed for THIS range: the facts of an earlier push are consistent inside
+  // themselves and cannot show what this push changed (a caller it added, an edit to the cited file outside the cited window).
+  if (!isObject(deltaRange) || !sameId(deltaRange.headSha, headSha) || !sameId(deltaRange.lastReviewedSha, lastReviewedSha)) global.push(REASONS.DELTA_RANGE_MISMATCH);
   const delta = readPathList(deltaPaths);
   if (delta === null) global.push(REASONS.DELTA_PATHS_UNREADABLE);
   const high = readPathList(highPaths);

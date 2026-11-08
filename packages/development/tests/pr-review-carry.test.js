@@ -71,6 +71,7 @@ function baseline() {
     depth: 'standard',
     deltaPlan: { mode: 'delta', readSet: [{ path: 'src/other.js', reasons: ['changed'] }] },
     deltaPaths: ['src/other.js'],
+    deltaRange: { headSha: H2, lastReviewedSha: H1 },
     highPaths: ['src/auth.js'],
     priorLedger: [ledgerEntry('p1', 'src/a.js', 10, CLAIM)],
     priorVerdicts: [priorOf()],
@@ -92,10 +93,11 @@ function flipped(mutate) {
   return input;
 }
 
-/** The round is at `head` (after `last` when given): its candidates were hashed there. */
+/** The round is at `head` (after `last` when given): its candidates were hashed there and the delta facts are those of `last..head`. */
 function atHead(input, head, last = input.lastReviewedSha) {
   input.headSha = head;
   input.lastReviewedSha = last;
+  input.deltaRange = { headSha: head, lastReviewedSha: last };
   for (const candidate of input.candidates) candidate.headSha = head;
   return input;
 }
@@ -299,7 +301,7 @@ describe('AC1 head-unknown', () => {
 
   test('a 64-hex object id is a head', () => {
     const long = 'e'.repeat(64);
-    const result = planCarry(flipped((i) => { i.priorVerdicts[0].head = long; i.lastReviewedSha = long; }));
+    const result = planCarry(atHead(flipped((i) => { i.priorVerdicts[0].head = long; }), H2, long));
     expect(result.carried).toHaveLength(1);
   });
 });
@@ -339,6 +341,90 @@ describe('AC1 delta-paths-unreadable and high-paths-unreadable', () => {
 
   test('an empty delta and an empty High list are readable and carry', () => {
     expect(planCarry(withDelta(flipped((i) => { i.highPaths = []; }), [])).carried).toHaveLength(1);
+  });
+});
+
+describe('AC1 delta-range-mismatch: the delta must be the one computed for THIS range', () => {
+  // `prepare`'s facts carry the delta of the range they were computed for. Facts of an EARLIER push (OTHER..H1) handed to a plan
+  // of H2 (lastReviewedSha H1) are consistent inside themselves, and say nothing about what the push to H2 changed.
+  const FRESH = { headSha: H2, lastReviewedSha: H1 };
+  const STALE = { headSha: H1, lastReviewedSha: OTHER };
+  const inRange = (input, range) => { input.deltaRange = range; return input; };
+
+  test('probe (a): a NEW caller added by this push is caught by this push\'s own delta, and carried past by the previous push\'s', () => {
+    const round = (paths, range) => inRange(withDelta(flipped((i) => {
+      i.priorVerdicts[0] = priorOf({ outcome: 'filtered', votes: REJECTED_VOTES });
+      i.candidates[0].dependents = ['src/caller.js', 'src/new-caller.js'];
+    }), paths), range);
+    expectOnlyReverify(round(['src/new-caller.js'], FRESH), [REASONS.DEPENDENT_CHANGED]);
+    const result = planCarry(round(['docs/note.md'], STALE));
+    expect(result.ok).toBe(true);
+    expect(result.carried).toEqual([]);
+    expect(result.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(result.reverify.map((entry) => entry.reasons)).toEqual([[REASONS.DELTA_RANGE_MISMATCH]]);
+  });
+
+  test('probe (b): an edit to the cited file OUTSIDE the cited window (the hunk hash cannot see it) is cited-file-in-delta with this push\'s delta, and carried past with the previous one\'s', () => {
+    const round = (paths, range) => inRange(withDelta(baseline(), paths), range);
+    expectOnlyReverify(round(['src/a.js'], FRESH), [REASONS.CITED_FILE_IN_DELTA]);
+    const result = planCarry(round(['docs/note.md'], STALE));
+    expect(result.carried).toEqual([]);
+    expect(result.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(result.reverify.map((entry) => entry.reasons)).toEqual([[REASONS.DELTA_RANGE_MISMATCH]]);
+  });
+
+  test.each([
+    ['absent', undefined],
+    ['null', null],
+    ['text', H2],
+    ['a list of the two heads', [H2, H1]],
+    ['an empty object', {}],
+    ['without a headSha', { lastReviewedSha: H1 }],
+    ['without a lastReviewedSha', { headSha: H2 }],
+    ['an abbreviated head', { headSha: H2.slice(0, 7), lastReviewedSha: H1 }],
+    ['an abbreviated last reviewed head', { headSha: H2, lastReviewedSha: H1.slice(0, 7) }],
+    ['heads that are numbers', { headSha: 2, lastReviewedSha: 1 }],
+    ['the two heads swapped', { headSha: H1, lastReviewedSha: H2 }],
+  ])('a deltaRange that is %s carries nothing: delta-range-mismatch', (_name, range) => {
+    const result = planCarry(inRange(baseline(), range));
+    expect(result.ok).toBe(true);
+    expect(result.carried).toEqual([]);
+    expect(result.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(result.reverify[0].reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+  });
+
+  test.each([
+    ['only the head differs', { headSha: OTHER, lastReviewedSha: H1 }],
+    ['only the last reviewed head differs', { headSha: H2, lastReviewedSha: OTHER }],
+    ['both differ', { headSha: OTHER, lastReviewedSha: OTHER }],
+    ['the range is the previous push\'s', STALE],
+  ])('a range where %s is delta-range-mismatch, the one reason, for every candidate', (_name, range) => {
+    const input = inRange(flipped((i) => {
+      i.priorVerdicts.push(priorOf({ id: 'p2', file: 'src/b.js', claim: 'Other defect' }));
+      i.priorLedger.push(ledgerEntry('p2', 'src/b.js', 10, 'Other defect'));
+      i.candidates.push(candidateOf({ id: 'p2', file: 'src/b.js', claim: 'Other defect' }));
+    }), range);
+    const result = planCarry(input);
+    expect(result.carried).toEqual([]);
+    expect(result.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(result.reverify.map((entry) => [entry.id, entry.reasons])).toEqual([['p1', [REASONS.DELTA_RANGE_MISMATCH]], ['p2', [REASONS.DELTA_RANGE_MISMATCH]]]);
+    expect(result.unmatched).toEqual([]);
+  });
+
+  test('the comparison ignores the case of the object id: the same range spelt in capitals binds', () => {
+    expect(planCarry(inRange(baseline(), { headSha: H2.toUpperCase(), lastReviewedSha: H1.toUpperCase() })).carried).toHaveLength(1);
+  });
+
+  test('the range of the delta is part of the round: a round at another head says delta-range-mismatch even when every other fact is carried over unchanged', () => {
+    const round1 = planCarry(baseline());
+    expect(round1.carried).toHaveLength(1);
+    // round 2 at H3 (delta H2..H3): the carried record and the candidates are re-stamped for it, but the range is still H1..H2
+    const input = { ...baseline(), headSha: H3, lastReviewedSha: H2, priorVerdicts: round1.carried };
+    for (const candidate of input.candidates) candidate.headSha = H3;
+    const result = planCarry(input);
+    expect(result.carried).toEqual([]);
+    expect(result.reasons).toEqual([REASONS.DELTA_RANGE_MISMATCH]);
+    expect(planCarry(inRange(input, { headSha: H3, lastReviewedSha: H2 })).carried).toHaveLength(1);
   });
 });
 
@@ -985,6 +1071,7 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
     dependents: ['clean', 'changed', 'missing'],
     location: ['same', 'moved'],
     candidateHead: ['same', 'other', 'missing'],
+    range: ['bound', 'otherHead', 'otherLast', 'missing'],
   };
   const PRODUCT = Object.values(FACTORS).reduce((n, values) => n * values.length, 1);
 
@@ -1018,8 +1105,13 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
     if (f.location === 'moved') input.candidates[0].lines = [30, 32];
     if (f.candidateHead === 'other') input.candidates[0].headSha = H1;
     if (f.candidateHead === 'missing') delete input.candidates[0].headSha;
+    if (f.range === 'otherHead') input.deltaRange = { headSha: OTHER, lastReviewedSha: H1 };
+    if (f.range === 'otherLast') input.deltaRange = { headSha: H2, lastReviewedSha: OTHER };
+    if (f.range === 'missing') delete input.deltaRange;
     return withDelta(input, paths, extra);
   }
+
+  const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
   /** Written from the input alone: what must hold for the verdict to stand. */
   function everyConditionHolds(input) {
@@ -1040,7 +1132,9 @@ describe('AC2 invariant over a second grid: blast radius, binding, ledger, locat
       !delta.has(candidate.file) &&
       (radius.get(candidate.file) || []).every((why) => why === 'changed') &&
       JSON.stringify(prior.lines) === JSON.stringify(candidate.lines) &&
-      typeof candidate.headSha === 'string' && candidate.headSha.toLowerCase() === input.headSha.toLowerCase()
+      typeof candidate.headSha === 'string' && candidate.headSha.toLowerCase() === input.headSha.toLowerCase() &&
+      isObject(input.deltaRange) && String(input.deltaRange.headSha).toLowerCase() === input.headSha.toLowerCase() &&
+      String(input.deltaRange.lastReviewedSha).toLowerCase() === input.lastReviewedSha.toLowerCase()
     );
   }
 
@@ -1297,6 +1391,7 @@ describe('AC3 interaction with mergeFindings and clearFixedFindings', () => {
       depth: 'standard',
       deltaPlan: { mode: 'delta', readSet: ['src/b.js', 'src/c.js', 'src/d.js'].map((path) => ({ path, reasons: ['changed'] })) },
       deltaPaths: ['src/b.js', 'src/c.js', 'src/d.js'],
+      deltaRange: { headSha: H2, lastReviewedSha: H1 },
       highPaths: [],
       priorVerdicts: ledger.map(priorFor),
       priorLedger: ledger,
