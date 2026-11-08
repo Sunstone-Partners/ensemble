@@ -117,12 +117,13 @@ function readBlobAt(git, cwd, sha, relPath) {
   return { ok: true, text: String(blob.stdout) };
 }
 
-const HUNK = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/;
+const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 /**
- * The line numbers, in `from`'s numbering, that `from..to` modified or removed in `file`.
- * `lines: null` means the WHOLE file changed (binary, deleted, created, mode/type change);
- * `[]` means the file did not change.
+ * The line numbers, in `from`'s numbering, that `from..to` modified or removed in `file`, and the
+ * hunks that carry `from`'s numbering to `to`'s (see `advanceLine`).
+ * `lines: null` (and `hunks: null`) means the WHOLE file changed (binary, deleted, created);
+ * `lines: []` means no line did: the file is unchanged, or only its mode changed (a chmod touches no line).
  */
 function changedOldLines(git, cwd, { from, to, file } = {}) {
   if (!isSafeRelPath(file)) return { ok: false, reason: 'bad-path' };
@@ -137,21 +138,42 @@ function changedOldLines(git, cwd, { from, to, file } = {}) {
   if (result.status !== 0) return { ok: false, reason: 'diff-failed' };
 
   const lines = [];
+  const hunks = [];
   let inHunks = false;
   for (const row of String(result.stdout).split('\n')) {
     if (!inHunks) {
-      if (/^Binary files /.test(row) || row === 'GIT binary patch') return { ok: true, lines: null };
-      if (/^(deleted file mode|new file mode|old mode|new mode) /.test(row)) return { ok: true, lines: null };
-      if (row === '--- /dev/null' || row === '+++ /dev/null') return { ok: true, lines: null };
+      if (/^Binary files /.test(row) || row === 'GIT binary patch') return { ok: true, lines: null, hunks: null };
+      if (/^(deleted file mode|new file mode) /.test(row)) return { ok: true, lines: null, hunks: null };
+      if (row === '--- /dev/null' || row === '+++ /dev/null') return { ok: true, lines: null, hunks: null };
     }
     const match = HUNK.exec(row);
     if (match === null) continue;
     inHunks = true;
-    const start = Number(match[1]);
-    const count = match[2] === undefined ? 1 : Number(match[2]);
-    for (let i = 0; i < count; i += 1) lines.push(start + i);
+    const oldStart = Number(match[1]);
+    const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+    const newCount = match[4] === undefined ? 1 : Number(match[4]);
+    hunks.push({ oldStart, oldCount, newStart: Number(match[3]), newCount });
+    for (let i = 0; i < oldCount; i += 1) lines.push(oldStart + i);
   }
-  return { ok: true, lines };
+  return { ok: true, lines, hunks };
+}
+
+/**
+ * Where line `line` of `from` is in `to`, given the `hunks` of `changedOldLines`: `{ touched: true, line: null }`
+ * when a hunk modified or removed it, else `{ touched: false, line }` moved by every hunk above it (an insertion
+ * above pushes it down, a removal above pulls it up). Pure.
+ */
+function advanceLine(hunks, line) {
+  let shift = 0;
+  for (const { oldStart, oldCount, newCount } of hunks) {
+    if (oldCount > 0) {
+      if (line >= oldStart && line < oldStart + oldCount) return { touched: true, line: null };
+      if (oldStart + oldCount <= line) shift += newCount - oldCount;
+    } else if (oldStart < line) {
+      shift += newCount; // a pure insertion after old line `oldStart`
+    }
+  }
+  return { touched: false, line: line + shift };
 }
 
 module.exports = {
@@ -161,5 +183,6 @@ module.exports = {
   primaryWorktree,
   holdsHead,
   readBlobAt,
-  changedOldLines
+  changedOldLines,
+  advanceLine
 };

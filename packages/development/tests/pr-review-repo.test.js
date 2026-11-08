@@ -227,11 +227,15 @@ describe('changedOldLines', () => {
   const lines = (from, to, file) => repo.changedOldLines(git, dir, { from, to, file });
 
   test('a modified line gives its exact old number', () => {
-    expect(lines(p1, p2, 'src/widget.js')).toEqual({ ok: true, lines: [12] });
+    expect(lines(p1, p2, 'src/widget.js')).toEqual({
+      ok: true,
+      lines: [12],
+      hunks: [{ oldStart: 12, oldCount: 1, newStart: 12, newCount: 1 }]
+    });
   });
 
   test('an unchanged file is []', () => {
-    expect(lines(p1, p2, 'src/other.js')).toEqual({ ok: true, lines: [] });
+    expect(lines(p1, p2, 'src/other.js')).toEqual({ ok: true, lines: [], hunks: [] });
   });
 
   test('a pure insertion contributes no old lines; a multi-hunk edit lists each', () => {
@@ -239,29 +243,52 @@ describe('changedOldLines', () => {
     initRepo(w);
     const a = commit(w, { 'f.txt': numbered(40) }, 'a');
     const ins = commit(w, { 'f.txt': numbered(40).replace('line 5\n', 'line 5\nnew\nnew2\n') }, 'ins');
-    expect(repo.changedOldLines(git, w, { from: a, to: ins, file: 'f.txt' })).toEqual({ ok: true, lines: [] });
+    expect(repo.changedOldLines(git, w, { from: a, to: ins, file: 'f.txt' })).toEqual({
+      ok: true,
+      lines: [],
+      hunks: [{ oldStart: 5, oldCount: 0, newStart: 6, newCount: 2 }]
+    });
     const multi = commit(
       w,
       { 'f.txt': numbered(40).replace('line 5\n', 'line 5\nnew\nnew2\n').replace('line 10\nline 11\n', 'X\n').replace('line 30\n', 'Y\nZ\n') },
       'multi'
     );
-    expect(repo.changedOldLines(git, w, { from: a, to: multi, file: 'f.txt' })).toEqual({ ok: true, lines: [10, 11, 30] });
+    expect(repo.changedOldLines(git, w, { from: a, to: multi, file: 'f.txt' })).toEqual({
+      ok: true,
+      lines: [10, 11, 30],
+      hunks: [
+        { oldStart: 5, oldCount: 0, newStart: 6, newCount: 2 },
+        { oldStart: 10, oldCount: 2, newStart: 12, newCount: 1 },
+        { oldStart: 30, oldCount: 1, newStart: 31, newCount: 2 }
+      ]
+    });
   });
 
-  test('deleted and created files, a binary change and a mode change are the whole file (null)', () => {
+  test('deleted and created files and a binary change are the whole file (null)', () => {
     const w = mkdir('prr-diff2-');
     initRepo(w);
-    const a = commit(w, { 'gone.txt': 'x\n', 'bin.dat': Buffer.from([0, 1, 2]), 'run.sh': 'echo\n' }, 'a');
+    const a = commit(w, { 'gone.txt': 'x\n', 'bin.dat': Buffer.from([0, 1, 2]) }, 'a');
     fs.unlinkSync(path.join(w, 'gone.txt'));
     fs.writeFileSync(path.join(w, 'bin.dat'), Buffer.from([0, 9, 9, 9]));
-    fs.chmodSync(path.join(w, 'run.sh'), 0o755);
     fs.writeFileSync(path.join(w, 'new.txt'), 'n\n');
     sh(w, ['add', '-A']);
     sh(w, ['commit', '-q', '-m', 'b']);
     const b = sh(w, ['rev-parse', 'HEAD']);
-    for (const file of ['gone.txt', 'bin.dat', 'run.sh', 'new.txt']) {
-      expect(repo.changedOldLines(git, w, { from: a, to: b, file })).toEqual({ ok: true, lines: null });
+    for (const file of ['gone.txt', 'bin.dat', 'new.txt']) {
+      expect(repo.changedOldLines(git, w, { from: a, to: b, file })).toEqual({ ok: true, lines: null, hunks: null });
     }
+  });
+
+  test('a mode-only change touches no line (a chmod is not a fix)', () => {
+    const w = mkdir('prr-mode-');
+    initRepo(w);
+    const a = commit(w, { 'run.sh': 'echo\nexit 0\n' }, 'a');
+    fs.chmodSync(path.join(w, 'run.sh'), 0o755);
+    sh(w, ['add', '-A']);
+    sh(w, ['commit', '-q', '-m', 'chmod']);
+    const b = sh(w, ['rev-parse', 'HEAD']);
+    expect(sh(w, ['diff', '--summary', a, b])).toContain('mode change');
+    expect(repo.changedOldLines(git, w, { from: a, to: b, file: 'run.sh' })).toEqual({ ok: true, lines: [], hunks: [] });
   });
 
   test('a file named like an option stays a pathspec and writes nothing', () => {
@@ -270,7 +297,7 @@ describe('changedOldLines', () => {
     const a = commit(w, { '--output=x': 'one\n' }, 'a');
     const b = commit(w, { '--output=x': 'two\n' }, 'b');
     const before = sh(w, ['status', '--porcelain']);
-    expect(repo.changedOldLines(git, w, { from: a, to: b, file: '--output=x' })).toEqual({ ok: true, lines: [1] });
+    expect(repo.changedOldLines(git, w, { from: a, to: b, file: '--output=x' })).toMatchObject({ ok: true, lines: [1] });
     expect(fs.existsSync(path.join(w, 'x'))).toBe(false);
     expect(sh(w, ['status', '--porcelain'])).toBe(before);
   });
@@ -280,7 +307,7 @@ describe('changedOldLines', () => {
     initRepo(w);
     const a = commit(w, { 'a.js': '1\n', 'b.js': '1\n' }, 'a');
     const b = commit(w, { 'a.js': '2\n' }, 'b');
-    expect(repo.changedOldLines(git, w, { from: a, to: b, file: '*.js' })).toEqual({ ok: true, lines: [] });
+    expect(repo.changedOldLines(git, w, { from: a, to: b, file: '*.js' })).toEqual({ ok: true, lines: [], hunks: [] });
   });
 
   test('unresolvable commits and bad paths fail', () => {
@@ -304,5 +331,75 @@ describe('changedOldLines', () => {
     const diff = fake.calls.map((c) => c.args).find((a) => a.includes('diff'));
     expect(diff.slice(-2)).toEqual(['--', 'a.js']);
     expect(diff).toEqual(expect.arrayContaining(['-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames']));
+  });
+});
+
+describe('advanceLine', () => {
+  const h = (oldStart, oldCount, newStart, newCount) => ({ oldStart, oldCount, newStart, newCount });
+
+  test('an insertion above pushes a line down; one after it leaves it', () => {
+    expect(repo.advanceLine([h(5, 0, 6, 5)], 20)).toEqual({ touched: false, line: 25 });
+    expect(repo.advanceLine([h(5, 0, 6, 5)], 5)).toEqual({ touched: false, line: 5 });
+    expect(repo.advanceLine([h(5, 0, 6, 5)], 6)).toEqual({ touched: false, line: 11 });
+    expect(repo.advanceLine([h(30, 0, 31, 5)], 20)).toEqual({ touched: false, line: 20 });
+    expect(repo.advanceLine([h(0, 0, 1, 2)], 1)).toEqual({ touched: false, line: 3 });
+  });
+
+  test('a removal above pulls a line up; a line inside a modified or removed range is touched', () => {
+    expect(repo.advanceLine([h(5, 2, 4, 0)], 20)).toEqual({ touched: false, line: 18 });
+    expect(repo.advanceLine([h(5, 2, 4, 0)], 6)).toEqual({ touched: true, line: null });
+    expect(repo.advanceLine([h(10, 2, 12, 1)], 11)).toEqual({ touched: true, line: null });
+    expect(repo.advanceLine([h(10, 2, 12, 1)], 12)).toEqual({ touched: false, line: 11 });
+    expect(repo.advanceLine([h(10, 2, 12, 1)], 9)).toEqual({ touched: false, line: 9 });
+  });
+
+  test('several hunks add up, in order', () => {
+    const hunks = [h(5, 0, 6, 2), h(10, 2, 12, 1), h(30, 1, 31, 2)];
+    expect(repo.advanceLine(hunks, 4)).toEqual({ touched: false, line: 4 });
+    expect(repo.advanceLine(hunks, 20)).toEqual({ touched: false, line: 21 });
+    expect(repo.advanceLine(hunks, 35)).toEqual({ touched: false, line: 37 });
+    expect(repo.advanceLine(hunks, 30)).toEqual({ touched: true, line: null });
+    expect(repo.advanceLine([], 7)).toEqual({ touched: false, line: 7 });
+  });
+
+  test('applied to the hunks git printed, it names where each old line went', () => {
+    const w = mkdir('prr-adv-');
+    initRepo(w);
+    const a = commit(w, { 'f.txt': numbered(40) }, 'a');
+    const b = commit(w, { 'f.txt': numbered(40).replace('line 5\n', 'line 5\nnew\nnew2\n').replace('line 10\nline 11\n', 'X\n') }, 'b');
+    const { hunks } = repo.changedOldLines(git, w, { from: a, to: b, file: 'f.txt' });
+    const contentAt = (sha, n) => sh(w, ['show', `${sha}:f.txt`]).split('\n')[n - 1];
+    for (const old of [1, 5, 6, 9, 12, 13, 30, 40]) {
+      const moved = repo.advanceLine(hunks, old);
+      expect(moved.touched).toBe(false);
+      expect(contentAt(b, moved.line)).toBe(contentAt(a, old));
+    }
+    for (const old of [10, 11]) expect(repo.advanceLine(hunks, old).touched).toBe(true);
+  });
+});
+
+describe('defaultGit is bound to the cwd, not to the caller\'s environment', () => {
+  const cases = [
+    ['GIT_DIR', (other) => path.join(other, '.git'), ['rev-parse', '--git-dir']],
+    ['GIT_WORK_TREE', (other) => other, ['rev-parse', '--show-toplevel']],
+    ['GIT_INDEX_FILE', (other) => path.join(other, '.git', 'index'), ['rev-parse', '--git-path', 'index']],
+    ['GIT_OBJECT_DIRECTORY', (other) => path.join(other, '.git', 'objects'), ['rev-parse', '--git-path', 'objects']],
+    ['GIT_COMMON_DIR', (other) => path.join(other, '.git'), ['rev-parse', '--git-common-dir']]
+  ];
+
+  test.each(cases)('%s in the environment does not rebind the repository', (name, valueFor, args) => {
+    const other = mkdir('prr-env-other-');
+    initRepo(other);
+    commit(other, { 'x.txt': 'x\n' }, 'x');
+    const clean = runtime.defaultGit()(args, { cwd: dir });
+    expect(clean.status).toBe(0);
+    const saved = process.env[name];
+    process.env[name] = valueFor(other);
+    try {
+      expect(runtime.defaultGit()(args, { cwd: dir })).toEqual(clean);
+    } finally {
+      if (saved === undefined) delete process.env[name];
+      else process.env[name] = saved;
+    }
   });
 });

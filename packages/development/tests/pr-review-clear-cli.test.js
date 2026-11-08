@@ -129,7 +129,7 @@ describe('deriveCleared rules', () => {
     const r = derive([e], { incoming: [finding('new', 'src/widget.js:14', 'off by one in loop!')] });
     expect(r.kept).toEqual([{ id: 'shift', reason: 're-reported' }]);
     expect(r.cleared).toEqual([]);
-    expect(r.ledger[0]).toEqual(e);
+    expect(r.ledger[0]).toEqual({ ...e, locationOrLink: 'src/widget.js:14', locationAsOf: p2 });
   });
 
   test('5 without a fingerprint the same location and failure mode counts', () => {
@@ -203,7 +203,7 @@ describe('deriveCleared whole-ledger properties', () => {
     const r = derive(input);
     expect(r.ledger.map((e) => e.id)).toEqual(['hit', 'keep', 'nohead', 'basehist', 'del']);
     expect(r.cleared.map((c) => c.id)).toEqual(['hit', 'del']);
-    expect(r.ledger[1]).toEqual(input[1]);
+    expect(r.ledger[1]).toEqual({ ...input[1], locationAsOf: p2 });
     expect(r.ledger[3]).toEqual(input[3]);
     expect(r.ledger[0].cleared).toBe(true);
     expect(r.ledger[1].cleared).toBeUndefined();
@@ -249,7 +249,7 @@ describe('main', () => {
     const code = main({ readJson: () => payload, emit: (v) => out.push(v), now: () => 5, ...io });
     return { code, result: out[0] };
   };
-  const good = () => ({ repoRoot: dir, baseSha: base, headSha: p2, ledger: [finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 })] });
+  const good = () => ({ repoRoot: dir, baseSha: base, headSha: p2, ledger: [finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 })], incoming: [] });
   const noHead = () => ({ ...good(), ledger: [finding('hit', 'src/widget.js:12', 'bad')] });
 
   test('exit 0 with a DERIVED result and wallMs', () => {
@@ -259,7 +259,14 @@ describe('main', () => {
     expect(result.cleared.map((c) => c.id)).toEqual(['hit']);
   });
 
-  test('incoming defaults to [] and is used when given', () => {
+  test('incoming is required: omitted it is FAILED and nothing is derived; given it is used', () => {
+    const { incoming, ...without } = good();
+    expect(incoming).toEqual([]);
+    const failed = run(without);
+    expect(failed.code).toBe(1);
+    expect(failed.result).toMatchObject({ ok: false, status: 'FAILED' });
+    expect(failed.result.reason).toMatch(/'incoming' is required/);
+    expect(failed.result.ledger).toBeUndefined();
     const payload = { ...good(), incoming: [finding('n', 'src/widget.js:14', 'bad')] };
     expect(run(payload).result.kept).toEqual([{ id: 'hit', reason: 're-reported' }]);
   });
@@ -339,8 +346,16 @@ describe('lastReviewedSha: the one baseline every carried entry shares', () => {
     expect(derive([survivor], { headSha: p3 }).cleared.map((c) => c.id)).toEqual(['survivor']);
     const r = derive([survivor], { headSha: p3, lastReviewedSha: p2 });
     expect(r.cleared).toEqual([]);
-    expect(r.kept).toEqual([{ id: 'survivor', reason: 'location-unchanged' }]);
+    // The entry was never moved (the verb did not run at p2), so its line is numbered at p1 and the p1..p2 edit that
+    // touched it leaves no place to look at: kept as unanchored and not stamped, where this pin used to assume the
+    // stored number was valid at p2 (the old numbering-at-lastReviewedSha assumption).
+    expect(r.kept).toEqual([{ id: 'survivor', reason: 'location-unanchored' }]);
     expect(r.ledger[0]).toEqual(survivor);
+    // In the documented flow the verb ran at p2 and stamped the entry, and the outcome is the one this test always meant.
+    const carried = derive([{ ...survivor, locationAsOf: p2 }], { headSha: p3, lastReviewedSha: p2 });
+    expect(carried.cleared).toEqual([]);
+    expect(carried.kept).toEqual([{ id: 'survivor', reason: 'location-unchanged' }]);
+    expect(carried.ledger[0]).toEqual({ ...survivor, locationAsOf: p3 });
   });
 
   test('an edit made since lastReviewedSha clears, whatever head the entry carries', () => {
@@ -375,13 +390,171 @@ describe('lastReviewedSha: the one baseline every carried entry shares', () => {
     const e = finding('a', 'src/widget.js:12', 'Off by one');
     const r = derive([e], { lastReviewedSha: p1, incoming: [finding('n', 'src/widget.js:14', 'off by one')] });
     expect(r.kept).toEqual([{ id: 'a', reason: 're-reported' }]);
+    expect(r.ledger[0]).toEqual({ ...e, locationOrLink: 'src/widget.js:14', locationAsOf: p2 });
+  });
+});
+
+describe('incoming is required (a re-raised finding must never read as a fixed one)', () => {
+  test('an omitted or malformed incoming is FAILED with a named reason, whatever the diff says', () => {
+    const e = finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 });
+    const omitted = deriveCleared({ git: defaultGit(), cwd: dir, baseSha: base, headSha: p2, ledger: [e], now: () => 0 });
+    expect(omitted).toEqual({ ok: false, status: 'FAILED', reason: expect.stringMatching(/^'incoming' is required/) });
+    for (const bad of [null, {}, 'x', 7, [1], [null], [[]]]) {
+      const r = deriveCleared({ git: defaultGit(), cwd: dir, baseSha: base, headSha: p2, ledger: [e], incoming: bad, now: () => 0 });
+      expect(r).toMatchObject({ ok: false, status: 'FAILED' });
+      expect(r.cleared).toBeUndefined();
+      expect(r.ledger).toBeUndefined();
+    }
+  });
+
+  test('control: the same ledger with an explicit empty incoming clears the touched finding', () => {
+    const e = finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 });
+    expect(derive([e], { incoming: [] }).cleared.map((c) => c.id)).toEqual(['hit']);
+  });
+});
+
+describe('the cited line is carried forward through every round (a fix after an earlier edit above it is found)', () => {
+  let w;
+  let b0;
+  let r1;
+  let r2;
+  let r3;
+  let r3b;
+  let r2d;
+  let r3m;
+  let r2e;
+  let r3e;
+  const withInserted = numbered(40).replace('line 3\n', 'line 3\nn1\nn2\nn3\nn4\nn5\n');
+  const at = (extra) => deriveCleared({ git: defaultGit(), cwd: w, baseSha: b0, incoming: [], now: () => 0, ...extra });
+
+  beforeAll(() => {
+    w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prr-clear-shift-')));
+    roots.push(w);
+    sh(w, ['init', '-q', '-b', 'main']);
+    sh(w, ['config', 'user.name', 'T']);
+    sh(w, ['config', 'user.email', 't@example.com']);
+    sh(w, ['config', 'commit.gpgsign', 'false']);
+    b0 = commit(w, { 'README.md': 'base\n' }, 'base');
+    // Round 1: the defect sits on line 20.
+    r1 = commit(w, { 'src/a.js': numbered(40) }, 'r1');
+    // Round 2: five lines are inserted above it, so it is on line 25.
+    r2 = commit(w, { 'src/a.js': withInserted }, 'r2');
+    // Round 3: the fix, on line 25 of round 2's numbering.
+    r3 = commit(w, { 'src/a.js': withInserted.replace('line 20\n', 'FIXED\n') }, 'r3');
+    // Round 3 instead: an unrelated edit at the number the defect used to have (round 2's line 20).
+    sh(w, ['checkout', '-q', '-b', 'alt', r2]);
+    r3b = commit(w, { 'src/a.js': withInserted.replace('line 15\n', 'EDITED\n') }, 'r3b');
+    // A history that removed two lines above the defect instead of adding five.
+    sh(w, ['checkout', '-q', '-b', 'del', r1]);
+    r2d = commit(w, { 'src/a.js': numbered(40).replace('line 5\nline 6\n', '') }, 'r2d');
+    // A round 2 that edited the defect's own line (the finding survived it), then a round 3.
+    sh(w, ['checkout', '-q', '-b', 'edited', r1]);
+    r2e = commit(w, { 'src/a.js': numbered(40).replace('line 20\n', 'line twenty\n') }, 'r2e');
+    r3e = commit(w, { 'src/a.js': numbered(40).replace('line 20\n', 'line twenty\n').replace('line 30\n', 'line thirty\n') }, 'r3e');
+    // A mode-only round 3: a chmod, no content change.
+    sh(w, ['checkout', '-q', '-b', 'mode', r2]);
+    fs.chmodSync(path.join(w, 'src/a.js'), 0o755);
+    sh(w, ['add', '-A']);
+    sh(w, ['commit', '-q', '-m', 'chmod']);
+    r3m = sh(w, ['rev-parse', 'HEAD']);
+    sh(w, ['checkout', '-q', 'main']);
+  });
+
+  test('round 2 moves the stored line to the head it reviewed; round 3 then finds the fix', () => {
+    const e = finding('F', 'src/a.js:20', 'defect');
+    const round2 = at({ headSha: r2, lastReviewedSha: r1, ledger: [e] });
+    expect(round2.kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+    expect(round2.ledger[0]).toEqual({ ...e, locationOrLink: 'src/a.js:25', locationAsOf: r2 });
+
+    const round3 = at({ headSha: r3, lastReviewedSha: r2, ledger: round2.ledger });
+    expect(round3.cleared).toEqual([{ id: 'F', clearedBy: r3, recordedAt: '1970-01-01T00:00:00.000Z' }]);
+  });
+
+  test('a mode-only commit clears nothing: a chmod touches no line', () => {
+    const e = finding('F', 'src/a.js:25', 'defect', { locationAsOf: r2 });
+    const r = at({ headSha: r3m, lastReviewedSha: r2, ledger: [e] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+  });
+
+  test('an unrelated edit at the number the defect used to have no longer clears it', () => {
+    const round2 = at({ headSha: r2, lastReviewedSha: r1, ledger: [finding('F', 'src/a.js:20', 'defect')] });
+    const round3 = at({ headSha: r3b, lastReviewedSha: r2, ledger: round2.ledger });
+    expect(round3.cleared).toEqual([]);
+    expect(round3.kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+    expect(round3.ledger[0]).toMatchObject({ locationOrLink: 'src/a.js:25', locationAsOf: r3b });
+  });
+
+  test('a first run that comes late (an earlier round was never run) still reads the entry at its own numbering, so the fix is found', () => {
+    // Recorded at r1 on line 20 and never moved: the line is 25 at r2, the round the fix is compared from.
+    const e = finding('F', 'src/a.js:20', 'defect', { headSha: r1 });
+    const r = at({ headSha: r3, lastReviewedSha: r2, ledger: [e] });
+    expect(r.cleared).toEqual([{ id: 'F', clearedBy: r3, recordedAt: '1970-01-01T00:00:00.000Z' }]);
+    expect(r.ledger[0]).toMatchObject({ id: 'F', cleared: true, clearedBy: r3 });
+  });
+
+  test('a first run that comes late is not fooled by an unrelated edit at the number the defect used to have', () => {
+    const e = finding('F', 'src/a.js:20', 'defect', { headSha: r1 });
+    const r = at({ headSha: r3b, lastReviewedSha: r2, ledger: [e] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+    expect(r.ledger[0]).toMatchObject({ locationOrLink: 'src/a.js:25', locationAsOf: r3b });
+  });
+
+  test('a first run that comes late cannot place a line an in-between round edited: location-unanchored, never cleared, never stamped', () => {
+    const e = finding('F', 'src/a.js:20', 'defect', { headSha: r1 });
+    const r = at({ headSha: r3e, lastReviewedSha: r2e, ledger: [e] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
     expect(r.ledger[0]).toEqual(e);
+  });
+
+  test('a stamp the repository no longer holds is a numbering base that is not on the PR: kept, never cleared', () => {
+    const e = finding('F', 'src/a.js:25', 'defect', { headSha: r1, locationAsOf: '3'.repeat(40) });
+    const r = at({ headSha: r3, lastReviewedSha: r2, ledger: [e] });
+    expect(r.kept).toEqual([{ id: 'F', reason: 'recorded-head-not-on-pr' }]);
+    expect(r.cleared).toEqual([]);
+  });
+
+  test('a range citation moves as a range, and removed lines above pull the line up', () => {
+    const ranged = at({ headSha: r2, lastReviewedSha: r1, ledger: [finding('R', 'src/a.js:20-22', 'defect')] });
+    expect(ranged.ledger[0].locationOrLink).toBe('src/a.js:25-27');
+    const pulled = at({ headSha: r2d, lastReviewedSha: r1, ledger: [finding('D', 'src/a.js:20', 'defect')] });
+    expect(pulled.ledger[0]).toMatchObject({ locationOrLink: 'src/a.js:18', locationAsOf: r2d });
+  });
+
+  test('a re-raised finding takes the location the new review gave it', () => {
+    const e = finding('F', 'src/a.js:20', 'Unchecked path join');
+    const r = at({ headSha: r2, lastReviewedSha: r1, ledger: [e], incoming: [finding('N', 'src/a.js:25', 'unchecked path join!')] });
+    expect(r.kept).toEqual([{ id: 'F', reason: 're-reported' }]);
+    expect(r.ledger[0]).toEqual({ ...e, locationOrLink: 'src/a.js:25', locationAsOf: r2 });
+  });
+
+  test('a second run over the verb\'s own output changes nothing (the stamp says the line is current)', () => {
+    const first = at({ headSha: r2, lastReviewedSha: r1, ledger: [finding('F', 'src/a.js:20', 'defect')] });
+    const second = at({ headSha: r2, lastReviewedSha: r1, ledger: first.ledger });
+    expect(second.kept).toEqual([{ id: 'F', reason: 'location-current' }]);
+    expect(second.ledger).toEqual(first.ledger);
+  });
+
+  test('an entry the verb already moved is compared from the head it was moved to, whatever lastReviewedSha says', () => {
+    const stamped = finding('F', 'src/a.js:25', 'defect', { locationAsOf: r2 });
+    const r = at({ headSha: r3, lastReviewedSha: r1, ledger: [stamped] });
+    expect(r.cleared.map((c) => c.id)).toEqual(['F']);
+  });
+
+  test('a file-only citation and a link carry no line to move and are returned as given', () => {
+    const fileOnly = finding('A', 'src/a.js', 'defect');
+    const link = finding('B', 'https://example.test/pr/1#c', 'defect');
+    const r = at({ headSha: r2, lastReviewedSha: r1, ledger: [fileOnly, link] });
+    expect(r.ledger[1]).toEqual(link);
+    expect(r.ledger[0]).toEqual(fileOnly);
   });
 });
 
 describe('entry point', () => {
   test('reads the payload on stdin and prints one JSON result', () => {
-    const payload = { repoRoot: dir, baseSha: base, headSha: p2, ledger: [finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 })] };
+    const payload = { repoRoot: dir, baseSha: base, headSha: p2, ledger: [finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 })], incoming: [] };
     const r = spawnSync('node', [CLI], { input: JSON.stringify(payload), encoding: 'utf8' });
     expect(r.status).toBe(0);
     const out = JSON.parse(r.stdout);

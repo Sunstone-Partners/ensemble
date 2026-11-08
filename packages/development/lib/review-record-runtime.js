@@ -20,7 +20,28 @@ const GH_TIMEOUT_MS = 60 * 1000;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** The real git: no shell, no prompts, no optional locks (so it never writes even a stat cache). */
+/**
+ * Variables that make git act on a repository other than the one `cwd` names. A caller's environment must not
+ * rebind `repoRoot`, so none of them reaches the child.
+ */
+const REPOSITORY_BINDING_VARIABLES = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_NAMESPACE',
+  'GIT_PREFIX'
+];
+
+function gitEnvironment() {
+  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' };
+  for (const name of REPOSITORY_BINDING_VARIABLES) delete env[name];
+  return env;
+}
+
+/** The real git: no shell, no prompts, no optional locks (so it never writes even a stat cache), bound to `cwd`. */
 function defaultGit() {
   return (args, { cwd } = {}) => {
     const result = spawnSync('git', args, {
@@ -28,7 +49,7 @@ function defaultGit() {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
       shell: false,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' }
+      env: gitEnvironment()
     });
     if (result.error) return { status: 127, stdout: '', stderr: String(result.error.message) };
     return {
