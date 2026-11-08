@@ -11,8 +11,8 @@
  * the real gate (a spawned `pr-review-cli.js gate`) and the procedure the prose delegates to
  * (`reference/merge-gate.md`), so a rename on either side fails here instead of drifting.
  *
- * Routing (plan 3H.7): a review-cycle finding is never sent to a remediation subagent or looped on; only check
- * failures and unresolved human threads are. The sentences that carry that are pinned by structure (which sentence
+ * Routing (plan 3H.7): a review-cycle finding is never auto-dispatched or looped on (only the operator's Fix on this
+ * PR selection fixes one); only check failures and unresolved human threads are. The sentences that carry that are pinned by structure (which sentence
  * names which blocker, which phases can see a review finding), against the codes the real gate raises, and in every
  * shipped rendering: the Claude and Codex renderings carry the workflow only, never `constraints`, so a constraint
  * alone would not reach them.
@@ -135,6 +135,26 @@ describe('AC1: the merge-confirmation question is not asked until the operator a
     expect(disposition).toMatch(/asked only after this step has finished on this head/);
   });
 
+  test('the operator sees the numbered list before the first question: in the Interactive action, in the reference (Show before the multi-select question) and in every rendering', () => {
+    const interactive = interactiveAction();
+    const list = interactive.indexOf('print the numbered list');
+    const login = interactive.indexOf("ask the operator's own login");
+    const question = interactive.indexOf('AskUserQuestion');
+    expect(list).toBeGreaterThan(-1);
+    expect(question).toBeGreaterThan(-1);
+    expect(list).toBeLessThan(login);
+    expect(login).toBeLessThan(question);
+    expect(GATE_REF.indexOf('**Show.**')).toBeGreaterThan(-1);
+    expect(GATE_REF.indexOf('**Show.**')).toBeLessThan(GATE_REF.indexOf('**One multi-select question per group**'));
+    for (const [name, file] of Object.entries(SURFACES)) {
+      const text = surfaceText(file);
+      const at = text.indexOf('Interactive: print the numbered list');
+      expect([name, at > -1]).toEqual([name, true]);
+      const asked = text.search(/ONE multi-select (AskUserQuestion|ask) per group/); // pi renders AskUserQuestion as ask
+      expect([name, asked > at]).toEqual([name, true]);
+    }
+  });
+
   test('a constraint forbids the question before the answer, and the ask tool is allowed (it maps to ask on pi)', () => {
     expect(COMMAND.constraints.some((c) => /NEVER ask the merge-confirmation question before the operator has answered/.test(c))).toBe(true);
     expect(COMMAND.metadata.allowed_tools).toContain('AskUserQuestion');
@@ -161,7 +181,7 @@ describe('AC2: --foreman records nothing as decided, runs no fix agent, and the 
     const foreman = dispositionActions().find((a) => a.startsWith('--foreman'));
     expect(foreman).toMatch(/ask, resolve, fix, default and waive nothing/);
     expect(foreman).toMatch(/mergeable:false HALTs findings-need-operator/);
-    expect(COMMAND.constraints.some((c) => /NEVER send a review-cycle finding .* to a remediation subagent or loop on one, and NEVER ask the merge-confirmation question/.test(c))).toBe(true);
+    expect(COMMAND.constraints.some((c) => /NEVER auto-dispatch or loop on a review-cycle finding .*: only the operator's Fix on this PR selection fixes one; NEVER ask the merge-confirmation question/.test(c))).toBe(true);
     for (const [name, file] of Object.entries(SURFACES)) expect([name, surfaceText(file).includes(flat(foreman))]).toEqual([name, true]);
   });
 
@@ -207,11 +227,11 @@ describe('review findings are never auto-fixed (plan 3H.7): the routing, pinned 
     }
   });
 
-  test('ONE sentence names every review-finding blocker and says it is never dispatched or looped on and is decided in Operator Disposition', () => {
+  test('ONE sentence names every review-finding blocker and says it is never auto-dispatched or looped on and is decided in Operator Disposition', () => {
     const naming = sentencesOf(routing()).filter((s) => REVIEW_FINDING_CODES.some((code) => s.includes(code)));
     expect(naming).toHaveLength(1);
     for (const code of REVIEW_FINDING_CODES) expect(naming[0]).toContain(code);
-    expect(naming[0]).toMatch(/never dispatched or looped on/);
+    expect(naming[0]).toMatch(/never auto-dispatched or looped on/);
     expect(naming[0]).toMatch(/decided in Operator Disposition/);
     expect(naming[0]).not.toMatch(/Verification and Round Loop|round cap|remediated/);
   });
@@ -237,15 +257,29 @@ describe('review findings are never auto-fixed (plan 3H.7): the routing, pinned 
     }
   });
 
-  test('the pi constraint forbids sending a review-cycle finding to a remediation subagent or looping on one', () => {
-    const constraint = COMMAND.constraints.find((c) => /NEVER send a review-cycle finding/.test(c));
-    expect(constraint).toContain('NEVER send a review-cycle finding (any dispositionChoices entry) to a remediation subagent or loop on one');
+  test('the pi constraint forbids auto-dispatching or looping on a review-cycle finding and names the operator-selected Fix on this PR as the only way one is fixed', () => {
+    const constraint = COMMAND.constraints.find((c) => /NEVER auto-dispatch or loop on a review-cycle finding/.test(c));
+    expect(constraint).toContain("NEVER auto-dispatch or loop on a review-cycle finding (any dispositionChoices entry): only the operator's Fix on this PR selection fixes one");
     for (const file of [SURFACES['pi prompt'], SURFACES['pi skill']]) expect(surfaceText(file)).toContain(flat(constraint));
+  });
+
+  test('no rule forbids the Fix on this PR path this command adds: the constraint and the routing sentence carve it out, and FIX_SELECTION appears only in Operator Disposition', () => {
+    const constraint = COMMAND.constraints.find((c) => /review-cycle finding/.test(c));
+    const routingSentence = sentencesOf(routing()).find((s) => REVIEW_FINDING_CODES.every((code) => s.includes(code)));
+    // The designed path: the operator's selection runs a fix (ONE MODE=local fix run with FIX_SELECTION).
+    expect(interactiveAction()).toMatch(/a selection means Fix on this PR: ONE pr-review-cycle MODE=local fix run with FIX_SELECTION/);
+    // So no rule may say a review finding is never sent or dispatched to a fixer without saying who may start one.
+    expect(constraint).not.toMatch(/NEVER send a review-cycle finding/);
+    expect(constraint).toMatch(/only the operator's Fix on this PR selection fixes one/);
+    expect(routingSentence).not.toMatch(/never dispatched/);
+    expect(routingSentence).toMatch(/never auto-dispatched or looped on, decided in Operator Disposition/);
+    // Nothing outside Operator Disposition starts a fix run for a review finding.
+    for (const a of actionsInOrder().filter((x) => x.step !== 'Operator Disposition')) expect([a.step, /FIX_SELECTION/.test(a.text)]).toEqual([a.step, false]);
   });
 
   test.each(Object.entries(SURFACES))('%s: the routing and the no-fix contract are rendered (not only in the constraints)', (_name, file) => {
     const text = surfaceText(file);
-    for (const sentence of sentencesOf(routing()).filter((s) => /never dispatched or looped on|^Check and review_thread findings/.test(s))) {
+    for (const sentence of sentencesOf(routing()).filter((s) => /never auto-dispatched or looped on|^Check and review_thread findings/.test(s))) {
       expect(text).toContain(sentence);
     }
     expect(text).toContain('this command never fixes one itself');

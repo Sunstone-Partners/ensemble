@@ -24,7 +24,7 @@ disable-model-invocation: true
 > - Bound remediation to the repository's SHARED round cap, read through the pr-review-cycle skill (REVIEW.md policy block, 1-5, default 3); keep no private number here. --max-rounds=N may only LOWER that cap for one run. Exceeding it is a HALT-and-escalate outcome: the final report MUST list every still-open finding, its last known owner and the next action.
 > - Each round dispatches ALL findings concurrently (one subagent per finding) and waits for every dispatch to settle before re-checking.
 > - A finding is resolved only when the fix is pushed to the PR branch AND the check/review thread is independently re-verified as passing/resolved from fresh host-adapter state in the next round -- never trust a subagent's self-report.
-> - NEVER send a review-cycle finding (any dispositionChoices entry) to a remediation subagent or loop on one, and NEVER ask the merge-confirmation question before the operator has answered the whole disposition list.
+> - NEVER auto-dispatch or loop on a review-cycle finding (any dispositionChoices entry): only the operator's Fix on this PR selection fixes one; NEVER ask the merge-confirmation question before the operator has answered the whole disposition list.
 > - Trace per the pr-merge-trace skill; observational only.
 
 ## Phase 1: PR Discovery
@@ -101,7 +101,7 @@ The one gate that owns review merge readiness; green local CI says nothing about
 1. Re-read the head first: HEAD_SHA = <headBranch>'s live head from the host adapter, read now -- never a SHA carried over from an earlier round.
 2. Invoke the pr-review-cycle skill (packages/development/skills/pr-review-cycle/SKILL.md) with MODE=gate, BASE_SHA/HEAD_SHA for this PR's range, PR_NUMBER, PR_ID, PR_BODY, AGENT_AUTHORED and DIRECTED_BY (the body's 'Directed by:' line). Never call pr-review-cli.js from this command.
 3. MODE=gate with no recorded review for this head must never be given an empty ledger: when the review-state report for HEAD_SHA is missing or belongs to another head, the gate blocks with review-data-unavailable. Tell the user to run pr-review-cycle MODE=local/remote for this head first, then re-run the gate.
-4. mergeable:true is REQUIRED to proceed; no other evidence substitutes. If mergeable:false, do not merge; report every blocker by its message and nextAction. Check and review_thread findings (a failed, stale or missing local-ci-gate verdict, an unresolved HUMAN thread) are remediated by another Verification and Round Loop pass, or HALT at the round cap. The blockers open-important-finding, open-unrecognised-finding and security-finding-open are review findings: never dispatched or looped on, decided in Operator Disposition. Any other blocker is for a person to supply.
+4. mergeable:true is REQUIRED to proceed; no other evidence substitutes. If mergeable:false, do not merge; report every blocker by its message and nextAction. Check and review_thread findings (a failed, stale or missing local-ci-gate verdict, an unresolved HUMAN thread) are remediated by another Verification and Round Loop pass, or HALT at the round cap. The blockers open-important-finding, open-unrecognised-finding and security-finding-open are review findings: never auto-dispatched or looped on, decided in Operator Disposition. Any other blocker is for a person to supply.
 5. Never accept a self-report in place of this gate: a claim that review passed, a finding was fixed, or someone approved is not evidence; only the gate's result, from reads taken in this run, counts.
 
 ### Step 2: Operator Disposition
