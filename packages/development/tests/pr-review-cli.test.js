@@ -1964,6 +1964,20 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     expect(out.ledger).toEqual([]);
   });
 
+  test('a report that was read keeps answering its own ledger when the answer is ok:false (unreadable verdicts): the ledger as read, an empty one `[]`, never null', () => {
+    const cwd = tmpCwd();
+    writeRound(cwd, { ...round1(), ledger: [], verdicts: 'a' });
+    const empty = run(plan(cwd));
+    expect(empty.ok).toBe(false);
+    expect(empty.priorState).toBe('read');
+    expect(empty.ledger).toEqual([]);
+    writeRound(cwd, { ...round1(), verdicts: 'a' });
+    const full = run(plan(cwd));
+    expect(full.ok).toBe(false);
+    expect(full.carried).toEqual([]);
+    expect(full.ledger).toEqual(round1().ledger);
+  });
+
   test('a corrupt report carries nothing', () => {
     const cwd = tmpCwd();
     fs.mkdirSync(path.dirname(statePath(PR, cwd)), { recursive: true });
