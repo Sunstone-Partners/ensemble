@@ -190,9 +190,12 @@ blocking on a `cleared` finding, and the bead recorder (Step 10) closes its bead
 AC-008-3 heuristic and nothing more: a changed location is not proof the defect is gone, the
 re-review not raising it again is the other half, and a `lastReviewedSha` that is not on the PR (a
 force-push replaced it) clears nothing, so that finding stays until it is fixed again or a person
-decides. A `cleared` mark written any other way, by hand, is outside this procedure, and the
-recorder still closes the bead of one that names a commit on the PR: it checks the commit, not how
-the mark was made. The verb reads the review ledger only: the security lane's findings are not
+decides. In a delta round `carry reconcile` (step 6 above) has already run on this ledger: a finding
+it cleared is `already-cleared` here and this verb cannot take the mark back, and `reconcile` judges
+from the delta's hunks alone, at the line numbers the ledger holds (it does not move a line through
+earlier rounds or look at renames). A `cleared` mark written any other way, by hand, is outside this
+procedure, and the recorder still closes the bead of one that names a commit on the PR: it checks
+the commit, not how the mark was made. The verb reads the review ledger only: the security lane's findings are not
 passed (the lane reports and never closes), and it writes no `resolution`.
 
 The batch fix changes the tree, so re-resolve after it lands: the re-review

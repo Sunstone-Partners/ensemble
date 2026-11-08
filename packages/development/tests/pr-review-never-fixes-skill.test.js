@@ -511,6 +511,25 @@ describe('the docs say a round the clear verb was not run at is not read as a fi
   });
 });
 
+describe('the docs name both writers of a cleared mark: the clear verb and carry reconcile (kata n350, qw98)', () => {
+  test('premise: carry reconcile exists and clears with clearFixedFindings, so a delta round has a second writer', () => {
+    const cli = fs.readFileSync(path.join(__dirname, '..', 'lib', 'pr-review-cli.js'), 'utf8');
+    expect(cli).toMatch(/reconcile: \{[\s\S]{0,400}clearFixedFindings\(/);
+  });
+
+  test('the gate reference, the clear-verb reference and the user guide no longer say the clear verb is the only writer', () => {
+    expect(GATE_REF).toContain("the skill's writers of it are `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6), and, in a delta round, `carry reconcile`");
+    expect(GATE_REF).toContain("The procedure's writers of the mark are `PR_REVIEW_CLEAR_CLI` and, in a delta round, `carry reconcile`");
+    expect(GATE_REF).not.toMatch(/only writer/);
+    expect(GUIDE_RULE).toContain("in a delta round, through `carry reconcile`, which clears from the delta's hunks alone");
+    expect(GUIDE_RULE).not.toMatch(/writes the mark only through/);
+    expect(TRIAGE).toContain('In a delta round `carry reconcile` (step 6 above) has already run on this ledger: a finding it cleared is `already-cleared` here and this verb cannot take the mark back');
+    const headline = flatten(readRepo('packages', 'development', 'CHANGELOG.md').split('\n').find((line) => /\(kata `n350`, plan/.test(line)));
+    expect(headline).toContain('is a producer of `cleared` (`carry reconcile`, kata `qw98`, is the other, in a delta round');
+    expect(headline).not.toContain('is the producer of `cleared`');
+  });
+});
+
 describe('the docs say /ensemble:pr-merge follows the no-fix rule (kata 6k8d)', () => {
   test('the user guide and both changelogs say pr-merge follows it and no longer carry the "not yet true" note', () => {
     expect(GUIDE_RULE).toContain('> **`/ensemble:pr-merge` follows this.**');
