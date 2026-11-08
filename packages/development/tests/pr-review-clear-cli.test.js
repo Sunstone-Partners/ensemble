@@ -609,6 +609,14 @@ describe('a force-push between rounds clears nothing (an entry raised at a head 
     expect(r.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
   });
 
+  test('an entry the verb stamped at a head that has since left the PR is kept the same way: recorded-head-not-on-pr', () => {
+    const stamped = finding('F', 'src/a.js:20', 'defect', { headSha: dead, locationAsOf: dead });
+    const r = at({ headSha: h, lastReviewedSha: s, ledger: [stamped] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'recorded-head-not-on-pr' }]);
+    expect(r.ledger).toEqual([stamped]);
+  });
+
   test('the entry is let go again once a review raises it: re-reported, stamped, and compared from there', () => {
     const r = at({ headSha: h, lastReviewedSha: s, ledger: [raisedAtDead()], incoming: [finding('N', 'src/a.js:25', 'defect')] });
     expect(r.kept).toEqual([{ id: 'F', reason: 're-reported' }]);
