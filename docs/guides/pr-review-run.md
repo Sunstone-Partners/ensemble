@@ -96,7 +96,8 @@ In full mode a refused brief (for example a changed path with a space in it) is 
 `brief-refused`, and that is a decision, not a gap: the run fails closed, is never lowered to light mode and is never run
 without the brief, so the runner gives no review and no verdict for that PR. The answer states this (`decision`) and the
 two ways forward (`fallback`): change what the renderer refused (rename the path) and start a new run, or review the PR
-by hand with the narrated Steps 1-10, from the start. The choice is the operator's; the runner never makes it.
+by hand. The narrated Steps 1-10 are that manual procedure, but the CLI `brief` they use is the same renderer, so it
+refuses the same input. The choice is the operator's; the runner never makes it.
 
 ## Triage (full mode)
 

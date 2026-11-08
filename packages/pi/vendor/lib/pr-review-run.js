@@ -127,7 +127,7 @@ const TRIAGE_RULES = Object.freeze([
  */
 const FULL_BRIEF_REFUSED = Object.freeze({
   decision: 'Full mode fails closed: a run whose brief the renderer refuses is never lowered to light mode and never run without that brief; nothing was dispatched, so this runner gives no review and no verdict for this pull request.',
-  fallback: 'Either change what the renderer refused (for example rename the path it names) and start a new run, or review this pull request by hand with the narrated Steps 1-10 of the pr-review-cycle skill, from the start.',
+  fallback: 'Either change what the renderer refused (for example rename the path it names) and start a new run, or review this pull request by hand: the narrated Steps 1-10 of the pr-review-cycle skill are the manual procedure, and the CLI `brief` they use is the same renderer, so it refuses the same input.',
 });
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

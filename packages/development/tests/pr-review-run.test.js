@@ -785,6 +785,7 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
       expect(out.fallback).toMatch(/rename the path/);
       expect(out.fallback).toMatch(/narrated Steps 1-10/);
       expect(out.fallback).toMatch(/start a new run/);
+      expect(out.fallback).toMatch(/same renderer, so it refuses the same input/); // the manual procedure is not offered as a way round the refusal
       expect(h.spans.filter((s) => s.type === 'start' && /^agent:/.test(s.name))).toEqual([]);
       expect(await h.collect()).toEqual(out);
       expect(h.stateWrites).toEqual([]);

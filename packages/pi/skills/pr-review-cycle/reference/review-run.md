@@ -90,8 +90,9 @@ unchanged. In full mode a refused brief (for example a changed path with a space
 `brief-refused`, and that is a decision, not a gap: the run fails closed, is never lowered to light mode and is never
 run without the brief, so the runner gives no review and no verdict for that PR. The answer says so (`decision`) and
 names the two ways forward (`fallback`): change what the renderer refused (rename the path) and start a new run, or
-review the PR by hand with the narrated Steps 1-10, from the start. Report it and let the operator choose; do not start
-either on your own. Never pass a light-mode verdict off for a full-mode one: the answer's `mode` says which it was.
+review the PR by hand. The narrated Steps 1-10 are that manual procedure, but the CLI `brief` they use is the same
+renderer, so it refuses the same input. Report it and let the operator choose; do not start either on your own. Never
+pass a light-mode verdict off for a full-mode one: the answer's `mode` says which it was.
 
 ## Re-review scope (`reReview`)
 
