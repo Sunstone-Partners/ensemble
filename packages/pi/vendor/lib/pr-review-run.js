@@ -12,7 +12,7 @@
  *   collectRun(input, deps)   head check -> collect the outstanding wave -> (next wave | verify round | finalise)
  *
  * Statuses (stdout of the CLI; exit 0 when ok):
- *   ok:true   DISPATCH | PENDING | DONE | ADJUDICATE
+ *   ok:true   DISPATCH | PENDING | TRIAGE | DONE | ADJUDICATE       (TRIAGE: full mode only)
  *   ok:false  NEEDS_FULL_MODE | RUN_INVALIDATED | RUN_FAILED
  *
  * What this module never does -- each is a guard with a test:
@@ -33,7 +33,10 @@
  *     that file, it is graded Important.
  *   - An agent that did not arrive is never read as reviewed: its slice is in `notReviewed`, a verifier's candidates are
  *     `unverified`, a missing security lane is not `clean`.
- *   - An unreadable, ambiguous, raised, High or sensitive tier is NEEDS_FULL_MODE with nothing dispatched.
+ *   - An unreadable, ambiguous, raised, High or sensitive tier selects FULL mode, which runs in this same runner (Deep depth,
+ *     the security lane, a model-orchestrator TRIAGE stop, the re-review scope rule: pr-review-full.js). The mode comes from
+ *     `selectMode` alone, is stored in the run and is never recomputed: nothing here can lower a full run to light.
+ *     NEEDS_FULL_MODE is left for a LIGHT run whose brief the renderer refuses (nothing dispatched; the narrated procedure).
  *
  * HONEST LIMITS: the runner computes and records agent deadlines and the concurrency cap, and cannot enforce either;
  * whoever dispatches must stop an agent at `deadlineAtIso` and keep to `maxConcurrentAgents`. The tier comes from the
@@ -75,6 +78,7 @@ const { deriveStatus } = require('./pr-review-status');
 const { statePath } = require('./pr-review-state');
 const { assessProtection } = require('./pr-review-precheck');
 const S = require('./pr-review-run-support');
+const F = require('./pr-review-full');
 
 const SCHEMA = 1;
 const RUN_SUBDIR = path.join('.ensemble', 'pr-review', 'run');
@@ -86,7 +90,7 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const ADJUDICATION_DISPOSITIONS = Object.freeze(['fix', 'deferred', 'not-applicable']);
 
 const PREPARE_KEYS = Object.freeze(['repo', 'pr', 'repoRoot', 'runId', 'traceRunId', 'baseSha', 'lastReviewedSha', 'remediationShas', 'dryRun', 'skipPrecheck', 'testFiles', 'testCommand', 'baselineTimeoutMs', 'nodeModules', 'stateRoot', 'agentAuthored']);
-const COLLECT_KEYS = Object.freeze(['repoRoot', 'runId', 'now', 'adjudications']);
+const COLLECT_KEYS = Object.freeze(['repoRoot', 'runId', 'now', 'adjudications', 'triage']);
 
 const RULES = Object.freeze([
   'Start exactly the agents of `agents`, in fresh contexts with READ-ONLY access, and pass each `prompt` through unedited; compose nothing yourself.',
@@ -95,6 +99,14 @@ const RULES = Object.freeze([
   'When the agents are done (or their deadlines have passed), call `collect`. Never read a result file, tally votes or decide a gate yourself.',
   'On ADJUDICATE decide only the findings listed, with a reason, and call `collect` with `adjudications`.',
   'Coverage is self-reported: the runner counts a slice as reviewed when the agent lists its paths in `pathsReviewed`, and cannot tell a read from a claim. Read-only access is an instruction in the prompt that the runner cannot enforce: the dispatcher must.',
+]);
+
+/** What a TRIAGE answer tells the orchestrating model, on top of RULES. */
+const TRIAGE_RULES = Object.freeze([
+  'This is a FULL-mode run: nothing is dispatched on this answer. Read the candidates, the coverage and the security lane, then call `collect` again with `triage`.',
+  'Triage can only ADD candidates the reviewers missed (for example an interaction between slices): `{"triage":{"additionalCandidates":[{"locationOrLink":"path/file.js:12","failureMode":"what goes wrong","severity":"important|nit","evidence":"what you read"}]}}`. `{"triage":{}}` adds none.',
+  'Every candidate, yours included, is then settled by independent fresh-context verifiers who are briefed with the claim and its location only. You can not remove, merge away, re-grade, close or waive a candidate, mark a slice reviewed, or decide a verdict: the gate and whether the review is complete are computed by the runner alone.',
+  'A `collect` without `triage` repeats this answer; the run cannot reach verification without it.',
 ]);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -186,9 +198,9 @@ function readDiffIndex(deps, file) {
   }
 }
 
-function logCall(run, call, startedAt, deps, adjudication = false) {
+function logCall(run, call, startedAt, deps, adjudication = false, flags = {}) {
   run.calls = Array.isArray(run.calls) ? run.calls : [];
-  run.calls.push({ call, startedAt, endedAt: deps.now(), ...(adjudication ? { adjudication: true } : {}) });
+  run.calls.push({ call, startedAt, endedAt: deps.now(), ...(adjudication ? { adjudication: true } : {}), ...flags });
 }
 
 /** Records a terminal phase with its answer, so every later call repeats it. */
@@ -291,6 +303,7 @@ function manifestOf(run, wave) {
     wave: `${wave.wave} of ${wave.of}`,
     headSha: run.headSha,
     mode: run.mode,
+    ...(run.reReview === undefined ? {} : { reReview: run.reReview }),
     tier: run.tier,
     depth: { mode: run.depth.mode, reviewersPerSlice: run.depth.reviewersPerSlice, verifiersPerCandidate: run.depth.verifiersPerCandidate, bounds: run.depth.bounds },
     maxConcurrentAgents: run.maxConcurrentAgents,
@@ -307,7 +320,7 @@ function manifestOf(run, wave) {
       ...(a.candidateIds !== undefined ? { candidateIds: a.candidateIds } : {}),
     })),
     next: `node review-run-cli.js collect  (payload {"repoRoot": ${JSON.stringify(run.repoRoot)}, "runId": ${JSON.stringify(run.runId)}})`,
-    rules: RULES,
+    rules: run.mode && run.mode.mode === 'full' ? [...RULES, 'Full mode: when the review round is collected the runner answers TRIAGE, not a verify wave; follow its rules.'] : RULES,
   };
 }
 
@@ -453,12 +466,14 @@ async function prepareRun(input, deps) {
   const mode = selectMode(tier);
   run.tier = tier;
   run.mode = mode;
-  if (mode.mode !== 'light') {
-    return terminate(run, 'needs-full-mode', failure('NEEDS_FULL_MODE', { runId, headSha, mode, tier, reason: mode.reasons.join(', '), dispatched: [], precheck }), 'prepare', startedAt, deps);
+  const isFull = mode.mode === 'full';
+  if (isFull) {
+    run.reReview = F.planReReview({ lastReviewedSha: input.lastReviewedSha, rangeMode: prepared.mode, deltaPlan: facts.deltaPlan, delta: facts.delta, paths: facts.paths });
   }
 
   // 7-8. depth and slices
-  const planned = S.planDepth(tier);
+  // Full mode is always Deep, whatever the tier word says (an unreadable tier resolves no depth of its own).
+  const planned = S.planDepth(isFull ? { tier: F.FULL_DEPTH_TIER, effectiveTier: F.FULL_DEPTH_TIER } : tier);
   if (planned.ok !== true) return failure('RUN_FAILED', { reason: 'depth-refused', error: planned.reason, precheck });
   run.depth = planned.depth;
   const sliced = planSlices({ paths: facts.numstat.map((f) => ({ path: f.path, lines: (f.added || 0) + (f.deleted || 0) })), threshold: run.policy && Number.isInteger(run.policy.sliceThreshold) ? run.policy.sliceThreshold : undefined, mode: run.depth.mode, lensesPerSlice: run.depth.reviewersPerSlice });
@@ -466,7 +481,9 @@ async function prepareRun(input, deps) {
   run.slices = sliced.slices;
   run.assignments = sliced.reviewerAssignments;
   run.sliced = sliced.sliced;
-  run.securityLane = SECURITY_REQUIRED_TIERS.includes(tier.tier) || SECURITY_REQUIRED_TIERS.includes(tier.effectiveTier) || mode.securityLane === true;
+  run.securityLane = isFull || SECURITY_REQUIRED_TIERS.includes(tier.tier) || SECURITY_REQUIRED_TIERS.includes(tier.effectiveTier) || mode.securityLane === true;
+  const downgraded = F.modeInvariant(run);
+  if (downgraded !== null) return failure('RUN_FAILED', { reason: 'mode-invariant', error: downgraded, precheck });
   const cap = run.policy && Number.isInteger(run.policy.maxConcurrentAgents) ? run.policy.maxConcurrentAgents : DEFAULT_MAX_CONCURRENT;
   run.maxConcurrentAgents = cap;
 
@@ -475,6 +492,7 @@ async function prepareRun(input, deps) {
   try {
     agents = buildReviewAgents(run, deps, { now: startedAt });
   } catch (error) {
+    if (isFull) return terminate(run, 'failed', failure('RUN_FAILED', { runId, headSha, reason: `brief-refused: ${msg(error)}`, mode, tier, dispatched: [], precheck }), 'prepare', startedAt, deps);
     return terminate(run, 'needs-full-mode', failure('NEEDS_FULL_MODE', { runId, headSha, mode: { ...mode, reasons: [...mode.reasons, 'brief-refused'] }, tier, reason: `brief-refused: ${msg(error)}`, dispatched: [], precheck }), 'prepare', startedAt, deps);
   }
   const groups = S.chunk(agents, cap);
@@ -496,6 +514,7 @@ function validateCollect(input) {
   if (!isValidRunId(input.runId)) return 'runId must be a valid run id';
   if (input.now !== undefined && !Number.isFinite(typeof input.now === 'string' ? Date.parse(input.now) : input.now)) return 'now must be epoch milliseconds or an ISO timestamp';
   if (input.adjudications !== undefined && !Array.isArray(input.adjudications)) return 'adjudications must be an array';
+  if (input.triage !== undefined && !isObject(input.triage)) return 'triage must be a JSON object';
   return null;
 }
 
@@ -518,7 +537,7 @@ function recordWave(run, wave, collected, now, tracer) {
 }
 
 /** Everything after the review round: complete and dedupe the findings, the lane, the coverage, the verification plan. */
-function processReview(run, deps) {
+function processReview(run, deps, { deferVerification = false } = {}) {
   const reviewWaves = run.waves.filter((w) => w.round === 'review');
   const agents = reviewWaves.flatMap((w) => w.agents);
   const raw = reviewWaves.flatMap((w) => w.result.findings);
@@ -586,7 +605,15 @@ function processReview(run, deps) {
     run.security = laneFindings.length > 0 ? { status: 'findings', findings: laneFindings } : { status: 'clean', findings: [] };
   }
 
-  // verification plan: K distinct fresh verifiers per candidate, nobody on their own finding
+  // verification plan: K distinct fresh verifiers per candidate, nobody on their own finding. A full run plans it only
+  // after the orchestrator's triage, which may add candidates (planVerifyRound is then called with the grown list).
+  if (deferVerification) return null;
+  return planVerifyRound(run, deps);
+}
+
+/** Plans and briefs the verify round for `run.candidates`. Null on success, a RUN_FAILED answer otherwise. */
+function planVerifyRound(run, deps) {
+  const deduped = run.candidates;
   const k = run.depth.verifiersPerCandidate;
   const plan = S.planVerifierPool({ candidates: deduped, mode: run.depth.mode, k });
   if (plan.ok !== true) return failure('RUN_FAILED', { reason: 'verify-plan-refused', error: plan.reason });
@@ -761,11 +788,12 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
   const notReviewed = notReviewedOf(run);
   const adjudicate = S.adjudicateList(built.ledger);
   const reducedReview = reducedReviewNotice(run, built, notReviewed, stage);
+  const fullFields = run.mode.mode === 'full' ? { reReview: run.reReview, triage: run.triage } : {};
   const state = {
     ...stage.reviewStatus,
     prId: run.pr,
     runId: run.runId,
-    mode: 'light',
+    mode: run.mode.mode,
     tier: run.tier,
     depth: { mode: run.depth.mode, reasons: run.depth.reasons, reviewersPerSlice: run.depth.reviewersPerSlice, verifiersPerCandidate: run.depth.verifiersPerCandidate },
     verification: { verification: built.tally.verification, reason: built.tally.reason, recoveryAction: built.tally.recoveryAction },
@@ -774,6 +802,7 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     security: run.security,
     notReviewed,
     gate: { mergeable: stage.gate.mergeable, blockers: stage.gate.blockers },
+    ...fullFields,
     ...(extra.adjudications ? { adjudicatedBy: 'orchestrator', adjudications: extra.adjudications } : {}),
   };
   const written = await settle(() => deps.writeState(statePath(run.pr, run.repoRoot), state));
@@ -781,7 +810,7 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     return { invalid: failure('RUN_FAILED', { reason: 'state-write-failed', error: isObject(written) ? written.reason || written.error : 'no answer', runId: run.runId }), moved: false };
   }
 
-  logCall(run, extra.call, startedAt, deps, extra.adjudications !== undefined);
+  logCall(run, extra.call, startedAt, deps, extra.adjudications !== undefined, extra.flags || {});
   const metrics = S.computeMetrics(run, deps.now());
   const answer = {
     ok: true,
@@ -791,6 +820,7 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     baseSha: run.baseSha,
     prState: run.prState,
     mode: run.mode,
+    ...fullFields,
     tier: run.tier,
     depth: { mode: run.depth.mode, verifiersPerCandidate: run.depth.verifiersPerCandidate, reviewersPerSlice: run.depth.reviewersPerSlice },
     gate: stage.gate,
@@ -849,6 +879,66 @@ function applyAdjudications(ledger, listed, adjudications, now) {
   return { ok: true, ledger: next };
 }
 
+/** The TRIAGE answer: the full-mode stop where the orchestrating model may add candidates, and nothing else. Dispatches nothing. */
+function triageManifest(run) {
+  return {
+    ok: true,
+    status: 'TRIAGE',
+    runId: run.runId,
+    headSha: run.headSha,
+    mode: run.mode,
+    tier: run.tier,
+    reReview: run.reReview,
+    depth: { mode: run.depth.mode, reviewersPerSlice: run.depth.reviewersPerSlice, verifiersPerCandidate: run.depth.verifiersPerCandidate },
+    dispatched: [],
+    candidates: run.candidates.map((c) => ({ id: c.id, locationOrLink: c.locationOrLink, severity: c.severity, failureMode: c.failureMode, source: c.source })),
+    coverage: { complete: run.coverage.complete, unreviewedSlices: run.coverage.unreviewedSlices, uncovered: run.coverage.uncovered },
+    security: { status: run.security.status, findings: run.security.findings.length, ...(run.security.reason === undefined ? {} : { reason: run.security.reason }) },
+    maxAdditionalCandidates: F.MAX_ADDITIONAL_CANDIDATES,
+    next: `node review-run-cli.js collect  (payload {"repoRoot": ${JSON.stringify(run.repoRoot)}, "runId": ${JSON.stringify(run.runId)}, "triage": {"additionalCandidates": []}})`,
+    rules: [...RULES, ...TRIAGE_RULES],
+  };
+}
+
+/**
+ * One collect call while the run waits for triage (phase `triage`). Returns an answer to hand back (the TRIAGE answer again,
+ * a refusal, a failure, or the verify wave), or null when triage is complete and nothing needs verifying, so collect goes on
+ * to the ledger. Triage only ever GROWS `run.candidates`: nothing here removes, edits or closes one.
+ */
+function triageStep(run, input, deps, tracer, startedAt, now) {
+  if (input.triage === undefined) {
+    logCall(run, 'collect', startedAt, deps, false, { triage: true });
+    saveRun(deps, run);
+    return triageManifest(run);
+  }
+  const validated = F.validateTriage(input.triage);
+  if (validated.ok !== true) return failure('RUN_FAILED', { reason: 'triage-refused', error: validated.reason, runId: run.runId });
+
+  const used = run.candidates.flatMap((c) => [c.id, ...(Array.isArray(c.mergedFrom) ? c.mergedFrom.map((m) => m.id) : [])]);
+  const top = used.map((id) => /^f(\d+)$/.exec(String(id))).filter((m) => m !== null).map((m) => Number(m[1]));
+  const first = Math.max(0, ...top) + 1;
+  const entries = validated.additional.map((raw, index) => S.completeFinding(raw, F.ORCHESTRATOR, `f${first + index}`));
+  let candidates = run.candidates;
+  if (entries.length > 0) {
+    const combined = dedupeFindings([...run.candidates, ...entries]);
+    if (!Array.isArray(combined)) return failure('RUN_FAILED', { reason: 'triage-refused', error: combined.reason, runId: run.runId });
+    candidates = combined;
+  }
+  const kept = entries.filter((e) => candidates.some((c) => c.id === e.id)).map((e) => e.id);
+  run.candidates = candidates;
+  run.triage = { turns: 1, requested: entries.length, additionalCandidateIds: kept, mergedIntoExisting: entries.length - kept.length, at: new Date(now).toISOString() };
+
+  const failed = planVerifyRound(run, deps);
+  if (failed !== null) return terminate(run, 'failed', { ...failed, runId: run.runId }, 'collect', startedAt, deps);
+  run.phase = 'triaged';
+  if (run.verifyAgents.length > 0) {
+    addWaves(run, 'verify', run.verifyAgents);
+    return emit(run, run.waves.find((w) => w.status === 'planned'), deps, tracer, startedAt, now, { triage: true });
+  }
+  saveRun(deps, run);
+  return null;
+}
+
 async function collectRun(input, deps) {
   const startedAt = deps.now();
   const invalid = validateCollect(input);
@@ -861,6 +951,11 @@ async function collectRun(input, deps) {
   const tracer = safeTracer(deps, run.traceRunId);
 
   if (['invalidated', 'needs-full-mode', 'failed'].includes(run.phase)) return run.result;
+
+  // A full run is never continued below what full mode requires (the stored mode is the only mode there is).
+  const downgraded = F.modeInvariant(run);
+  if (downgraded !== null) return terminate(run, 'failed', failure('RUN_FAILED', { reason: 'mode-invariant', error: downgraded, runId: run.runId }), 'collect', startedAt, deps);
+  if (input.triage !== undefined && run.phase !== 'triage') return failure('RUN_FAILED', { reason: 'triage-not-pending', error: `run ${run.runId} is not waiting for triage (phase ${run.phase})`, runId: run.runId });
 
   // ---- a finished run: the stored answer, or an adjudication of what it listed
   if (run.phase === 'done') {
@@ -899,6 +994,12 @@ async function collectRun(input, deps) {
   }
   if (head.pr.state !== 'OPEN') return notOpen(head.pr.state, run.runId);
 
+  // ---- 1b. a full run waits here for the orchestrator's triage; it cannot reach the ledger without passing through it
+  if (run.phase === 'triage') {
+    const triaged = triageStep(run, input, deps, tracer, startedAt, now);
+    if (triaged !== null) return triaged;
+  }
+
   // ---- 2. the outstanding wave
   const wave = run.waves.find((w) => w.status === 'dispatched');
   if (wave !== undefined) {
@@ -922,8 +1023,16 @@ async function collectRun(input, deps) {
   if (next !== undefined) return emit(run, next, deps, tracer, startedAt, now);
 
   if (run.candidates === undefined) {
-    const failed = processReview(run, deps);
+    const isFull = run.mode.mode === 'full';
+    const failed = processReview(run, deps, { deferVerification: isFull });
     if (failed !== null) return terminate(run, 'failed', { ...failed, runId: run.runId }, 'collect', startedAt, deps);
+    if (isFull) {
+      run.phase = 'triage';
+      run.triage = { turns: 0, requested: 0, additionalCandidateIds: [], mergedIntoExisting: 0 };
+      logCall(run, 'collect', startedAt, deps, false, { triage: true });
+      saveRun(deps, run);
+      return triageManifest(run);
+    }
     if (run.verifyAgents.length > 0) {
       addWaves(run, 'verify', run.verifyAgents);
       return emit(run, run.waves.find((w) => w.status === 'planned'), deps, tracer, startedAt, now);
@@ -936,21 +1045,21 @@ async function collectRun(input, deps) {
   const validation = validateLedger(built.ledger);
   if (validation.ok !== true) return terminate(run, 'failed', failure('RUN_FAILED', { reason: 'ledger-unusable', error: `findings fail validation: ${validation.offendingIds.join(', ')}`, runId: run.runId }), 'collect', startedAt, deps);
 
-  const outcome = await finalise(run, built, deps, now, startedAt, tracer, { call: 'collect' });
+  const outcome = await finalise(run, built, deps, now, startedAt, tracer, { call: 'collect', flags: run.phase === 'triaged' ? { triage: true } : {} });
   if (outcome.invalid) {
     return outcome.moved ? terminate(run, 'invalidated', outcome.invalid, 'collect', startedAt, deps) : outcome.invalid;
   }
   return outcome.answer;
 }
 
-function emit(run, wave, deps, tracer, startedAt, now) {
+function emit(run, wave, deps, tracer, startedAt, now, flags = {}) {
   try {
     dispatchWave(run, wave, now, deps, tracer);
   } catch (error) {
     return terminate(run, 'failed', failure('RUN_FAILED', { reason: 'dispatch-failed', error: msg(error), runId: run.runId }), 'collect', startedAt, deps);
   }
   run.phase = wave.round === 'review' ? 'review-dispatched' : 'verify-dispatched';
-  logCall(run, 'collect', startedAt, deps);
+  logCall(run, 'collect', startedAt, deps, false, flags);
   saveRun(deps, run);
   return manifestOf(run, wave);
 }
