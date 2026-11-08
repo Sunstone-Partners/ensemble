@@ -36,6 +36,17 @@
  *     commit. A cleared mark with no commit id, with a commit nobody verified, or on a bead that
  *     is already closed, closes nothing. ABSENCE IS NOT A FIX: a finding that simply is not in
  *     this ledger leaves its bead open.
+ *   - A CLOSE IS THIS PR'S. A bead is closed only by the PR that last confirmed it: the
+ *     `Last confirmed: <repo> PR #<n> at head <sha>` footer this planner writes into every
+ *     description must name THIS repository (case-insensitive) and PR (any earlier head). A
+ *     footer naming another repository or PR leaves the bead open and is reported as
+ *     `skip` / `recorded-by-other-pr` with `recordedBy: {repo, prNumber}`; a footer that is
+ *     missing or unreadable is `skip` / `recorded-pr-unknown` (fail closed). This holds for a
+ *     finding's own bead and for a collapsed file bead alike.
+ *   - REOPEN LIMIT. A bead counts as closed by this recorder when its close reason has the
+ *     recorder's own shape, `Fixed: ... changed at <sha> and was not reported again at <sha>
+ *     (<repo> PR #<n>).`. A person who pastes a reason of that shape gets the bead reopened on
+ *     the next live finding; real br records `done` for a plain person close, which stays closed.
  *   - A CLOSED BEAD ON A LIVE FINDING. If the closed bead is one this recorder closed as a fix
  *     (its reason is the one `fixedReason` writes) the finding is a regression: the bead is
  *     REOPENED, updated and noted. If anyone else closed it, their decision stands and it is NOT
@@ -57,7 +68,8 @@
  *     a collapsed bead is never created for the one new finding of a file whose others hold their
  *     own beads. Once a file has a collapsed bead new findings join it even if the count later
  *     drops: the choice is sticky, so a count that moves around the threshold cannot flip a file
- *     between one bead and many.
+ *     between one bead and many. A sticky bucket may therefore hold a single member; its title
+ *     is then the singular one without `(collapsed)`.
  *   - WHAT IS RECORDED. Every finding that is presented to the operator: confirmed by the
  *     verifier majority, but also unverified or disputed ones (the list shows them, each with its
  *     bead id, and the description says which). Filtered findings, duplicates and
@@ -367,7 +379,7 @@ function renderBucket(bucket, entries, context) {
   if (entries.length > MEMBERS_LISTED_MAX) lines.push(`- ... and ${entries.length - MEMBERS_LISTED_MAX} more`);
   lines.push('', ...footer(context));
   return {
-    title: clean(`[${bucket.group}] ${flat(bucket.file, 200)}: ${count} ${word} finding${count === 1 ? '' : 's'} (collapsed)`),
+    title: clean(`[${bucket.group}] ${flat(bucket.file, 200)}: ${count} ${word} finding${count === 1 ? '' : 's (collapsed)'}`),
     description: clean(lines.join('\n')),
     priority: PRIORITY[bucket.group],
     type: ISSUE_TYPE[bucket.group],
@@ -516,6 +528,19 @@ function closeActionFor({ key, findingIds, lookup, commits, context, what }) {
   if (!lookup.found) return { ...base, action: 'skip', reason: 'fixed-without-bead' };
   const beadId = lookup.item.id;
   if (lookup.item.status === 'closed') return { ...base, action: 'skip', reason: 'already-closed', closedBeadId: beadId, status: 'closed' };
+  // A bead is closed only by the PR that last confirmed it (the footer this planner wrote).
+  // Another PR's fix of the same claim leaves it open: that PR still raises the claim.
+  const recorded = typeof lookup.item.description === 'string' ? LAST_CONFIRMED_RE.exec(lookup.item.description) : null;
+  if (recorded === null) return { ...base, action: 'skip', reason: 'recorded-pr-unknown', beadId };
+  if (recorded[1].toLowerCase() !== context.repo || Number(recorded[2]) !== context.prNumber) {
+    return {
+      ...base,
+      action: 'skip',
+      reason: 'recorded-by-other-pr',
+      beadId,
+      recordedBy: { repo: recorded[1], prNumber: Number(recorded[2]) },
+    };
+  }
   const commit = commits[commits.length - 1];
   return {
     ...base,
@@ -616,6 +641,7 @@ function planBeads(input, lookups) {
       // `beadId` only ever names an OPEN bead. A close leaves a closed one.
       if (action.closedBeadId !== undefined) byFinding[id].closedBeadId = action.closedBeadId;
       else if (action.beadId !== undefined) byFinding[id][action.action === 'close' ? 'closedBeadId' : 'beadId'] = action.beadId;
+      if (action.recordedBy !== undefined) byFinding[id].recordedBy = action.recordedBy;
     }
   };
   const emitted = new Set();

@@ -13,17 +13,20 @@
  *
  * Usage: node pr-review-clear-cli.js < payload.json
  *
- * payload { repoRoot, baseSha, headSha, lastReviewedSha?, ledger[], incoming?[] }
+ * payload { repoRoot, baseSha, headSha, lastReviewedSha?, ledger[], incoming[] }
  *   repoRoot  REQUIRED git repository (or linked-worktree) root; no default to the cwd
  *   baseSha, headSha  REQUIRED full object ids; the head must descend from the base
  *   lastReviewedSha  the head the PRIOR round reviewed (the `reviewedHeadSha` its state report
  *             recorded: the value `review-range` is given). Every entry carried from that report
  *             was alive then, so what changed since is all that can have fixed it. Without it an
  *             entry's own `headSha` (when it has one) is the baseline: when the finding was first
- *             raised, a longer span that also counts an edit the finding survived
- *   ledger    REQUIRED entries recorded in earlier rounds
- *   incoming  the findings the review of `headSha` raised (what was handed to
- *             `ledger recordRound` as `incoming`); default []
+ *             raised, a longer span that also counts an edit the finding survived. An entry this
+ *             verb already moved (`locationAsOf`) is compared from that head instead
+ *   ledger    REQUIRED entries recorded in earlier rounds, as the previous run of this verb returned them
+ *   incoming  REQUIRED, the findings the review of `headSha` raised (what was handed to
+ *             `ledger recordRound` as `incoming`), `[]` when it raised none. It is never defaulted: without
+ *             it a re-raised finding could not be told from a fixed one, and every finding whose line
+ *             was touched would be cleared
  * result
  *   DERIVED (exit 0)  { ok, status, headSha, ledger[], cleared[{ id, clearedBy, recordedAt }],
  *                       kept[{ id, reason }] }
@@ -31,28 +34,45 @@
  *                     this repository, head not descending from base. Nothing partial.
  *
  * The rule (what `clearFixedFindings` implements, with its facts read from git). For each
- * entry, in input order, the first match wins and the entry is kept as given:
- *   1. `cleared === true` already            -> already-cleared
- *   2. the baseline is this very head (own `headSha`, or `lastReviewedSha`: the same head
- *      reviewed again, nothing changed since)  -> recorded-at-this-head
- *   3. no baseline: no `lastReviewedSha` and no own `headSha` that is a commit
- *      -> no-recorded-head
- *   4. the baseline (`lastReviewedSha`, else the own head) not ON THE PR -> recorded-head-not-on-pr
- *      (an ancestor of head, not of base; a force-pushed old head is no longer an ancestor, and
- *      neither is a `lastReviewedSha` the repository no longer holds)
- *   5. re-reported at this head              -> re-reported: `incoming` holds the same
+ * entry, in input order, the first match wins:
+ *   1. `cleared === true` already            -> already-cleared (as given)
+ *   2. the entry was raised at this very head (own `headSha`), or its baseline is this head (the same
+ *      head reviewed again, nothing changed since)  -> recorded-at-this-head (as given)
+ *   3. its line is already in this head's numbering (`locationAsOf` is this head) -> location-current
+ *      (as given: this is what makes a second run over the verb's own output change nothing)
+ *   4. no baseline: no `locationAsOf`, no `lastReviewedSha` and no own `headSha` that is a commit
+ *      -> no-recorded-head (as given)
+ *   5. the baseline (`locationAsOf`, else `lastReviewedSha`, else the own head) not ON THE PR
+ *      -> recorded-head-not-on-pr (as given; an ancestor of head, not of base: a force-pushed old
+ *      head is no longer an ancestor, and neither is a baseline the repository no longer holds,
+ *      a `locationAsOf` included: the numbering it vouched for is gone)
+ *   6. re-reported at this head              -> re-reported: `incoming` holds the same
  *      `fingerprintFinding` identity (the LINE is not part of it, so a defect re-reported
  *      lower after the file shifted still counts), or, when either side has no fingerprint,
- *      the same exact `locationOrLink` + `failureMode`
- *   6. cites no file                         -> no-location
- *   7. `git diff` of the cited file from the baseline to this head cannot be read
- *      -> diff-failed; the cited line (or, for a file-only citation, any line) is untouched
- *      -> location-unchanged
- *   8. otherwise CLEARED: the original entry plus `cleared`, `clearedBy` (the full head id)
+ *      the same exact `locationOrLink` + `failureMode`. The entry takes the location the new
+ *      review gave it
+ *   7. cites no file                         -> no-location (as given)
+ *   8. `git diff` of the cited file from the baseline to this head cannot be read
+ *      -> diff-failed (as given); the cited line (or, for a file-only citation, any line) is
+ *      untouched -> location-unchanged: the line is moved to this head's numbering
+ *   9. otherwise CLEARED: the original entry plus `cleared`, `clearedBy` (the full head id)
  *      and `clearedReason` as `clearFixedFindings` produced them (`not-cleared` if it
  *      declines).
- * Kept entries are returned exactly as given; the output ledger has the input's length and
- * order; a second run over its own output changes nothing; the input is never mutated.
+ *
+ * Carrying the line forward. An entry cites the line it had when it was first recorded, and a delta
+ * review only re-raises what it sees, so a finding that sat below an edit would be looked up at a
+ * stale line the next time and a fix made there missed. Every entry this verb keeps in rules 6 and 8
+ * therefore comes back with its `file:line` (or `file:a-b`) in THIS head's numbering (the `git diff`
+ * hunks from its baseline to this head move it; a re-raised one takes the new review's location) and
+ * `locationAsOf: <this head>`. The next run compares from that stamp. Run the verb at every head, in
+ * order. An entry it never moved is numbered at the head it was raised at, not at `lastReviewedSha`:
+ * when it is compared from `lastReviewedSha` its line is first moved from its own head to that one
+ * (those edits only move it: the finding was alive there, so they cannot have fixed it), and when that
+ * diff touched the line or replaced the file its place is unknown -> location-unanchored (as given,
+ * not stamped, never cleared). A mode-only change (chmod) touches no line; deleting, creating or
+ * replacing a file with binary content does.
+ * The output ledger has the input's length and order; a second run over its own output changes
+ * nothing; the input is never mutated.
  *
  * Honest limits: a changed location is the AC-008-3 heuristic, not proof the defect is
  * gone; the re-review not raising it again is the other half. A force-push that rewrites
@@ -62,7 +82,7 @@
 const fs = require('fs');
 const { isObjectId } = require('./pr-review-scope');
 const { redact } = require('./pr-review-state');
-const { anchorOf, clearFixedFindings, fingerprintFinding, fingerprintPath } = require('./pr-review-ledger');
+const { clearFixedFindings, fingerprintFinding, fingerprintPath } = require('./pr-review-ledger');
 const repo = require('./pr-review-repo');
 const runtime = require('./review-record-runtime');
 
@@ -73,32 +93,64 @@ function failed(reason) {
   return { ok: false, status: 'FAILED', reason };
 }
 
-/** The cited file and line of an entry: `{ file, line }`, `{ file, line: null }` (a file with no line) or `null`. */
-function citedFile(entry) {
-  const anchor = anchorOf(entry);
-  if (anchor !== null) return { file: anchor.file, line: anchor.line };
-  const file = fingerprintPath(entry);
-  return file === null ? null : { file, line: null };
+const SINGLE_LINE = /^(.+?):(\d+)(?::(\d+))?$/;
+const LINE_RANGE = /^(.+?):(\d+)\s*[-\u2013]\s*(\d+)$/;
+
+/** `file:12`, `file:12:5` or `file:12-20` as `{ file, start, end, column }` (`end`/`column` null when absent), else `null`. */
+function citation(entry) {
+  const text = typeof entry.locationOrLink === 'string' ? entry.locationOrLink.trim() : '';
+  const single = SINGLE_LINE.exec(text);
+  if (single !== null) return { file: single[1], start: Number(single[2]), end: null, column: single[3] === undefined ? null : single[3] };
+  const range = LINE_RANGE.exec(text);
+  if (range !== null && Number(range[3]) >= Number(range[2])) {
+    return { file: range[1], start: Number(range[2]), end: Number(range[3]), column: null };
+  }
+  return null;
 }
 
-function reReported(entry, incoming) {
+/** The cited file and lines of an entry: `{ file, line, endLine }`, `{ file, line: null }` (a file with no line) or `null`. */
+function citedFile(entry) {
+  const parsed = citation(entry);
+  if (parsed !== null) return { file: parsed.file, line: parsed.start, endLine: parsed.end === null ? parsed.start : parsed.end };
+  const file = fingerprintPath(entry);
+  return file === null ? null : { file, line: null, endLine: null };
+}
+
+/** The finding of `incoming` that is the same defect as `entry`, or `null`. */
+function reRaisedBy(entry, incoming) {
   const own = fingerprintFinding(entry);
-  return incoming.some((other) => {
+  const match = incoming.find((other) => {
     const theirs = fingerprintFinding(other);
     if (own !== null && theirs !== null) return own === theirs;
     return other.locationOrLink === entry.locationOrLink && other.failureMode === entry.failureMode;
   });
+  return match === undefined ? null : match;
 }
 
+/** The entry's citation with its line (or `a-b` range) moved through `hunks`, or `null` when it names no line to move. */
+function movedLocation(entry, hunks) {
+  const parsed = citation(entry);
+  if (parsed === null) return null;
+  const first = repo.advanceLine(hunks, parsed.start);
+  if (first.touched) return null;
+  if (parsed.end === null) return `${parsed.file}:${first.line}${parsed.column === null ? '' : `:${parsed.column}`}`;
+  const last = repo.advanceLine(hunks, parsed.end);
+  return `${parsed.file}:${first.line}-${last.touched ? first.line + (parsed.end - parsed.start) : last.line}`;
+}
+
+const INCOMING_REQUIRED =
+  "'incoming' is required: the findings the review of this head raised, an array of objects ([] when it raised none). It is never defaulted: without it a re-raised finding cannot be told from a fixed one and every finding whose line was touched would be cleared";
+
 /**
- * @param {{git?:Function, cwd:string, baseSha:string, headSha:string, lastReviewedSha?:string, ledger:Object[], incoming?:Object[], now?:Function}} input
+ * @param {{git?:Function, cwd:string, baseSha:string, headSha:string, lastReviewedSha?:string, ledger:Object[], incoming:Object[], now?:Function}} input
  * @returns {Object} the DERIVED or FAILED result
  */
 function deriveCleared(input) {
   const { cwd, baseSha, headSha, ledger } = input;
   const git = input.git || runtime.defaultGit();
-  const incoming = input.incoming === undefined ? [] : input.incoming;
   const now = input.now || Date.now;
+  if (!Array.isArray(input.incoming) || !input.incoming.every(isObject)) return failed(INCOMING_REQUIRED);
+  const incoming = input.incoming;
 
   const head = repo.resolveCommit(git, cwd, headSha);
   if (head === null || head !== headSha.toLowerCase()) return failed('headSha is not a commit of this repository');
@@ -108,7 +160,7 @@ function deriveCleared(input) {
   if (descends === null) return failed('could not tell whether headSha descends from baseSha');
   if (descends === false) return failed('headSha does not descend from baseSha');
 
-  // The prior round's reviewed head, when the caller has it: the one baseline every carried entry shares. An
+  // The prior round's reviewed head, when the caller has it: the baseline entries without a stamp share. An
   // object the repository no longer holds (a force-push replaced it) resolves to null: a baseline that is not on the PR.
   const shared = input.lastReviewedSha === undefined ? undefined : repo.resolveCommit(git, cwd, input.lastReviewedSha);
 
@@ -119,30 +171,64 @@ function deriveCleared(input) {
     kept.push({ id: entry.id, reason });
     return entry;
   };
+  /** Kept, with its location in this head's numbering and the stamp that says so. */
+  const keepMoved = (entry, reason, locationOrLink) => {
+    kept.push({ id: entry.id, reason });
+    return { ...entry, locationOrLink, locationAsOf: head };
+  };
 
   const out = ledger.map((entry) => {
     if (entry.cleared === true) return keep(entry, 'already-cleared');
     const own = typeof entry.headSha === 'string' ? repo.resolveCommit(git, cwd, entry.headSha) : null;
     if (own === head) return keep(entry, 'recorded-at-this-head');
-    const recorded = shared === undefined ? own : shared;
+    const stamped = typeof entry.locationAsOf === 'string' ? repo.resolveCommit(git, cwd, entry.locationAsOf) : null;
+    if (stamped === head) return keep(entry, 'location-current');
+    // A stamp this repository no longer holds (a force-push replaced that head): the numbering it vouched for is gone.
+    if (typeof entry.locationAsOf === 'string' && stamped === null) return keep(entry, 'recorded-head-not-on-pr');
+    const recorded = stamped !== null ? stamped : shared === undefined ? own : shared;
     if (recorded === null) return keep(entry, shared === undefined ? 'no-recorded-head' : 'recorded-head-not-on-pr');
     if (recorded === head) return keep(entry, 'recorded-at-this-head');
     if (!repo.commitOnPr(git, cwd, { commit: recorded, headSha: head, baseSha: base }).ok) {
       return keep(entry, 'recorded-head-not-on-pr');
     }
-    if (reReported(entry, incoming)) return keep(entry, 're-reported');
-    const cited = citedFile(entry);
+    const raised = reRaisedBy(entry, incoming);
+    if (raised !== null) {
+      const hasLocation = typeof raised.locationOrLink === 'string' && raised.locationOrLink.trim() !== '';
+      return keepMoved(entry, 're-reported', hasLocation ? raised.locationOrLink : entry.locationOrLink);
+    }
+    // An entry this verb never moved is numbered at the head it was raised at. When rounds went by without a run
+    // (the verb arrived mid-review, or a round was skipped) bring its line to the baseline first: the edits in
+    // between only MOVE it (the finding was alive at the baseline, so they cannot have fixed it); an edit that
+    // touched the line itself leaves its place unknown, so it is kept, never cleared on a guess.
+    let numbered = entry;
+    if (typeof entry.locationAsOf !== 'string' && shared !== undefined && own !== null && own !== recorded && repo.isAncestor(git, cwd, own, recorded) === true) {
+      const early = citation(entry);
+      if (early !== null) {
+        const before = repo.changedOldLines(git, cwd, { from: own, to: recorded, file: early.file });
+        if (!before.ok) return keep(entry, 'diff-failed');
+        const where = before.hunks === null ? null : movedLocation(entry, before.hunks);
+        if (where === null) return keep(entry, 'location-unanchored');
+        numbered = { ...entry, locationOrLink: where };
+      }
+    }
+
+    const cited = citedFile(numbered);
     if (cited === null) return keep(entry, 'no-location');
 
     const changed = repo.changedOldLines(git, cwd, { from: recorded, to: head, file: cited.file });
     if (!changed.ok) return keep(entry, 'diff-failed');
     const { lines } = changed;
     const touched =
-      cited.line === null ? lines === null || lines.length > 0 : lines === null || lines.includes(cited.line);
-    if (!touched) return keep(entry, 'location-unchanged');
+      cited.line === null
+        ? lines === null || lines.length > 0
+        : lines === null || lines.some((n) => n >= cited.line && n <= cited.endLine);
+    if (!touched) {
+      const moved = cited.line === null ? null : movedLocation(numbered, changed.hunks);
+      return moved === null ? keep(entry, 'location-unchanged') : keepMoved(entry, 'location-unchanged', moved);
+    }
 
     const decision = clearFixedFindings({
-      ledger: [entry],
+      ledger: [numbered],
       changedLocations: [{ path: cited.file, lines }],
       headSha: head,
       reReported: []
@@ -185,9 +271,7 @@ function main(io = {}) {
     return finish(failed("'lastReviewedSha' must be a full object id when given"));
   }
   if (!Array.isArray(ledger) || !ledger.every(isObject)) return finish(failed("'ledger' must be an array of objects"));
-  if (incoming !== undefined && (!Array.isArray(incoming) || !incoming.every(isObject))) {
-    return finish(failed("'incoming' must be an array of objects when given"));
-  }
+  if (!Array.isArray(incoming) || !incoming.every(isObject)) return finish(failed(INCOMING_REQUIRED));
 
   const { resolveProjectRootFlag } = require('./toolchain-cli');
   const resolved = resolveProjectRootFlag(repoRoot);
@@ -201,7 +285,7 @@ function main(io = {}) {
       headSha,
       lastReviewedSha,
       ledger,
-      incoming: incoming === undefined ? [] : incoming,
+      incoming,
       now
     })
   );

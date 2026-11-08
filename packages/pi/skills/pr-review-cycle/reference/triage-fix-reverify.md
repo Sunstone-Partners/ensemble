@@ -104,20 +104,36 @@ root or a linked worktree of it; there is no default). `lastReviewedSha` is the 
 `reviewedHeadSha`, the same value `review-range` was given above: every finding carried over from
 that report was alive then, so what changed since is all that can have fixed it (without it, a
 finding's own `headSha` is the baseline, which also counts an edit the finding survived).
-`ledger` is the findings carried over; `incoming` is what this head's review raised (what
-`recordRound` was given as `incoming`). The CLI reads git and writes nothing. It marks a carried
-finding `cleared`, with `clearedBy` the new head, when the diff `lastReviewedSha..headSha` changed
-the file and line it cites and no finding this head's review raised is the same defect (same
-file, failure mode and class; the line is not part of that, so a defect re-reported lower after
-the file shifted counts). Every other entry comes back as given, with its reason in `kept[]`
-(`re-reported`, `location-unchanged`, `recorded-head-not-on-pr`, ...). Carry the `ledger` it
-returns forward in place of the one you sent: the gate stops blocking on a `cleared` finding, and
-the bead recorder (Step 10) closes its bead. This is the AC-008-3 heuristic and nothing more: a
-changed location is not proof the defect is gone, the re-review not raising it again is the other
-half, and a `lastReviewedSha` that is not on the PR (a force-push replaced it) clears nothing, so
-that finding stays until it is fixed again or a person decides. It reads the review ledger only:
-the security lane's findings are not passed (the lane reports and never closes), and it writes
-no `resolution`.
+`ledger` is the findings carried over. **`incoming` is required**: what this head's review raised
+(what `recordRound` was given as `incoming`; `[]` when it raised nothing). A call without it fails
+and clears nothing, because an omitted list would read every re-raised finding as fixed.
+
+**Run the verb at every head, in order, and carry the `ledger` it returns forward in place of the
+one you sent.** A finding cites the line it had when it was recorded, and the verb moves that line
+through each round's diff: every finding it keeps comes back with its `file:line` in this head's
+numbering and `locationAsOf` set to this head (a re-raised one takes the location the new review
+gave it), and the next run compares from that stamp. So an edit above the line, an unrelated edit
+at the number the line used to have, and a fix made after an earlier round shifted the code are all
+read against the right line. A second run at the same head changes nothing (`location-current`).
+A finding the verb has not moved yet is numbered at the head it was raised at: it is moved to
+`lastReviewedSha` first, and when an edit in between touched its line, its place is unknown
+(`location-unanchored`: kept, never cleared).
+
+The CLI reads git and writes nothing. It marks a carried finding `cleared`, with `clearedBy` the new
+head, when the diff from the baseline (the stamp, else `lastReviewedSha`) to `headSha` changed the
+file and line it cites and no finding this head's review raised is the same defect (same file,
+failure mode and class; the line is not part of that, so a defect re-reported lower after the file
+shifted counts). A mode-only change (a `chmod`) touches no line; deleting, creating or replacing a
+file does. Every other entry comes back with its reason in `kept[]` (`re-reported`,
+`location-unchanged`, `location-unanchored`, `recorded-head-not-on-pr`, ...). The gate stops
+blocking on a `cleared` finding, and the bead recorder (Step 10) closes its bead. This is the
+AC-008-3 heuristic and nothing more: a changed location is not proof the defect is gone, the
+re-review not raising it again is the other half, and a `lastReviewedSha` that is not on the PR (a
+force-push replaced it) clears nothing, so that finding stays until it is fixed again or a person
+decides. A `cleared` mark written any other way, by hand, is outside this procedure, and the
+recorder still closes the bead of one that names a commit on the PR: it checks the commit, not how
+the mark was made. The verb reads the review ledger only: the security lane's findings are not
+passed (the lane reports and never closes), and it writes no `resolution`.
 
 The batch fix changes the tree, so re-resolve after it lands: the re-review
 diff (same base), `headSha`, `reviewedHeadSha` (Step 8) and `reviewedTreeSha`
