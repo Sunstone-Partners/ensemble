@@ -168,18 +168,19 @@ const HEADROOM_MAX = 10;
  * A 77-line slice took as long as a 727-line one, and the same four paths took 12.8 and more than 15 minutes in one run and 7.2
  * and 7.3 in a re-review: a per-agent cost with a wide spread, not a rate. What the record does NOT show: the lost reviewer has no
  * arrival and no last message, so a slow agent cannot be told from a hung one. The floor helps the slow case only; a hung agent
- * now holds the run 22 minutes instead of 15 and its slice is still reported not reviewed. What it does show is no queueing: the
- * orchestrator's dispatch logs (run2 and run3 `dispatch.log.jsonl`) put the spawn call 10 to 11 ms after the manifest, in one wave
- * of three agents under a cap of 8, and the deadline clock starts at the dispatch (the agent's own start is not recorded). The
+ * now holds the run 22 minutes instead of 15 and its slice is still reported not reviewed. What it does show is no delay at the
+ * spawn call: the orchestrator's dispatch logs (run2 and run3 `dispatch.log.jsonl`) put it 10 to 11 ms after the manifest for the
+ * review rounds (about 0.4 s for the verify rounds), in one wave of three agents under a cap of 8, and the deadline clock starts at
+ * the dispatch; the agent's own start is not recorded, so queueing after the spawn call is not excluded. The
  * model's estimate for the 4-path slice is 3.7 minutes, doubled 8, so the 15-minute base decided, with 0.4 minutes of margin over the
  * slowest finished reviewer (14.58) and none over the one that did not arrive.
  *
  * So a sized agent's deadline has a floor: the slowest reviewer that FINISHED a small slice at effort `hi`, times FLOOR_FACTOR.
  * FLOOR_FACTOR (1.5) is a JUDGEMENT like DEFAULT_HEADROOM: with 10 reviewers measured it is half again the slowest finished and
- * half again the base, and the one that did not arrive needed over 15. It is not a guarantee: a reviewer slower than 22 minutes is
+ * about half again the base (22.5 against 22), and the one that did not arrive needed over 15. It is not a guarantee: a reviewer slower than 22 minutes is
  * still `expired`, its slice still reported not reviewed, and nothing here relaxes that. The floor applies whatever a policy's
  * `deadlineMinutes` says (a policy raises a deadline above it, it cannot lower it below what was measured, and a value of the policy
- * below it is named in the run's sizing warnings); the slice limits and the headroom are unchanged, because slicing finer does not
+ * below it, 15 included, is named in the run's sizing warnings; an unset value is raised without a warning); the slice limits and the headroom are unchanged, because slicing finer does not
  * shorten a fixed cost. It was measured at effort `hi`; the runner records no effort and applies it at whatever effort the
  * dispatcher uses.
  */

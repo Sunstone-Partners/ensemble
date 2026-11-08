@@ -285,6 +285,9 @@ function loadPolicy(input) {
   // --- Key by key: accept, or reject by name and use the default ---------
   const policy = clone(DEFAULT_POLICY);
   const rejected = [];
+  // What the policy block SET itself and the loader accepted, apart from the defaults the policy always holds (a value equal to the
+  // default cannot be told from an unset one in `policy`): `deadlineMinutes` per role (kata d9sy).
+  const explicit = { deadlineMinutes: {} };
   const reject = (key, reason, value) => {
     rejected.push({ key, reason, value });
     if (!warnings.includes(reason)) warnings.push(reason);
@@ -332,6 +335,7 @@ function loadPolicy(input) {
           reject(`deadlineMinutes.${role}`, 'out-of-range', minutes);
         } else {
           policy.deadlineMinutes[role] = minutes;
+          explicit.deadlineMinutes[role] = minutes;
         }
       }
     }
@@ -344,7 +348,7 @@ function loadPolicy(input) {
     else reject(key, 'invalid-type', value);
   }
 
-  return { ok: true, source: 'policy', policy, rejected, warnings };
+  return { ok: true, source: 'policy', policy, rejected, warnings, explicit };
 }
 
 module.exports = {

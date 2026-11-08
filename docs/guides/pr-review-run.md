@@ -296,7 +296,7 @@ value cannot be told from the default. The brief's timebox is the deadline the a
 
 | agent | work | deadline |
 |---|---|---|
-| a reviewer on a slice at the limits (8 paths, 612 lines) | 7.49 min | 22 (the fixed-cost floor; modelled 14.98, base 15) |
+| a reviewer on a slice at the limits (8 paths, 612 lines) | 7.49 min | 22 (the fixed-cost floor; modelled 15, which is 14.98 rounded up, base 15) |
 | a reviewer on 4 paths, 280 lines (kata `d9sy`) | 12.8 min, over 15 (stopped), and 7.2 and 7.3 in one re-review | 22 (modelled 8, base 15) |
 | the security lane of the real run (19 paths, 1450 lines) | 17.75 min | 36 (2.03 x what it took; it was given 15) |
 | a verifier | not sized | 5 |
@@ -305,14 +305,14 @@ value cannot be told from the default. The brief's timebox is the deadline the a
 live runs at effort `hi` (kata `q3a9`) show a reviewer's time on a small slice does not follow its size: 77 lines took 14.6 and 9.1
 minutes, 327 lines 10.6 and 9.4, 323 lines 8.2 and 10.6, the 727-line whole-range reader 13.9, and the same four paths (280 lines)
 took 12.8 minutes for one reviewer and more than 15 for another (stopped at its deadline; the slice was reported not reviewed),
-while two other reviewers of a re-review of those four paths took 7.2 and 7.3. What this establishes: no queueing (the
-orchestrator's dispatch logs put the spawn call 10 to 11 ms after the manifest, one wave of three agents under a cap of 8, and the
-deadline starts at dispatch) and no size effect on a small slice. What it does NOT establish: why the lost reviewer was lost. It
-has no arrival and no last message, so a slow agent cannot be told from a hung one, and the agent's own start time is not
-recorded. The floor helps the slow case only; a hung agent now holds the run 22 minutes instead of 15 and its slice is still
+while two other reviewers of a re-review of those four paths took 7.2 and 7.3. What this establishes: no delay at the spawn
+call (the orchestrator's dispatch logs put it 10 to 11 ms after the manifest for the review rounds and about 0.4 s for the verify
+rounds, one wave of three agents under a cap of 8, and the deadline starts at dispatch) and no size effect on a small slice. What
+it does NOT establish: why the lost reviewer was lost. It has no arrival and no last message, so a slow agent cannot be told from
+a hung one, and the agent's own start time is not recorded, so queueing after the spawn call is not excluded. The floor helps the slow case only; a hung agent now holds the run 22 minutes instead of 15 and its slice is still
 reported not reviewed. So a reviewer, the whole-range reader and the lane have a floor, `MIN_AGENT_MINUTES`: the slowest FINISHED
 reviewer measured (14.58 minutes) times `FLOOR_FACTOR` (1.5, a judgement like the headroom), 22 minutes, whatever the policy's
-`deadlineMinutes` says (a policy raises a deadline above it, never below it; a value below it is named in the sizing warnings).
+`deadlineMinutes` says (a policy raises a deadline above it, never below it; a value the policy SETS below it, 15 included, is named in the sizing warnings and recorded in `sizing.model.policyDeadlineMinutes`; an unset value is raised without a warning and the agent is marked `deadlineFloored`).
 It was measured at effort `hi` and the runner records no effort, so it applies at whatever effort the dispatcher uses. The slice
 limits and the headroom are unchanged, because a finer slice does not shorten a fixed cost. A reviewer slower than 22 minutes is
 still `expired` and its slice reported not reviewed. Re-dispatching a lost reviewer is not built.
@@ -536,6 +536,14 @@ and the run is not collected until every agent of every wave has arrived or expi
 slot is refilled, and it stays `expired` in the record. A wave dispatched after a refill carries no total (`2 (rolling)`): how
 many there will be depends on when verifiers arrive. The review round is not rolling: its agents differ in kind and the lane is
 the longest.
+
+`pr-review-cli timing` reads the refill waves as ONE `verifier` step (`rolling: true`, `waves: n`): the time at least one verifier
+was running (the union of their intervals, so a gap between two dispatches is not verification time). It does so only when the trace
+bears the marks out: no wave number stamped on spans dispatched apart, wave numbers that agree with the times, every wave that
+overlaps an earlier one marked on every span with `cap` (equal to the review span's `max_concurrent_agents`, which `collect` records
+when it closes the review) and `running` (`running` plus the wave's agents within the cap, no more earlier spans running at its start
+than `running`), and never more verifier spans at once than the cap. Otherwise a warning names the reason and the waves are read one
+after another, so an overlap is refused as before.
 
 The numbers are reproducible: the test `the replay behind the documented verify-round numbers` in `pr-review-run.test.js` drives
 the REAL runner (`collect` on a simulated clock, cap 8) over the 17 measured verifier times and prints the figures

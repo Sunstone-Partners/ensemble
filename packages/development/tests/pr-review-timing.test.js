@@ -1394,7 +1394,7 @@ describe('verifier waves dispatched while the wave before is still running (kata
   const w = (wave, extra = {}) => ({ round: 1, wave, ...extra });
   // verifiers of wave 1 at 31..51 s and 31..41 s; a refill dispatched at 41 s (the slot VerB freed) runs 41..60 s, the next at 51 s runs 51..58 s
   const rolling = (refill) => [
-    root(0, 300),
+    root(0, 300, { turns: 10, tool_calls: 12, max_concurrent_agents: 4 }),
     agent('reviewer', 0, 30, { agent: 'RevA', ...w(1) }),
     agent('verifier', 31, 51, { agent: 'VerA', ...w(1) }),
     agent('verifier', 31, 41, { agent: 'VerB', ...w(1) }),
@@ -1441,7 +1441,7 @@ describe('verifier waves dispatched while the wave before is still running (kata
   test('an unusable verifier span among them makes the step a lower bound; no usable span is a missing step', () => {
     const some = computeReviewTiming([...rolling(true).slice(0, 5), agent('verifier', 55, null, { agent: 'VerE', ...w(3, { refill: true, cap: 4, running: 1 }) }), verdict(60, 61)]);
     expect(some.criticalPath.rounds[0].steps[1]).toMatchObject({ rolling: true, lowerBound: true, unusable: 1 });
-    const none = computeReviewTiming([root(0, 300), agent('reviewer', 0, 30, w(1)), agent('verifier', 31, null, w(2, { refill: true, cap: 4, running: 0 })), verdict(60, 61)]);
+    const none = computeReviewTiming([root(0, 300, { max_concurrent_agents: 4 }), agent('reviewer', 0, 30, w(1)), agent('verifier', 31, null, w(2, { refill: true, cap: 4, running: 0 })), verdict(60, 61)]);
     expect(none.criticalPath.missing).toBe(true);
     expect(none.criticalPath.reason).toContain('verifier: every verifier span is unusable');
   });
@@ -1477,7 +1477,7 @@ describe('the refill marks explain only the overlap the runner makes (kata 630v,
   }
 
   const base = (verifiers) => [
-    { name: NAMES.root, start: 0, end: 300, attrs: {} },
+    { name: NAMES.root, start: 0, end: 300, attrs: { max_concurrent_agents: 4 } },
     { name: NAMES.reviewer, start: 0, end: 30, attrs: { agent: 'RevA', round: 1, wave: 1 } },
     ...verifiers.map((v) => ({ name: NAMES.verifier, start: v.start, end: v.end, status: v.status, attrs: { agent: v.agent, round: 1, wave: v.wave, ...v.attrs } })),
     { name: NAMES.verdict, start: 70, end: 71, attrs: { round: 1 } },
@@ -1529,6 +1529,54 @@ describe('the refill marks explain only the overlap the runner makes (kata 630v,
     const t = recordAndRead(base([...five, { agent: 'VerC', wave: 2, start: 45, end: 60, attrs: M(0) }]));
     expect(verifierStep(t).rolling).toBeUndefined(); // the contradiction withdraws the rolling reading: the two waves are read one after another
     expect(t.warnings.join('\n')).toContain('5 verifier spans ran at once, more than the cap of 4');
+  });
+
+  // second independent review (round 2): the rolling reading may not be a way round the per-wave guards
+  const custom = (verifiers, { rootEnd = 300, verdict = [70, 71], rootCap = 4 } = {}) => [
+    { name: NAMES.root, start: 0, end: rootEnd, attrs: rootCap === null ? {} : { max_concurrent_agents: rootCap } },
+    { name: NAMES.reviewer, start: 0, end: 30, attrs: { agent: 'RevA', round: 1, wave: 1 } },
+    ...verifiers.map((v) => ({ name: NAMES.verifier, start: v.start, end: v.end, status: v.status, attrs: { agent: v.agent, round: 1, wave: v.wave, ...v.attrs } })),
+    { name: NAMES.verdict, start: verdict[0], end: verdict[1], attrs: { round: 1 } },
+  ];
+
+  test('F1: a wave number stamped on spans dispatched minutes apart is still MISSING when a refill mark is present (the mis-stamp guard comes first)', () => {
+    const spans = custom([{ agent: 'VerA', wave: 1, start: 31, end: 40 }, { agent: 'VerB', wave: 1, start: 631, end: 640 }, { agent: 'VerC', wave: 2, start: 35, end: 45, attrs: M(1) }], { rootEnd: 660, verdict: [650, 651] });
+    const t = recordAndRead(spans);
+    expect(t.criticalPath).toMatchObject({ missing: true });
+    expect(t.criticalPath.reason).toContain('its spans start 10m00s apart');
+    expect(verifierStep(t).rolling).toBeUndefined();
+    expect(t.warnings.join('\n')).toContain('verifier wave 1: its spans start 10m00s apart');
+    // the same spans without the mark were already refused: the mark changes nothing
+    const unmarked = recordAndRead(custom([{ agent: 'VerA', wave: 1, start: 31, end: 40 }, { agent: 'VerB', wave: 1, start: 631, end: 640 }, { agent: 'VerC', wave: 2, start: 35, end: 45 }], { rootEnd: 660, verdict: [650, 651] }));
+    expect(unmarked.criticalPath.reason).toContain('its spans start 10m00s apart');
+  });
+
+  test('F3: the overlap is explained by the TIMES, not the wave numbers: an unmarked wave 1 that starts after a marked wave 2 is refused', () => {
+    const t = recordAndRead(custom([{ agent: 'VerA', wave: 1, start: 41, end: 60 }, { agent: 'VerB', wave: 2, start: 31, end: 50, attrs: M(0) }]));
+    expect(t.criticalPath).toMatchObject({ missing: true });
+    expect(t.warnings.join('\n')).toContain('verifier wave 2 starts before verifier wave 1: the wave numbers disagree with the times');
+  });
+
+  test('F4: the cap a refill declares is checked against the one the review span recorded, for EVERY marked wave', () => {
+    const five = ['V1', 'V2', 'V3', 'V4', 'V5'].map((agent) => ({ agent, wave: 1, start: 31, end: 40 }));
+    const cheat = recordAndRead(custom([...five, { agent: 'VerC', wave: 2, start: 35, end: 60, attrs: { refill: true, cap: 99, running: 5 } }]));
+    expect(cheat.warnings.join('\n')).toContain('declares a cap of 99 but the review span records 4');
+    expect(verifierStep(cheat).rolling).toBeUndefined();
+    // one marked wave of eight under a declared cap of 1, with no overlap at all: refused as well
+    const eight = Array.from({ length: 8 }, (_, i) => ({ agent: `W${i}`, wave: 2, start: 45, end: 54, attrs: { refill: true, cap: 1, running: 0 } }));
+    const wide = recordAndRead(custom([{ agent: 'VerA', wave: 1, start: 31, end: 40 }, ...eight]));
+    expect(wide.warnings.join('\n')).toContain('more than its cap of 1');
+    // a review span that records no cap leaves nothing to check the marks against: not rolling
+    const blind = recordAndRead(custom([...wave1, ...refills()], { rootCap: null }));
+    expect(blind.warnings.join('\n')).toContain('the review span records no max_concurrent_agents');
+    expect(blind.criticalPath).toMatchObject({ missing: true });
+  });
+
+  test('F6: the rolling step is the UNION of the verifier intervals: a gap between two dispatches is not verification time', () => {
+    // barrier waves [31,40] and [50,55], then an honest refill [52,60]: verifiers ran 9 s, then 10 s; the 10 s between them is nobody's
+    const t = recordAndRead(custom([{ agent: 'VerA', wave: 1, start: 31, end: 40 }, { agent: 'VerB', wave: 2, start: 50, end: 55 }, { agent: 'VerC', wave: 3, start: 52, end: 60, attrs: M(1) }]));
+    expect(verifierStep(t)).toMatchObject({ rolling: true, ms: 19000, waves: 3 });
+    expect(t.criticalPath.missing).toBe(false);
   });
 
   test('a verifier that ended `expired` is not counted as running: its span only ends when its wave is collected', () => {

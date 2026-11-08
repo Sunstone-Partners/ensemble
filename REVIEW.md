@@ -136,7 +136,7 @@ logins).
 | `sliceMaxFiles` | Most paths in one reviewer's slice (default 8, derived from the one real full-mode run, kata `sfpb`). |
 | `sliceTargetLines` | Changed lines to aim for in one reviewer's slice (default 612). |
 | `deadlineHeadroom` | Times the modelled time to read its work an agent's deadline allows (1-10, default 2: a judgement, not a measurement). |
-| `deadlineMinutes` | Per-agent deadline base in minutes (reviewer 15, verifier 5, security 15). The review runner raises a reviewer's and the security lane's above it by what they have to read, at most 60 minutes, and never gives them less than a fixed-cost floor of 22 minutes (measured: a reviewer's time on a small slice does not follow its size): a value below 22 is overridden and the run's sizing says so. |
+| `deadlineMinutes` | Per-agent deadline base in minutes (reviewer 15, verifier 5, security 15). The review runner raises a reviewer's and the security lane's above it by what they have to read, at most 60 minutes, and never gives them less than a fixed-cost floor of 22 minutes (measured: a reviewer's time on a small slice does not follow its size): a value the policy sets below 22 (15 included) is overridden and the run's sizing warnings say so; an unset value is raised without a warning (the manifest marks the agent `deadlineFloored`). |
 
 ## Ownership
 

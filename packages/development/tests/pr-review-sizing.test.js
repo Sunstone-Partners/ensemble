@@ -19,7 +19,7 @@ const path = require('path');
 
 const sizing = require('../lib/pr-review-sizing');
 const { DEFAULT_POLICY, loadPolicy, DEADLINE_MINUTES_MAX, DEFAULT_DEADLINE_MINUTES, KNOWN_KEYS } = require('../lib/pr-review-policy');
-const { reviewDeadlines } = require('../lib/pr-review-results');
+const { reviewDeadlines, floorOverrideMessage } = require('../lib/pr-review-results');
 const { planSlices } = require('../lib/pr-review-depth');
 
 const {
@@ -540,11 +540,15 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(unreleased).toContain('reader-not-planned');
   });
 
-  test('the CHANGELOG entry is in Unreleased and says the model is one run and nothing is relaxed', () => {
-    // the newest entry goes at the top of the list (kata k48x), so this entry is found by its own opening words, not by position
+  test('the CHANGELOG entry is in Unreleased, among the first entries (the newer ones named), and says the model is one run and nothing is relaxed', () => {
+    // the newest entry goes at the top of the list (kata k48x), so this entry is found by its own opening words, and its place is pinned relative to the newer ones
     const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
     const at = unreleased.indexOf('- **packages/development:** `review-run` sizes its slices and deadlines to what there is to read (kata `sfpb`');
     expect(at).toBeGreaterThan(-1);
+    const newer = unreleased.slice(0, at).split('- **packages/development:**').slice(1); // the text collapses whitespace: entries are told apart by their prefix
+    expect(newer.length).toBeLessThanOrEqual(8); // an entry filed far from the top is a misplaced one
+    // the entries known to sit above it: this change (katas d9sy and 630v) is the first
+    expect(newer[0]).toMatch(/^ `review-run` gives a small slice the time the first live runs showed it needs.*\(kata `d9sy` and `630v`/);
     const first = unreleased.slice(at);
     const entry = first.slice(0, first.indexOf('- **packages/development:**', 10));
     expect(entry).toMatch(/Nothing is relaxed/);
@@ -605,6 +609,30 @@ describe('the fixed cost of an agent: a small slice is not given a deadline its 
     }
     // work that needs more than the floor is the model's doing, not the floor's: nothing to name
     expect(ask('security', REAL, { policy: load({ deadlineMinutes: { security: 5 } }).policy }).warnings).toEqual([]);
+  });
+
+  test('F2 (second independent review): a policy value the policy SET is named whatever it equals, 15 included; an unset one is raised without a warning, and the sizing records what the policy set', () => {
+    const set15 = load({ deadlineMinutes: { reviewer: 15 } });
+    expect(set15.explicit).toEqual({ deadlineMinutes: { reviewer: 15 } });
+    const named = ask('reviewer', SMALL_4_PATHS, { policy: set15.policy, explicit: set15.explicit });
+    expect(named.minutes).toBe(MIN_AGENT_MINUTES);
+    expect(named.sizing).toMatchObject({ floored: true, policyMinutes: 15, overridesPolicy: true });
+    expect(named.warnings).toEqual([floorOverrideMessage({ role: 'reviewer', policyMinutes: 15, floorMinutes: MIN_AGENT_MINUTES })]);
+    expect(named.warnings[0]).toContain('deadlineMinutes.reviewer (15)');
+    // not set: the default is raised silently (the manifest says the floor decided: deadlineFloored), and no policy value is recorded
+    const unset = load({});
+    expect(unset.explicit).toEqual({ deadlineMinutes: {} });
+    const quiet = ask('reviewer', SMALL_4_PATHS, { policy: unset.policy, explicit: unset.explicit });
+    expect(quiet.minutes).toBe(MIN_AGENT_MINUTES);
+    expect(quiet.warnings).toEqual([]);
+    expect(quiet.sizing).toMatchObject({ floored: true, policyMinutes: null, overridesPolicy: false });
+    // set to the floor or above: nothing is overridden; a role the policy did not set keeps null
+    const atFloor = load({ deadlineMinutes: { reviewer: MIN_AGENT_MINUTES } });
+    expect(ask('reviewer', SMALL_4_PATHS, { policy: atFloor.policy, explicit: atFloor.explicit }).warnings).toEqual([]);
+    expect(ask('security', SMALL_4_PATHS, { policy: set15.policy, explicit: set15.explicit }).sizing.policyMinutes).toBeNull();
+    // a value the loader rejected was never set
+    const rejected = load({ deadlineMinutes: { reviewer: 0 } });
+    expect(rejected.explicit).toEqual({ deadlineMinutes: {} });
   });
 
   test('the floor relaxes no rule: the deadline is the floor and no more, and the 60-minute maximum stays above it', () => {

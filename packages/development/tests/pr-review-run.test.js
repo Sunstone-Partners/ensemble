@@ -2111,16 +2111,16 @@ describe('the replay behind the documented verify-round numbers (kata 630v, revi
       expect(r.minutes).toBeLessThan(b);
     }
     process.stderr.write(`\nREPLAY verify round (minutes): ${JSON.stringify(rows)}\n`);
-    // the documented figures (docs/guides/pr-review-run.md, Rolling verification): the barrier model gives 11.4 to 11.5 minutes against
-    // the measured 11.7 (the difference is the harness turnaround between waves), and the real runner's rolling round saves 3.7 to 4.1
-    const at = (pollS) => rows.find((row) => row.pollS === pollS);
-    expect(at(7.5).barrier).toBeGreaterThan(11.3);
-    expect(at(7.5).barrier).toBeLessThan(11.8);
-    expect(at(7.5).rolling).toBeGreaterThan(6.2); // the lower bound: 49.3 agent-minutes / cap 8
-    for (const row of rows) {
-      expect(row.saved).toBeGreaterThan(3.6);
-      expect(row.saved).toBeLessThan(4.3);
-    }
+    // the documented rows (docs/guides/pr-review-run.md, Rolling verification), pinned to 0.1 minute: the barrier model gives 11.4 to 11.5
+    // minutes against the measured 11.7 (the difference is the harness turnaround between waves), the real runner's rolling round 7.3,
+    // 7.4 and 7.8, so it saves 4.1, 4.1 and 3.8. The freed-slot release of an expired verifier is pinned by its own test, not by these figures.
+    const tenth = (minutes) => Math.round(minutes * 10 + 1e-9) / 10;
+    expect(rows.map((row) => [row.pollS, tenth(row.barrier), tenth(row.rolling), tenth(row.saved)])).toEqual([
+      [1, 11.4, 7.3, 4.1],
+      [7.5, 11.5, 7.4, 4.1],
+      [15, 11.5, 7.8, 3.8],
+    ]);
+    expect(rows.every((row) => row.rolling > 6.2)).toBe(true); // the lower bound: 49.3 agent-minutes / cap 8
   });
 });
 
@@ -2674,7 +2674,7 @@ describe('metrics and the acvv recorder', () => {
     expect(h.spans.some((s) => s.type === 'end' && s.id === root.id)).toBe(false);
     answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
     expect((await h.collect()).status).toBe('DONE');
-    expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'ok', attrs: { phase: 'done' } }]);
+    expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'ok', attrs: { phase: 'done', max_concurrent_agents: 8 } }]);
     // a finished run re-read, or adjudicated, closes nothing twice
     await h.collect();
     expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
@@ -2687,7 +2687,7 @@ describe('metrics and the acvv recorder', () => {
     moved.head = MOVED;
     expect((await moved.collect()).status).toBe('RUN_INVALIDATED');
     const root = moved.spans.find((s) => s.type === 'start' && s.name === 'review');
-    expect(moved.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'error', attrs: { phase: 'invalidated' } }]);
+    expect(moved.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'error', attrs: { phase: 'invalidated', max_concurrent_agents: 8 } }]);
     expect((await moved.collect()).status).toBe('RUN_INVALIDATED');
     expect(moved.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
 
@@ -2924,7 +2924,7 @@ describe('metrics and the acvv recorder', () => {
       expect((await h.collect()).status).toBe('DONE');
       expect(h.readRun()).toMatchObject({ phase: 'done', rootEnded: true }); // one write holds both
       const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
-      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'ok', attrs: { phase: 'done' } }]);
+      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'ok', attrs: { phase: 'done', max_concurrent_agents: 8 } }]);
       // and it closes after the verdict that ends the run, which is what keeps that verdict inside the window
       const verdict = h.spans.find((s) => s.type === 'start' && s.name === 'review.verdict');
       const verdictEnd = h.spans.findIndex((s) => s.type === 'end' && s.id === verdict.id);
@@ -2939,7 +2939,7 @@ describe('metrics and the acvv recorder', () => {
       h.head = MOVED;
       expect((await h.collect()).status).toBe('RUN_INVALIDATED');
       const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
-      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'error', attrs: { phase: 'invalidated' } }]);
+      expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'error', attrs: { phase: 'invalidated', max_concurrent_agents: 8 } }]);
     });
   });
 
@@ -3183,7 +3183,7 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(sizesOf(m)).toEqual([[8, 454], [3, 556], [8, 440]]);
       expect(m.sizing.slices.map((slice) => [slice.id, slice.overLimit])).toEqual([['whole-pr~1', false], ['whole-pr~2', false], ['whole-pr~3', false]]);
       expect(m.sizing.warnings).toEqual([]);
-      expect(m.sizing.model).toEqual({ minutesPerFile: 0.934, minutesPer100Lines: 1.224, headroom: 2, maxMinutes: 60, derivedFrom: 'real271', fixedCostFloorMinutes: 22 });
+      expect(m.sizing.model).toEqual({ minutesPerFile: 0.934, minutesPer100Lines: 1.224, headroom: 2, maxMinutes: 60, derivedFrom: 'real271', fixedCostFloorMinutes: 22, policyDeadlineMinutes: { reviewer: null, security: null } });
       // two lenses on each of three slices, and the lane, all dispatched together under the default cap of 8
       expect(m.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'reviewer-s2-a', 'reviewer-s2-b', 'reviewer-s3-a', 'reviewer-s3-b', 'security-lane']);
       expect(m.agents.length).toBeLessThanOrEqual(m.maxConcurrentAgents);
@@ -3755,6 +3755,14 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       // ... and it is SAID: the manifest's sizing records the floor and names the policy value it overrode (independent review round 1)
       expect(belowFloor.sizing.model.fixedCostFloorMinutes).toBe(22);
       expect(belowFloor.sizing.warnings).toEqual([{ code: 'deadline-floor-over-policy', message: expect.stringContaining('policy deadlineMinutes.reviewer (20) is below the 22-minute fixed-cost floor') }]);
+      // a policy that SETS the default value is overridden too, and named (second independent review, F2); one that sets nothing is not
+      const set15 = await real271({ policyJson: { deadlineMinutes: { reviewer: 15 } } }).prepare();
+      expect(set15.agents.filter((a) => a.role === 'reviewer').every((a) => a.deadlineMinutes === 22)).toBe(true);
+      expect(set15.sizing.model.policyDeadlineMinutes).toEqual({ reviewer: 15, security: null });
+      expect(set15.sizing.warnings).toEqual([{ code: 'deadline-floor-over-policy', message: expect.stringContaining('policy deadlineMinutes.reviewer (15) is below the 22-minute fixed-cost floor') }]);
+      const unset = await real271({ policyJson: {} }).prepare();
+      expect(unset.sizing.model.policyDeadlineMinutes).toEqual({ reviewer: null, security: null });
+      expect(unset.sizing.warnings).toEqual([]);
       const lower = await real271({ policyJson: { deadlineMinutes: { security: 5 } } }).prepare();
       expect(agentOf(lower, 'security-lane').deadlineMinutes).toBe(36);
     });

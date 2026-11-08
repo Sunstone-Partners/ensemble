@@ -91,7 +91,7 @@
  * `maxConcurrentAgents` (the lane is the longest agent: it must not wait behind a wave of reviewers). With several slices each
  * reviewer's brief names a diff of ITS slice (`slices/slice-<n>.diff`), not the whole range. An agent's deadline is the policy's
  * `deadlineMinutes` as a floor, raised to the modelled time to read what it was given (a reviewer: its slice; the lane: every
- * changed path), with headroom, never below the fixed cost of an agent (`MIN_AGENT_MINUTES`, kata d9sy), at most 60 minutes. Everything is recorded in `run.sizing` and the DISPATCH manifest, and nothing
+ * changed path), with headroom, never below the fixed cost of an agent (`MIN_AGENT_MINUTES`, kata d9sy; a policy value SET below it is overridden and named in `run.sizing.warnings`), at most 60 minutes. Everything is recorded in `run.sizing` and the DISPATCH manifest, and nothing
  * relaxes a fail-closed rule: an agent that arrives after its (larger) deadline is `expired`, a reviewer that lists fewer paths
  * than its slice leaves the slice not reviewed, a slice or deadline the limits cannot hold is a recorded warning and not a pass.
  *
@@ -124,7 +124,7 @@ const { isValidRunId } = require('./toolchain/run-id');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
 const { planSlices, verifyCoverage } = require('./pr-review-depth');
-const { reviewDeadlines, toVotesInput } = require('./pr-review-results');
+const { reviewDeadlines, toVotesInput, floorOverrideMessage } = require('./pr-review-results');
 const { DEFAULT_POLICY, DEADLINE_MINUTES_MAX } = require('./pr-review-policy');
 const SZ = require('./pr-review-sizing');
 const { dedupeFindings, isActionable, normalizeSeverity, validateLedger } = require('./pr-review-ledger');
@@ -395,8 +395,10 @@ function planRunSlices(run, numstat) {
       message: `no whole-range reader is planned: ${plan.slices.length} slices of ${lenses} lenses${lane === 1 ? ' and the security lane' : ''} make ${withReader - 1} agents at once, the concurrency cap is ${run.maxConcurrentAgents} and the reader would be one more; raise maxConcurrentAgents to ${withReader} (the policy allows at most 32) to add it`,
     });
   }
+  // the deadlineMinutes the policy block SET for a role (null: none, the default applies), so the floor's override is auditable
+  const policySet = (role) => (isObject(run.policyExplicit) && isObject(run.policyExplicit.deadlineMinutes) && Number.isInteger(run.policyExplicit.deadlineMinutes[role]) ? run.policyExplicit.deadlineMinutes[role] : null);
   const sizing = {
-    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run, fixedCostFloorMinutes: SZ.MIN_AGENT_MINUTES },
+    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run, fixedCostFloorMinutes: SZ.MIN_AGENT_MINUTES, policyDeadlineMinutes: { reviewer: policySet('reviewer'), security: policySet('security') } },
     limits: { sliceMaxFiles: resolved.maxFiles, sliceTargetLines: resolved.targetLines, slicesAllowed: maxSlices, slicesWanted: wanted.slices.length },
     work: { files: paths.length, lines: plan.totalLines },
     slices,
@@ -448,15 +450,15 @@ function buildReviewAgents(run, deps, ctx) {
   // The deadline the agent is given at dispatch (`dispatchWave` asks the same question of the same inputs), so a brief's timebox is
   // its deadline. A modelled need over the maximum is capped and said, once per slice or lane.
   const deadline = (agent, work, label) => {
-    const answer = reviewDeadlines({ role: agent.role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy, work });
+    const answer = reviewDeadlines({ role: agent.role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy, explicit: run.policyExplicit, work });
     if (answer.ok !== true) throw new Error(`no deadline for ${agent.name}: ${answer.reason}`);
     if (answer.sizing !== undefined && answer.sizing.capped) {
       const message = `${label}: reading ${work.files} paths and ${work.lines} changed lines is modelled at ${answer.sizing.modeledMinutes} minutes, over the ${DEADLINE_MINUTES_MAX}-minute maximum, so its deadline is capped at ${DEADLINE_MINUTES_MAX} minutes; if it does not arrive in time it is reported not reviewed`;
       if (!run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-capped', message });
     }
     if (answer.sizing !== undefined && answer.sizing.overridesPolicy) {
-      const message = answer.warnings.find((warning) => warning.includes('fixed-cost floor'));
-      if (message !== undefined && !run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-floor-over-policy', message });
+      const message = floorOverrideMessage({ role: agent.role, policyMinutes: answer.sizing.policyMinutes, floorMinutes: answer.sizing.floorMinutes });
+      if (!run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-floor-over-policy', message });
     }
     return answer;
   };
@@ -709,6 +711,8 @@ async function prepareStages(input, deps, ctx) {
     // Whether the base policy was usable; ok:false names why every path is High (kata vhpf).
     policyStatus: isObject(facts.policy) ? { ok: facts.policy.ok !== false, reason: facts.policy.ok === false ? facts.policy.reason || 'policy-untrusted' : null } : null,
     policyRejected: isObject(facts.policy) && Array.isArray(facts.policy.rejected) ? facts.policy.rejected : [],
+    // what the policy block SET (loadPolicy's `explicit`), apart from the defaults a loaded policy always holds
+    policyExplicit: isObject(facts.policy) && isObject(facts.policy.explicit) ? facts.policy.explicit : { deadlineMinutes: {} },
     sensitivePaths: isObject(facts.paths) && Array.isArray(facts.paths.sensitive) ? facts.paths.sensitive : [],
     phase: 'preparing',
     waves: [],
@@ -1335,7 +1339,7 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     return outcome;
   }
   tracer.end(stage.verdictSpan, 'ok', { status: isObject(stage.reviewStatus) ? stage.reviewStatus.status : undefined });
-  if (outcome.closesRoot) endRoot(tracer, run.rootSpanId, 'ok', { phase: 'done' });
+  if (outcome.closesRoot) endRoot(tracer, run.rootSpanId, 'ok', { phase: 'done', max_concurrent_agents: run.maxConcurrentAgents });
   return { answer: outcome.answer };
 }
 
@@ -1555,7 +1559,7 @@ async function collectRun(input, deps) {
   const answer = await collectStages(input, deps, ctx);
   const { run, tracer } = ctx;
   if (run !== null && run.rootSpanId !== null && run.rootSpanId !== undefined && run.rootEnded !== true && TERMINAL_PHASES.includes(run.phase)) {
-    endRoot(tracer, run.rootSpanId, run.phase === 'done' ? 'ok' : 'error', { phase: run.phase });
+    endRoot(tracer, run.rootSpanId, run.phase === 'done' ? 'ok' : 'error', { phase: run.phase, max_concurrent_agents: run.maxConcurrentAgents });
     run.rootEnded = true;
     try {
       saveRun(deps, run);
