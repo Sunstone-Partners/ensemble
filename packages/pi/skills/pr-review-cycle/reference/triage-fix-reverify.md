@@ -115,17 +115,23 @@ numbering and `locationAsOf` set to this head (a re-raised one takes the locatio
 gave it), and the next run compares from that stamp. So an edit above the line, an unrelated edit
 at the number the line used to have, and a fix made after an earlier round shifted the code are all
 read against the right line. A second run at the same head changes nothing (`location-current`).
-A finding the verb has not moved yet is numbered at the head it was raised at: it is moved to
-`lastReviewedSha` first, and when an edit in between touched its line, its place is unknown
-(`location-unanchored`: kept, never cleared).
+A finding the verb has not moved yet is numbered at the head it was raised at (its own `headSha`): it
+is moved to `lastReviewedSha` first. When an edit in between touched its line, or that head does not
+lead to `lastReviewedSha` (a force-push replaced it, or the repository no longer holds it), its place
+is unknown (`location-unanchored`: kept, never cleared) until a review raises it again, which
+re-anchors it.
 
 The CLI reads git and writes nothing. It marks a carried finding `cleared`, with `clearedBy` the new
 head, when the diff from the baseline (the stamp, else `lastReviewedSha`) to `headSha` changed the
 file and line it cites and no finding this head's review raised is the same defect (same file,
 failure mode and class; the line is not part of that, so a defect re-reported lower after the file
 shifted counts). A mode-only change (a `chmod`) touches no line; deleting, creating or replacing a
-file does. Every other entry comes back with its reason in `kept[]` (`re-reported`,
-`location-unchanged`, `location-unanchored`, `recorded-head-not-on-pr`, ...). The gate stops
+file does. A file that git's rename detection says was RENAMED keeps its findings as
+`location-unanchored` instead: the defect went with the file, the verb does not guess the new path,
+and a review that raises it under the new path adds a finding of its own, so a person decides the
+old one. A file deleted outright, or replaced by one too dissimilar for git to pair, is a deletion.
+Every other entry comes back with its reason in `kept[]` (`re-reported`, `location-unchanged`,
+`location-unanchored`, `recorded-head-not-on-pr`, ...). The gate stops
 blocking on a `cleared` finding, and the bead recorder (Step 10) closes its bead. This is the
 AC-008-3 heuristic and nothing more: a changed location is not proof the defect is gone, the
 re-review not raising it again is the other half, and a `lastReviewedSha` that is not on the PR (a
