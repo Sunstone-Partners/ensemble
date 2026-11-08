@@ -485,8 +485,8 @@ describe('main(): the process entry point', () => {
   });
 
   const mainPayload = (ledger, extra = {}) => ({ ...payload(ledger, { headSha: fx.p3 }), baseSha: fx.base, repoRoot: fx.worktree, ...extra });
-  /** What the host says about the PR: a head on this repository. */
-  const hostSays = (over = {}) => () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN', ...over });
+  /** What the host says about the PR: a head on this repository, the head under review, and the base branch's tip. */
+  const hostSays = (over = {}) => () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', baseRefOid: fx.base, state: 'OPEN', ...over });
 
   function run(body, io = {}) {
     const out = [];
@@ -644,7 +644,7 @@ describe('what the head under review cannot control: the recorder refuses, by na
   });
 
   const mainPayload = (ledger, extra = {}) => ({ ...payload(ledger, { headSha: fx.p3 }), baseSha: fx.base, repoRoot: fx.worktree, ...extra });
-  const hostSays = (over = {}) => () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN', ...over });
+  const hostSays = (over = {}) => () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', baseRefOid: fx.base, state: 'OPEN', ...over });
   function run(body, io = {}) {
     const out = [];
     const code = main({ readJson: () => body, emit: (value) => out.push(value), now: () => 0, readPr: hostSays(), ...io });
@@ -692,13 +692,75 @@ describe('what the head under review cannot control: the recorder refuses, by na
     expect(readPr).toHaveBeenCalledWith({ repo: 'Acme/Widgets', prNumber: 7 });
   });
 
+  test('a head the host does not report as the pull request\'s head is refused as head-not-pr-head, before the tracker is touched', () => {
+    // p1 and p2 are real commits of this repository and ancestors of the head the host reports (p3): still not THE head.
+    for (const headSha of [fx.p1, fx.p2]) {
+      const tracker = fakeTracker();
+      const { code, out } = run(mainPayload([finding()], { headSha }), { deps: tracker });
+      expect(code).toBe(0);
+      expect(out).toMatchObject({ ...REFUSAL, code: 'head-not-pr-head' });
+      expect(out.reason).toContain(headSha);
+      expect(out.reason).toContain(fx.p3);
+      expect(tracker.calls).toEqual([]);
+    }
+  });
+
+  test('a head that exists only in the reviewing checkout (never part of the pull request) is refused as head-not-pr-head', () => {
+    const local = makeRepo();
+    writeFile(local.worktree, 'local-only.txt', 'never pushed\n');
+    const localHead = commitAll(local.worktree, 'local only');
+    const tracker = fakeTracker();
+    const { out } = run({ ...payload([finding()], { headSha: localHead }), baseSha: local.base, repoRoot: local.worktree }, { deps: tracker, readPr: hostSays({ headRefOid: local.p3, baseRefOid: local.base }) });
+    expect(out).toMatchObject({ ...REFUSAL, code: 'head-not-pr-head' });
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('a head the host did not state is refused as head-unverified (only a full commit id can be compared)', () => {
+    for (const headRefOid of [undefined, null, '', '   ', 'abc1234', 'z'.repeat(40), 7, {}]) {
+      const tracker = fakeTracker();
+      const { out } = run(mainPayload([finding()]), { deps: tracker, readPr: hostSays({ headRefOid }) });
+      expect(out).toMatchObject({ ...REFUSAL, code: 'head-unverified' });
+      expect(tracker.calls).toEqual([]);
+    }
+  });
+
+  test('the host\'s head is compared as a commit id, not as text: case and surrounding space do not matter', () => {
+    const { out } = run(mainPayload([finding()]), { deps: fakeTracker(), readPr: hostSays({ headRefOid: ` ${fx.p3.toUpperCase()}\n` }) });
+    expect(out.status).toBe('RECORDED');
+  });
+
+  test('a baseSha that is not on the base branch (here: a commit of the pull request) is refused as base-not-on-base-branch', () => {
+    const tracker = fakeTracker();
+    const { out } = run(mainPayload([finding()], { baseSha: fx.p1 }), { deps: tracker });
+    expect(out).toMatchObject({ ...REFUSAL, code: 'base-not-on-base-branch' });
+    expect(out.reason).toContain(fx.p1);
+    expect(tracker.calls).toEqual([]);
+  });
+
+  test('a base branch tip the host did not state is refused as base-unverified', () => {
+    for (const baseRefOid of [undefined, null, '', 'abc', 7, {}]) {
+      const tracker = fakeTracker();
+      const { out } = run(mainPayload([finding()]), { deps: tracker, readPr: hostSays({ baseRefOid }) });
+      expect(out).toMatchObject({ ...REFUSAL, code: 'base-unverified' });
+      expect(tracker.calls).toEqual([]);
+    }
+  });
+
+  test('a base branch tip this repository does not hold is refused as base-tip-unavailable (fetch it)', () => {
+    const tracker = fakeTracker();
+    const { out } = run(mainPayload([finding()]), { deps: tracker, readPr: hostSays({ baseRefOid: '2'.repeat(40) }) });
+    expect(out).toMatchObject({ ...REFUSAL, code: 'base-tip-unavailable' });
+    expect(out.reason).toMatch(/fetch/);
+    expect(tracker.calls).toEqual([]);
+  });
+
   test('makeReadPr asks gh for the fields the refusal needs and reads its answer strictly', () => {
     const { makeReadPr } = require('../lib/review-record-runtime');
     const calls = [];
     const reply = (stdout, status = 0, stderr = '') => (command, argv) => (calls.push([command, argv]), { status, stdout, stderr });
-    const ok = makeReadPr(reply(JSON.stringify({ isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' })))({ repo: 'Acme/Widgets', prNumber: 7 });
-    expect(ok).toEqual({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' });
-    expect(calls[0]).toEqual(['gh', ['pr', 'view', '7', '--repo', 'Acme/Widgets', '--json', 'isCrossRepository,headRefOid,baseRefName,state']]);
+    const ok = makeReadPr(reply(JSON.stringify({ isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', baseRefOid: fx.base, state: 'OPEN' })))({ repo: 'Acme/Widgets', prNumber: 7 });
+    expect(ok).toEqual({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', baseRefOid: fx.base, state: 'OPEN' });
+    expect(calls[0]).toEqual(['gh', ['pr', 'view', '7', '--repo', 'Acme/Widgets', '--json', 'isCrossRepository,headRefOid,baseRefName,baseRefOid,state']]);
     expect(makeReadPr(reply('', 1, 'gh: not found\nHTTP 404'))({ repo: 'a/b', prNumber: 1 })).toEqual({ ok: false, error: 'gh pr view failed: HTTP 404' });
     expect(makeReadPr(reply('not json'))({ repo: 'a/b', prNumber: 1 }).ok).toBe(false);
     expect(makeReadPr(reply('[]'))({ repo: 'a/b', prNumber: 1 }).ok).toBe(false);
@@ -708,9 +770,11 @@ describe('what the head under review cannot control: the recorder refuses, by na
   test('a primary checkout that holds the head (or work built on it) is refused as head-checked-out, from the primary and from the linked worktree alike', () => {
     const held = makeRepo();
     gitIn(held.primary, 'checkout', '-q', '--detach', held.p3);
+    // The host reports this repository's own head and base tip (the fixture repositories do not share commit ids).
+    const readPr = hostSays({ headRefOid: held.p3, baseRefOid: held.base });
     for (const repoRoot of [held.primary, held.worktree]) {
       const tracker = fakeTracker();
-      const { out } = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot }, { deps: tracker });
+      const { out } = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot }, { deps: tracker, readPr });
       expect(out).toMatchObject({ ...REFUSAL, code: 'head-checked-out' });
       expect(out.reason).toContain(held.primary);
       expect(tracker.calls).toEqual([]);
@@ -719,12 +783,12 @@ describe('what the head under review cannot control: the recorder refuses, by na
     writeFile(held.primary, 'later.txt', 'later\n');
     commitAll(held.primary, 'later');
     const tracker = fakeTracker();
-    const { out } = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot: held.primary }, { deps: tracker });
+    const { out } = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot: held.primary }, { deps: tracker, readPr });
     expect(out.code).toBe('head-checked-out');
 
     // And the same repository is fine once the primary is back on the base's branch.
     gitIn(held.primary, 'checkout', '-q', 'main');
-    const ok = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot: held.worktree }, { deps: fakeTracker() });
+    const ok = run({ ...payload([finding()], { headSha: held.p3 }), baseSha: held.base, repoRoot: held.worktree }, { deps: fakeTracker(), readPr });
     expect(ok.out.status).toBe('RECORDED');
   });
 
@@ -762,7 +826,7 @@ describe('a fix closes a bead only with a commit git says is on the PR', () => {
   });
 
   const body = (ledger, extra = {}) => ({ ...payload(ledger, { headSha: fx.p3 }), baseSha: fx.base, repoRoot: fx.worktree, ...extra });
-  const hostSays = () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' });
+  const hostSays = () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', baseRefOid: fx.base, state: 'OPEN' });
   function run(request, io = {}) {
     const out = [];
     const code = main({ readJson: () => request, emit: (value) => out.push(value), now: () => 0, readPr: hostSays, ...io });
@@ -805,7 +869,8 @@ describe('a fix closes a bead only with a commit git says is on the PR', () => {
 
   test('a commit on the PR that is newer than the head the request names is not a fix either', () => {
     const tracker = withOpenBead();
-    const { out } = run(body([finding({ cleared: true, clearedBy: fx.p3 })], { headSha: fx.p2 }), { deps: tracker });
+    // The host agrees that p2 is the head: the request names the pull request's head, and p3 is newer than it.
+    const { out } = run(body([finding({ cleared: true, clearedBy: fx.p3 })], { headSha: fx.p2 }), { deps: tracker, readPr: () => ({ ...hostSays(), headRefOid: fx.p2 }) });
     expect(out.unverifiedFixes).toEqual([{ commit: fx.p3, reason: 'not-an-ancestor-of-head' }]);
     expect(tracker.issues[0].status).toBe('open');
   });
@@ -835,14 +900,15 @@ describe('end to end: a real diff, the clear CLI, then the recorder (acceptance 
     fx = makeRepo();
   });
 
-  const hostSays = () => ({ ok: true, isCrossRepository: false, headRefOid: fx.p3, baseRefName: 'main', state: 'OPEN' });
+  /** The host's head is the head being recorded: a review is always of the pull request's head at that time. */
+  const hostSays = (head) => () => ({ ok: true, isCrossRepository: false, headRefOid: head, baseRefName: 'main', baseRefOid: fx.base, state: 'OPEN' });
   const record = (ledger, headSha, tracker, extra = {}) => {
     const out = [];
     main({
       readJson: () => ({ ...payload(ledger, { headSha }), baseSha: fx.base, repoRoot: fx.worktree, ...extra }),
       emit: (value) => out.push(value),
       now: () => 0,
-      readPr: hostSays,
+      readPr: hostSays(headSha),
       deps: tracker,
     });
     return out[0];

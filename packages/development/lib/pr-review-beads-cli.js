@@ -44,9 +44,14 @@
  *   recorded. Before anything is read from or written to the tracker this process
  *     1. asks the HOST (`gh pr view`) about the pull request and refuses, by name, a head on a fork
  *        (`cross-repository-head`), a head whose repository the host did not state
- *        (`head-repository-unknown`) and a pull request it could not read (`pr-unreadable`), the way
- *        the precheck and the review runner refuse them (the head's own files must not steer what
- *        is written for it);
+ *        (`head-repository-unknown`), a pull request it could not read (`pr-unreadable`), a
+ *        `headSha` that is not the head the host reports (`head-not-pr-head`; `head-unverified`
+ *        when the host stated none) and a `baseSha` that is not on the base branch the host
+ *        reports (`base-not-on-base-branch`; `base-unverified` when the host stated no tip,
+ *        `base-tip-unavailable` when that tip is not in the repository: fetch it), the way the
+ *        precheck and the review runner refuse them (the head's own files must not steer what is
+ *        written for it, and a commit the pull request does not hold, or one it authored as the
+ *        "base", is not the review's);
  *     2. runs the tracker in the repository's PRIMARY checkout, never in a linked worktree or clone
  *        of the head (`git rev-parse --git-common-dir`), and refuses that checkout when it holds the
  *        head or anything built on it (`head-checked-out`: its `.beads` would be the head's own);
@@ -231,11 +236,21 @@ function checkTrust({ input, repoRoot, baseSha, git, readPr }) {
       : refuse('head-repository-unknown', 'the host did not say whether the head of this pull request is on this repository, so no bead was recorded');
   }
 
+  // The review is of THIS head: the host's own head must be the commit the payload names. A head the pull request
+  // does not hold (a stale one, a fork's, a commit the host never saw) must not decide what is recorded for it.
+  const headSha = input.headSha.trim();
+  const hostHead = typeof pr.headRefOid === 'string' ? pr.headRefOid.trim().toLowerCase() : '';
+  if (!isObjectId(hostHead)) {
+    return refuse('head-unverified', 'the host did not state the head commit of this pull request, so the head under review could not be checked against it: nothing was recorded');
+  }
+  if (hostHead !== headSha.toLowerCase()) {
+    return refuse('head-not-pr-head', `headSha ${headSha} is not the current head of the pull request (the host reports ${hostHead}): nothing was recorded; review the current head, then record`);
+  }
+
   const primary = repoFacts.primaryWorktree(git, repoRoot);
   if (!primary.ok) {
     return refuse('no-primary-worktree', `the repository's primary checkout, which holds its tracker, could not be found from ${repoRoot} (${primary.reason}): nothing was recorded`);
   }
-  const headSha = input.headSha.trim();
   const holds = repoFacts.holdsHead(git, primary.path, headSha);
   if (holds !== false) {
     return refuse(
@@ -249,6 +264,22 @@ function checkTrust({ input, repoRoot, baseSha, git, readPr }) {
   const base = repoFacts.resolveCommit(git, repoRoot, baseSha);
   if (base === null) {
     return refuse('base-unavailable', `baseSha ${baseSha} is not a commit of the repository at ${repoRoot} (fetch it), so the tracker's configuration cannot be read from the base: nothing was recorded`);
+  }
+
+  // And the base must be the base branch's own: a commit the pull request authored would let its own
+  // .ensemble/toolchain.yaml choose the tracker. The host states the base branch's tip; baseSha must be on it.
+  const hostBaseTip = typeof pr.baseRefOid === 'string' ? pr.baseRefOid.trim().toLowerCase() : '';
+  if (!isObjectId(hostBaseTip)) {
+    return refuse('base-unverified', 'the host did not state the tip of the base branch, so baseSha could not be checked to be on it: nothing was recorded');
+  }
+  const onBase = repoFacts.isAncestor(git, repoRoot, base, hostBaseTip);
+  if (onBase !== true) {
+    return refuse(
+      onBase === false ? 'base-not-on-base-branch' : 'base-tip-unavailable',
+      onBase === false
+        ? `baseSha ${base} is not on the base branch (${pr.baseRefName || 'the base branch'} is at ${hostBaseTip}): a commit of the pull request itself would let its own files choose the tracker, so nothing was recorded`
+        : `the base branch's tip ${hostBaseTip} is not in the repository at ${repoRoot} (fetch it), so baseSha could not be checked to be on the base branch: nothing was recorded`
+    );
   }
   const config = repoFacts.readBlobAt(git, repoRoot, base, TOOLCHAIN_CONFIG);
   if (!config.ok) {

@@ -71,11 +71,11 @@ function defaultRun(command, argv) {
  * The host's own answer about the pull request (`gh pr view`): what the head's files cannot
  * supply. `run(command, argv) -> {status, stdout, stderr}` is replaced by tests.
  *
- * @returns {(request: {repo: string, prNumber: number}) => {ok:true, isCrossRepository:*, headRefOid:*, baseRefName:*, state:*}|{ok:false, error:string}}
+ * @returns {(request: {repo: string, prNumber: number}) => {ok:true, isCrossRepository:*, headRefOid:*, baseRefName:*, baseRefOid:*, state:*}|{ok:false, error:string}}
  */
 function makeReadPr(run = defaultRun) {
   return ({ repo, prNumber }) => {
-    const fields = 'isCrossRepository,headRefOid,baseRefName,state';
+    const fields = 'isCrossRepository,headRefOid,baseRefName,baseRefOid,state';
     const result = run('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', fields]);
     if (!isObject(result) || result.status !== 0) {
       const detail = isObject(result) ? String(result.stderr || '').trim().split('\n').pop() : '';
@@ -88,7 +88,7 @@ function makeReadPr(run = defaultRun) {
       return { ok: false, error: 'gh pr view answered with output that is not JSON' };
     }
     if (!isObject(data)) return { ok: false, error: 'gh pr view answered with something that is not an object' };
-    return { ok: true, isCrossRepository: data.isCrossRepository, headRefOid: data.headRefOid, baseRefName: data.baseRefName, state: data.state };
+    return { ok: true, isCrossRepository: data.isCrossRepository, headRefOid: data.headRefOid, baseRefName: data.baseRefName, baseRefOid: data.baseRefOid, state: data.state };
   };
 }
 
