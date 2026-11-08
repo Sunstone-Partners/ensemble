@@ -585,6 +585,11 @@ describe('discoverAdapters: adapters grouped one level under an installed skills
     const xdgConfigHome = mkTempDir('ensemble-adapters-nested-self-xdg-');
     const groupDir = path.join(projectRoot, 'packages', 'full', 'skills', 'adapter-tracker-beads');
     writeAdapterDir(groupDir, validAdapterManifest({ adapter: 'beads' }));
+    // writeAdapterDir also writes a SKILL.md, and a SKILL.md makes the scan skip this directory anyway,
+    // which would leave the `continue` after the manifest branch untested. Remove it, so that `continue`
+    // is the only thing that stops the scan descending into this adapter's own subdirectories.
+    fs.rmSync(path.join(groupDir, 'SKILL.md'));
+    expect(fs.existsSync(path.join(groupDir, 'SKILL.md'))).toBe(false);
     // A nested directory inside a REAL adapter directory is part of that adapter, not a second
     // adapter: descending into it would invent one.
     writeAdapterDir(
