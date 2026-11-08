@@ -104,8 +104,9 @@ describe('the plan records one bead per open gap', () => {
     const key = beadKeys(input()).keys[0];
     const cleared = { ...record, gaps: record.gaps.map((gap) => ({ ...gap, cleared: true, clearedBy: FIX_COMMIT })) };
     const withCommit = input({ coverage: cleared, commitsOnPr: [FIX_COMMIT] });
-    const plan = planBeads(withCommit, held(key));
-    expect(plan.actions.map((action) => action.action)).not.toContain('close');
+    // the bead carries this PR's own footer, so a close WOULD be planned if a cleared mark and a verified commit could close a gap
+    const plan = planBeads(withCommit, held(key, { description: `Body.\n\nLast confirmed: acme/widgets PR #7 at head ${'1'.repeat(40)}` }));
+    expect(plan.actions.map((action) => action.action)).toEqual(['update']);
     // absence is not a fix: with the gap gone from the record, the plan has nothing to do with its bead
     const gone = input({ coverage: { status: 'complete', gaps: [] } });
     expect(planBeads(gone, {})).toMatchObject({ ok: true, actions: [] });
