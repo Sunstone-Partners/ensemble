@@ -64,7 +64,8 @@ light mode.
    `RUN_FAILED` with reason `triage-refused` and is not terminal: fix the payload and call `collect` again. For the
    verifier brief the answer names the entry (`additionalCandidates[n]`) and the renderer's own reason, and one
    refused entry refuses the whole payload, so nothing of it is kept. Without that check such an entry would be kept
-   unverified and block the gate.
+   unverified and block the gate. The check runs on an entry that is kept: one that duplicates a candidate a verifier
+   will be asked about is dropped before it is screened (that candidate is verified as it is), so it is not refused.
 6. `ADJUDICATE` (ok:true): the result already carries the gate, computed with every listed item held open. Decide
    ONLY the items in `adjudicate[]`, each as `fix`, `deferred` or `not-applicable` with a reason, and re-enter
    `collect` with `adjudications:[{id, disposition, reason}]`. An item not listed cannot be adjudicated, and an

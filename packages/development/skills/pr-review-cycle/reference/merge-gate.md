@@ -229,7 +229,7 @@ this rule, not the code.
 
 **The operator's decision list.** Beside the verdict, `gate` returns
 `dispositionChoices` (one entry per undecided finding: `id`, `severity`,
-`locationOrLink`, `votes`, `verification` (only when no verifier voted),
+`locationOrLink`, `votes`, `verification` (when its outcome is `unverified`),
 `beadId`, `group`, `choices[]`, `default`, `requiresReason`),
 `dispositionGroups` (what may be answered for a whole group
 at once) and `mergeConfirmation` (what the merge question must show: open beads,
@@ -238,12 +238,14 @@ Step 3b `votes` result as `votes` to include each finding's tally, and the same
 `policy`. The list asks the gate which findings block, so it cannot disagree
 with the verdict: a verifier-filtered Important finding is still listed while
 the gate blocks on it (its tally shows why), and a Pre-existing security-lane
-finding is a blocking entry. A finding no verifier voted on (its claim is one the
-verifier brief refuses, kata `0g9n`, or the run did no verification) carries
-`verification` (`outcome: "unverified"`, `reason`, and for a refused claim
-`unbriefable` with its `kind`, `input` and the renderer's reason) and its `votes`
-is null: show it as not verified with that reason, never as a tally. A person
-decides it with no verifier's help. The list is
+finding is a blocking entry. A finding whose outcome is `unverified` (its claim is
+one the verifier brief refuses, kata `0g9n`, or its verifiers did not all answer)
+carries `verification` (`outcome: "unverified"`, `reason`, and for a refused claim
+`unbriefable` with its `kind`, `input` and the renderer's reason): show it as not
+verified with that reason, never as a tally. A refused claim has `votes` null
+because nobody was asked. With no `votes` input (this `MODE=gate` path reads the
+recorded ledger) `verification` is read from the ledger finding's own record and
+`votes` stays null; a person decides it with no verifier's help. The list is
 ordered blocking Important and security findings first, then Nits, then
 Pre-existing, and many Nits in one file collapse into one entry (its id,
 `file:<path>`, is not a ledger id: expand it to its `members` before `ledger`
