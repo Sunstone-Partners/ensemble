@@ -16,14 +16,19 @@ that; REVIEW_COMPLETE is only ever relayed from the CLI's `deriveStatus`.
 The mode comes only from `selectMode` over the tier the CLI computes: never from the diff's size, never from an
 agent's judgement, never from a payload key (a `mode` key is refused as unknown). Tier Low or Medium is `light`. An
 unreadable tier, a raised tier, any ambiguity, tier High or a sensitive or High path is `full`. No path downgrades a
-full run to light mid-run.
+full run to light mid-run: every `collect` first checks the stored run. Its mode label must be what `selectMode` says
+for the tier the run itself stores, and a full run must still be Deep, with five verifiers and the lane; a label
+rewritten to light, removed or unknown is `RUN_FAILED` with reason `mode-invariant`. `run.json` is local state nobody
+authenticates, so this catches an edit of one of those fields, not a record whose tier, label, depth and lane were all
+rewritten together.
 
-Full differs from light only in four ways: (1) Deep depth always (at least 2 reviewers per slice, 5 verifiers per
-finding, whatever the tier word says); (2) the security lane always; (3) a `TRIAGE` stop between the review round and
-the verify round, where you may add candidates the reviewers missed; (4) the re-review scope rule under
-`reReview` below. Briefs are still generated from templates, and the gate, the approvals, the independence of
-reviewers and verifiers, REVIEW_COMPLETE (the CLI only) and "a path nobody reviewed is reported as not reviewed" are
-the same as in light mode.
+Full differs from light in four ways, and the fourth is only a record: (1) Deep depth always (at least 2 reviewers per
+slice, 5 verifiers per finding, whatever the tier word says); (2) the security lane always; (3) a `TRIAGE` stop between
+the review round and the verify round, where you may add candidates the reviewers missed; (4) the re-review scope rule
+under `reReview` below, which is recorded and changes nothing a reviewer reads: reviewers read the whole range in both
+modes today. Briefs are still generated from templates, and the gate, the approvals, the independence of reviewers and
+verifiers, REVIEW_COMPLETE (the CLI only) and "a path nobody reviewed is reported as not reviewed" are the same as in
+light mode.
 
 ## What you do
 
@@ -50,8 +55,12 @@ the same as in light mode.
    fresh-context verifiers as every other candidate, whose briefs carry the claim and location only, never anything
    you concluded; `pre-existing` is not an allowed severity for it. You never remove, merge away, re-grade, close or
    waive a candidate, never mark a slice reviewed, never set a verdict and never decide a gate. A refused `triage`
-   (an unknown key, a location that is not a line of a regular file of the head, more than 20 candidates, a severity other than `important` or `nit`) is
-   `RUN_FAILED` with reason `triage-refused` and is not terminal: fix the payload and call `collect` again.
+   (an unknown key, a location that is not a line of a regular file of the head, more than 20 candidates, a severity
+   other than `important` or `nit`, or an entry the verifier brief refuses: for example a claim that reads as a vote, a
+   verdict, the orchestrator or a conclusion, or a path with whitespace) is `RUN_FAILED` with reason `triage-refused`
+   and is not terminal: fix the payload and call `collect` again. For the verifier brief the answer names the entry
+   (`additionalCandidates[n]`) and the renderer's own reason, and one refused entry refuses the whole payload, so
+   nothing of it is kept. Without that check such an entry would be kept unverified and block the gate.
 6. `ADJUDICATE` (ok:true): the result already carries the gate, computed with every listed item held open. Decide
    ONLY the items in `adjudicate[]`, each as `fix`, `deferred` or `not-applicable` with a reason, and re-enter
    `collect` with `adjudications:[{id, disposition, reason}]`. An item not listed cannot be adjudicated, and an
@@ -73,12 +82,16 @@ the same as in light mode.
 | `DONE` | true | stop and report |
 | `NEEDS_FULL_MODE` | false | light mode only, and only when a brief the renderer refuses (for example a path with a space) means the runner cannot review mechanically: nothing was dispatched, run the narrated Steps 1-10 from the start |
 | `RUN_INVALIDATED` | false | the head moved (at any `collect`, a finished run's included): the run is over and nothing it produced is usable; start a new run on the new head |
-| `RUN_FAILED` | false | report the `reason` and the error: the review did not run to a verdict, so treat it as blocked. `head-unreadable` and `pr-not-open` leave a started run retryable by a later `collect`; `triage-refused` is not terminal either (fix the `triage` payload and call again); `brief-refused` is a full-mode brief the renderer refuses; at `prepare` the refusals `cross-repository-head`, `head-repository-unknown`, `pr-not-open` and `base-not-merge-base` mean nothing was fetched, run or posted |
+| `RUN_FAILED` | false | report the `reason` and the error: the review did not run to a verdict, so treat it as blocked. `head-unreadable` and `pr-not-open` leave a started run retryable by a later `collect`; `triage-refused` is not terminal either (fix the `triage` payload and call again); `brief-refused` is a full-mode brief the renderer refuses, and its answer carries `decision` and `fallback` (below); at `prepare` the refusals `cross-repository-head`, `head-repository-unknown`, `pr-not-open` and `base-not-merge-base` mean nothing was fetched, run or posted |
 
 `NEEDS_FULL_MODE` is the light-mode fallback, not an error to work around, and never a way to full mode: full mode runs
 in this runner. When a light run cannot review mechanically, nothing was dispatched and the narrated procedure is
-unchanged. In full mode a refused brief is `RUN_FAILED` with reason `brief-refused`. Never pass a light-mode verdict
-off for a full-mode one: the answer's `mode` says which it was.
+unchanged. In full mode a refused brief (for example a changed path with a space in it) is `RUN_FAILED` with reason
+`brief-refused`, and that is a decision, not a gap: the run fails closed, is never lowered to light mode and is never
+run without the brief, so the runner gives no review and no verdict for that PR. The answer says so (`decision`) and
+names the two ways forward (`fallback`): change what the renderer refused (rename the path) and start a new run, or
+review the PR by hand with the narrated Steps 1-10, from the start. Report it and let the operator choose; do not start
+either on your own. Never pass a light-mode verdict off for a full-mode one: the answer's `mode` says which it was.
 
 ## Re-review scope (`reReview`)
 
@@ -100,6 +113,10 @@ of verdicts is kata qw98, PR #268), so every run still has reviewers read the wh
 * The baseline test run executes the head's own test code in a scratch directory; it is not a sandbox
   (`docs/guides/pr-review-prepare.md`).
 * The runner never edits the reviewed tree and never pushes.
+* A tier record that carries a raise (`raised` is not empty; `selectMode` selects full for one) cannot be produced through
+  the runner: `prepareRun` passes `assignTier` no second assessment and no proposed tier, so that case is exercised only
+  with an injected tier record. A sensitive or High path, tier High and an unreadable or ambiguous tier are what select
+  full mode here.
 * A head from outside this repository is never reviewed (`cross-repository-head`, `head-repository-unknown`), whatever
   the options: `skipPrecheck` and `dryRun` do not skip the check. The baseline would run the fork's test code on this
   machine and the agents would be handed its snapshot. Read the diff
@@ -128,12 +145,22 @@ of verdicts is kata qw98, PR #268), so every run still has reviewers read the wh
   rounds): a lower bound, not a transcript count. `metrics.wallMs` and `metrics.orchestratorTurns` are recorded
   honestly and `metrics.triageCalls` counts the `triage` calls. No before/after comparison against the narrated flow has
   been run on a live PR: no speedup and no turn target is claimed, and for full mode the High-tier saving is UNMEASURED
-  (the 5x target is not claimed for it).
+  (the 5x target is not claimed for it). Measuring it is kata `q3a9`'s job, not this runner's.
 * Triage is a model judgement, but it can only add candidates, and what it adds is verified by fresh-context verifiers
   that never see its reasoning; it never removes, grades or closes anything, and never sets a verdict.
 * Call `collect` one at a time per run: the run file has no lock, and two overlapping calls can each emit the next wave.
 * A finished run's stored answer is as of its finalise: a repeat `collect` re-reads only the head and the PR's open
   state, so the approvals, branch protection and `mergeable` it holds can be out of date. Start a new run for a
   current verdict.
+* Known defects, found by the one real full-mode run, that are NOT fixed here and are tracked on their own: (a) the
+  default 15-minute deadline for a reviewer or the security lane is too short for a large whole-PR slice, so a Deep
+  run's security lane can arrive late, be recorded `expired` and leave the gate on `security-review-missing` (kata
+  `sfpb`; that run's lane needed 17m45s and its gate named `security-review-missing`); (b) the verifier brief refuses a
+  claim that names the orchestrator or a verdict, and a path with whitespace, so a reviewer-raised candidate like that
+  stays `unverified` and blocks the gate (kata `0g9n`; an entry the orchestrator adds is refused at triage instead);
+  (c) `review-run-cli.js` `peekRun` reads `run.json` at a `runId` it has not validated yet (kata `yz76`); (d) agent spans
+  are named `agent:<name>` and the security lane's role is `security`, while `pr-review-timing.js` reads
+  `review.reviewer`, `review.verifier` and `review.security-lane`, so `pr-review-cli.js timing` does not read this
+  runner's spans as stages; the span naming is PR #270's and is not changed here.
 
 Guide with a worked example: `docs/guides/pr-review-run.md`.
