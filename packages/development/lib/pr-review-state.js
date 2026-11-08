@@ -32,10 +32,13 @@ const STATE_DIR = path.join('.ensemble', 'pr-review');
  *   base64 characters) and nothing else, so prose and footers after it survive.
  * - `Bearer <credential>`: the credential is 16+ chars of `[A-Za-z0-9\-._~+/]`
  *   containing at least one digit, optional `=` padding.
- * - `Authorization:` followed by a known scheme (Bearer, Basic, Token, Digest,
- *   Negotiate, AWS4-HMAC-SHA256, Bot) and its credential (8+ token characters;
- *   Digest and AWS4-HMAC-SHA256 take the rest of the line), or by a single
- *   token-shaped value of 20+ chars.
+ * - `Authorization:` followed by `Digest` or `AWS4-HMAC-SHA256` and the rest of the
+ *   line, by ANY single-word scheme (Bearer, Basic, Token, Api-Key, a scheme nobody
+ *   has heard of) and a credential of 8+ token characters, or by one token-shaped
+ *   value of 20+ chars. A scheme followed by a short word is prose and is kept
+ *   (`Authorization: header is required`); two longer words after the colon cannot be
+ *   told from a scheme and its credential, so `Authorization: scheme validation`
+ *   is redacted (the base redacted any two words).
  * - generic `name = value` secrets (see GENERIC_SECRET_PATTERN).
  *
  * Rules the next reader relies on: redaction is idempotent (`[REDACTED]` is
@@ -49,7 +52,7 @@ const TOKEN_PATTERNS = [
   /sk-[A-Za-z0-9]{20,}/g,
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /\b(?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16}\b/g,
-  /\bAuthorization:[ \t]*(?:(?:Digest|AWS4-HMAC-SHA256)[ \t]+[^\n]+|(?:Bearer|Basic|Token|Negotiate|Bot)[ \t]+[A-Za-z0-9\-._~+/]{8,}=*|[A-Za-z0-9\-._~+/]{20,}=*)/gi,
+  /\bAuthorization:[ \t]*(?:(?:Digest|AWS4-HMAC-SHA256)[ \t]+[^\n]+|[A-Za-z][A-Za-z0-9._~+/-]*[ \t]+[A-Za-z0-9\-._~+/]{8,}=*|[A-Za-z0-9\-._~+/]{20,}=*)/gi,
   /\bBearer\s+(?=[A-Za-z0-9\-._~+/]*\d)[A-Za-z0-9\-._~+/]{16,}=*/gi,
 ];
 
@@ -64,7 +67,11 @@ const TOKEN_PATTERNS = [
  * `[A-Za-z0-9+/=_\-!@#$%^&*]` that contains a digit and a letter, is not
  * followed by `.`+non-space, `(` or more token chars, so `api_key =
  * process.env.API_KEY` (code) and `password: required` (prose) are kept.
- * The floor: `password=hunter2` (7 chars) is redacted; `password=abc12` is not.
+ * The floor: `password=hunter2` (7 chars) is redacted; `password=abc12` is not. An
+ * unquoted value that is only letters (`password=correcthorsebatterystaple`) is not
+ * recognised either: it cannot be told from a word or an identifier (`token:
+ * authentication`, `secret = generateSecret`), so redacting it would rewrite prose
+ * and code again. Quote it and 4+ characters are redacted.
  */
 const GENERIC_SECRET_PATTERN =
   /([\w.-]*(?:secret|token|password|passwd|pwd|api[-_]?key|access[-_]?key|private[-_]?key)(?:[_.-][\w.-]*)?\\?["']?[ \t]*[:=][ \t]*)(?:"[^"\n]{4,}"|'[^'\n]{4,}'|(?=[A-Za-z0-9+/=_\-!@#$%^&*]*\d)(?=[A-Za-z0-9+/=_\-!@#$%^&*]*[A-Za-z])[A-Za-z0-9+/=_\-!@#$%^&*]{6,}(?![A-Za-z0-9+/=_\-!@#$%^&*(]|\.\S))/gi;

@@ -189,6 +189,45 @@ describe('redact does not mangle ordinary text', () => {
     expect(redact(`sent Bearer ${'abcdEFGH1234ijklMNOP5678'} ok`)).toBe(`sent ${R} ok`);
   });
 
+  test.each([
+    ['an Api-Key scheme', 'Authorization: Api-Key abc123xyzSECRET'],
+    ['an ApiKey scheme', 'Authorization: ApiKey s3cr3tvalue1'],
+    ['an X-Api-Key scheme', 'Authorization: X-Api-Key AbCdEfGhIjKlMnOp'],
+    ['a scheme nobody has heard of', 'Authorization: Frobnicate 0123456789abcdef'],
+    ['a lower-case header name and scheme', 'authorization: api-key abc123xyzSECRET'],
+    ['a credential that is only letters', 'Authorization: Api-Key correcthorsebatterystaple'],
+    ['a Token scheme', 'Authorization: Token abcdef0123456789'],
+  ])('redacts the whole Authorization header with %s', (_name, text) => {
+    expect(redact(text)).toBe(R);
+  });
+
+  test('the text around an Authorization credential survives', () => {
+    expect(redact('sent Authorization: Api-Key abc123xyzSECRET to the proxy')).toBe(`sent ${R} to the proxy`);
+    expect(redact('Authorization: Api-Key abc123xyzSECRET\nLast confirmed: o/r PR #1')).toBe(`${R}\nLast confirmed: o/r PR #1`);
+  });
+
+  test.each([
+    ['a short word after a word', 'Authorization: header is required'],
+    ['a scheme with no credential', 'Authorization: Api-Key'],
+    ['a scheme and a short word', 'Authorization: Bearer tokens are rejected'],
+    ['no colon', 'Authorization header validation is required'],
+    ['the word on its own', 'Authorization: required'],
+  ])('keeps %s', (_name, text) => {
+    expect(redact(text)).toBe(text);
+  });
+
+  test('stated limit: an unquoted secret that is only letters is not told from a word; quote it and it is redacted', () => {
+    expect(redact('password=correcthorsebatterystaple')).toBe('password=correcthorsebatterystaple');
+    expect(redact('password="correcthorsebatterystaple"')).toBe(`password=${R}`);
+    expect(redact('token: authentication required')).toBe('token: authentication required');
+  });
+
+  test('Authorization redaction is idempotent', () => {
+    const once = redact('a Authorization: Api-Key abc123xyzSECRET b Authorization: Token abcdef0123456789 c');
+    expect(once).toBe(`a ${R} b ${R} c`);
+    expect(redact(once)).toBe(once);
+  });
+
   test('redaction of these shapes is idempotent', () => {
     const once = redact(`password=hunter2 Bearer abcdEFGH1234ijklMNOP5678 ${pemBegin}\n${BODY}`);
     expect(redact(once)).toBe(once);
