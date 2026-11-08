@@ -305,6 +305,31 @@ describe('a stale verdict is never carried: each push below flips the oracle, an
     expect(r.second.outcomes).toEqual(r.full2);
   });
 
+  test('a symlinked DIRECTORY on a specifier path whose target moved (S8b): the import resolves to nothing the hash can see, so the citation is never hashed or carried', () => {
+    // lib/vendor.js is a directory link; git stores its text ('real-a', then 'real-b') and nothing under it, and the planner keeps
+    // delta mode because the name ends in .js. The oracle follows the link text, as the file system would.
+    const linkTarget = (read) => (read('lib/vendor.js') || '').trim();
+    const f = finding('F-vendor', 'lib/core9.js', 3, 'core9 dereferences the vendored package without a null check', (read) => (has(read(`lib/${linkTarget(read)}/pkg.js`), 'module.exports = null') ? 'real' : 'not-real'));
+    const r = scenario({
+      files: {
+        'lib/core9.js': pad(10, { 1: "const pkg = require('./vendor.js/pkg');" }),
+        'lib/real-a/pkg.js': 'module.exports = {};\n',
+        'lib/real-b/pkg.js': 'module.exports = null;\n',
+        'lib/vendor.js': { link: 'real-a' },
+      },
+      findings: [f],
+      push: { 'lib/vendor.js': { link: 'real-b' } },
+    });
+    expect(r.full1).toEqual({ 'F-vendor': 'filtered' });
+    expect(flippedIds(r.full1, r.full2)).toEqual(['F-vendor']);
+    // what matters: the carry round is the full re-review, and nothing was carried across the retarget
+    expect(r.second.plan.carried).toEqual([]);
+    expect(r.second.outcomes).toEqual(r.full2);
+    // and why: the producer refused the citation at both heads, so nothing was recorded to be carried
+    expect(r.first.candidates[0].hashError).toMatch(/symlinked directory lib\/vendor\.js/);
+    expect(r.first.recorded.skipped).toEqual([{ id: 'F-vendor', reason: 'no-hash' }]);
+  });
+
   test.each([
     ['< and >', 'x < y', 'x > y'],
     ['= and !', 'x == y', 'x != y'],

@@ -18,7 +18,8 @@
  *            refuse a candidate stamped with another head, so hash again after any push.
  *            Contract, hunk definition and limits: pr-review-carry-hash.js (dependencies are hashed; dependents -- importers,
  *            name-matched tests, computed-specifier files naming it -- are listed, not hashed, and planCarry re-verifies when
- *            one is in the delta; direct dependents only; bare npm packages are not hashed; symlinks are refused; the closure
+ *            one is in the delta; direct dependents only; bare npm packages are not hashed; symlinks are refused (a cited file,
+ *            a closure member, or a directory on the path of a specifier); the closure
  *            is capped at 200 files; an unresolved relative specifier is hashed as `absent`). Redaction: the output goes
  *            through `redact`, which replaces the value of any key matching /token|secret|password|api[-_]?key|authorization/i,
  *            so a depHashes entry keyed `lib/token-cache.js` comes back `[REDACTED]` (planCarry: missing hash, no carry).

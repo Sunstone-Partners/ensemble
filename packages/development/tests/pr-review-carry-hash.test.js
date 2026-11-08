@@ -542,6 +542,67 @@ describe('symlinks are refused (git mode 120000)', () => {
   });
 });
 
+describe('a specifier that passes through a symlinked DIRECTORY is refused (an ancestor with git mode 120000)', () => {
+  const ABSENT = require('crypto').createHash('sha256').update('absent').digest('hex');
+  const repo = makeRepo({
+    'lib/real-a/pkg.js': 'module.exports = {};\n',
+    'lib/real-b/pkg.js': 'module.exports = null;\n',
+    'lib/plain/pkg.js': 'module.exports = 1;\n',
+    // cited files, each reading a package through another kind of path
+    'lib/core9.js': "const pkg = require('./vendor.js/pkg');\n" + lines(6),
+    'lib/deep.js': "const pkg = require('./vendor.js/sub/pkg');\n" + lines(6),
+    'lib/bare-dir.js': "const pkg = require('./vendordir/pkg');\n" + lines(6),
+    'lib/via-member.js': "require('./member');\n" + lines(6),
+    'lib/member.js': "require('./vendor.js/pkg');\n",
+    'lib/ctl.js': "const pkg = require('./plain/pkg');\n" + lines(6),
+    'lib/dangling.js': "const pkg = require('./plain/missing');\n" + lines(6),
+  });
+  // two directories, linked: one named like a module (a name the delta planner sizes), one named like a directory
+  fs.symlinkSync('real-a', path.join(repo.root, 'lib/vendor.js'));
+  fs.symlinkSync('real-a', path.join(repo.root, 'lib/vendordir'));
+  const head = repo.commit({});
+
+  test('git lists the link as ONE entry (mode 120000) and nothing under it: no hash can see its target', () => {
+    expect(git(repo.root, ['ls-tree', '-r', head, '--', 'lib/vendor.js'])).toMatch(/^120000 blob /);
+    const names = git(repo.root, ['ls-tree', '-r', '--name-only', head]).split('\n');
+    expect(names.filter((name) => name.startsWith('lib/vendor.js/'))).toEqual([]);
+  });
+
+  test('an import through a directory symlink named like a module (./vendor.js/pkg) is hashError and carries no hash fields', () => {
+    const out = one(repo, head, { file: 'lib/core9.js', line: 3 });
+    expect(out.hashError).toMatch(/symlinked directory lib\/vendor\.js/);
+    NO_FIELDS(out);
+  });
+
+  test.each([
+    ['an ancestor two levels up (./vendor.js/sub/pkg)', 'lib/deep.js', /symlinked directory lib\/vendor\.js/],
+    ['a link that does not look like a file (./vendordir/pkg)', 'lib/bare-dir.js', /symlinked directory lib\/vendordir/],
+    ['a specifier of a closure MEMBER, not of the cited file', 'lib/via-member.js', /symlinked directory lib\/vendor\.js/],
+  ])('%s is refused too', (_name, file, pattern) => {
+    const out = one(repo, head, { file, line: 3 });
+    expect(out.hashError).toMatch(pattern);
+    NO_FIELDS(out);
+  });
+
+  test('control: a specifier through an ORDINARY directory still hashes, resolved or (when nothing is there) absent', () => {
+    const ok = one(repo, head, { file: 'lib/ctl.js', line: 3 });
+    expect(ok.hashError).toBeUndefined();
+    expect(Object.keys(ok.depHashes)).toEqual(['lib/plain/pkg.js']);
+    const gone = one(repo, head, { file: 'lib/dangling.js', line: 3 });
+    expect(gone.hashError).toBeUndefined();
+    expect(gone.depHashes).toEqual({ 'lib/plain/missing': ABSENT });
+  });
+
+  test('retargeting the link (real-a -> real-b) can no longer leave a stale hash behind: the citation fails closed at both heads', () => {
+    fs.unlinkSync(path.join(repo.root, 'lib/vendor.js'));
+    fs.symlinkSync('real-b', path.join(repo.root, 'lib/vendor.js'));
+    const next = repo.commit({});
+    expect(git(repo.root, ['diff', '--name-only', head, next])).toBe('lib/vendor.js');
+    expect(one(repo, next, { file: 'lib/core9.js', line: 3 }).hashError).toMatch(/symlinked directory/);
+    expect(one(repo, head, { file: 'lib/core9.js', line: 3 }).hashError).toMatch(/symlinked directory/);
+  });
+});
+
 describe('dependents (the blast radius of the cited file)', () => {
   const FILES = {
     'lib/core.js': lines(10),

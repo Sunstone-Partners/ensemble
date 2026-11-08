@@ -27,7 +27,8 @@
  *
  * FAIL CLOSED: a citation that cannot be hashed gets NO hunkHash and NO depHashes plus `hashError` (planCarry reads a missing
  * hash as 'hash-missing' => re-verify). Causes: file absent at head, no/invalid line or range (outside the file), the cited
- * file or a closure member holds a computed specifier or is a symlink, the tracked closure exceeds MAX_CLOSURE (200) files, the cited file is source of an unanalyzable type, a
+ * file or a closure member holds a computed specifier or is a symlink or names a specifier that passes through a symlinked
+ * directory, the tracked closure exceeds MAX_CLOSURE (200) files, the cited file is source of an unanalyzable type, a
  * git read or scan (the dependents' `git grep`) fails, a
  * path git cannot hand to `cat-file --batch` (contains a newline). Nothing is ever defaulted.
  *
@@ -38,7 +39,10 @@
  * computed specifier whose text names the cited file. `planCarry` re-verifies a verdict when any of them is in the delta.
  * Direct dependents only, not transitive callers. Bare npm packages (`require('lodash')`) are not hashed: a lockfile change
  * does not invalidate. Symlinks (git mode 120000) are refused, cited or in the closure: git stores the link text, so hashing
- * the blob would not see the target change. Resolution is the graph's file-level over-approximation. A
+ * the blob would not see the target change. So is a specifier whose normalized path passes through a symlinked DIRECTORY (any
+ * proper-prefix directory is a symlink entry), in the cited file or in any closure member: git lists the link as one entry and
+ * nothing under it, so the specifier resolves to nothing and no hash would see its target move. Resolution is the graph's
+ * file-level over-approximation. A
  * relative specifier that resolves to no tracked file is recorded as an ABSENT dependency: key = its normalized joined path,
  * value = sha256('absent'). A string that merely looks like a path is therefore harmless, and a dangling import is
  * invalidated when the file appears (the key set and hashes change). Absent entries are never read and do not count toward
@@ -155,9 +159,23 @@ function hunkOf(text, citation) {
 }
 
 /**
+ * The first proper-prefix directory of the normalized path `normalized` that git stores as a symlink (mode 120000), or null.
+ * Git lists such a directory as ONE entry holding its link text and nothing under it, so a specifier through it resolves to
+ * nothing and no hash can see its target move (`./vendor.js/pkg` with `lib/vendor.js` -> real-a, retargeted to real-b).
+ */
+function symlinkedAncestor(modes, normalized) {
+  const parts = normalized.split('/');
+  for (let i = 1; i < parts.length; i += 1) {
+    const prefix = parts.slice(0, i).join('/');
+    if (modes.get(prefix) === SYMLINK_MODE) return prefix;
+  }
+  return null;
+}
+
+/**
  * What `file` references: `tracked` (the files it resolves to) and `absent` (the normalized paths of relative specifiers
  * that resolve to no tracked file). A specifier climbing above the repository root is dropped. Throws a HashError on a
- * computed specifier.
+ * computed specifier and on a specifier that passes through a symlinked directory.
  */
 function dependenciesOf(ctx, file) {
   const text = ctx.blobs.get(file).toString('utf8');
@@ -169,6 +187,8 @@ function dependenciesOf(ctx, file) {
     for (const spec of references.specifiers) {
       const normalized = joinRelative(spec.startsWith('/') ? '' : dirname(file), spec);
       if (normalized === null) continue;
+      const linked = symlinkedAncestor(ctx.modes, normalized);
+      if (linked !== null) throw new HashError(`${file} names '${spec}', which passes through the symlinked directory ${linked}`);
       const target = resolveTracked(normalized, ctx.tracked);
       if (target === null) absent.add(normalized);
       else if (target !== file) found.add(target);
