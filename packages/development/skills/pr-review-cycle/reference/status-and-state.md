@@ -179,11 +179,14 @@ the first dispatch, the critical path) are missing with that reason. That check 
 a step only through a span that was open across it: a forward and a backward step
 both in the gaps between spans leave no trace in the recorder's data. And a figure
 nobody recorded is `{ ms: null, missing: true, reason }`, never zero: a critical path
-with no verdict span, or with two in one round, has no total, steps that overlap or
-run out of order are never summed (the total is missing and names the pair), a wave
-that holds only the security lane has no step (the round names it in `uncountedWaves`
-and its total is a lower bound), and an unfinished agent makes the orchestrator-only
-time an upper bound (`bound: 'upper'`).
+with no verdict span, or with two in one round, has no total (a verdict span that
+ended in error was never recorded and counts for neither), steps that overlap or
+run out of order are never summed (the total is missing and names the pair), spans
+that carry one wave number but started more than 5 s apart are not one wave (that step
+is missing), a security lane that ended after the slowest reviewer of its wave, or ran
+in a wave no reviewer ran in, is no step, so the round names it (`outlasted`,
+`uncountedWaves`) and its total is a lower bound, and an unfinished agent makes the
+orchestrator-only time an upper bound (`bound: 'upper'`).
 Copy the answer into `state.timing` verbatim; do not round, fill in or drop a
 missing figure. Timing is observational only: a `timing` call that fails or answers
 `ok: false` is recorded as it answered, or left out, and never blocks the review,

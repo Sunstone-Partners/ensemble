@@ -83,11 +83,14 @@ light-mode verdict off for a full-mode one.
 * Trace: spans go to `.ensemble/state/toolchain/trace-<traceRunId>.jsonl` under the names `pr-review-cli timing` reads
   (`review`, `review.head-read`, `review.gate`, `review.verdict`, `review.<role>` per agent, each with `round`, agents
   also with their `wave`; an agent ends at its last message, `last_message_ts`). Waves run one after another, so the
-  critical path sums the slowest reviewer of each review wave and the slowest verifier of each verify wave; a wave that
-  holds only the security lane is no step, so `timing` reports a lower bound for it. `traceRunId` defaults to the
-  review's own `runId`, so a review has a trace file of its own; keep it that way for `timing` (two runs sharing one
-  file have two `review` roots and no window). Its spans join a `/ensemble-pr-merge` run's trace only when the caller
-  passes that run's id; nothing passes it today.
+  critical path sums the slowest reviewer of each review wave and the slowest verifier of each verify wave. The security
+  lane is no step of it, so `timing` reports a lower bound, naming the agent, when a lane ended after the slowest
+  reviewer of its wave (`outlasted`, the usual case at the default cap) or ran in a wave no reviewer ran in
+  (`uncountedWaves`). A verdict that was not recorded (a failed state write, retried) is a span that ended in error and
+  counts for nothing; a result file the runner cannot place in time is named in the answer's `warnings`. `traceRunId`
+  defaults to the review's own `runId`, so a review has a trace file of its own; keep it that way for `timing` (two runs
+  sharing one file have two `review` roots and no window). Its spans join a `/ensemble-pr-merge` run's trace only when
+  the caller passes that run's id; nothing passes it today.
 * `metrics.orchestratorTurns.atLeast` counts the model turns the protocol itself requires (runner calls plus dispatch
   rounds): a lower bound, not a transcript count. No before/after comparison against the narrated flow has been run
   on a live PR, so no speedup and no turn target is claimed.

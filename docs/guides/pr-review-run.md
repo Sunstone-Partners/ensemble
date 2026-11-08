@@ -144,27 +144,38 @@ Stage spans go to
 `<repoRoot>/.ensemble/state/toolchain/trace-<traceRunId>.jsonl` under the names `pr-review-cli timing` reads
 (`lib/pr-review-timing.js` holds the contract, the runner imports its names and kinds): one `review` root span per run
 (opened by `prepare`, closed by the call that ends the run), `review.head-read` (fetching the base and head and finding
-the merge base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status) and one
+the merge base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status and recording it:
+the state report, `final.json` and the run file) and one
 `review.<role>` span per dispatched agent (`review.reviewer`, `review.verifier`, `review.security-lane`) with its `agent`
 name and its `wave`. Each carries `round` (1; 2 when `lastReviewedSha` makes the run a delta re-review). An agent span
 opens when the agent is dispatched and closes when its result is collected, with `last_message_ts` set to the moment its
 result file arrived, so the reader counts the agent to its last message and not to the `collect` call. A result file
+dated before the agent was dispatched is no message of this dispatch (a stale file): no `last_message_ts` is stamped. One
 dated well after the `collect` that read it (clock skew) cannot be placed: it is recorded as it is, so the reader refuses
-that agent's interval instead of counting it to the `collect` call, and the answer's `warnings` say so.
+that agent's interval instead of counting it to the `collect` call. The answer's `warnings` say so in both cases.
 
 Waves. `maxConcurrentAgents` splits a round's agents into waves, and a wave is dispatched only after the one before it
 was collected, so waves run one after another. `wave` is the agent's number among its kind (the review agents, and apart
 from them the verifiers), from 1. The reader's critical path therefore takes the slowest reviewer of each review wave and
 the slowest verifier of each verify wave and sums them (`reviewer wave 1 -> reviewer wave 2 -> verifier -> verdict`), not
-the one slowest agent across the waves. The security lane is not a step of the critical path (the contract names the
-slowest reviewer): a wave that holds only the lane, which a small cap makes, has no step, so its round lists it under
-`uncountedWaves` and the critical path is a lower bound, not passed off as the whole chain.
+the one slowest agent across the waves. The agents of a wave are dispatched together, so spans that carry one wave number
+but start more than 5 s apart are not one wave (a number stamped on spans of more than one): that step is missing and
+names the wave. The security lane is not a step of the critical path (the contract names the slowest reviewer), so the
+critical path is a lower bound, not passed off as the whole chain, whenever the lane may have lengthened it: the round
+lists under `outlasted` each lane (or classifier, or second assessor) that ended after the slowest reviewer of its wave,
+with the excess in `byMs` (the default cap puts the lane in the reviewers' wave, so a lane slower than the reviewers is
+the usual case: the verifier waited for it), and under `uncountedWaves` each wave that holds no reviewer, which a small
+cap makes (a cap of 2 on two reviewers and the lane leaves the lane alone in wave 2). Whether the lane should be a step
+is the owner's decision; until then the figure says what it leaves out.
 
-The verdict is recorded once while the window is open: a `collect` retried after a failed state write derives it again but
-adds no second `review.verdict` span (two inside the window leave the critical path without the verdict that ends its
-chain). A `collect` with `adjudications` re-runs the gate and the verdict after the root has closed and records both
-there; those spans lie outside the window and the reader leaves them out of the critical path. The runner no longer
-writes `precheck` and `prepare-head` spans (the reader never read them).
+One verdict stays in the window. The verdict span ends `ok` when the verdict was recorded and `error` when that attempt
+did not get that far (a failed state write, or a throw such as `final.json` failing to write); the reader takes an `error`
+span for no verdict, so a `collect` retried after such a failure leaves one verdict and not two (two leave the critical
+path without the verdict that ends its chain). A finished run records the end of its root span in the same write of the
+run file as its verdict, and the root closes right after the verdict. A `collect` with `adjudications` re-runs the gate
+and the verdict after the root has closed and records both there; those spans lie outside the window and the reader
+leaves them out of the critical path. The runner no longer writes `precheck` and `prepare-head` spans (the reader never
+read them).
 
 Limits: the root opens after the first read of the PR head (the run id depends on it), `turns` and `tool_calls` are not
 recorded (the runner cannot see the model, so the reader reports them missing), and a `Quick` review has no verifier, so
