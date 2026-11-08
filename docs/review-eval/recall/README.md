@@ -51,9 +51,10 @@ unbriefable). So the loss is at reading and at the reviewer's own grading.
 ## What changed, and what it cannot fix
 
 Code (kata `yg7k`): the reviewer and whole-range briefs now state `Tool calls` and `Throwaway snippets` from the policy (defaults 40 and
-**3**, was 1) and say to spend snippets on a claim about what code *does*; every agent that writes findings (the slice reviewers, the whole-range reader and the security lane) is given the Severity bullets of `REVIEW.md` read at the base
-commit (a built-in copy, pinned equal to the file, when the base has none), plus one sentence: a defect a user or caller would hit is Important wherever it sits. No category
-is added to the repository's taxonomy and the text carries no example. Verifier briefs are untouched: independence, the one-claim-per-verifier brief and the vote rules hold.
+**3**, was 1) and say to spend snippets on a claim about what code *does*; every agent the RUNNER dispatches that writes findings (the slice reviewers, the whole-range reader and the security lane) is given the Severity bullets of `REVIEW.md`
+read at the base commit (a built-in copy, pinned equal to the file, when the base has none; a REVIEW.md whose Severity section cannot be read is named in the manifest's `sizing.warnings` as `severity-guide-fallback`). Nothing is added to them: no sentence, no category, no example. The narrated path
+(the `brief` CLI call of the skill) returns the bare template without a contract, as before, so it is not covered. The security lane has no tool-call cap or snippet guidance
+(pre-existing: its template never had one) and this PR does not add one. Verifier briefs are untouched: independence, the one-claim-per-verifier brief and the vote rules hold.
 
 Not fixable in code, stated plainly: whether a reviewer *thinks* to run `detectE2eFrameworkInDir('/no/such/dir')`, or notices that a
 documented option is read nowhere, is the model's depth. The knobs that buy it are operator settings in the `ensemble-review-policy`
@@ -66,11 +67,19 @@ block of `REVIEW.md`, each with a cost:
 | `effort` of the dispatcher's agent call (not a policy key: the dispatcher sets it) | the agent default | more reasoning per reviewer | tokens and time, unmeasured here |
 | lenses per slice (`depth.standard.reviewers`) | 2 | a third lens on a slice (another pass over the same paths) | one more reviewer per slice |
 
+An out-of-range value of either key is reported as `invalid-type`, the reason every simple policy key uses (pre-existing precedent, e.g. `maxConcurrentAgents`);
+`reviewerSnippets` at or above `reviewerToolCalls` is rejected as `exceeds-tool-calls`, because snippets count toward the cap.
+
 **The knobs are advisory.** The runner sizes a reviewer's deadline from paths and changed lines only; it does not read `reviewerToolCalls`,
 checks nothing and warns about nothing. The plan's figures for an earlier run (17 to 41 minutes for 73 to 144 calls) imply roughly 0.23 to
 0.29 minutes per call, so 200 calls would need about 47 to 57 minutes, reachable only with `deadlineMinutes.reviewer` near its maximum of 60. A
 reviewer that reaches its call cap returns its findings and the paths it did not reach; one that reaches its deadline is reported not reviewed.
 The default of 3 snippets is a judgement, like `deadlineHeadroom`: the run only shows that one was spent on a nit.
+
+**The answer key is in the repository.** The reference and fixture are tracked files, and a snapshot is the exact head tree (the prepare step fails with
+`snapshot-mismatch` for anything else), so a reviewer of any head that contains them could read them. The PR 207 re-measure is on the immutable head `48c862c`,
+whose tree does not hold them; run the guard from a checkout of this repository, never against a head that has merged these files, and re-measure a head
+that has them only after removing them from that head. The guard refuses findings that state another `headSha` (`head-mismatch`).
 
 Interplay with PR 282 (open when this was written: a 22-minute reviewer floor): both touch `pr-review-run.js`, `review-run.md`, the CHANGELOG and the
 `REVIEW.md` / user-guide policy rows; whichever merges second resolves the conflict. A longer reviewer deadline gives more room for more

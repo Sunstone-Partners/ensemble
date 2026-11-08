@@ -441,8 +441,7 @@ function claimRuleBullet() {
  * definition at all: the contract named the words and nothing else. The definition is the repository's own: the Severity bullets of
  * REVIEW.md read at the base commit (`extractSeverityGuide`), so a maintainer edits the meaning in that file and nothing here widens it.
  * `DEFAULT_SEVERITY_GUIDE` is the same bullets as REVIEW.md carries them, used when the base has no such section (a test pins that the two
- * agree). The one sentence added says that a defect a user or caller would hit is not graded down because of where it sits; it adds
- * no category and no example.
+ * agree). Nothing is added to it: no sentence, category or example.
  */
 const DEFAULT_SEVERITY_GUIDE = [
   '- **Important** \u2014 the change is wrong, unsafe or unproven: a defect a user or another agent would hit, a security or secret exposure, a gate that cannot fail, a claim with no command behind it, or a generated artifact that no longer matches its source. An Important finding must be answered before merge.',
@@ -452,7 +451,7 @@ const DEFAULT_SEVERITY_GUIDE = [
 
 function severityBullet(guide) {
   const text = typeof guide === 'string' && guide.trim() !== '' ? guide : DEFAULT_SEVERITY_GUIDE;
-  return `- Severity (the repository's REVIEW.md, "Severity"):\n${text.split('\n').map((line) => `  ${line}`).join('\n')}\n  Grade a defect a user or caller would hit as \`important\` wherever it sits: a new or opt-in path is not a reason to call it a nit.`;
+  return `- Severity (the repository's REVIEW.md, "Severity"):\n${text.split('\n').map((line) => `  ${line}`).join('\n')}`;
 }
 
 /** The text a reviewer or the lane writes its result as. */

@@ -1649,9 +1649,21 @@ describe('a `pre-existing` label is a claim about provenance and is checked agai
       const brief = fs.readFileSync(a.briefPath, 'utf8');
       expect(brief).toContain('- **Important** \u2014 the change is wrong, unsafe or unproven: a defect a user or another agent would hit');
       expect(brief).toContain('- **Nit** \u2014 a preference that does not change behaviour');
-      expect(brief).toMatch(/a new or opt-in path is not a reason to call it a nit/);
-      expect(brief).not.toMatch(/Report one root cause once/);
+      // nothing is added to the repository's words: no sentence about opt-in paths, no root-cause rule, no example
+      expect(brief).not.toMatch(/opt-in|new or rare|Report one root cause/);
     }
+  });
+
+  test('a REVIEW.md whose Severity section cannot be read is NAMED in the manifest warnings and the built-in copy applies; no file, or facts from before this key, say nothing (kata yg7k)', async () => {
+    const base = makeFacts({ changedPaths: ['src/a.js'], numstat: [{ path: 'src/a.js', added: 10, deleted: 2 }] });
+    const warned = async (guidance) => (await harness({ facts: { ...base, guidance } }).prepare()).sizing.warnings.filter((w) => w.code === 'severity-guide-fallback');
+    const named = await warned({ severityGuide: null, severityGuideProblem: 'severity-bullets-malformed' });
+    expect(named).toHaveLength(1);
+    expect(named[0].message).toMatch(/severity-bullets-malformed/);
+    expect(await warned({ severityGuide: null, severityGuideProblem: 'severity-section-missing' })).toHaveLength(1);
+    expect(await warned({ severityGuide: null, severityGuideProblem: 'no-rules-file' })).toEqual([]);
+    expect(await warned({})).toEqual([]);
+    expect(await warned({ severityGuide: '- **Important** \u2014 a.\n- **Nit** \u2014 b.\n- **Pre-existing** \u2014 c.', severityGuideProblem: null })).toEqual([]);
   });
 
   test('the meaning comes from the REVIEW.md Severity section read at the base when facts carry it, else the built-in copy (kata yg7k)', async () => {

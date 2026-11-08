@@ -1,7 +1,7 @@
 {
  "run": "pr207-hi-q3c",
  "headSha": "48c862c416af218bc1fa32305493fb8855602b31",
- "note": "the ledger of the first Medium run (collect output, whole entries minus verification tallies), kept so the recall guard test pins the run itself",
+ "note": "Selected fields (id, source, locationOrLink, severity, failureMode, disposition, evidence, verification) of every entry of the ledger in the first Medium run's final collect output. The scorer reads locationOrLink, severity, failureMode, evidence and id; the other fields of the original (originalTextOrLink, reportedId, fixId, originalLinks, mergedFrom, uncertain) are not kept.",
  "ledger": [
   {
    "id": "f1",

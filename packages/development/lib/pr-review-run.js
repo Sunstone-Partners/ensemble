@@ -457,6 +457,10 @@ function buildReviewAgents(run, deps, ctx) {
   };
   // What a reviewer may spend (policy `reviewerToolCalls`, `reviewerSnippets`; the default when the policy holds neither).
   const stated = (key, fallback) => (run.policy && Number.isInteger(run.policy[key]) ? run.policy[key] : fallback);
+  // a REVIEW.md whose Severity section could not be read is NAMED, never replaced by the built-in copy in silence ('no-rules-file' is the documented defaults)
+  if (run.severityGuide === null && run.severityGuideProblem !== null && run.severityGuideProblem !== 'no-rules-file') {
+    run.sizing.warnings.push({ code: 'severity-guide-fallback', message: `REVIEW.md at the base has no readable Severity section (${run.severityGuideProblem}), so the reviewers are given the built-in copy of the severity words, not your edit; fix the section (a "## Severity" heading with one "- **Important** ...", "- **Nit** ..." and "- **Pre-existing** ..." bullet, under 2000 characters)` });
+  }
   const budget = { toolCalls: stated('reviewerToolCalls', DEFAULT_POLICY.reviewerToolCalls), snippets: stated('reviewerSnippets', DEFAULT_POLICY.reviewerSnippets) };
   run.slices.forEach((slice, sliceIndex) => {
     // a reviewer handed the WHOLE range diff (its slice could not be cut from it) reads the whole diff: its deadline is sized for that
@@ -706,6 +710,7 @@ async function prepareStages(input, deps, ctx) {
     policyRejected: isObject(facts.policy) && Array.isArray(facts.policy.rejected) ? facts.policy.rejected : [],
     // the Severity bullets of REVIEW.md at the base (null: a cached prepare without them, or a REVIEW.md without the section)
     severityGuide: isObject(facts.guidance) && typeof facts.guidance.severityGuide === 'string' ? facts.guidance.severityGuide : null,
+    severityGuideProblem: isObject(facts.guidance) && typeof facts.guidance.severityGuideProblem === 'string' ? facts.guidance.severityGuideProblem : null,
     sensitivePaths: isObject(facts.paths) && Array.isArray(facts.paths.sensitive) ? facts.paths.sensitive : [],
     phase: 'preparing',
     waves: [],

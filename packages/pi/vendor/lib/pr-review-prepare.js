@@ -118,6 +118,12 @@ class PrepareError extends Error {
   }
 }
 
+/** What the reviewers' contract is told about the severity words: the guide from the base REVIEW.md, or the named reason it could not be read. */
+function severityGuideFacts(reviewText) {
+  const { guide, problem } = extractSeverityGuide(reviewText);
+  return { severityGuide: guide, severityGuideProblem: problem };
+}
+
 /* ------------------------------------------------------------------ helpers */
 
 function gitOk(deps, args, opts, reason, stage, detail) {
@@ -844,7 +850,7 @@ function deriveFromGit(deps, options, range, nodeModules, treeSha, entries) {
       deleted: numstat.reduce((n, f) => n + (f.deleted || 0), 0),
       binary: numstat.filter((f) => f.binary).length,
     },
-    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath, severityGuide: extractSeverityGuide(reviewText) },
+    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath, ...severityGuideFacts(reviewText) },
     policy,
     pathsInput,
     paths: classification,

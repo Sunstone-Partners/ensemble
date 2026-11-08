@@ -55,6 +55,8 @@ describe('the real process on the first Medium run of PR 207 (the measurement th
     [['--reference', REFERENCE]],
     [['--reference', REFERENCE, '--findings', '/nonexistent/ledger.json']],
     [['--reference', REFERENCE, '--findings', LEDGER, '--slack', 'many']],
+    [['--reference', REFERENCE, '--findings', LEDGER, '--slack', '']],
+    [['--reference', REFERENCE, '--findings', LEDGER, '--max-false-negative', '']],
     [['--reference', REFERENCE, '--findings', LEDGER, '--max-false-negative', '2']],
     [['--reference', REFERENCE, '--findings', LEDGER, '--bogus', '1']],
   ])('unreadable or bad input is exit 2 and never a pass (%j)', (args) => {
@@ -100,6 +102,33 @@ describe('wording: every word of one term list, in the failure mode or the evide
   });
 });
 
+describe('the reference is not satisfied by unrelated text, and a run that inflates is visible (review of PR 283, round 2)', () => {
+  const status = (id, failureMode) => scoreRecall({ reference, findings: [finding({ failureMode })] }).items.find((i) => i.id === id).status;
+
+  test('a finding that merely mentions a generic word of the reference does not satisfy the item', () => {
+    expect(status('E4', 'The usings option of the scaffold is ignored for a second namespace')).toBe('not-raised');
+    expect(status('E3', 'The first class in the file is a fixture, unrelated to where text is spliced')).toBe('not-raised');
+    expect(status('E4', 'The usings list and the fixtureType both come from the caller')).toBe('found');
+  });
+
+  test('a correct paraphrase of E6 is found', () => {
+    expect(status('E6', 'The headed flag is accepted by the parser but never reaches the browser launch')).toBe('found');
+  });
+
+  test('Important findings that match no item are listed, and a matching one is not', () => {
+    const result = scoreRecall({ reference, findings: [finding({ id: 'a', failureMode: 'something else entirely' }), finding({ id: 'b', severity: 'nit', failureMode: 'also unrelated' }), finding({ id: 'c', failureMode: 'Microsoft.Playwright.Xunit is misclassified' })] });
+    expect(result.unmatchedImportant.map((f) => f.id)).toEqual(['a']);
+  });
+
+  test('findings of another head are refused (exit-2 class), the same head and a bare array are scored', () => {
+    const other = scoreRecall({ reference, findings: { headSha: 'f'.repeat(40), ledger: [] } });
+    expect(other).toMatchObject({ ok: false, pass: false });
+    expect(other.error).toMatch(/head-mismatch/);
+    expect(scoreRecall({ reference, findings: { headSha: reference.headSha, ledger: [] } }).ok).toBe(true);
+    expect(scoreRecall({ reference, findings: [] }).ok).toBe(true);
+  });
+});
+
 describe('whole words: a word inside a longer one is not a hit (review of PR 283)', () => {
   const item = ref([{ id: 'A', terms: [['slow-mo']] }]);
   const status = (failureMode, evidence) => scoreRecall({ reference: item, findings: [finding({ failureMode, evidence })] }).items[0].status;
@@ -121,6 +150,7 @@ describe('whole words: a word inside a longer one is not a hit (review of PR 283
 describe('the committed fixture is the run\'s own ledger, evidence included (review of PR 283)', () => {
   test('every entry carries its evidence, because the guard matches on it', () => {
     expect(ledger.ledger.length).toBe(17);
+    expect(ledger.headSha).toBe(reference.headSha);
     for (const entry of ledger.ledger) expect(typeof entry.evidence === 'string' && entry.evidence.length > 0).toBe(true);
   });
 

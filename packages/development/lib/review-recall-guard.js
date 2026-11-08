@@ -26,7 +26,9 @@
  *   - `downgraded`   the defect was raised but only as a Nit, Pre-existing or an unreadable severity: the review would defer it, so for
  *                    the guard it is lost, and it is reported apart because the cause is different (grading, not reading);
  *   - `not-raised`   no finding matches.
- * `falseNegativeRate` = (downgraded + not-raised) / items; `notRaisedRate` is the part of it nobody raised at all. The guard FAILS (exit 1)
+ * `falseNegativeRate` = (downgraded + not-raised) / items; `notRaisedRate` is the part of it nobody raised at all. `unmatchedImportant` lists the Important findings that match no item (a run that
+ * inflates its Important findings raises no false-negative rate: read this beside it). Findings that state a `headSha` different from the
+ * reference's are refused (`head-mismatch`), and the reference should be read from the checkout that runs the guard, never from the reviewed head. The guard FAILS (exit 1)
  * when `falseNegativeRate` exceeds `--max-false-negative` (default 0: any lost Important finding fails). Unreadable input is exit 2 and
  * never a pass: an empty reference, a duplicate id, an item with neither anchors nor terms, findings that are not a list.
  *
@@ -116,6 +118,12 @@ function scoreRecall({ reference, findings, slack = DEFAULT_SLACK, maxFalseNegat
   if (!Number.isInteger(slack) || slack < 0) return { ok: false, pass: false, error: 'slack-invalid: a whole number of lines, 0 or more' };
   if (typeof maxFalseNegative !== 'number' || !(maxFalseNegative >= 0 && maxFalseNegative <= 1)) return { ok: false, pass: false, error: 'max-false-negative-invalid: a number from 0 to 1' };
 
+  // the findings of another head say nothing about this reference: fail closed rather than score them
+  const stated = isObject(findings) && isText(findings.headSha) ? findings.headSha.trim() : null;
+  if (stated !== null && isText(reference.headSha) && stated !== reference.headSha.trim()) {
+    return { ok: false, pass: false, error: `head-mismatch: the findings are of ${stated}, the reference is of ${reference.headSha.trim()}` };
+  }
+
   const entries = list.filter(isObject);
   const items = ref.items.map((item) => {
     const hits = entries.filter((finding) => matches(item, finding, slack));
@@ -130,12 +138,18 @@ function scoreRecall({ reference, findings, slack = DEFAULT_SLACK, maxFalseNegat
       ...(best === undefined ? {} : { best: best.id === undefined ? null : best.id }),
     };
   });
+  // Important findings that match no reference item: over-inflation (many Important findings, few of them real) is invisible to the rate, so it is counted
+  const matched = new Set(items.flatMap((item) => item.matchedBy.map((m) => m.id)));
+  const unmatchedImportant = entries.filter((finding) => normalizeSeverity(finding.severity) === 'important' && !matched.has(finding.id === undefined ? null : finding.id)).map((finding) => ({ id: finding.id === undefined ? null : finding.id, locationOrLink: finding.locationOrLink === undefined ? null : finding.locationOrLink }));
   const counts = { items: items.length, found: 0, downgraded: 0, 'not-raised': 0 };
   for (const item of items) counts[item.status] += 1;
   const falseNegativeRate = (counts.downgraded + counts['not-raised']) / counts.items;
   const notRaisedRate = counts['not-raised'] / counts.items;
-  return { ok: true, pass: falseNegativeRate <= maxFalseNegative, maxFalseNegative, items, counts, falseNegativeRate, notRaisedRate };
+  return { ok: true, pass: falseNegativeRate <= maxFalseNegative, maxFalseNegative, items, counts, falseNegativeRate, notRaisedRate, unmatchedImportant };
 }
+
+/** A flag's number: an empty or non-numeric string is NaN (refused later), never 0. */
+const number = (value) => (/^\s*[+-]?(?:\d+\.?\d*|\.\d+)\s*$/.test(value) ? Number(value) : NaN);
 
 function parseArgs(argv) {
   const options = { slack: DEFAULT_SLACK, maxFalseNegative: DEFAULT_MAX_FALSE_NEGATIVE };
@@ -145,8 +159,8 @@ function parseArgs(argv) {
     if (value === undefined) return { error: `${flag} needs a value` };
     if (flag === '--reference') options.reference = value;
     else if (flag === '--findings') options.findings = value;
-    else if (flag === '--slack') options.slack = Number(value);
-    else if (flag === '--max-false-negative') options.maxFalseNegative = Number(value);
+    else if (flag === '--slack') options.slack = number(value);
+    else if (flag === '--max-false-negative') options.maxFalseNegative = number(value);
     else return { error: `unknown argument ${flag}` };
   }
   if (!isText(options.reference) || !isText(options.findings)) return { error: '--reference and --findings are required' };

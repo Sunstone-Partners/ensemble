@@ -45,23 +45,29 @@
           "marker class"
         ],
         [
-          "first class"
-        ],
-        [
           "findclassbodyrange"
         ]
       ],
-      "note": "These phrases are specific to the splice position; 'first class' could also appear in an unrelated finding, so read matchedBy."
+      "note": "Phrases specific to the splice position; read matchedBy."
     },
     {
       "id": "E4",
       "summary": "scaffoldNewSpecFile throws for a new xUnit file because no step supplies collection, fixtureType or usings",
       "terms": [
         [
+          "usings",
+          "fixturetype"
+        ],
+        [
+          "usings",
+          "collection"
+        ],
+        [
+          "collection must be",
           "usings"
         ]
       ],
-      "note": "'usings' is generic: any finding about a usings option matches, so read matchedBy before counting it."
+      "note": "'usings' alone is generic, so it is paired with another word the defect uses; read matchedBy."
     },
     {
       "id": "E5",
@@ -116,6 +122,14 @@
         [
           "headed",
           "inert"
+        ],
+        [
+          "headed",
+          "never"
+        ],
+        [
+          "headed",
+          "framework"
         ]
       ],
       "note": "Whole-word match: 'slow-motion' does not match 'slow-mo'."

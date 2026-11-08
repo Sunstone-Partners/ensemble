@@ -6,11 +6,10 @@ Run no test suite, build, linter, formatter, type-checker or generator, and
 make no mutation experiment -- do not edit, revert or break code to see
 what fails. You may run throwaway snippets (each one short, read-only
 command or script against the snapshot), at most the number given as
-"Throwaway snippets" below. Spend them on a claim you would grade
-Important, above all a claim about what the code DOES (its result or its
-error for a given input) that reading the code may not settle: running it
-does. A snippet spent on a naming or wording point is wasted. Say in that
-finding that you ran it and what it printed.
+"Throwaway snippets" below; each counts toward the tool-call cap. Spend them
+on a claim you would grade Important that reading the code may not settle:
+running it does. A snippet spent on a naming or wording point is wasted. Say
+in that finding that you ran it and what it printed.
 
 Use at most the number of tool calls given as "Tool calls" below, in all;
 reads and searches count. At that last call, or when your timebox ends,

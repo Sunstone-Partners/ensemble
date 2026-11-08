@@ -102,7 +102,7 @@ const DEFAULT_MAX_CONCURRENT_AGENTS = 8;
  * What a reviewer may spend in one pass (kata yg7k). `reviewerToolCalls` is the cap the reviewer and whole-range briefs
  * state ("at most N tool calls in all"); `reviewerSnippets` is how many throwaway read-only snippets it may run to settle a
  * claim about what code DOES. The first measured Medium run (PR 207) kept the cap at 40 and the snippets at one: reviewers spent
- * snippets on nits, and findings that needed running the code were never raised. More calls and snippets buy deeper reviewers and
+ * snippets on nits, and findings that needed running the code were not raised [INFERENCE: the run shows the one snippet spent on a nit, not that more would have found them]. More calls and snippets buy deeper reviewers and
  * cost wall time and tokens: a reviewer that uses its whole budget runs longer, so a maintainer who raises them should raise
  * `deadlineMinutes.reviewer` with them. ADVISORY: the runner sizes a deadline from paths and changed lines only and neither
  * checks nor warns about the budget. The default of 3 snippets is a judgement, not a measurement (like `deadlineHeadroom`).
@@ -194,15 +194,18 @@ const KNOWN_KEYS = Object.freeze(['sourceSha', 'roundCap', 'depth', 'deadlineMin
 /**
  * The meaning of the three severity words, as the repository wrote it (kata yg7k): the three bullets (`Important`, `Nit`,
  * `Pre-existing`) of the "## Severity" section of the REVIEW.md text the caller read at the BASE commit. A reviewer's contract carries
- * it, so what an Important finding is stays the prose a maintainer edits, with no code change. Pure; the text is never executed. Returns
- * the bullets joined by newlines with line breaks inside a bullet collapsed, or null when the section or any of the three bullets is
- * absent (the caller then uses its built-in copy, which is these same bullets as REVIEW.md carries them).
+ * it, so what an Important finding is stays the prose a maintainer edits, with no code change. Pure; the text is never executed.
+ * Returns `{ guide, problem }`: the bullets joined by newlines (line breaks inside a bullet collapsed) and `problem: null`, or
+ * `guide: null` and a NAMED problem, so the caller can say why the built-in copy applies instead of using it silently:
+ *   `no-rules-file` (no REVIEW.md at the base: the defaults apply and nothing is wrong), `severity-section-missing` (no line `## Severity`),
+ *   `severity-bullets-malformed` (not exactly one `- **Important** ...`, `- **Nit** ...` and `- **Pre-existing** ...` bullet in the section),
+ *   `severity-section-too-long` (over 2000 characters), `severity-section-control-characters`.
  */
 function extractSeverityGuide(text) {
-  if (typeof text !== 'string') return null;
+  if (typeof text !== 'string') return { guide: null, problem: 'no-rules-file' };
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const start = lines.findIndex((line) => /^##\s+Severity\s*$/.test(line));
-  if (start === -1) return null;
+  if (start === -1) return { guide: null, problem: 'severity-section-missing' };
   const bullets = [];
   for (let i = start + 1; i < lines.length; i += 1) {
     if (/^#{1,6}\s/.test(lines[i])) break;
@@ -216,9 +219,13 @@ function extractSeverityGuide(text) {
     bullets.push({ word: open[1], text: bullet });
   }
   const words = bullets.map((bullet) => bullet.word);
-  if (words.length !== 3 || !['Important', 'Nit', 'Pre-existing'].every((word) => words.includes(word))) return null;
+  if (words.length !== 3 || !['Important', 'Nit', 'Pre-existing'].every((word) => words.includes(word))) {
+    return { guide: null, problem: 'severity-bullets-malformed' };
+  }
   const guide = bullets.map((bullet) => bullet.text).join('\n');
-  return guide.length > 2000 || /[\u0000-\u0008\u000B-\u001F\u007F]/.test(guide) ? null : guide;
+  if (guide.length > 2000) return { guide: null, problem: 'severity-section-too-long' };
+  if (/[\u0000-\u0008\u000B-\u001F\u007F]/.test(guide)) return { guide: null, problem: 'severity-section-control-characters' };
+  return { guide, problem: null };
 }
 
 /** The answer when nothing can be trusted: strict defaults, named reason. */
@@ -394,6 +401,12 @@ function loadPolicy(input) {
     const value = parsed[key];
     if (isValid(value)) policy[key] = clone(value);
     else reject(key, 'invalid-type', value);
+  }
+
+  // snippets count toward the tool-call cap, so a snippet allowance that is the whole cap leaves nothing to read with
+  if (policy.reviewerSnippets >= policy.reviewerToolCalls) {
+    reject('reviewerSnippets', 'exceeds-tool-calls', policy.reviewerSnippets);
+    policy.reviewerSnippets = DEFAULT_REVIEWER_SNIPPETS;
   }
 
   return { ok: true, source: 'policy', policy, rejected, warnings };
