@@ -507,23 +507,32 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(guide).toMatch(/not run end to end here/);
   });
 
-  test('the guide, the reference, the user guide and the CHANGELOG state the whole-range reader of a light run cut into several slices, the cap arithmetic, what it is graded on and what it cannot do (review of PR 274, round 2)', () => {
+  test('the guide, the reference, the user guide and the CHANGELOG state the whole-range reader of a light run cut into several slices, the cap arithmetic, what it is graded on and what it cannot do (review of PR 274, rounds 2 and 3)', () => {
     for (const text of [guide, reference]) {
       expect(text).toContain('reviewer-range');
       expect(text).toContain('whole-range');
       expect(text).toMatch(/one pass[^.]{0,40}one lens/);
+      // the slices come first; the reader is added only when the cap holds it beside them, and the plan says when it does not
+      expect(text).toContain('floor((maxConcurrentAgents - lane) / lenses per slice)');
+      expect(text).toContain('slices x lenses + lane + 1 <= maxConcurrentAgents');
+      expect(text).toContain('reader-not-planned');
+      expect(text).toContain('range-reviewer-brief.md');
     }
-    expect(guide).toContain('floor((maxConcurrentAgents - 1 for the lane - 1 for the whole-range reader, in light mode) / lenses per slice)');
-    expect(reference).toContain('floor((maxConcurrentAgents - 1 - 1 in light mode for the whole-range reader) / lenses per slice)');
     expect(guide).toMatch(/the plan does not warn about it/);
+    expect(guide).toMatch(/A slice that fits the limits is never given up for it/);
+    expect(guide).toContain('| 8 (the default) | 3, within the limits | yes | 8 |');
+    expect(guide).toContain('| 7 | 3, within the limits | no (`reader-not-planned`) | 7 |');
+    expect(guide).toContain('| 5 | 2 (`slice-over-limit`) | no (`reader-not-planned`) | 5 |');
     expect(guide).toMatch(/36 minutes for the real PR/);
     expect(guide).toMatch(/no second independent reader of the whole diff/);
     expect(guide).toMatch(/`paths-not-reviewed`/);
     expect(guide).toMatch(/`deadlineHeadroom` changes the deadlines only/);
     expect(row('maxConcurrentAgents')).toMatch(/whole-range reader/);
+    expect(row('maxConcurrentAgents')).toContain('floor((cap - lane) / lenses per slice)');
     expect(row('deadlineMinutes')).toMatch(/only when its payload carries `work`/);
     const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
-    expect(unreleased).toMatch(/gets one whole-range reader \(kata `sfpb`, review round 2/);
+    expect(unreleased).toMatch(/gets one whole-range reader when the cap holds it \(kata `sfpb`, review rounds 2 and 3/);
+    expect(unreleased).toContain('reader-not-planned');
   });
 
   test('the CHANGELOG entry is the first of Unreleased and says the model is one run and nothing is relaxed', () => {

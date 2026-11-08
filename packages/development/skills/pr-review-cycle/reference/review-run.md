@@ -119,14 +119,20 @@ agents the manifest names and stop each at its own `deadlineAtIso`; the deadline
 * Slices: every PR is cut, in path order, into slices of at most `sliceMaxFiles` (8) paths and about `sliceTargetLines`
   (612) changed lines (policy keys; the defaults are derived from the one real full-mode run in `lib/pr-review-sizing.js`, with
   a headroom of 2 that is a judgement and not a measurement),
-  and never into more slices than let the whole review round and the lane run in ONE wave (`floor((maxConcurrentAgents - 1 -
-  1 in light mode for the whole-range reader) / lenses per slice)`: 3 at the default cap of 8). A path is never cut and every path is read under at least two lenses.
+  and never into more slices than let the whole review round run in ONE wave: `floor((maxConcurrentAgents - lane) / lenses per
+  slice)`, where `lane` is 1 for a run with a security lane (3 slices at the default cap of 8). The cap must hold one slice's
+  lenses and the lane for that to be one wave at all: below it the round is split into waves and nothing warns. A path is never
+  cut and every path is read under at least two lenses.
   With several slices each reviewer's brief names a diff of ITS slice (`slices/slice-<n>.diff`), or the whole range diff when
   its paths cannot all be placed in it; the security lane reads the whole diff.
-* A light run cut into several slices has one more reviewer, `reviewer-range` (slice id `whole-range`): it reads the WHOLE range
-  diff and every path under one lens, with a deadline sized for the whole diff; start it like any other agent. If it expires or
-  lists fewer paths its read is in `notReviewed` (`whole-range`), and the final answer's `reducedReview` says what it covers
-  (interactions between slices) and what it cannot (one pass, one lens, no second reader of the whole diff).
+* A light run cut into several slices has one more reviewer, `reviewer-range` (slice id `whole-range`), when the cap holds it
+  beside the slices and the lane: `slices x lenses + lane + 1 <= maxConcurrentAgents` (a 3-slice run at the default cap is 6
+  reviewers + the reader + the lane = 8). A slice that fits the limits is never given up for it: when the cap does not hold it the
+  plan has no reader and says so (`reader-not-planned`, naming the cap that would). It reads the WHOLE range diff and every path
+  under one lens with a brief of its own (`templates/range-reviewer-brief.md`, rendered like the others with `{ role: "range-reviewer", vars: { lens, timeboxMinutes, paths, diffPath, snapshotDir } }`),
+  and its deadline is sized for the whole diff; start it like any other agent. If it expires or lists fewer paths its read is in
+  `notReviewed` (`whole-range`), and the final answer's `reducedReview` says what it covers (interactions between slices) and
+  what it cannot (one pass, one lens, no second reader of the whole diff).
 * Deadlines: `deadlineMinutes` is the BASE for a reviewer and the lane (15), raised to the modelled time to read the agent's
   `work` with headroom (`deadlineHeadroom`, 2: a judgement), at most 60 minutes: `clamp(ceil(max(paths x 0.934, changed lines / 100 x
   1.224) x headroom), base, 60)`. A reviewer's `work` is its slice, the lane's is every changed path, a verifier is not sized
@@ -134,7 +140,8 @@ agents the manifest names and stop each at its own `deadlineAtIso`; the deadline
   reviewers at 15 minutes and the lane at 36, where it needed 17.75.
 * `sizing` in the review round's manifest and in `run.json` says what was planned: `model`, `limits`, `work`, `slices[]`
   (`overLimit`, `diff`) and `warnings[]`. Report every warning with the run: `slice-over-limit` (the cap holds fewer slices
-  than the limits ask for; the message names the `maxConcurrentAgents` that would hold them), `deadline-capped` (a modelled
+  than the limits ask for; the message names the `maxConcurrentAgents` that would hold them), `reader-not-planned` (the cap
+  holds the slices but not a whole-range reader beside them; the message names the cap that would), `deadline-capped` (a modelled
   need over 60 minutes: that agent may not finish) and `invalid-<key>` (an unreadable policy value; the default applied).
 * Nothing is relaxed. An agent that arrives after its (larger) deadline is `expired`, and a reviewer that lists fewer paths
   than its slice leaves that slice not reviewed: both are reported in `notReviewed`, never hidden by a bigger deadline or a
@@ -144,8 +151,9 @@ agents the manifest names and stop each at its own `deadlineAtIso`; the deadline
   measured. The lane is one agent: above about 32 paths or 2,450 changed lines its deadline is capped at 60 minutes and the
   warning says so. A reviewer reads its slice's diff, so an interaction between slices is read as a whole only by the
   security lane and, in full mode, by `TRIAGE` (its answer carries `rangeDiff` and `slices`) or, in light mode, by the
-  whole-range reader (one pass, one lens); the final answer's `reducedReview` has a `cross-slice` line when that applies and
-  carries the plan's warnings. Detail: `docs/guides/pr-review-run.md`.
+  whole-range reader when one was planned (one pass, one lens); the final answer's `reducedReview` has a `cross-slice` line
+  that names what actually read it (a lane or a reader that did not arrive and cover every path is not credited, and `by no
+  agent` is said when none did) and carries the plan's warnings. Detail: `docs/guides/pr-review-run.md`.
 
 ## A candidate the verifier brief refuses
 
