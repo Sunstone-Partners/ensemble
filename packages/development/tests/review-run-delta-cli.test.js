@@ -442,3 +442,48 @@ describe('what a delta round does with the findings of the round before', () => 
     expect(readStateFile().verdicts.find((v) => v.file === 'med/a03.js')).toMatchObject({ head: head3, carriedFrom: fx.head1 });
   });
 });
+
+describe('a full-mode (High tier) re-review: the headline case of the measurement (kata q3a9)', () => {
+  /** A High PR of the shape of the real full-mode run: 19 files under a High path (wide/**), so the run is Deep with the lane and a TRIAGE stop. */
+  function wideHead() {
+    git(fx.work, 'checkout', '-q', '-B', 'wide-pr', 'main');
+    LINES.forEach((count, index) => write(fx.work, medPath(index).replace(/^med\//, 'wide/'), body(count)));
+    git(fx.work, 'add', '.');
+    git(fx.work, 'commit', '-q', '-m', 'a wide High PR');
+    return git(fx.work, 'rev-parse', 'HEAD');
+  }
+  const widePaths = ALL_PATHS.map((file) => file.replace(/^med\//, 'wide/'));
+
+  test('a 1-file fix push to a High PR: Deep depth, the lane and TRIAGE all stay, but one slice reads the delta and the saving is in the plan', () => {
+    const head1 = wideHead();
+    setGh({ head: head1 });
+    fs.rmSync(statePath(), { force: true });
+    const first = prep('w1');
+    expect(first.out).toMatchObject({ status: 'DISPATCH', mode: { mode: 'full' } });
+    expect(first.out.agents).toHaveLength(7);
+    answerReview(first.out, { lanePaths: widePaths, findings: { 'reviewer-s1-a': [finding('wide/a03.js:1', 'the first line returns before the guard on line 2 can run')] } });
+    expect(coll('w1').out).toMatchObject({ status: 'TRIAGE' });
+    const v1 = coll('w1', { triage: {} });
+    expect(v1.out).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    answerVotes(v1.out);
+    expect(coll('w1').out).toMatchObject({ status: 'DONE', mode: { mode: 'full' } });
+    expect(readStateFile().verdicts).toHaveLength(1);
+
+    const head2 = push(head1, { 'README.md': '# fixture, fixed\n' }, 'w-fix');
+    const p = prep('w2', { lastReviewedSha: head1, remediationShas: [head2] });
+    expect(p.out).toMatchObject({ status: 'DISPATCH', mode: { mode: 'full' }, depth: { mode: 'deep', verifiersPerCandidate: 5 } });
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta', delta: { changedPaths: 1, readPaths: 1, agentsPlanned: 3, agentsFullRead: 7 } });
+    expect(p.out.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
+    // the reviewer raises the earlier defect again; the push did not touch it, so it keeps its verdict
+    answerReview(p.out, { lanePaths: ['README.md'], findings: { 'reviewer-s1-a': [finding('wide/a03.js:1', 'the first line returns before the guard on line 2 can run')] } });
+    const triage = coll('w2');
+    expect(triage.out).toMatchObject({ status: 'TRIAGE', reReview: { scope: 'delta', appliedRange: 'delta' }, coverage: { complete: true } });
+    expect(path.basename(triage.out.rangeDiff)).toBe('delta.diff');
+    // nothing is left to verify: every candidate kept its verdict, so the run goes from TRIAGE straight to the verdict
+    const done = coll('w2', { triage: {} });
+    expect(done.out).toMatchObject({ ok: true, status: 'DONE', mode: { mode: 'full' }, carry: { appliedRange: 'delta', carried: 1, reverified: 0 } });
+    expect(done.out.ledger).toHaveLength(1);
+    expect(done.out.ledger[0]).toMatchObject({ locationOrLink: 'wide/a03.js:1', headSha: head2, carriedFrom: head1, verification: { outcome: 'present' } });
+    expect(done.out.coverage).toEqual({ complete: true, unreviewedSlices: [], uncovered: [] });
+  });
+});
