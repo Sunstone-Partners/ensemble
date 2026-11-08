@@ -18,9 +18,10 @@
  *   baseSha, headSha  REQUIRED full object ids; the head must descend from the base
  *   lastReviewedSha  the head the PRIOR round reviewed (the `reviewedHeadSha` its state report
  *             recorded: the value `review-range` is given). Every entry carried from that report
- *             was alive then, so what changed since is all that can have fixed it. Without it an
- *             entry's own `headSha` (when it has one) is the baseline: when the finding was first
- *             raised, a longer span that also counts an edit the finding survived. An entry this
+ *             was alive then, so what changed since is all that can have fixed it. It has to be ON THE
+ *             PR: one a force-push replaced keeps every entry (`recorded-head-not-on-pr`), stamped or
+ *             not. Without it an entry's own `headSha` (when it has one) is the baseline: when the finding
+ *             was first raised, a longer span that also counts an edit the finding survived. An entry this
  *             verb already moved (`locationAsOf`) is compared from that head instead, unless
  *             `lastReviewedSha` is a LATER head (the verb skipped a round): then that is the baseline
  *   ledger    REQUIRED entries recorded in earlier rounds, as the previous run of this verb returned them
@@ -43,11 +44,13 @@
  *      (as given: this is what makes a second run over the verb's own output change nothing)
  *   4. no baseline: no `locationAsOf`, no `lastReviewedSha` and no own `headSha` that is a commit
  *      -> no-recorded-head (as given)
- *   5. the baseline (`lastReviewedSha` when it is later than the `locationAsOf` stamp, else the stamp,
- *      else `lastReviewedSha`, else the own head) not ON THE PR
+ *   5. `lastReviewedSha`, when given, not ON THE PR, or the baseline (`lastReviewedSha` when it is later than the
+ *      `locationAsOf` stamp, else the stamp, else `lastReviewedSha`, else the own head) not ON THE PR
  *      -> recorded-head-not-on-pr (as given; an ancestor of head, not of base: a force-pushed old
- *      head is no longer an ancestor, and neither is a baseline the repository no longer holds,
- *      a `locationAsOf` included: the numbering it vouched for is gone)
+ *      head is no longer an ancestor, and neither is a head the repository no longer holds, a `locationAsOf`
+ *      included: the numbering it vouched for is gone. A `lastReviewedSha` off the PR keeps EVERY entry
+ *      that needs a comparison, whatever stamp it carries: a stamp says where the line is, not that the
+ *      finding was alive at the head the prior round reviewed)
  *   6. re-reported at this head              -> re-reported: `incoming` holds the same
  *      `fingerprintFinding` identity (the LINE is not part of it, so a defect re-reported
  *      lower after the file shifted still counts), or, when either side has no fingerprint,
@@ -171,9 +174,12 @@ function deriveCleared(input) {
   if (descends === null) return failed('could not tell whether headSha descends from baseSha');
   if (descends === false) return failed('headSha does not descend from baseSha');
 
-  // The prior round's reviewed head, when the caller has it: the baseline entries without a stamp share. An
-  // object the repository no longer holds (a force-push replaced it) resolves to null: a baseline that is not on the PR.
+  // The prior round's reviewed head, when the caller has it: the baseline entries without a stamp share. It has to be ON THE
+  // PR (an ancestor of head, not of base). One a force-push replaced, or this repository no longer holds (that resolves to
+  // null), can no longer say what changed since, and no stamp brings that back: a stamp says where the LINE is, not that the
+  // finding was alive at the head the prior round reviewed. Every entry that needs a comparison is kept (below).
   const shared = input.lastReviewedSha === undefined ? undefined : repo.resolveCommit(git, cwd, input.lastReviewedSha);
+  const sharedOffPr = shared !== undefined && (shared === null || !repo.commitOnPr(git, cwd, { commit: shared, headSha: head, baseSha: base }).ok);
 
   const recordedAt = new Date(now()).toISOString();
   const cleared = [];
@@ -203,11 +209,12 @@ function deriveCleared(input) {
     if (stamped === head) return keep(entry, 'location-current');
     // A stamp this repository no longer holds (a force-push replaced that head): the numbering it vouched for is gone.
     if (typeof entry.locationAsOf === 'string' && stamped === null) return keep(entry, 'recorded-head-not-on-pr');
+    if (sharedOffPr) return keep(entry, 'recorded-head-not-on-pr');
     // A stamp older than lastReviewedSha means the verb did not run at the prior round's head (a skipped round). The
     // finding was alive at that head, so THAT is the baseline, and the line is first moved from the stamp to it (below).
     const lagging = stamped !== null && shared !== undefined && shared !== stamped && repo.isAncestor(git, cwd, stamped, shared) === true;
     const recorded = lagging ? shared : stamped !== null ? stamped : shared === undefined ? own : shared;
-    if (recorded === null) return keep(entry, shared === undefined ? 'no-recorded-head' : 'recorded-head-not-on-pr');
+    if (recorded === null) return keep(entry, 'no-recorded-head');
     if (recorded === head) return keep(entry, 'recorded-at-this-head');
     if (!repo.commitOnPr(git, cwd, { commit: recorded, headSha: head, baseSha: base }).ok) {
       return keep(entry, 'recorded-head-not-on-pr');

@@ -537,7 +537,7 @@ describe('the cited line is carried forward through every round (a fix after an 
     expect(second.ledger).toEqual(first.ledger);
   });
 
-  test('an entry the verb already moved is compared from the head it was moved to, whatever lastReviewedSha says', () => {
+  test('an entry the verb already moved is compared from the head it was moved to, whatever earlier head lastReviewedSha names', () => {
     const stamped = finding('F', 'src/a.js:25', 'defect', { locationAsOf: r2 });
     const r = at({ headSha: r3, lastReviewedSha: r1, ledger: [stamped] });
     expect(r.cleared.map((c) => c.id)).toEqual(['F']);
@@ -705,6 +705,78 @@ describe('a skipped round clears nothing it should not (the stamp is older than 
     const stampedAtY = finding('F', 'src/a.js:25', 'defect', { locationAsOf: yShift });
     expect(at({ headSha: hFix, lastReviewedSha: yShift, ledger: [stampedAtY] }).cleared.map((c) => c.id)).toEqual(['F']);
     expect(at({ headSha: hOther, lastReviewedSha: yShift, ledger: [stampedAtY] }).kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+  });
+});
+
+describe('a lastReviewedSha that is not on the PR clears nothing, whatever stamp an entry carries', () => {
+  let w;
+  let b0;
+  let ha;
+  let hb;
+  let hc;
+  let deadX;
+  const at = (extra) => deriveCleared({ git: defaultGit(), cwd: w, baseSha: b0, headSha: hc, incoming: [], now: () => 0, ...extra });
+  /** What the verb left at round 2: the defect (line 25 at round 1) is on line 28, stamped with that head. */
+  const stampedAtHb = () => finding('F', 'src/a.js:28', 'defect', { headSha: ha, locationAsOf: hb });
+
+  beforeAll(() => {
+    w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prr-clear-offpr-')));
+    roots.push(w);
+    sh(w, ['init', '-q', '-b', 'main']);
+    sh(w, ['config', 'user.name', 'T']);
+    sh(w, ['config', 'user.email', 't@example.com']);
+    sh(w, ['config', 'commit.gpgsign', 'false']);
+    b0 = commit(w, { 'README.md': 'base\n' }, 'base');
+    ha = commit(w, { 'src/a.js': numbered(40, { 25: 'DEFECT' }) }, 'round 1: the defect is on line 25');
+    // A commit that is not on the PR: it hangs off round 1 on a branch the PR never contained, and the stamp below does
+    // not lead to it (a stamp that did would be caught by the skipped-round rule, which is not what this is about).
+    sh(w, ['checkout', '-q', '-b', 'dead', ha]);
+    deadX = commit(w, { 'README.md': 'base\ndead\n' }, 'a commit off the PR');
+    sh(w, ['checkout', '-q', 'main']);
+    const shifted = numbered(40, { 25: 'DEFECT' }).replace('line 2\n', 'line 2\nn1\nn2\nn3\n');
+    hb = commit(w, { 'src/a.js': shifted }, 'round 2: three lines inserted above (the defect is on line 28)');
+    hc = commit(w, { 'src/a.js': shifted.replace('DEFECT\n', 'DEFECT (edited)\n') }, 'round 3: the stamped line is edited, the defect remains');
+  });
+
+  test('premise: the stamp is on the PR, the lastReviewedSha is not, and the stamp does not lead to it', () => {
+    const git = defaultGit();
+    expect(git(['merge-base', '--is-ancestor', hb, hc], { cwd: w }).status).toBe(0);
+    expect(git(['merge-base', '--is-ancestor', deadX, hc], { cwd: w }).status).toBe(1);
+    expect(git(['merge-base', '--is-ancestor', hb, deadX], { cwd: w }).status).toBe(1);
+  });
+
+  test('a stamp on the PR and a lastReviewedSha off it: a touched defect is kept, not cleared', () => {
+    const e = stampedAtHb();
+    const r = at({ lastReviewedSha: deadX, ledger: [e] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'recorded-head-not-on-pr' }]);
+    expect(r.ledger).toEqual([e]);
+  });
+
+  test('a lastReviewedSha the repository does not hold, or the base, is no better', () => {
+    for (const lastReviewedSha of ['a'.repeat(40), b0]) {
+      const r = at({ lastReviewedSha, ledger: [stampedAtHb()] });
+      expect(r.cleared).toEqual([]);
+      expect(r.kept).toEqual([{ id: 'F', reason: 'recorded-head-not-on-pr' }]);
+    }
+  });
+
+  test('control: a lastReviewedSha that is on the PR (the head the stamp names) still compares from the stamp, and the edit clears', () => {
+    const r = at({ lastReviewedSha: hb, ledger: [stampedAtHb()] });
+    expect(r.cleared.map((c) => c.id)).toEqual(['F']);
+  });
+
+  test('an entry that needs no comparison is reported as before, whatever the lastReviewedSha is', () => {
+    const done = finding('A', 'src/a.js:28', 'defect', { cleared: true, clearedBy: hb });
+    const own = finding('B', 'src/a.js:28', 'defect', { headSha: hc });
+    const current = finding('C', 'src/a.js:28', 'defect', { locationAsOf: hc });
+    const r = at({ lastReviewedSha: deadX, ledger: [done, own, current] });
+    expect(r.kept).toEqual([
+      { id: 'A', reason: 'already-cleared' },
+      { id: 'B', reason: 'recorded-at-this-head' },
+      { id: 'C', reason: 'location-current' }
+    ]);
+    expect(r.ledger).toEqual([done, own, current]);
   });
 });
 
