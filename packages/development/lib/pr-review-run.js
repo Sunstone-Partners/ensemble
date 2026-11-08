@@ -41,6 +41,18 @@
  * Coverage is the agents' own report (`pathsReviewed`) and their read-only access an instruction nobody here enforces. The
  * baseline test run (head code) happens inside prepare, before the tier is known. `agentAuthored` is the caller's word.
  *
+ * STAGE SPANS (kata k0sh): the run records, through `makeTracer`, exactly the span names `lib/pr-review-timing.js` reads (its
+ * STAGES and STAGE_KINDS are imported, never respelled here): one `review` root per run (opened by prepare, closed by the call
+ * that ends the run, so it is the orchestrator window), `review.head-read` (fetching the base and head and finding the merge
+ * base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status) and one `review.<role>`
+ * span per dispatched agent with its `agent` name and `round`. Every one carries `round` (1, or 2 when `lastReviewedSha` makes
+ * it a delta re-review; the runner cannot know how many re-reviews came before). An agent span opens when the agent is
+ * dispatched and closes when its result is collected, with `last_message_ts` = the moment its result file arrived, so the
+ * agent counts to its last message and never to the collect call or the session's exit. `precheck` and `prepare-head` are kept:
+ * the reader ignores names that are not stages. HONEST LIMITS: the root opens after the first read of the PR head (the run id
+ * depends on it), and does not record `turns` or `tool_calls` (the runner cannot see the model). A trace file that already
+ * holds another `review` root (a second run sharing `traceRunId`) has no usable window: give each run its own trace.
+ *
  * deps (every function may be async):
  *   now()                                    epoch ms
  *   makeTracer(traceRunId)                   -> {startSpan(name,{kind,attrs}), endSpan(id,{status,attrs})}   (never throws)
@@ -75,6 +87,7 @@ const { deriveStatus } = require('./pr-review-status');
 const { statePath } = require('./pr-review-state');
 const { assessProtection } = require('./pr-review-precheck');
 const S = require('./pr-review-run-support');
+const { STAGES, STAGE_KINDS } = require('./pr-review-timing');
 
 const SCHEMA = 1;
 const RUN_SUBDIR = path.join('.ensemble', 'pr-review', 'run');
@@ -274,7 +287,7 @@ function dispatchWave(run, wave, now, deps, tracer) {
     agent.deadlineAt = deadline.deadlineAt;
     agent.deadlineAtIso = deadline.deadlineAtIso;
     agent.prompt = S.agentPrompt(agent);
-    agent.spanId = tracer.start(`agent:${agent.name}`, 'agent', { role: agent.role, round: wave.round, wave: wave.wave });
+    agent.spanId = tracer.start(stageOfAgent(agent), STAGE_KINDS[stageOfAgent(agent)], { agent: agent.name, role: agent.role, round: run.round, stage: wave.round, wave: wave.wave });
     dispatched.push(agent);
   }
   wave.status = 'dispatched';
@@ -311,7 +324,36 @@ function manifestOf(run, wave) {
   };
 }
 
+/** The span a dispatched agent is recorded under: `review.<role>`, the security lane being `review.security-lane`. */
+function stageOfAgent(agent) {
+  return agent.name === LANE_NAME ? STAGES['security-lane'] : STAGES[agent.role];
+}
+
+/** Closes the `review` root span (when one is open), whatever the run's outcome. */
+function endRoot(tracer, rootSpanId, status, attrs) {
+  if (tracer !== null && rootSpanId !== null && rootSpanId !== undefined) tracer.end(rootSpanId, status, attrs);
+}
+
+/**
+ * Prepare. The `review` root span opens inside and stays open on DISPATCH (the run carries its id; collect closes it when the
+ * run ends); every other outcome is the end of the run, so it is closed here.
+ */
 async function prepareRun(input, deps) {
+  const ctx = { tracer: null, root: null };
+  let answer;
+  try {
+    answer = await prepareStages(input, deps, ctx);
+  } catch (error) {
+    endRoot(ctx.tracer, ctx.root, 'error', { error: msg(error) });
+    throw error;
+  }
+  if (!(isObject(answer) && answer.ok === true && answer.status === 'DISPATCH')) {
+    endRoot(ctx.tracer, ctx.root, isObject(answer) && answer.ok === true ? 'ok' : 'error', { status: isObject(answer) ? answer.status : undefined });
+  }
+  return answer;
+}
+
+async function prepareStages(input, deps, ctx) {
   const startedAt = deps.now();
   const invalid = validatePrepare(input);
   if (invalid !== null) return failure('RUN_FAILED', { reason: 'invalid-input', error: invalid });
@@ -347,6 +389,9 @@ async function prepareRun(input, deps) {
     return failure('RUN_FAILED', { reason: 'run-exists', error: `run ${runId} already exists; call collect, or choose another runId` });
   }
   const tracer = safeTracer(deps, traceRunId);
+  const round = input.lastReviewedSha === undefined ? 1 : 2;
+  ctx.tracer = tracer;
+  ctx.root = tracer.start(STAGES.root, STAGE_KINDS[STAGES.root], { pr: input.pr, round, headSha });
 
   // 2. precheck (advisory: a failed precheck never stops the review)
   let precheck;
@@ -361,9 +406,12 @@ async function prepareRun(input, deps) {
   // base: always the merge base of the freshly fetched base branch and the head. A caller-stated baseSha is checked
   // against it, never trusted: a commit inside the PR would narrow the changed paths, tier, slices and coverage to the
   // suffix, and the gate would grade only that suffix with no sign that the earlier commits went unreviewed.
+  const headReadSpan = tracer.start(STAGES.headRead, STAGE_KINDS[STAGES.headRead], { headSha, round });
   const refs = await settle(() => deps.fetchRefs({ headSha, baseRefName }));
-  if (!isObject(refs) || refs.ok !== true) return failure('RUN_FAILED', { reason: 'refs-unavailable', error: isObject(refs) && refs.error ? refs.error : 'the base and head could not be fetched', precheck });
-  const mb = await settle(() => deps.git(['merge-base', `refs/remotes/origin/${baseRefName}`, headSha]));
+  const refsFetched = isObject(refs) && refs.ok === true;
+  const mb = refsFetched ? await settle(() => deps.git(['merge-base', `refs/remotes/origin/${baseRefName}`, headSha])) : null;
+  tracer.end(headReadSpan, refsFetched ? 'ok' : 'error', {});
+  if (!refsFetched) return failure('RUN_FAILED', { reason: 'refs-unavailable', error: isObject(refs) && refs.error ? refs.error : 'the base and head could not be fetched', precheck });
   const baseSha = isObject(mb) && mb.status === 0 ? String(mb.stdout).trim().toLowerCase() : '';
   if (!SHA.test(baseSha)) return failure('RUN_FAILED', { reason: 'base-unresolved', error: `no merge base of origin/${baseRefName} and ${headSha}`, precheck });
   if (input.baseSha !== undefined && input.baseSha !== baseSha) {
@@ -402,6 +450,7 @@ async function prepareRun(input, deps) {
     schema: SCHEMA,
     runId,
     traceRunId,
+    round,
     repo: input.repo,
     pr: input.pr,
     repoRoot: input.repoRoot,
@@ -482,6 +531,7 @@ async function prepareRun(input, deps) {
   const now = deps.now();
   dispatchWave(run, run.waves[0], now, deps, tracer);
   run.phase = 'review-dispatched';
+  run.rootSpanId = ctx.root;
   logCall(run, 'prepare', startedAt, deps);
   saveRun(deps, run);
   return { ...manifestOf(run, run.waves[0]), precheck, prState: run.prState };
@@ -504,13 +554,16 @@ function expectedOf(wave) {
 }
 
 /** Records one collected wave in the run and ends its agents' spans. */
-function recordWave(run, wave, collected, now, tracer) {
+function recordWave(run, wave, collected, now, tracer, deps) {
   for (const record of collected.agents) {
     const agent = wave.agents.find((a) => a.name === record.name);
     agent.state = record.state;
     agent.reason = record.reason;
     if (Number.isFinite(record.arrivedAt)) agent.arrivedAt = record.arrivedAt;
-    tracer.end(agent.spanId, record.state === 'arrived' ? 'ok' : record.state, { state: record.state, reason: record.reason });
+    // The agent counts to its last message: the arrival of its result file, when that lies inside the span it is recorded in.
+    const closedAt = deps.now();
+    const lastMessage = Number.isFinite(record.arrivedAt) && record.arrivedAt >= agent.dispatchedAt && record.arrivedAt <= closedAt ? { last_message_ts: new Date(record.arrivedAt).toISOString() } : {};
+    tracer.end(agent.spanId, record.state === 'arrived' ? 'ok' : record.state, { state: record.state, reason: record.reason, ...lastMessage });
   }
   wave.status = 'collected';
   wave.collectedAt = now;
@@ -672,6 +725,7 @@ async function treeOf(deps, sha) {
  * Returns `{invalid}` (head moved / unreadable) or the graded pieces.
  */
 async function gateStage(run, built, deps, tracer) {
+  const span = tracer.start(STAGES.gate, STAGE_KINDS[STAGES.gate], { headSha: run.headSha, round: run.round });
   const unavailable = [];
   const warnings = [];
   const reviewsRead = await twice(() => deps.readReviews());
@@ -680,9 +734,18 @@ async function gateStage(run, built, deps, tracer) {
   if (protectionRead.ok !== true) unavailable.push('branch-protection');
 
   const head = await readHead(deps);
-  if (!head.ok) return { invalid: failure('RUN_FAILED', { reason: 'head-unreadable', error: head.error, runId: run.runId }) };
-  if (head.headSha !== run.headSha) return { invalid: failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), moved: true };
-  if (head.pr.state !== 'OPEN') return { invalid: notOpen(head.pr.state, run.runId), moved: false };
+  if (!head.ok) {
+    tracer.end(span, 'error', { reason: 'head-unreadable' });
+    return { invalid: failure('RUN_FAILED', { reason: 'head-unreadable', error: head.error, runId: run.runId }) };
+  }
+  if (head.headSha !== run.headSha) {
+    tracer.end(span, 'error', { reason: 'head-moved' });
+    return { invalid: failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), moved: true };
+  }
+  if (head.pr.state !== 'OPEN') {
+    tracer.end(span, 'error', { reason: 'pr-not-open' });
+    return { invalid: notOpen(head.pr.state, run.runId), moved: false };
+  }
 
   const headTreeSha = await treeOf(deps, run.headSha);
   if (headTreeSha === undefined) warnings.push('head-tree-unreadable: only approvals given on the head commit itself are counted');
@@ -703,12 +766,12 @@ async function gateStage(run, built, deps, tracer) {
   const description = checkDescription({ body: head.pr.body, agentAuthored: run.agentAuthored });
   const policy = run.policy === null ? undefined : run.policy;
   const approvals = evaluateApprovals({ reviews, headSha: run.headSha, headTreeSha, tier: run.tier, policy, author: run.author, directedBy: description.directedBy || undefined, agentAuthored: run.agentAuthored });
-  const span = tracer.start('gate', 'gate', { headSha: run.headSha });
   const gate = evaluateGate({ ledger: built.ledger, approvals, tier: run.tier, description, security: run.security, headSha: run.headSha, policy, unavailable });
   const disposition = buildDispositionChoices({ ledger: built.ledger, security: run.security, votes: built.tally, policy, headSha: run.headSha });
   tracer.end(span, gate.mergeable === true ? 'ok' : 'blocked', { mergeable: gate.mergeable, blockers: gate.blockers.length });
   const gated = { ...gate, dispositionChoices: disposition.dispositionChoices, dispositionGroups: disposition.groups, mergeConfirmation: disposition.mergeConfirmation, ...(disposition.ok === true ? {} : { dispositionReason: disposition.reason }) };
 
+  const verdictSpan = tracer.start(STAGES.verdict, STAGE_KINDS[STAGES.verdict], { headSha: run.headSha, round: run.round });
   const actionable = built.ledger.filter((entry) => isActionable(entry)).length;
   const deferred = built.ledger.filter((entry) => !isActionable(entry) && entry.disposition === 'deferred').length;
   const tests = testsFact(run.baseline);
@@ -725,6 +788,7 @@ async function gateStage(run, built, deps, tracer) {
     ...(run.policy && Number.isInteger(run.policy.roundCap) ? { roundCap: run.policy.roundCap } : {}),
     reportPath: statePath(run.pr, run.repoRoot),
   });
+  tracer.end(verdictSpan, 'ok', { status: isObject(reviewStatus) ? reviewStatus.status : undefined });
   return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection: assessProtection(protectionRead, run.baseRefName, { required: approvals.humansRequired }), unavailable, warnings, headState: head.pr.state };
 }
 
@@ -849,7 +913,25 @@ function applyAdjudications(ledger, listed, adjudications, now) {
   return { ok: true, ledger: next };
 }
 
+const TERMINAL_PHASES = Object.freeze(['done', 'invalidated', 'needs-full-mode', 'failed']);
+
+/**
+ * Collect. The `review` root span stays open across PENDING and DISPATCH answers and is closed by the call after which the
+ * run is over (a finished, invalidated or failed run), once: the run records that it did.
+ */
 async function collectRun(input, deps) {
+  const ctx = { tracer: null, run: null };
+  const answer = await collectStages(input, deps, ctx);
+  const { run, tracer } = ctx;
+  if (run !== null && run.rootSpanId !== null && run.rootSpanId !== undefined && run.rootEnded !== true && TERMINAL_PHASES.includes(run.phase)) {
+    endRoot(tracer, run.rootSpanId, run.phase === 'done' ? 'ok' : 'error', { phase: run.phase });
+    run.rootEnded = true;
+    saveRun(deps, run);
+  }
+  return answer;
+}
+
+async function collectStages(input, deps, ctx) {
   const startedAt = deps.now();
   const invalid = validateCollect(input);
   if (invalid !== null) return failure('RUN_FAILED', { reason: 'invalid-input', error: invalid });
@@ -859,6 +941,8 @@ async function collectRun(input, deps) {
   if (run === null) return failure('RUN_FAILED', { reason: 'run-not-found', error: `no run ${input.runId} under ${input.repoRoot}` });
   if (run === undefined) return failure('RUN_FAILED', { reason: 'run-unreadable', error: 'run.json is not a run of this version' });
   const tracer = safeTracer(deps, run.traceRunId);
+  ctx.run = run;
+  ctx.tracer = tracer;
 
   if (['invalidated', 'needs-full-mode', 'failed'].includes(run.phase)) return run.result;
 
@@ -913,7 +997,7 @@ async function collectRun(input, deps) {
       saveRun(deps, run);
       return { ok: true, status: 'PENDING', runId: run.runId, round: wave.round, wave: `${wave.wave} of ${wave.of}`, waitingOn: pending.map((a) => a.name), retryAfterMs: Math.max(1000, Math.min(15000, earliest - now)), earliestDeadlineAt: earliest, earliestDeadlineAtIso: new Date(earliest).toISOString() };
     }
-    recordWave(run, wave, collected, now, tracer);
+    recordWave(run, wave, collected, now, tracer, deps);
     saveRun(deps, run);
   }
 

@@ -175,11 +175,11 @@ function harness({ changedPaths = ['src/a.js'], numstat, policyJson, facts, base
     makeTracer: () => ({
       startSpan: (name, opts) => {
         spanSeq += 1;
-        h.spans.push({ type: 'start', id: spanSeq, name, kind: opts.kind });
+        h.spans.push({ type: 'start', id: spanSeq, name, kind: opts.kind, attrs: opts.attrs });
         return spanSeq;
       },
       endSpan: (id, opts) => {
-        h.spans.push({ type: 'end', id, status: opts.status });
+        h.spans.push({ type: 'end', id, status: opts.status, attrs: opts.attrs });
         return true;
       },
     }),
@@ -1654,16 +1654,86 @@ describe('metrics and the acvv recorder', () => {
     expect(S.computeMetrics(run, 9100)).toEqual({ wallMs: 9100, runnerCalls: 2, dispatchRounds: 1, agentsDispatched: 2, agentsByRole: { reviewer: 1, verifier: 1 }, adjudicationCalls: 1, orchestratorTurns: { atLeast: 3, basis: expect.stringContaining('lower bound') }, runnerMs: 200, agentActiveMs: 7900, orchestratorOnlyMs: 1000 });
   });
 
-  test('stage spans: precheck, prepare-head, one span per agent from dispatch to collection, and the gate', async () => {
+  test('stage spans use the names and kinds lib/pr-review-timing.js reads: the review root, head-read, one span per agent from dispatch to collection, the gate and the verdict', async () => {
     const h = harness();
     await reviewRound(h);
     const started = h.spans.filter((s) => s.type === 'start');
-    expect(started.map((s) => s.name)).toEqual(['precheck', 'prepare-head', 'agent:reviewer-s1-a', 'agent:reviewer-s1-b', 'agent:security-lane', 'gate']);
-    expect(started.filter((s) => s.kind === 'agent')).toHaveLength(3);
-    expect(started.find((s) => s.name === 'gate').kind).toBe('gate');
+    expect(started.map((s) => s.name)).toEqual(['review', 'precheck', 'review.head-read', 'prepare-head', 'review.reviewer', 'review.reviewer', 'review.security-lane', 'review.gate', 'review.verdict']);
+    expect(Object.fromEntries(started.filter((s) => s.name.startsWith('review')).map((s) => [s.name, s.kind]))).toEqual({ review: 'phase', 'review.head-read': 'io', 'review.reviewer': 'agent', 'review.security-lane': 'agent', 'review.gate': 'gate', 'review.verdict': 'phase' });
+    expect(started.filter((s) => s.kind === 'agent').map((s) => s.attrs.agent)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
+    // every contract span names its round: the verdict is only a step of a round's critical path when it carries one
+    for (const span of started.filter((s) => s.name.startsWith('review'))) expect(span.attrs.round).toBe(1);
     const ended = h.spans.filter((s) => s.type === 'end');
     expect(ended).toHaveLength(started.length);
+    // the root is one span and it closes last
+    expect(started.filter((s) => s.name === 'review')).toHaveLength(1);
+    expect(ended[ended.length - 1].id).toBe(started.find((s) => s.name === 'review').id);
     expect(h.readRun().waves[0].agents.every((a) => a.spanId !== null && a.spanId !== undefined)).toBe(true);
+  });
+
+  test('an agent span ends at its last message: last_message_ts is when its result file arrived, and an agent that never arrived has none', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    answerReview(m, { skip: ['reviewer-s1-b'], lane: { findings: [], pathsReviewed: allPaths(h) } });
+    // the collector dates an arrival by the result file's change time (ctime), which a writer cannot backdate
+    const arrived = ['reviewer-s1-a', 'security-lane'].map((name) => fs.statSync(m.agents.find((a) => a.name === name).outPath).ctimeMs);
+    const after = m.agents[1].deadlineAt + 1000;
+    await h.collect({ now: after });
+    const ends = new Map(h.spans.filter((s) => s.type === 'end').map((s) => [s.id, s]));
+    const byAgent = Object.fromEntries(h.spans.filter((s) => s.type === 'start' && s.kind === 'agent').map((s) => [s.attrs.agent, ends.get(s.id)]));
+    expect(byAgent['reviewer-s1-a'].attrs.last_message_ts).toBe(new Date(Math.round(arrived[0])).toISOString());
+    expect(byAgent['security-lane'].attrs.last_message_ts).toBe(new Date(Math.round(arrived[1])).toISOString());
+    expect(byAgent['reviewer-s1-b']).toMatchObject({ status: expect.not.stringMatching(/^ok$/) });
+    expect(byAgent['reviewer-s1-b'].attrs.last_message_ts).toBeUndefined();
+  });
+
+  test('the root stays open while the run is PENDING and is closed by the call that ends it', async () => {
+    const h = harness();
+    const m = await h.prepare();
+    const root = h.spans.find((s) => s.type === 'start' && s.name === 'review');
+    expect(h.spans.some((s) => s.type === 'end' && s.id === root.id)).toBe(false);
+    expect(h.readRun().rootSpanId).toBe(root.id);
+    answerReview(m, { skip: ['reviewer-s1-b'], lane: { findings: [], pathsReviewed: allPaths(h) } });
+    expect((await h.collect()).status).toBe('PENDING');
+    expect(h.spans.some((s) => s.type === 'end' && s.id === root.id)).toBe(false);
+    answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(h) } });
+    expect((await h.collect()).status).toBe('DONE');
+    expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'ok', attrs: { phase: 'done' } }]);
+    // a finished run re-read, or adjudicated, closes nothing twice
+    await h.collect();
+    expect(h.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
+  });
+
+  test('a run that ends without a verdict still closes its root: invalidated, refused for full mode, or failed in prepare', async () => {
+    const moved = harness();
+    const m = await moved.prepare();
+    answerReview(m, { lane: { findings: [], pathsReviewed: allPaths(moved) } });
+    moved.head = MOVED;
+    expect((await moved.collect()).status).toBe('RUN_INVALIDATED');
+    const root = moved.spans.find((s) => s.type === 'start' && s.name === 'review');
+    expect(moved.spans.filter((s) => s.type === 'end' && s.id === root.id)).toEqual([{ type: 'end', id: root.id, status: 'error', attrs: { phase: 'invalidated' } }]);
+    expect((await moved.collect()).status).toBe('RUN_INVALIDATED');
+    expect(moved.spans.filter((s) => s.type === 'end' && s.id === root.id)).toHaveLength(1);
+
+    const full = harness({ policyJson: { highPaths: ['src/**'] } });
+    expect((await full.prepare()).status).toBe('NEEDS_FULL_MODE');
+    const fullRoot = full.spans.find((s) => s.type === 'start' && s.name === 'review');
+    expect(full.spans.filter((s) => s.type === 'end' && s.id === fullRoot.id)).toHaveLength(1);
+
+    const broken = harness();
+    broken.deps.fetchRefs = async () => ({ ok: false, error: 'network' });
+    expect((await broken.prepare()).status).toBe('RUN_FAILED');
+    const brokenRoot = broken.spans.find((s) => s.type === 'start' && s.name === 'review');
+    expect(broken.spans.filter((s) => s.type === 'end' && s.id === brokenRoot.id)).toHaveLength(1);
+    expect(broken.spans.find((s) => s.name === 'review.head-read' && s.type === 'start')).toBeDefined();
+  });
+
+  test('a delta re-review (lastReviewedSha) is round 2 on every contract span', async () => {
+    const h = harness();
+    await reviewRound(h, { prepare: { lastReviewedSha: 'e'.repeat(40) } });
+    const contract = h.spans.filter((s) => s.type === 'start' && s.name.startsWith('review'));
+    expect(contract.length).toBeGreaterThan(0);
+    for (const span of contract) expect(span.attrs.round).toBe(2);
   });
 
   test('tracing never fails the run: a tracer that throws on everything changes nothing', async () => {
