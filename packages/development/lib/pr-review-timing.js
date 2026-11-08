@@ -87,7 +87,10 @@
  * is a missing step that names the wave), when a round has more than one verdict span (which one ends the chain is not
  * known), and when the steps overlap or run out of order (each wave must end before the next starts, the last reviewer wave
  * before the first verifier wave, the last verifier wave before the verdict, each round before the next): overlapping
- * steps would count the same minutes twice, so they are never summed.
+ * steps would count the same minutes twice, so they are never summed. A `review.verdict` span that ends with status `error`
+ * is a verdict that was not recorded (a recorder whose attempt failed, then retried, ends the failed one that way): it is no
+ * verdict, so it is neither the verdict step nor a second verdict, and a round whose every verdict span ended in error has
+ * no verdict (MISSING).
  *
  * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
  * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
@@ -429,17 +432,23 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
   const cutTo = timeline.ok ? window : null;
   const rounds = keys.map((round) => {
     const inRound = (stage) => byStage[stage].filter((s) => roundOf(s) === round);
+    // A verdict span that ended in error is a verdict that was not recorded (a collect retried after a failed write): no verdict.
+    const verdictSpans = inRound('verdict');
+    const produced = verdictSpans.filter((s) => s.status !== 'error');
+    const verdictPick = produced.length === 0 && verdictSpans.length > 0
+      ? { step: { stage: 'verdict', ...missing('every verdict span ended in error: no verdict was recorded') }, interval: null }
+      : slowestStep('verdict', produced, cutTo);
     // reviewer waves, then verifier waves, then the verdict: the order the steps must run in
     const reviewerPicks = stagePicks('reviewer', inRound('reviewer'), cutTo, warnings, labelOf(round));
     const picks = [
       ...reviewerPicks,
       ...stagePicks('verifier', inRound('verifier'), cutTo, warnings, labelOf(round)),
-      { label: 'verdict', wave: null, ...slowestStep('verdict', inRound('verdict'), cutTo) },
+      { label: 'verdict', wave: null, ...verdictPick },
     ];
     const steps = picks.map((p) => p.step);
     const gaps = steps.filter((s) => s.missing);
     if (gaps.length > 0) return { round, steps, ...missing(gapReason(gaps)) };
-    const verdicts = inRound('verdict')
+    const verdicts = produced
       .map(intervalOf)
       .filter((found) => found.ok && clipTo(found, cutTo) !== null).length;
     if (verdicts > 1) {

@@ -1072,6 +1072,37 @@ describe('spans that carry one wave number were dispatched together (review of P
   });
 });
 
+describe('a verdict span that ended in error is a verdict that was not recorded (review of PR 270, round 2)', () => {
+  const verdict = (start, end, status = 'ok') => ({ ...span(STAGES.verdict, start, end, { round: 1 }), status });
+  const chain = [root(0, 300), agent('reviewer', 0, 40, { round: 1 }), agent('verifier', 41, 51, { round: 1 })];
+
+  test('the failed attempt and the retry that recorded the verdict are ONE verdict: the retry\'s is the step, the total is computed, not MISSING for two verdicts', () => {
+    const t = computeReviewTiming([...chain, verdict(51, 52, 'error'), verdict(53, 54)]);
+    expect(t.criticalPath).toMatchObject({ ms: 40000 + 10000 + 1000, missing: false });
+    expect(t.criticalPath.rounds[0].steps[2]).toEqual({ stage: 'verdict', ms: 1000, missing: false });
+    expect(t.stages[STAGES.verdict].count).toBe(2); // both attempts are in the trace and in the per-stage table
+  });
+
+  test('an error verdict that is the longer one is not taken for the step: the slowest rule does not choose a verdict that was never recorded', () => {
+    const t = computeReviewTiming([...chain, verdict(51, 80, 'error'), verdict(81, 82)]);
+    expect(t.criticalPath).toMatchObject({ ms: 40000 + 10000 + 1000, missing: false });
+  });
+
+  test('a round whose only verdict span ended in error has no verdict: MISSING, with that reason, the other steps still measured', () => {
+    const t = computeReviewTiming([...chain, verdict(51, 52, 'error')]);
+    expect(t.criticalPath).toMatchObject({ ms: null, missing: true });
+    expect(t.criticalPath.reason).toContain('verdict: every verdict span ended in error: no verdict was recorded');
+    expect(t.criticalPath.rounds[0].steps.slice(0, 2).every((s) => !s.missing)).toBe(true);
+  });
+
+  test('only the status `error` is excluded: a verdict that ended in another status still counts, and two of them are still two', () => {
+    expect(computeReviewTiming([...chain, verdict(51, 52, 'blocked')]).criticalPath).toMatchObject({ ms: 51000, missing: false });
+    const two = computeReviewTiming([...chain, verdict(51, 52, 'blocked'), verdict(53, 54)]).criticalPath;
+    expect(two).toMatchObject({ ms: null, missing: true });
+    expect(two.reason).toContain('2 verdict spans recorded in the round');
+  });
+});
+
 describe('input checking', () => {
   test.each([[undefined], [null], ['spans'], [{ spans: 'x' }], [{}]])('%j is refused, not read as an empty trace', (input) => {
     expect(computeReviewTiming(input)).toMatchObject({ ok: false });
