@@ -629,6 +629,85 @@ describe('a force-push between rounds clears nothing (an entry raised at a head 
   });
 });
 
+describe('a skipped round clears nothing it should not (the stamp is older than lastReviewedSha)', () => {
+  let w;
+  let b0;
+  let s1;
+  let yEdit;
+  let hEdit;
+  let yShift;
+  let hFix;
+  let hOther;
+  let yGone;
+  const inserted = numbered(40).replace('line 3\n', 'line 3\nn1\nn2\nn3\nn4\nn5\n');
+  const at = (extra) => deriveCleared({ git: defaultGit(), cwd: w, baseSha: b0, incoming: [], now: () => 0, ...extra });
+  /** What the verb left behind at round 1: the defect on line 20, stamped with that head. */
+  const stampedAtS1 = () => finding('F', 'src/a.js:20', 'defect', { locationAsOf: s1 });
+
+  beforeAll(() => {
+    w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prr-clear-skip-')));
+    roots.push(w);
+    sh(w, ['init', '-q', '-b', 'main']);
+    sh(w, ['config', 'user.name', 'T']);
+    sh(w, ['config', 'user.email', 't@example.com']);
+    sh(w, ['config', 'commit.gpgsign', 'false']);
+    b0 = commit(w, { 'README.md': 'base\n' }, 'base');
+    s1 = commit(w, { 'src/a.js': numbered(40) }, 'round 1: the verb ran here and stamped the entry');
+    // Round 2 is reviewed but the verb is NOT run. It edits the defect's own line (the finding survives the edit).
+    yEdit = commit(w, { 'src/a.js': numbered(40, { 20: 'line 20 (reformatted)' }) }, 'round 2: the cited line is reformatted');
+    // Round 3: an unrelated edit far from the cited line.
+    hEdit = commit(w, { 'src/a.js': numbered(40, { 20: 'line 20 (reformatted)', 30: 'unrelated edit' }) }, 'round 3: an edit elsewhere');
+    // The same, but round 2 only moves the line (five lines inserted above it).
+    sh(w, ['checkout', '-q', '-b', 'shift', s1]);
+    yShift = commit(w, { 'src/a.js': inserted }, 'round 2: five lines inserted above');
+    hFix = commit(w, { 'src/a.js': inserted.replace('line 20\n', 'FIXED\n') }, 'round 3: the fix');
+    sh(w, ['checkout', '-q', '-b', 'shift-other', yShift]);
+    hOther = commit(w, { 'src/a.js': inserted.replace('line 15\n', 'EDITED\n') }, 'round 3: an unrelated edit at the number the defect had at round 1');
+    // A round 2 that a force-push has since replaced.
+    sh(w, ['checkout', '-q', '-b', 'gone', s1]);
+    yGone = commit(w, { 'src/a.js': numbered(40, { 21: 'a different round 2' }) }, 'round 2, force-pushed away');
+    sh(w, ['checkout', '-q', 'main']);
+  });
+
+  test('an edit the finding survived in the skipped round is not a fix: location-unanchored, never cleared', () => {
+    const e = stampedAtS1();
+    const r = at({ headSha: hEdit, lastReviewedSha: yEdit, ledger: [e] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
+    expect(r.ledger).toEqual([e]);
+  });
+
+  test('a skipped round that only moved the line still lets the fix be found', () => {
+    const r = at({ headSha: hFix, lastReviewedSha: yShift, ledger: [stampedAtS1()] });
+    expect(r.cleared).toEqual([{ id: 'F', clearedBy: hFix, recordedAt: '1970-01-01T00:00:00.000Z' }]);
+  });
+
+  test('...and an unrelated edit at the number the line had at round 1 does not clear it: the line is moved to the head and stamped', () => {
+    const r = at({ headSha: hOther, lastReviewedSha: yShift, ledger: [stampedAtS1()] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+    expect(r.ledger[0]).toMatchObject({ locationOrLink: 'src/a.js:25', locationAsOf: hOther });
+  });
+
+  test('a skipped round that a force-push replaced keeps the entry: its baseline is not on the PR', () => {
+    const r = at({ headSha: hEdit, lastReviewedSha: yGone, ledger: [stampedAtS1()] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'recorded-head-not-on-pr' }]);
+  });
+
+  test('a re-raised finding is still re-anchored whatever the skipped round did', () => {
+    const r = at({ headSha: hEdit, lastReviewedSha: yEdit, ledger: [stampedAtS1()], incoming: [finding('N', 'src/a.js:20', 'defect')] });
+    expect(r.kept).toEqual([{ id: 'F', reason: 're-reported' }]);
+    expect(r.ledger[0]).toMatchObject({ locationOrLink: 'src/a.js:20', locationAsOf: hEdit });
+  });
+
+  test('control: the documented flow (the verb ran at the prior head, so the stamp is lastReviewedSha) compares from the stamp as before', () => {
+    const stampedAtY = finding('F', 'src/a.js:25', 'defect', { locationAsOf: yShift });
+    expect(at({ headSha: hFix, lastReviewedSha: yShift, ledger: [stampedAtY] }).cleared.map((c) => c.id)).toEqual(['F']);
+    expect(at({ headSha: hOther, lastReviewedSha: yShift, ledger: [stampedAtY] }).kept).toEqual([{ id: 'F', reason: 'location-unchanged' }]);
+  });
+});
+
 describe('a renamed file keeps its findings (a rename is not a fix: the defect went with the file)', () => {
   let w;
   let b0;
