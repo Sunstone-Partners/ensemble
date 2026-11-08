@@ -511,7 +511,7 @@ describe('the docs say a round the clear verb was not run at is not read as a fi
   });
 });
 
-describe('the docs name both writers of a cleared mark: the clear verb and carry reconcile (kata n350, qw98)', () => {
+describe('the docs name one writer of a cleared mark: the clear verb (carry reconcile writes none) (kata n350, qw98)', () => {
   test('premise: carry reconcile no longer clears (it does not call clearFixedFindings and answers cleared: [])', () => {
     const cli = fs.readFileSync(path.join(__dirname, '..', 'lib', 'pr-review-cli.js'), 'utf8');
     const action = cli.slice(cli.indexOf('  reconcile: {'), cli.indexOf('function runCarry'));
@@ -520,16 +520,32 @@ describe('the docs name both writers of a cleared mark: the clear verb and carry
     expect(action).not.toMatch(/clearFixedFindings/);
   });
 
-  test('the gate reference, the clear-verb reference and the user guide no longer say the clear verb is the only writer', () => {
-    expect(GATE_REF).toContain("the skill's writers of it are `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6), and, in a delta round, `carry reconcile`");
-    expect(GATE_REF).toContain("The procedure's writers of the mark are `PR_REVIEW_CLEAR_CLI` and, in a delta round, `carry reconcile`");
-    expect(GATE_REF).not.toMatch(/only writer/);
-    expect(GUIDE_RULE).toContain("in a delta round, through `carry reconcile`, which clears from the delta's hunks alone");
-    expect(GUIDE_RULE).not.toMatch(/writes the mark only through/);
-    expect(TRIAGE).toContain('In a delta round `carry reconcile` (step 6 above) has already run on this ledger: a finding it cleared is `already-cleared` here and this verb cannot take the mark back');
+  test('the gate reference, the clear-verb reference, the carry guide, the user guide and the changelog headline say the clear verb is the only writer', () => {
+    expect(GATE_REF).toContain("the skill's only writer of it is `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6); `carry reconcile` writes none");
+    expect(GATE_REF).toContain("The procedure's only writer of the mark is `PR_REVIEW_CLEAR_CLI` (`carry reconcile` writes none)");
+    expect(GATE_REF).not.toMatch(/writers of (it|the mark)/);
+    expect(GUIDE_RULE).toContain('The procedure writes the mark only through `lib/pr-review-clear-cli.js` (`carry reconcile` writes none)');
+    expect(GUIDE_RULE).not.toMatch(/in a delta round, through `carry reconcile`/);
+    expect(TRIAGE).toContain('6. **Reconcile (writes nothing).**');
+    expect(TRIAGE).toContain('This verb is the only writer of `cleared`: `carry reconcile` (step 6 above) writes none.');
+    expect(TRIAGE).not.toMatch(/is how an `unmatched` verdict ends/);
+    const carryGuide = flatten(readRepo('docs', 'guides', 'pr-review-carry.md'));
+    expect(carryGuide).toContain('It never clears: `cleared` is always empty and no entry gains a mark.');
+    expect(carryGuide).not.toContain('A finding no reviewer reported again whose cited location the push changed is cleared; one that was observed again');
     const headline = flatten(readRepo('packages', 'development', 'CHANGELOG.md').split('\n').find((line) => /\(kata `n350`, plan/.test(line)));
-    expect(headline).toContain('is a producer of `cleared` (`carry reconcile`, kata `qw98`, is the other, in a delta round');
-    expect(headline).not.toContain('is the producer of `cleared`');
+    expect(headline).toContain('is the only writer of `cleared` (`carry reconcile`, kata `qw98`, writes none)');
+    expect(headline).not.toContain('is a producer of `cleared`');
+  });
+
+  test('the docs say what incoming must hold, and that a lastReviewedSha off the PR clears nothing, whatever stamp an entry carries', () => {
+    expect(TRIAGE).toContain("**`incoming` is required**: EVERY finding this head's review presented, whatever its verdict");
+    expect(GUIDE_RULE).toContain("`incoming` (every finding the head's review presented, whatever its verdict, `[]` when none)");
+    expect(TRIAGE).toContain('(a force-push replaced it, or the repository no longer holds it) clears nothing, whatever stamp an entry carries');
+    expect(GUIDE_RULE).toContain('A `lastReviewedSha` that is not on the PR (a force-push replaced it) clears nothing.');
+    const header = flatten(fs.readFileSync(path.join(__dirname, '..', 'lib', 'pr-review-clear-cli.js'), 'utf8').replace(/^\s*\* ?/gm, ''));
+    expect(header).toContain('EVERY finding the review of `headSha` presented, whatever its verdict');
+    expect(header).toContain('This verb is the only writer of `cleared` in the procedure (`carry reconcile` writes none)');
+    expect(header).toContain('It has to be ON THE PR: one a force-push replaced keeps every entry (`recorded-head-not-on-pr`), stamped or not.');
   });
 });
 

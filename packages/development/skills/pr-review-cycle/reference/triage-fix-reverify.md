@@ -142,11 +142,12 @@ verification contract.
    candidates }`: `findings` the `votes` result's `findings`, `candidates` this round's hashed citations. It answers the
    settled verdict records, stamped with the PR, base, depth and verifier count; a finding it `skipped` is recorded
    nowhere and is verified again next round. The state report's `verdicts` (Step 9) are the plan's `carried` plus these.
-6. **Reconcile.** Run `carry` with `{ action: "reconcile", ledger, changedLocations, headSha, observations }`: `ledger`
-   the merged ledger, `changedLocations` the hunks of `delta.diff` (`{ path, lines }`) and `observations` EVERY finding
-   this round observed (the `votes` result's `findings`: present, disputed, unverified and filtered alike). A prior
-   finding that nobody observed again and whose cited location the push changed is cleared, which is how an `unmatched`
-   verdict ends; one that was observed again, whatever its verdict, is never cleared, and neither is a carried finding.
+6. **Reconcile (writes nothing).** Run `carry` with `{ action: "reconcile", ledger, changedLocations, headSha, observations }`:
+   `ledger` the merged ledger; the other three keys are still required and are not read. It answers the ledger read into
+   the current taxonomy and `cleared: []`: it never clears a finding. It used to clear one from the delta's hunks alone, at
+   the line numbers the ledger holds, and so marked defects that were still there as fixed (a line shifted across a skipped
+   round, a force-pushed head, a partial fix raised again and voted present). Only the clear verb below writes `cleared`, and
+   it reads git. A prior verdict nobody re-presents (`unmatched`) just is not carried.
 
 **Findings the new head fixed (CLI `pr-review-clear-cli.js`, kata `n350`, AC-008-3).** Once the
 new head's review has been through `ledger` `recordRound`, run `node "$PR_REVIEW_CLEAR_CLI"`
@@ -156,9 +157,10 @@ root or a linked worktree of it; there is no default). `lastReviewedSha` is the 
 `reviewedHeadSha`, the same value `review-range` was given above: every finding carried over from
 that report was alive then, so what changed since is all that can have fixed it (without it, a
 finding's own `headSha` is the baseline, which also counts an edit the finding survived).
-`ledger` is the findings carried over. **`incoming` is required**: what this head's review raised
-(what `recordRound` was given as `incoming`; `[]` when it raised nothing). A call without it fails
-and clears nothing, because an omitted list would read every re-raised finding as fixed.
+`ledger` is the findings carried over. **`incoming` is required**: EVERY finding this head's review presented, whatever
+its verdict (the `votes` result's `findings`: present, disputed, unverified and filtered alike; `[]` when it presented
+nothing), not only the ones that settled as present. A call without it fails and clears nothing, because an omitted list
+would read every re-raised finding as fixed; a finding left out of it reads the same way.
 
 **Run the verb at every head, in order, and carry the `ledger` it returns forward in place of the
 one you sent.** A finding cites the line it had when it was recorded, and the verb moves that line
@@ -189,13 +191,12 @@ Every other entry comes back with its reason in `kept[]` (`re-reported`, `locati
 blocking on a `cleared` finding, and the bead recorder (Step 10) closes its bead. This is the
 AC-008-3 heuristic and nothing more: a changed location is not proof the defect is gone, the
 re-review not raising it again is the other half, and a `lastReviewedSha` that is not on the PR (a
-force-push replaced it) clears nothing, so that finding stays until it is fixed again or a person
-decides. In a delta round `carry reconcile` (step 6 above) has already run on this ledger: a finding
-it cleared is `already-cleared` here and this verb cannot take the mark back, and `reconcile` judges
-from the delta's hunks alone, at the line numbers the ledger holds (it does not move a line through
-earlier rounds or look at renames). A `cleared` mark written any other way, by hand, is outside this
-procedure, and the recorder still closes the bead of one that names a commit on the PR: it checks
-the commit, not how the mark was made. The verb reads the review ledger only: the security lane's findings are not
+force-push replaced it, or the repository no longer holds it) clears nothing, whatever stamp an
+entry carries, so that finding stays until it is fixed again or a person decides. This verb is the
+only writer of `cleared`: `carry reconcile` (step 6 above) writes none. A `cleared` mark written
+any other way, by hand, is outside this procedure, and the recorder still closes the bead of one
+that names a commit on the PR: it checks the commit, not how the mark was made. The verb reads the
+review ledger only: the security lane's findings are not
 passed (the lane reports and never closes), and it writes no `resolution`.
 
 The batch fix changes the tree, so re-resolve after it lands: the re-review
