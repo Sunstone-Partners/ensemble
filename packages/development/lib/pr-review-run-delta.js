@@ -34,7 +34,7 @@ const sameId = (a, b) => isObjectId(a) && isObjectId(b) && a.toLowerCase() === b
 const identity = (value) => (isText(value) ? value.trim() : Number.isFinite(value) ? String(value) : null);
 
 /** The lists of a state report's `notReviewed` that must all be empty before the round can stand for the paths a delta does not read. */
-const NOT_REVIEWED_LISTS = Object.freeze(['unreviewedSlices', 'unreviewedPaths', 'incompleteVerifiers', 'unbriefable', 'expiredAgents']);
+const NOT_REVIEWED_LISTS = Object.freeze(['unreviewedSlices', 'unreviewedPaths', 'underReviewedPaths', 'incompleteVerifiers', 'unbriefable', 'expiredAgents']);
 
 /**
  * What a delta round does NOT see, said in its answer (kata xb4j review): the plan's read set is the changed files, their direct
@@ -43,13 +43,16 @@ const NOT_REVIEWED_LISTS = Object.freeze(['unreviewedSlices', 'unreviewedPaths',
  * declared limits hold (direct dependents only, bare npm packages and lockfile changes unseen, symlinks and computed specifiers
  * fail closed); a High or sensitive file can be in the read set as a caller of a changed file, while a changed path never is.
  */
-const DELTA_LIMITS = Object.freeze([
-  'read-set: changed files, their direct importers and tests, and name matches; not the modules a changed file imports, nor callers of callers',
-  'the security lane and the whole-range reader read the whole range',
-  'carry: direct dependents only; bare npm packages and lockfile changes are not seen; symlinks and computed specifiers re-verify',
-  'a High or sensitive file can be in the read set as a caller of a changed file; a changed path never is',
-  'remediationShas is the caller\'s statement of which commits are the fix round\'s own',
-]);
+function deltaLimits({ lane, reader, triage }) {
+  const whole = [lane ? 'the security lane' : null, reader ? 'the whole-range reader' : null, triage ? 'the TRIAGE step' : null].filter((name) => name !== null);
+  return Object.freeze([
+    'read-set: changed files, their direct importers and tests, and name matches; not the modules a changed file imports, nor callers of callers',
+    whole.length > 0 ? `read on the whole range in this round: ${whole.join(', ')}` : 'no agent of this round reads the whole range: a defect outside the read set is seen by no one',
+    'carry: direct dependents only; bare npm packages and lockfile changes are not seen; symlinks and computed specifiers re-verify',
+    'a High or sensitive file can be in the read set as a caller of a changed file; a changed path never is',
+    'remediationShas is the caller\'s statement of which commits are the fix round\'s own',
+  ]);
+}
 
 const no = (reason) => ({ ok: false, reason });
 
@@ -335,4 +338,4 @@ function verdictRecords(run, findings) {
   return { verdicts: [...carried, ...fresh], recorded: fresh.length, skipped: recorded.ok === true ? recorded.skipped : [{ id: null, reason: recorded.reason }] };
 }
 
-module.exports = { DELTA_LIMITS, priorRound, deltaScope, idSeed, hashCandidates, carryFacts, planRunCarry, composeDeltaLedger, verdictRecords, NOT_REVIEWED_LISTS };
+module.exports = { deltaLimits, priorRound, deltaScope, idSeed, hashCandidates, carryFacts, planRunCarry, composeDeltaLedger, verdictRecords, NOT_REVIEWED_LISTS };

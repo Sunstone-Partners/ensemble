@@ -133,6 +133,7 @@ const { evaluateApprovals } = require('./pr-review-approvals');
 const { checkDescription } = require('./pr-review-description');
 const { evaluateGate, SECURITY_REQUIRED_TIERS } = require('./pr-review-gate');
 const { buildDispositionChoices } = require('./pr-review-disposition');
+const { buildCoverage } = require('./pr-review-coverage');
 const { deriveStatus } = require('./pr-review-status');
 const { statePath, readState } = require('./pr-review-state');
 const D = require('./pr-review-run-delta');
@@ -342,11 +343,6 @@ function deltaRoundOf(run) {
   return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta';
 }
 
-/** The range the review agents are told they read. */
-function reviewRangeOf(run) {
-  return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta' ? `${run.lastReviewedSha}..${run.headSha}` : `${run.baseSha}..${run.headSha}`;
-}
-
 /** The review agents a slice plan dispatches: a reviewer per (slice, lens), the whole-range reader and the security lane. */
 function agentCountOf(run, sliced) {
   return sliced.plan.reviewerAssignments.length + (sliced.sizing.wholeRangeReader === true ? 1 : 0) + (run.securityLane ? 1 : 0);
@@ -441,7 +437,7 @@ function planRunSlices(run, numstat) {
 function sliceDiffFiles(run, deps, dir) {
   const whole = reviewDiffOf(run);
   const files = run.slices.map(() => whole);
-  for (const entry of run.sizing.slices) entry.diff = 'whole-range';
+  for (const entry of run.sizing.slices) entry.diff = deltaRoundOf(run) ? 'delta' : 'whole-range';
   if (run.slices.length <= 1) return files;
   let text = null;
   try {
@@ -484,7 +480,7 @@ function buildReviewAgents(run, deps, ctx) {
   };
   run.slices.forEach((slice, sliceIndex) => {
     // a reviewer handed the WHOLE range diff (its slice could not be cut from it) reads the whole diff: its deadline is sized for that
-    const wholeDiff = run.slices.length > 1 && run.sizing.slices[sliceIndex].diff === 'whole-range';
+    const wholeDiff = run.slices.length > 1 && ['whole-range', 'delta'].includes(run.sizing.slices[sliceIndex].diff);
     const work = wholeDiff ? { files: run.changedPaths.length, lines: run.sizing.work.lines } : { files: slice.paths.length, lines: slice.lines };
     // one reviewer per (slice, lens) pass; the lenses come from the shared plan (planSlices), the names stay `reviewer-s<n>-<a|b|..>`
     run.assignments.filter((assignment) => assignment.sliceId === slice.id).forEach((assignment, lensIndex) => {
@@ -751,6 +747,8 @@ async function prepareStages(input, deps, ctx) {
     changedPaths: facts.changedPaths,
     numstat: facts.numstat,
     policy: isObject(facts.policy) && isObject(facts.policy.policy) ? facts.policy.policy : null,
+    // Whether the base policy was usable; ok:false names why every path is High (kata vhpf).
+    policyStatus: isObject(facts.policy) ? { ok: facts.policy.ok !== false, reason: facts.policy.ok === false ? facts.policy.reason || 'policy-untrusted' : null } : null,
     policyRejected: isObject(facts.policy) && Array.isArray(facts.policy.rejected) ? facts.policy.rejected : [],
     sensitivePaths: isObject(facts.paths) && Array.isArray(facts.paths.sensitive) ? facts.paths.sensitive : [],
     phase: 'preparing',
@@ -810,7 +808,7 @@ async function prepareStages(input, deps, ctx) {
   if (deltaRead !== null) {
     // What the same push would have cost as a full re-read, so the plan shows the saving it makes.
     const whole = planRunSlices(run, facts.numstat);
-    run.reReview = { ...run.reReview, appliedRange: 'delta', delta: { lastReviewedSha: input.lastReviewedSha, changedPaths: deltaRead.changedPaths.length, readPaths: deltaRead.readPaths.length, agentsPlanned: agentCountOf(run, sliced), agentsFullRead: whole.ok === true ? agentCountOf(run, whole) : null, limits: D.DELTA_LIMITS } };
+    run.reReview = { ...run.reReview, appliedRange: 'delta', delta: { lastReviewedSha: input.lastReviewedSha, changedPaths: deltaRead.changedPaths.length, readPaths: deltaRead.readPaths.length, agentsPlanned: agentCountOf(run, sliced), agentsFullRead: whole.ok === true ? agentCountOf(run, whole) : null, limits: D.deltaLimits({ lane: run.securityLane, reader: sliced.sizing.wholeRangeReader === true, triage: isFull }) } };
   }
   run.slices = sliced.plan.slices;
   run.assignments = sliced.plan.reviewerAssignments;
@@ -970,7 +968,20 @@ function processReview(run, deps, { deferVerification = false } = {}) {
   const rangeFailure = unreviewed.get(RANGE_COVERAGE_SLICE) || null;
   const reviewedBy = agents.filter((a) => a.role === 'reviewer' && a.sliceId !== undefined && a.sliceId !== RANGE_COVERAGE_SLICE && !unreviewed.has(a.sliceId)).map((a) => ({ sliceId: a.sliceId, lens: a.lens, reviewer: a.name, paths: a.paths }));
   const coverage = verifyCoverage({ slices: run.slices, reviewedBy, mode: run.depth.mode, changedPaths: run.changedPaths });
-  run.coverage = { ok: coverage.ok, complete: coverage.ok === true && coverage.covered === true && rangeFailure === null, reviewedSlices: coverage.reviewedSlices || [], unreviewedSlices: [...(coverage.unreviewedSlices || run.slices.map((s) => s.id)), ...(rangeFailure === null ? [] : [RANGE_COVERAGE_SLICE])], uncovered: coverage.uncovered || run.changedPaths.slice(), detail: [...unreviewed.values()].filter((d) => d.sliceId !== LANE_COVERAGE_SLICE) };
+  // A coverage the module could not compute is never "nothing is unreviewed": `verifyCoverage` answers empty lists then, so the
+  // fallback to every slice and every path is decided here and not by `||` (an empty list is truthy).
+  const computed = coverage.ok === true;
+  run.coverage = {
+    ok: coverage.ok,
+    complete: computed && coverage.covered === true && rangeFailure === null,
+    reviewedSlices: coverage.reviewedSlices || [],
+    unreviewedSlices: [...(computed ? coverage.unreviewedSlices : run.slices.map((s) => s.id)), ...(rangeFailure === null ? [] : [RANGE_COVERAGE_SLICE])],
+    uncovered: computed ? coverage.uncovered : run.changedPaths.slice(),
+    underReviewed: computed ? coverage.underReviewed : [],
+    requiredLenses: computed ? coverage.requiredLenses : undefined,
+    ...(computed ? {} : { reason: coverage.reason }),
+    detail: [...unreviewed.values()].filter((d) => d.sliceId !== LANE_COVERAGE_SLICE),
+  };
 
   // the security lane: only a lane that arrived AND covered every changed path is ever `clean`
   const lane = agents.find((a) => a.name === LANE_NAME);
@@ -1163,6 +1174,30 @@ function testsFact(baseline) {
   return { exitCode: baseline.exitCode, skipped: false, command: `relevant test files only (${files} file${files === 1 ? '' : 's'}), not the full suite: ${(baseline.command || []).join(' ')}` };
 }
 
+/**
+ * The run's coverage as the record the gate, the status and the operator's list read (`pr-review-coverage.js`, kata k48x), built
+ * from what the run stored: the unreviewed slices and the whole-range read, the paths nobody read and the paths read under too few
+ * lenses, with why each failed. A coverage the run could not compute is `unavailable`. A run that says `complete: false` and names
+ * nothing (one stored by an earlier version, which kept no `underReviewed`) is still incomplete: it names every changed path.
+ * Nothing here is a decision: it is a pure function of the run, so every `finalise` of one run (an adjudication included) answers
+ * the same coverage.
+ */
+function coverageOf(run) {
+  const covered = run.coverage;
+  return buildCoverage({
+    changedPaths: run.changedPaths,
+    slices: run.slices,
+    unreviewedSlices: covered.unreviewedSlices,
+    uncovered: covered.uncovered,
+    underReviewed: covered.underReviewed,
+    requiredLenses: covered.requiredLenses,
+    detail: covered.detail,
+    incomplete: covered.complete !== true,
+    origin: `review run ${run.runId}`,
+    ...(covered.ok === true ? {} : { unavailable: covered.reason || 'the coverage module refused its input' }),
+  });
+}
+
 /** One read, and ONE retry of it, before it is called unavailable. */
 async function twice(fn) {
   let result = await settle(fn);
@@ -1224,8 +1259,9 @@ async function gateStage(run, built, deps, tracer) {
   const description = checkDescription({ body: head.pr.body, agentAuthored: run.agentAuthored });
   const policy = run.policy === null ? undefined : run.policy;
   const approvals = evaluateApprovals({ reviews, headSha: run.headSha, headTreeSha, tier: run.tier, policy, author: run.author, directedBy: description.directedBy || undefined, agentAuthored: run.agentAuthored });
-  const gate = evaluateGate({ ledger: built.ledger, approvals, tier: run.tier, description, security: run.security, headSha: run.headSha, policy, unavailable });
-  const disposition = buildDispositionChoices({ ledger: built.ledger, security: run.security, votes: built.tally, policy, headSha: run.headSha });
+  const coverage = coverageOf(run);
+  const gate = evaluateGate({ ledger: built.ledger, approvals, tier: run.tier, description, security: run.security, coverage, headSha: run.headSha, policy, unavailable });
+  const disposition = buildDispositionChoices({ ledger: built.ledger, security: run.security, coverage, votes: built.tally, policy, headSha: run.headSha });
   tracer.end(span, gate.mergeable === true ? 'ok' : 'blocked', { mergeable: gate.mergeable, blockers: gate.blockers.length });
   const gated = { ...gate, dispositionChoices: disposition.dispositionChoices, dispositionGroups: disposition.groups, mergeConfirmation: disposition.mergeConfirmation, ...(disposition.ok === true ? {} : { dispositionReason: disposition.reason }) };
   const protection = assessProtection(protectionRead, run.baseRefName, { required: approvals.humansRequired });
@@ -1248,6 +1284,10 @@ async function gateStage(run, built, deps, tracer) {
       reviewedHeadSha: run.headSha,
       ...(headTreeSha === undefined ? {} : { reviewedTreeSha: headTreeSha, headTreeSha }),
       findingCounts: { total: built.ledger.length, actionable, deferred },
+      // An incomplete coverage is not a complete review: the status is given the same record the gate was (and the policy that
+      // says who may decide a gap), so the local phase that publication is gated on can never rest on paths nobody read.
+      coverage,
+      ...(policy === undefined ? {} : { policy }),
       // No usable baseline (no relevant test files, a timed-out run, none at all) is a run that did not happen, never a
       // failure it did not have: recorded as skipped, so the status reads `tests skipped` and can never be complete.
       tests: tests === undefined ? { skipped: true, command: 'none: the baseline run produced no usable result (no relevant test files, a timed-out run or no run)' } : tests,
@@ -1259,7 +1299,7 @@ async function gateStage(run, built, deps, tracer) {
     tracer.end(verdictSpan, 'error', { error: msg(error) });
     throw error;
   }
-  return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection, unavailable, warnings, headState: head.pr.state, verdictSpan };
+  return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection, unavailable, warnings, headState: head.pr.state, verdictSpan, coverage };
 }
 
 function reducedReviewNotice(run, built, notReviewed, stage) {
@@ -1272,6 +1312,10 @@ function reducedReviewNotice(run, built, notReviewed, stage) {
     if (notReviewed.unreviewedPaths.length > 0) parts.push(`path(s) ${notReviewed.unreviewedPaths.join(', ')}`);
     lines.push(`NOT REVIEWED: ${parts.join('; ')}`);
   }
+  // The gate does not pass on an unread path: said here, where the report is read, as well as in the gate's blockers.
+  const gaps = stage.coverage.status === 'complete' ? [] : stage.coverage.gaps;
+  if (stage.coverage.status === 'unavailable') lines.push(`coverage UNAVAILABLE (${stage.coverage.reason}): the merge gate is not mergeable until the review is run again`);
+  else if (gaps.length > 0) lines.push(`the merge gate is NOT MERGEABLE on ${gaps.length} coverage gap(s) (${gaps.map((gap) => gap.id).join(', ')}) until the review is run again on this head or the operator accepts each with a recorded reason`);
   const sizing = isObject(run.sizing) ? run.sizing : null;
   if (sizing !== null && Array.isArray(sizing.warnings)) for (const warning of sizing.warnings) lines.push(`plan ${warning.code}: ${warning.message}`);
   const rangeDetail = isObject(run.coverage) && Array.isArray(run.coverage.detail) ? run.coverage.detail.find((d) => d.sliceId === RANGE_COVERAGE_SLICE) : undefined;
@@ -1303,6 +1347,7 @@ function notReviewedOf(run) {
   return {
     unreviewedSlices: run.coverage.unreviewedSlices,
     unreviewedPaths: run.coverage.uncovered,
+    underReviewedPaths: Array.isArray(run.coverage.underReviewed) ? run.coverage.underReviewed : [],
     incompleteVerifiers: verifyWaves.flatMap((w) => w.result.incompleteVerifiers),
     unbriefable: run.unbriefable,
     expiredAgents: agents.filter((a) => a.state !== 'arrived').map((a) => ({ name: a.name, role: a.role, state: a.state, reason: a.reason })),
@@ -1356,7 +1401,7 @@ function carrySummaryOf(run) {
     reasons: carry.reasons,
     cleared: delta.cleared,
     notes: delta.notes,
-    limits: D.DELTA_LIMITS,
+    limits: run.reReview.delta.limits,
   };
 }
 
@@ -1490,7 +1535,8 @@ function triageManifest(run, deps) {
       return { id: c.id, locationOrLink: c.locationOrLink, severity: c.severity, failureMode: c.failureMode, source: c.source, ...(refusal === undefined ? {} : { unbriefable: { kind: refusal.kind, ...(refusal.input === undefined ? {} : { input: refusal.input }), reason: refusal.reason } }) };
     }),
     coverage: { complete: run.coverage.complete, unreviewedSlices: run.coverage.unreviewedSlices, uncovered: run.coverage.uncovered },
-    rangeDiff: isObject(run.prepared) && typeof reviewDiffOf(run) === 'string' ? reviewDiffOf(run) : null,
+    // the TRIAGE step reads the WHOLE range in a delta round too (like the lane and the whole-range reader)
+    rangeDiff: isObject(run.prepared) && typeof run.prepared.rangeDiff === 'string' ? run.prepared.rangeDiff : null,
     slices: Array.isArray(run.slices) ? run.slices.map((slice) => ({ id: slice.id, paths: slice.paths })) : [],
     security: { status: run.security.status, findings: run.security.findings.length, ...(run.security.reason === undefined ? {} : { reason: run.security.reason }) },
     maxAdditionalCandidates: F.MAX_ADDITIONAL_CANDIDATES,

@@ -2,14 +2,14 @@
 
 /** The pure steps of the runner's delta re-review (kata xb4j); the whole path is proven through the real CLI in review-run-delta-cli.test.js. */
 
-const { priorRound, deltaScope, idSeed, hashCandidates, planRunCarry } = require('../lib/pr-review-run-delta');
+const { priorRound, deltaScope, idSeed, hashCandidates, planRunCarry, deltaLimits } = require('../lib/pr-review-run-delta');
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 const goodState = () => ({
   prId: '7', runId: 'r1', headSha: HEAD, reviewedHeadSha: HEAD, baseSha: BASE,
   ledger: [{ id: 'f1' }], verdicts: [{ id: 'f1' }],
-  notReviewed: { unreviewedSlices: [], unreviewedPaths: [], incompleteVerifiers: [], unbriefable: [], expiredAgents: [] },
+  notReviewed: { unreviewedSlices: [], unreviewedPaths: [], underReviewedPaths: [], incompleteVerifiers: [], unbriefable: [], expiredAgents: [] },
   security: { status: 'clean', findings: [] },
 });
 const goodRun = () => ({ schema: 1, phase: 'done', headSha: HEAD, baseSha: BASE, pr: 7 });
@@ -52,6 +52,8 @@ describe('priorRound: the last round the runner can stand on', () => {
     ['an expired agent (a security lane that never returned is recorded not-run)', (s) => ({ ...s, security: { status: 'not-run', findings: [] }, notReviewed: { ...s.notReviewed, expiredAgents: [{ name: 'security-lane' }] } }), 'state-round-incomplete'],
     ['an incomplete verifier', (s) => ({ ...s, notReviewed: { ...s.notReviewed, incompleteVerifiers: [{ name: 'verifier-1' }] } }), 'state-round-incomplete'],
     ['an unreviewed path', (s) => ({ ...s, notReviewed: { ...s.notReviewed, unreviewedPaths: ['src/a.js'] } }), 'state-round-incomplete'],
+    ['a path read under too few lenses (coverage kata k48x)', (s) => ({ ...s, notReviewed: { ...s.notReviewed, underReviewedPaths: [{ path: 'src/x.js' }] } }), 'state-round-incomplete'],
+    ['a state written before under-reviewed paths were recorded', (s) => ({ ...s, notReviewed: { unreviewedSlices: [], unreviewedPaths: [], incompleteVerifiers: [], unbriefable: [], expiredAgents: [] } }), 'state-round-incomplete'],
     ['an unbriefable candidate', (s) => ({ ...s, notReviewed: { ...s.notReviewed, unbriefable: [{ id: 'f2' }] } }), 'state-round-incomplete'],
     ['a missing coverage list', (s) => ({ ...s, notReviewed: { unreviewedSlices: [] } }), 'state-round-incomplete'],
     ['a security finding', (s) => ({ ...s, security: { status: 'findings', findings: [{}] } }), 'state-security-open'],
@@ -109,5 +111,15 @@ describe('idSeed and hashing', () => {
   test('a delta round with no usable prior carries nothing and says so', () => {
     const run = { candidates: [{ id: 'f1' }], priorRound: undefined, carryFacts: undefined };
     expect(planRunCarry(run, [])).toMatchObject({ planOk: false, carriedIds: [], reasons: ['no-prior-round'] });
+  });
+});
+
+describe('deltaLimits: the limit names only the whole-range readers the round planned', () => {
+  test.each([
+    [{ lane: true, reader: false, triage: false }, 'read on the whole range in this round: the security lane'],
+    [{ lane: true, reader: true, triage: true }, 'read on the whole range in this round: the security lane, the whole-range reader, the TRIAGE step'],
+    [{ lane: false, reader: false, triage: false }, 'no agent of this round reads the whole range: a defect outside the read set is seen by no one'],
+  ])('%j', (plan, line) => {
+    expect(deltaLimits(plan)[1]).toBe(line);
   });
 });

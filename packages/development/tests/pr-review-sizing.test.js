@@ -535,18 +535,12 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(unreleased).toContain('reader-not-planned');
   });
 
-  // Newest first: the xb4j entry (re-review delta, the change after this one) is the first entry of Unreleased and the sfpb entry
-  // follows it directly. A later change that puts its own entry on top updates this pin, with the entry it puts above.
-  test('the CHANGELOG has the sizing entry directly after the newest one and it says the model is one run and nothing is relaxed', () => {
-    // (`read` collapses whitespace, so the text is one line: entries are told apart by their `- **packages/` openers)
-    const afterUnreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
-    const release = afterUnreleased.indexOf(' ## [', 10);
-    const unreleased = release === -1 ? afterUnreleased : afterUnreleased.slice(0, release);
-    const entries = unreleased.slice(unreleased.indexOf('- **packages/')).split(/(?=- \*\*packages\/[a-z]+(?:, packages\/[a-z]+)*:\*\* )/);
-    expect(entries[0]).toMatch(/^- \*\*packages\/development:\*\* review-run re-review plans a delta, carries verdicts and re-verifies only what changed \(kata `xb4j`/);
-    const start = unreleased.indexOf(entries[1]);
-    expect(entries[1]).toMatch(/^- \*\*packages\/development:\*\* `review-run` sizes its slices and deadlines to what there is to read \(kata `sfpb`/);
-    const first = unreleased.slice(start);
+  test('the CHANGELOG entry is in Unreleased and says the model is one run and nothing is relaxed', () => {
+    // the newest entry goes at the top of the list (kata k48x), so this entry is found by its own opening words, not by position
+    const unreleased = changelog.slice(changelog.indexOf('## [Unreleased]'));
+    const at = unreleased.indexOf('- **packages/development:** `review-run` sizes its slices and deadlines to what there is to read (kata `sfpb`');
+    expect(at).toBeGreaterThan(-1);
+    const first = unreleased.slice(at);
     const entry = first.slice(0, first.indexOf('- **packages/development:**', 10));
     expect(entry).toMatch(/Nothing is relaxed/);
     expect(entry).toMatch(/one observed run/);

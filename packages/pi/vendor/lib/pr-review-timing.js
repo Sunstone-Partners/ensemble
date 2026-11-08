@@ -411,7 +411,7 @@ function overlapReason([previous, next]) {
 /** Why a round has no total: each missing step with its own reason, and what a missing verifier usually means. */
 function gapReason(gaps) {
   return gaps
-    .map((s) => `${stepLabel(s)}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none)' : ''}`)
+    .map((s) => `${stepLabel(s)}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none), or no candidate needed verification (a delta round whose candidates kept their verdicts)' : ''}`)
     .join('; ');
 }
 

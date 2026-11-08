@@ -208,6 +208,9 @@ describe('a re-review of the next head through the real CLI (kata xb4j)', () => 
     expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta', delta: { lastReviewedSha: fx.head1, changedPaths: 1, readPaths: 1, agentsPlanned: 3, agentsFullRead: 8 } });
     expect(p.out.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
     expect(p.out.sizing.work.files).toBe(1);
+    // a delta's slice is labelled for what it was handed, and the stated limit names only the whole-range readers this plan has
+    expect(p.out.sizing.slices.map((slice) => slice.diff)).toEqual(['delta']);
+    expect(p.out.reReview.delta.limits).toContain('read on the whole range in this round: the security lane');
     // the reviewers read the DELTA diff, not the whole range
     const brief = fs.readFileSync(p.out.agents[0].briefPath, 'utf8');
     const diffPath = /Diff for your slice: (\S+)/.exec(brief)[1];
@@ -348,6 +351,15 @@ describe('every re-review the runner cannot stand behind reads the whole range (
     expectFullRead(prep('r2s', { lastReviewedSha: fx.head1, remediationShas: [head2] }), ['prior-round-unusable:state-security-open']);
   });
 
+  test('a last round with a path read under too few lenses (underReviewedPaths): the delta cannot stand for it, a full read', () => {
+    firstRound('u1');
+    const state = readStateFile();
+    state.notReviewed.underReviewedPaths = [{ path: 'med/a05.js', lenses: 1 }];
+    fs.writeFileSync(statePath(), JSON.stringify(state));
+    const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 'u-fix');
+    expectFullRead(prep('u2', { lastReviewedSha: fx.head1, remediationShas: [head2] }), ['prior-round-unusable:state-round-incomplete']);
+  });
+
   test('a state report whose run record is gone or says another head: a full read', () => {
     firstRound('i1');
     const record = path.join(fx.work, '.ensemble', 'pr-review', 'run', 'i1', 'run.json');
@@ -484,7 +496,9 @@ describe('a full-mode (High tier) re-review: the headline case of the measuremen
     answerReview(p.out, { lanePaths: [...widePaths, 'README.md'], findings: { 'reviewer-s1-a': [finding('wide/a03.js:1', 'the first line returns before the guard on line 2 can run')] } });
     const triage = coll('w2');
     expect(triage.out).toMatchObject({ status: 'TRIAGE', reReview: { scope: 'delta', appliedRange: 'delta' }, coverage: { complete: true } });
-    expect(path.basename(triage.out.rangeDiff)).toBe('delta.diff');
+    // TRIAGE reads the whole range, like the lane
+    expect(path.basename(triage.out.rangeDiff)).toBe('range.diff');
+    expect(p.out.reReview.delta.limits).toContain('read on the whole range in this round: the security lane, the TRIAGE step');
     // nothing is left to verify: every candidate kept its verdict, so the run goes from TRIAGE straight to the verdict
     const done = coll('w2', { triage: {} });
     expect(done.out).toMatchObject({ ok: true, status: 'DONE', mode: { mode: 'full' }, carry: { appliedRange: 'delta', carried: 1, reverified: 0 } });
@@ -518,5 +532,54 @@ describe('the carry is refused for a file the push touched, even where its cited
     expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 0, verified: 1, reasons: expect.arrayContaining(['cited-file-in-delta']) } });
     answerVotes(v.out);
     expect(coll('t2').out).toMatchObject({ status: 'DONE', carry: { carried: 0, reverified: 1 } });
+  });
+});
+
+describe('the readers that cross slices in a delta round with several slices', () => {
+  /** Nine changed Medium paths: two slices (the limit is 8 files), so the light run adds the whole-range reader. */
+  const nine = () => Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [medPath(n), `${body(LINES[n])}// pushed\n`]));
+
+  test('the whole-range reader of a light delta round is handed range.diff and every changed path of the PR', () => {
+    firstRound('v1');
+    const head2 = push(fx.head1, nine(), 'v-fix');
+    const p = prep('v2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
+    const reader = p.out.agents.find((a) => a.name === 'reviewer-range');
+    expect(reader).toBeDefined();
+    const brief = fs.readFileSync(reader.briefPath, 'utf8');
+    expect(path.basename(/Diff for the whole range: (\S+)/.exec(brief)[1])).toBe('range.diff');
+    for (const file of ALL_PATHS) expect(brief).toContain(file);
+    expect(p.out.reReview.delta.limits).toContain('read on the whole range in this round: the security lane, the whole-range reader');
+    expect(p.out.sizing.slices.every((slice) => ['delta', 'slice'].includes(slice.diff))).toBe(true);
+  });
+});
+
+describe('a full-mode delta round with several slices: what the answer says about cross-slice reading is true', () => {
+  test('TRIAGE is handed the whole range, and the sentence names the lane and TRIAGE', () => {
+    git(fx.work, 'checkout', '-q', '-B', 'wide-pr2', 'main');
+    LINES.forEach((count, index) => write(fx.work, medPath(index).replace(/^med\//, 'wide/'), body(count)));
+    git(fx.work, 'add', '.');
+    git(fx.work, 'commit', '-q', '-m', 'a wide High PR');
+    const head1 = git(fx.work, 'rev-parse', 'HEAD');
+    const widePaths = ALL_PATHS.map((file) => file.replace(/^med\//, 'wide/'));
+    setGh({ head: head1 });
+    fs.rmSync(statePath(), { force: true });
+    const first = prep('x1');
+    answerReview(first.out, { lanePaths: widePaths });
+    expect(coll('x1').out).toMatchObject({ status: 'TRIAGE' });
+    expect(coll('x1', { triage: {} }).out).toMatchObject({ status: 'DONE' });
+    const docs = Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`docs/d${n}.md`, `# d${n}\n${'text\n'.repeat(120)}`]));
+    const head2 = push(head1, docs, 'x-fix');
+    const p = prep('x2', { lastReviewedSha: head1, remediationShas: [head2] });
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
+    expect(p.out.sizing.slices.length).toBeGreaterThan(1);
+    const all = [...widePaths, ...Object.keys(docs)];
+    answerReview(p.out, { lanePaths: all });
+    const triage = coll('x2');
+    expect(triage.out).toMatchObject({ status: 'TRIAGE' });
+    expect(path.basename(triage.out.rangeDiff)).toBe('range.diff');
+    const done = coll('x2', { triage: {} });
+    expect(done.out.status).toBe('DONE');
+    expect(done.out.reducedReview).toMatch(/an interaction between slices was read as a whole only by the security lane and the TRIAGE step/);
   });
 });
