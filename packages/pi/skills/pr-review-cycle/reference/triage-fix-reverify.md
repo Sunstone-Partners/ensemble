@@ -168,14 +168,16 @@ numbering and `locationAsOf` set to this head (a re-raised one takes the locatio
 gave it), and the next run compares from that stamp. So an edit above the line, an unrelated edit
 at the number the line used to have, and a fix made after an earlier round shifted the code are all
 read against the right line. A second run at the same head changes nothing (`location-current`).
-A finding the verb has not moved yet is numbered at the head it was raised at (its own `headSha`): it
-is moved to `lastReviewedSha` first. When an edit in between touched its line, or that head does not
-lead to `lastReviewedSha` (a force-push replaced it, or the repository no longer holds it), its place
-is unknown (`location-unanchored`: kept, never cleared) until a review raises it again, which
-re-anchors it.
+A finding's number belongs to the head the verb last moved it to (`locationAsOf`) or, when it never
+has, to the head it was raised at (its own `headSha`), and the verb moves the line from there to
+`lastReviewedSha` first. A round the verb was not run at reads the same way: the next run moves the
+line through that round's edits, it does not take them for a fix. When an edit in between touched its
+line, or that head does not lead to `lastReviewedSha` (a force-push replaced it, or the repository no
+longer holds it), its place is unknown (`location-unanchored`: kept, never cleared) until a review
+raises it again, which re-anchors it.
 
 The CLI reads git and writes nothing. It marks a carried finding `cleared`, with `clearedBy` the new
-head, when the diff from the baseline (the stamp, else `lastReviewedSha`) to `headSha` changed the
+head, when the diff from the baseline (`lastReviewedSha`, or the stamp when that is a later head) to `headSha` changed the
 file and line it cites and no finding this head's review raised is the same defect (same file,
 failure mode and class; the line is not part of that, so a defect re-reported lower after the file
 shifted counts). A mode-only change (a `chmod`) touches no line; deleting, creating or replacing a
