@@ -1,0 +1,106 @@
+# The merge sweep (`sweep`)
+
+`/ensemble:pr-merge` runs the sweep twice, just before the merge and just after it (before the source
+branch is deleted). It records, as beads in the tracker of the repository being merged, every unresolved
+bot finding and every failed hosted-CI run on a landed commit that no bead represents yet. Hosted CI is not
+waited for, so this is where a late bot comment or a red hosted run is caught. Run it only as a step of a
+merge a maintainer started; it has no timer, hook or background run.
+
+The sweep is bookkeeping. It never blocks the merge and never authorizes it: the local gate and the review
+gate decide that. Report its answer (below) and carry on.
+
+## Call
+
+`node "$LOCAL_CI_CLI" sweep < payload.json` (the CLI is located as in `SKILL.md`). One JSON object in, one
+out. `ok:false` (exit 1) is PARTIAL or FAILED; a malformed payload is `{error}` (exit 1) with nothing done;
+everything else exits 0.
+
+| Key | Meaning |
+|---|---|
+| `facts` | `{findings: [...], failures: [...]}`, already fetched (below). |
+| `repoRoot` | The repository being merged: its git root, or a linked worktree of it. Required; never taken from the current directory. |
+| `repo` | `owner/name` of that repository. |
+| `pr` | The number of the pull request this run is merging. |
+| `headSha` | Its head, full 40 hex: `HEAD_SHA`. It must be the head the host reports. |
+| `baseSha` | The full commit id of its base branch the run resolved: `BASE_SHA`, or the commit `origin/<baseRefName>` names after a fresh fetch. |
+| `dryRun` | `true` under `--dry-run`: look up and plan, write nothing. |
+
+Any other key is rejected, and so is the old `trackedKeys`: the set of keys the tracker already holds is
+built from the tracker, never from the payload (a caller-supplied set could only hide a finding).
+
+## Facts
+
+```json
+{ "findings": [{ "prNumber": 12, "commentId": 345, "body": "...", "path": "src/a.js", "line": 10,
+                 "url": "https://github.com/o/r/pull/12#discussion_r345", "author": "coderabbitai[bot]" }],
+  "failures": [{ "checkRunId": 999, "name": "test (node 22)", "sha": "<commit>", "url": "https://github.com/o/r/runs/999",
+                 "prNumber": 12, "conclusion": "failure" }] }
+```
+
+- `findings`: UNRESOLVED review comments by a bot (the host's account type, never a name) on this pull
+  request and on recently merged ones. `prNumber` and `commentId` are required and make the key
+  `finding:pr<N>:comment<ID>`. `commentId` is the host's own id of the comment (the number after
+  `#discussion_r` or `#issuecomment-` in its link, or a node id): never an array index, a hash of the text or
+  anything else that differs from one sweep to the next, or the same finding would be recorded again. A
+  finding whose id you cannot establish is left out and named in the report as not recorded.
+- `failures`: FAILED hosted-CI runs on a landed commit. `checkRunId` is required and makes the key
+  `ci-failure:checkrun<ID>`: the host's id of that check run (the number in its link), stable between sweeps.
+- Everything else is optional descriptive text. It goes into the bead cut to one line, bounded and redacted.
+  No text is ever part of a key.
+- A finding with `resolved: true`, a repeated entry and an entry with no readable identity (reported under
+  `invalid`, below) are never recorded as beads.
+
+Nothing in code reads the host for these facts: the host adapter's normalized review-thread output carries no
+comment id, so they are read by the caller (`host.change-request-reviews`, `host.change-request-threads`,
+`host.change-request-checks`) and listed as above.
+
+## What it does
+
+1. `findUntracked(facts, [])` lists the entries that carry a key.
+2. The tracker is listed ONCE (closed beads and any labels included) and each key is looked up in it.
+3. `findUntracked(facts, held)` names the entries that are really new.
+4. One bead per new entry, stored under its key as the external reference: a finding is a `task` at
+   priority 2 labelled `merge-sweep` and `bot-finding`, a CI failure a `bug` at priority 1 labelled
+   `merge-sweep` and `ci-failure`. The tracker's listing by the `merge-sweep` label finds them all.
+
+So a second sweep of the same facts finds every key held and writes nothing. A key the tracker holds is
+skipped whatever the bead's state: a bead a person closed is never recreated or reopened, and several beads
+sharing a key are an error for that key (nothing is created for it). The sweep only ever creates: it never
+updates, relabels, closes or reopens a bead, so a finding fixed later is closed by a person.
+
+With no key to look up (no facts, only resolved findings) git, the host and the tracker are not asked.
+
+## Answer
+
+`{ ok, status, recorded, counts: {create, skip, error}, actions[], beads{<key>: {kind, action, reason?, beadId?, status?}}, invalid[] }`
+
+| `status` | Means | Say |
+|---|---|---|
+| `RECORDED` | Every new entry now has a bead (`counts.create` of them; `counts.skip` were already tracked). | Nothing, or the count. |
+| `PLANNED` | `dryRun`: what would be created. | The count. |
+| `UNAVAILABLE` | No usable tracker, or its adapter lacks a capability the sweep needs. `fallback: skip-finding-beads`. | No bead was recorded, and why (`reason`). |
+| `REFUSED` | A trust check said no (`code`, `reason`). Nothing was read from or written to the tracker. | No bead was recorded, and the code. |
+| `PARTIAL` | Some creates failed, a key is held twice, or an entry is `invalid`: `actions[i].error`, `beads[key]` and `invalid` say which. Exit 1. | What failed. The next sweep retries only that. |
+| `FAILED` | The tracker could not be read, or `repoRoot` is not a repository. Nothing was written. Exit 1. | The `reason`. |
+
+## Where the beads go
+
+Into the tracker of the repository the pull request belongs to, never the current directory's and never the
+head's own. Before it reads or writes the tracker the sweep runs the PR-review recorder's trust checks
+(`pr-review-beads-cli.js` `checkTrust`; its `reason` text is written for the review, so act on the `code`): the host is asked about
+`repo` and `pr`, and a head on a fork (`cross-repository-head`), an unreadable pull request
+(`pr-unreadable`), a `headSha` that is not the pull request's head (`head-not-pr-head`) and a `baseSha` that
+is not on its base branch (`base-not-on-base-branch`, or `base-tip-unavailable`: fetch `origin/<base>` and
+run it again) are REFUSED. The tracker runs in the repository's PRIMARY checkout, never in a worktree or
+clone of the head, and a primary checkout that holds the head is REFUSED (`head-checked-out`: keep the
+primary checkout on the base branch, and after a merge commit run the sweep before pulling it). Which tracker to use is read from
+`.ensemble/toolchain.yaml` as committed at `baseSha`, never from the tree, and no adapter code is loaded from a
+tree. A merged pull request is fine: its base tip is where the host recorded it at the merge.
+
+## Limits
+
+- The sweep does not collect facts and does not judge them: it records the ones it is given.
+- It records into a Beads tracker. A repository whose adapter lacks the findings capabilities (Jira, Azure
+  Boards today) is `UNAVAILABLE`: the findings are in the report, not in a tracker.
+- Two sweeps at the same moment: br refuses the second create of a key, so one of them reports `PARTIAL`;
+  running it again records nothing twice.
