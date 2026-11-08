@@ -23,7 +23,7 @@ reads git objects at the head under review.
 2. Build the candidates: the open findings of the prior ledger, re-presented with their own `id`, `claim` = the ledger finding's `failureMode` verbatim, and `file` and `line`/`lines` from its `locationOrLink`; plus the new candidates of this round.
 3. Hash them at the new head: `node "$PR_REVIEW_CARRY_HASH_CLI"` with `{ repoRoot?, headSha, citations }`. Each answered candidate carries `headSha` (the head it was hashed at), `hunkHash`, `depHashes` and `dependents` (or `hashError`). Pass the candidates on exactly as answered, and hash again after any push.
 4. Run `carry` with `action: "plan"`, giving it the `deltaPlan`, `deltaPaths` and `deltaRange` of the prepare facts for THIS head (`deltaRange` = `{ headSha: facts.headSha, lastReviewedSha: facts.delta.lastReviewedSha }`).
-5. Use the answer's `ledger` as the round's existing ledger. It is the prior ledger with the carried findings stamped; never stamp by hand.
+5. Use the answer's `ledger` as the round's existing ledger. It is the prior ledger with the carried findings stamped; never stamp by hand. A `null` ledger means the prior state could not be read: nothing carries, verify every candidate, and never put an empty ledger in its place.
 6. Verify only the `reverify` candidates and the new ones, with the unchanged verification contract.
 7. Run `carry` with `action: "record"` for the findings of the `votes` result.
 8. Write the state report's `verdicts` = the `carried` records of step 4 plus the `verdicts` of step 7.
@@ -92,13 +92,13 @@ included.
 
 Answers:
 
-- `plan`: `{ ok, carried[], reverify[], unmatched[], reasons[], ledger, priorState }`.
+- `plan`: `{ ok, carried[], reverify[], unmatched[], reasons[], ledger, priorState }` (`ledger` is an array or `null`).
   - `carried`: the prior verdict and votes, `head` = the current head, `carriedFrom` = the head it was first settled on (kept through any number of carries).
   - `reverify`: `{ id?, file, claim, reasons[] }`, every reason that applies.
   - `unmatched`: a prior verdict no current candidate re-presents (`no-current-candidate`); never carried.
   - `reasons`: the whole-round reasons that apply to every candidate. `ok:false` only for an unreadable request.
-  - `ledger`: the prior ledger with exactly the carried findings stamped (`headSha` = the carried record's head, `carriedFrom`), so `mergeFindings` does not re-open them and `clearFixedFindings` does not clear them. A ledger that already holds a finding stamped with the current head is refused (`ok:false`, `ledger: null`). `null` when the prior ledger was not readable.
-  - `priorState`: `read`, or why nothing was read: `absent`, `discarded`, `corrupt`, `unreadable`. Anything but `read` adds `prior-state-unavailable` to every reason list: nothing carries.
+  - `ledger`: the prior ledger with exactly the carried findings stamped (`headSha` = the carried record's head, `carriedFrom`), so `mergeFindings` does not re-open them and `clearFixedFindings` does not clear them. A ledger that already holds a finding stamped with the current head is refused (`ok:false`, `ledger: null`). It is `null` whenever `priorState` is not `read` (absent, discarded, corrupt, unreadable) and an array only for a report that was read, so an empty array means "the report holds an empty ledger", never "nothing was read". The answer is the round's existing ledger and an empty one reads as no open findings: a `null` ledger means the prior round's state could not be read, so nothing carries, every candidate is verified, and an empty ledger is NEVER substituted for it. Use only a ledger you read yourself with `state-read`; with none, treat the round as a first review and say in the report that the prior state was unavailable.
+  - `priorState`: `read`, or why nothing was read: `absent`, `discarded`, `corrupt`, `unreadable`. Anything but `read` adds `prior-state-unavailable` to every reason list: nothing carries, and `ledger` is `null`.
 - `record`: `{ ok, verdicts[], skipped[{ id, reason }] }` (or `{ ok:false, verdicts:[], skipped:[], reason }`). A finding that is not settled, has no id, no candidate (or an ambiguous one), no usable hash, cites another file or claim than its ledger entry says, or whose votes do not give its outcome under the round's verifier count is `skipped` and recorded nowhere: the next round verifies it again.
 - `reconcile`: `{ ok, ledger[], cleared[] }`. A finding no reviewer reported again whose cited location the push changed is cleared; one that was observed again, whatever its verdict, is not.
 

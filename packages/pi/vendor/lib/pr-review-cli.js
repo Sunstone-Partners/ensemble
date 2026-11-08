@@ -217,12 +217,14 @@
  *                             `deltaRange` is `{ headSha: facts.headSha, lastReviewedSha: facts.delta.lastReviewedSha }`, the
  *                             range `deltaPlan` and `deltaPaths` were computed for, and it must be this round's `headSha` and
  *                             `lastReviewedSha`: a missing, malformed or different one carries nothing (`delta-range-mismatch`).
- *                             Answers { ok, carried[], reverify[], unmatched[], reasons[], ledger[], priorState }: a carried
- *                             record keeps its verdict and votes, is stamped `head` = this head and keeps `carriedFrom`;
+ *                             Answers { ok, carried[], reverify[], unmatched[], reasons[], ledger[]|null, priorState }: a
+ *                             carried record keeps its verdict and votes, is stamped `head` = this head and keeps `carriedFrom`;
  *                             `ledger` is the prior ledger with exactly those findings stamped (`stampLedger`; refused,
- *                             `ok:false`, when it already holds a finding stamped with this head); a `reverify` entry lists
- *                             every reason (the module header has the table). A missing, discarded or corrupt report
- *                             carries nothing (`prior-state-unavailable`). `candidates` are the hash step's answer as it gave
+ *                             `ok:false`, when it already holds a finding stamped with this head, and then `null`); a `reverify`
+ *                             entry lists every reason (the module header has the table). A missing, discarded, corrupt or
+ *                             unreadable report (`priorState` other than `read`) carries nothing (`prior-state-unavailable`) and
+ *                             answers `ledger: null`, NEVER `[]`: the answer is the round's existing ledger, and an empty one
+ *                             reads as "no open findings". `candidates` are the hash step's answer as it gave
  *                             it: each is stamped with the `headSha` it was hashed at, and one stamped with another head (or
  *                             none) is verified again (`candidate-head-mismatch`), never carried.
  *                record     { prId, baseSha, headSha, depth, expectedVerifiers?, findings[], candidates[] } -- the verdict
@@ -636,7 +638,11 @@ function runMode(payload) {
  * `deltaPlan`, `deltaPaths`, `deltaRange`, `highPaths`, a hash) is graded in-band and a missing one means re-verification (exit 0).
  */
 
-/** What the PR's state report said about the round the delta starts from. */
+/**
+ * What the PR's state report said about the round the delta starts from. `verdicts` and `ledger` are what `planCarry` is
+ * given: both empty when nothing was read (there is nothing to carry from). That is NOT what the answer's `ledger` says:
+ * only `priorState: 'read'` made it a ledger.
+ */
 function readPriorRound(payload) {
   const unavailable = (priorState) => ({ priorState, verdicts: [], ledger: [] });
   const read = readState(statePath(payload.prId, payload.cwd || process.cwd()), payload.lastReviewedSha, { cwd: payload.cwd });
@@ -653,7 +659,9 @@ function carryPlan(payload) {
   }
   const prior = readPriorRound(payload);
   const plan = planCarry({ ...payload, priorVerdicts: prior.verdicts, priorLedger: prior.ledger });
-  const answer = { ...plan, ledger: Array.isArray(prior.ledger) ? prior.ledger : null, priorState: prior.priorState };
+  // The answer's `ledger` is the round's existing ledger, so an empty one reads as "no open findings": it is answered only
+  // for a prior state that was READ. An absent, discarded, corrupt or unreadable one answers `null`, never `[]`.
+  const answer = { ...plan, ledger: prior.priorState === 'read' && Array.isArray(prior.ledger) ? prior.ledger : null, priorState: prior.priorState };
   if (prior.priorState !== 'read') {
     const unavailable = CARRY_REASONS.PRIOR_STATE_UNAVAILABLE;
     return {

@@ -1918,18 +1918,49 @@ describe('pr-review-cli: carry reads the PR\'s own state, stamps the ledger, rec
     for (const entry of out.reverify) expect(entry.reasons).toContain(reason);
   });
 
-  test.each([
-    ['no report', null, 'absent'],
-    ['a report for another head (discarded, never reused)', { ...round1(), headSha: '9'.repeat(40) }, 'discarded'],
-  ])('%s carries nothing: every candidate is verified again with prior-state-unavailable', (_name, state, priorState) => {
+  const UNAVAILABLE = [
+    ['no report', 'absent', () => {}, {}],
+    ['a report written for another head (discarded, never reused)', 'discarded', (cwd) => writeRound(cwd, { ...round1(), headSha: '9'.repeat(40) }), {}],
+    ['a corrupt report', 'corrupt', (cwd) => {
+      fs.mkdirSync(path.dirname(statePath(PR, cwd)), { recursive: true });
+      fs.writeFileSync(statePath(PR, cwd), '{not json');
+    }, {}],
+    ['a payload with no lastReviewedSha (the report cannot be looked up)', 'unreadable', (cwd) => writeRound(cwd), { lastReviewedSha: undefined }],
+  ];
+
+  test.each(UNAVAILABLE)('%s carries nothing, is verified again with prior-state-unavailable, and answers a NULL ledger (an empty one would read as "no open findings")', (_name, priorState, setup, over) => {
     const cwd = tmpCwd();
-    if (state !== null) writeRound(cwd, state);
-    const out = run(plan(cwd));
+    setup(cwd);
+    const out = run(plan(cwd, over));
     expect(out.ok).toBe(true);
     expect(out.priorState).toBe(priorState);
     expect(out.carried).toEqual([]);
     expect(out.reasons).toContain(REASONS.PRIOR_STATE_UNAVAILABLE);
     for (const entry of out.reverify) expect(entry.reasons).toContain(REASONS.PRIOR_STATE_UNAVAILABLE);
+    expect(out.ledger).toBeNull();
+  });
+
+  test('through the real executable the unreadable states answer `"ledger": null` in the JSON, never `[]`; a report that was read answers an array', () => {
+    const answers = UNAVAILABLE.map(([, , setup, over]) => {
+      const cwd = tmpCwd();
+      setup(cwd);
+      return JSON.parse(cli(plan(cwd, over)).stdout);
+    });
+    expect(answers.map((out) => out.priorState)).toEqual(['absent', 'discarded', 'corrupt', 'unreadable']);
+    for (const out of answers) expect(Object.prototype.hasOwnProperty.call(out, 'ledger') && out.ledger === null).toBe(true);
+    const cwd = tmpCwd();
+    writeRound(cwd);
+    const read = JSON.parse(cli(plan(cwd)).stdout);
+    expect(read.priorState).toBe('read');
+    expect(Array.isArray(read.ledger)).toBe(true);
+    expect(read.ledger.map((f) => [f.id, f.headSha, f.carriedFrom])).toEqual([['a', HEAD, LAST], ['b', LAST, undefined]]);
+  });
+
+  test('a report that was read but holds an empty ledger answers `[]`: an array means "read", and only that', () => {
+    const cwd = tmpCwd();
+    writeRound(cwd, { ...round1(), ledger: [], verdicts: [] });
+    const out = run(plan(cwd));
+    expect(out.priorState).toBe('read');
     expect(out.ledger).toEqual([]);
   });
 

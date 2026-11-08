@@ -116,11 +116,15 @@ verification contract.
    `delta-range-mismatch` and nothing carries), `highPaths` the High and sensitive paths of `paths`, `baseSha` the base
    of the range, and `depth` and `expectedVerifiers` the very ones Step 3b runs `votes` with. Never pass `priorVerdicts`
    or `priorLedger`: `plan` reads them from the report written for `lastReviewedSha` (the report `state-read` returns for
-   that head) and refuses a payload that has them. `priorState` other than `read` (no report, a discarded or a corrupt
-   one) is `prior-state-unavailable`: nothing carries.
+   that head) and refuses a payload that has them. `priorState` other than `read` (no report, a discarded, a corrupt or
+   an unreadable one) is `prior-state-unavailable`: nothing carries, and the answer's `ledger` is `null`.
 3. **Use the answer's `ledger`.** It is the prior ledger with each carried finding stamped (`headSha` = the new head,
    `carriedFrom` = the head it was first settled on). Make it this round's `existingLedger` for Step 3 (`dedupe`,
    `recordRound`, `merge`). Never stamp by hand: a ledger already stamped with the new head is refused (`ok:false`).
+   A `null` ledger means the prior round's state could not be read: nothing carries, verify every candidate, and NEVER
+   substitute an empty ledger for it -- an empty ledger reads as no open findings and drops the open Important findings
+   and their provenance. Use only a ledger you have read yourself with `state-read`; with none, treat the round as a first
+   review and say in the report that the prior state was unavailable.
 4. **Verify the rest.** Every `reverify` candidate and every new candidate goes through Step 3b exactly as in a first
    review: K independent fresh verifiers each, the same `votes` call and `expectedVerifiers`. A `carried` verdict is not
    verified again. Report each `reverify` reason.
