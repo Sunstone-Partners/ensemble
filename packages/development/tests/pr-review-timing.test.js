@@ -236,6 +236,44 @@ describe('span lengths come from the recorder, never from a stepped wall clock (
     expect(t.wall.ms).toBe(durationMs); // the length is the recorder's either way
   });
 
+  test('a verdict the recorded stamps place a millisecond past the end of the root is rounding, not a cut (the numbers of a real run)', () => {
+    // The root's whole-millisecond stamp is truncated late in its millisecond and the verdict's early in its own, and each duration is rounded:
+    // the verdict really ended 0.14 ms before the root, and the stamps put its end 1 ms after the root's (a real review-run printed
+    // 'verdict 12ms [lower bound] [cut to the window by 1ms]' for it and made the whole critical path a lower bound).
+    let wall = T0;
+    let mono = 5000000;
+    const tracer = createTracer({ runId: 'rounding', projectRoot: dir, clock: { now: () => wall, mono: () => mono } });
+    const moveTo = (wallMs, monoMs) => {
+      wall = T0 + wallMs;
+      mono = 5000000 + monoMs;
+    };
+    const rootId = tracer.startSpan(STAGES.root);
+    moveTo(100, 100);
+    const reviewer = tracer.startSpan(STAGES.reviewer, { kind: 'agent', parentId: rootId, attrs: { agent: 'RevA' } });
+    moveTo(5100, 5100);
+    tracer.endSpan(reviewer);
+    const verifier = tracer.startSpan(STAGES.verifier, { kind: 'agent', parentId: rootId, attrs: { agent: 'Ver1' } });
+    moveTo(8100, 8100);
+    tracer.endSpan(verifier);
+    moveTo(10706, 10705.027);
+    const verdictSpan = tracer.startSpan(STAGES.verdict, { parentId: rootId });
+    moveTo(10718, 10717.959);
+    tracer.endSpan(verdictSpan);
+    moveTo(10718, 10718.099);
+    tracer.endSpan(rootId);
+    const trace = readTrace(path.join(dir, '.ensemble', 'state', 'toolchain', 'trace-rounding.jsonl'));
+    expect(trace.spans.map((s) => [s.name, s.duration_ms])).toEqual([
+      [STAGES.root, 10718],
+      [STAGES.reviewer, 5000],
+      [STAGES.verifier, 3000],
+      [STAGES.verdict, 13], // 12.932 rounded: placed from its start it ends at 10719, the root at 10718
+    ]);
+    const t = computeReviewTiming(trace);
+    expect(t.criticalPath.rounds[0].steps[2]).toEqual({ stage: 'verdict', ms: 12, missing: false });
+    expect(t.criticalPath).toMatchObject({ ms: 8012, missing: false });
+    expect(t.criticalPath.lowerBound).toBeUndefined();
+  });
+
   test('a backward wall-clock step is a clock anomaly the recorder flags: the spans are UNUSABLE and the reason names it', () => {
     const trace = reviewerSpanningAStep('anomaly', -540, 60);
     expect(trace.spans.map((s) => s.attrs.clock_anomaly)).toEqual([true, true]); // the recorder's own flag
@@ -699,6 +737,38 @@ describe('the critical path never exceeds the window and counts the verdict once
     const { criticalPath } = computeReviewTiming([root(100, 400), agent('reviewer', 50, 200), agent('verifier', 200, 300), verdict(300, 310)]);
     expect(criticalPath.rounds[0].steps[0]).toMatchObject({ stage: 'reviewer', ms: 100000, clippedMs: 50000, lowerBound: true }); // 100..200, not 50..200
     expect(criticalPath).toMatchObject({ ms: 210000, lowerBound: true });
+  });
+
+  // What the recorder writes: `start_ts` in whole milliseconds, and `readTrace` rounds each `duration_ms` to a millisecond. The runner closes
+  // the root an instant after the verdict, so the verdict ends within a fraction of a millisecond of the window's end, and placed from the
+  // rounded numbers it can seem to end after it (see the real-recorder case in the clock tests above).
+  const placed = (name, startMs, durationMs, attrs = {}) => ({
+    ...span(name, 0, 1, attrs),
+    start_ts: new Date(T0 + startMs).toISOString(),
+    end_ts: new Date(T0 + Math.floor(startMs + durationMs)).toISOString(),
+    duration_ms: durationMs,
+  });
+  const verdictOvershooting = (overshootMs) =>
+    computeReviewTiming([
+      placed(STAGES.root, 0, 400000, { turns: 10, tool_calls: 12 }), // the window ends at 400000 ms
+      agent('reviewer', 0, 300),
+      agent('verifier', 300, 390),
+      placed(STAGES.verdict, 399990, 10 + overshootMs), // starts 10 ms before the window ends
+    ]);
+
+  test.each([[0.5], [1]])('a verdict that overshoots the window by %p ms, no more than the stamps resolve, is rounding and not a cut', (over) => {
+    const t = verdictOvershooting(over);
+    expect(t.criticalPath.rounds[0].steps[2]).toEqual({ stage: 'verdict', ms: 10, missing: false });
+    expect(t.criticalPath).toMatchObject({ ms: 390010, missing: false }); // 300 s + 90 s + 10 ms
+    expect(t.criticalPath.lowerBound).toBeUndefined();
+    expect(formatReviewTiming(t)).not.toContain('cut to the window');
+  });
+
+  test.each([[1.5], [2]])('an overshoot of %p ms, more than the stamps resolve, is still a cut and says so', (over) => {
+    const t = verdictOvershooting(over);
+    expect(t.criticalPath.rounds[0].steps[2]).toEqual({ stage: 'verdict', ms: 10, missing: false, lowerBound: true, clippedMs: over });
+    expect(t.criticalPath).toMatchObject({ ms: 390010, lowerBound: true });
+    expect(formatReviewTiming(t)).toContain('[cut to the window by');
   });
 
   test('a span wholly outside the window changes nothing: an exact step stays exact', () => {

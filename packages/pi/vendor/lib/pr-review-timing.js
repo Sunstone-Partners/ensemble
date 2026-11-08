@@ -67,7 +67,9 @@
  * critical path counts the verdict, so orchestrator time leaves it out: no minute is in both, and critical path
  * plus orchestrator-only never exceeds the window.
  * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval length cut to the
- * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`), summed over the rounds. A stage dispatched
+ * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`; an overshoot of one millisecond or less is
+ * the rounding of the stamps, not a cut: `start_ts` is whole milliseconds and `readTrace` rounds each duration to one, so
+ * the verdict, which ends an instant before the root does, can seem to end after it), summed over the rounds. A stage dispatched
  * in several waves (spans that name different `wave`s) is one step PER WAVE, that wave's slowest span, because the waves ran
  * one after another: review waves of 40 s and 20 s are 60 s of the chain, never the 40 s of the one slowest reviewer. The
  * step then carries its `wave`; a stage in one wave, or in spans that name none, is one step as ever, and spans that name
@@ -124,6 +126,8 @@ const isText = (value) => typeof value === 'string' && value.trim() !== '';
 
 /** How far a span's wall-clock length may differ from the recorder's duration before the wall clock is taken to have stepped (run-trace.js allows the same 5 s between its two clocks). */
 const CLOCK_SKEW_TOLERANCE_MS = 5000;
+/** The resolution of the stamps: `start_ts` is whole milliseconds and `readTrace` rounds each `duration_ms` to one, so a span's end, placed from them, is a millisecond off at most, either way. */
+const WALL_CLOCK_RESOLUTION_MS = 1;
 const CLOCK_ANOMALY_REASON = 'the recorder flagged a clock anomaly: its wall-clock and monotonic readings disagree over this span';
 /** The latest time a Date can hold: a span that would end after it has no usable length. */
 const MAX_TIME_MS = 8.64e15;
@@ -274,8 +278,9 @@ function clipTo(interval, window) {
 /**
  * Slowest usable span of `spans` as a step figure, with the interval it occupies (cut to `window` when one is given);
  * a missing step when none was recorded or none is usable. A span that is unusable (unfinished, inconsistent) makes the
- * step a lower bound; so does a cut (`clippedMs`: how much of the winning span lay outside the window). A span wholly
- * outside the window is left out: it cannot change a figure measured inside it.
+ * step a lower bound; so does a cut (`clippedMs`: how much of the winning span lay outside the window; up to
+ * WALL_CLOCK_RESOLUTION_MS it is rounding and not a cut). A span wholly outside the window is left out: it cannot change a
+ * figure measured inside it.
  */
 function slowestStep(stage, spans, window = null) {
   if (spans.length === 0) return { step: { stage, ...missing(`no ${stage} span recorded`) }, interval: null };
@@ -290,7 +295,10 @@ function slowestStep(stage, spans, window = null) {
     const interval = clipTo(found, window);
     if (interval === null) continue;
     const ms = interval.end - interval.start;
-    if (best === null || ms > best.ms) best = { ms, span, interval, cutMs: found.end - found.start - ms };
+    if (best === null || ms > best.ms) {
+      const cutMs = found.end - found.start - ms;
+      best = { ms, span, interval, cutMs: cutMs <= WALL_CLOCK_RESOLUTION_MS ? 0 : cutMs };
+    }
   }
   if (best === null) {
     const reason = `every ${stage} span is unusable (unfinished, inconsistent or outside the window)`;
