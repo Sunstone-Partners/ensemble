@@ -22,8 +22,11 @@
  *   review.verifier         agent
  *   review.verdict          phase  the CLI computing REVIEW_COMPLETE / REVIEW_PENDING / REVIEW_BLOCKED
  * Any span MAY carry an integer attr `round` (1 = the first review, 2.. = delta re-reviews): the
- * critical path is then computed per round and summed. `trace start --attr k=v` records strings, so
- * a decimal string counts as the integer it spells (`turns`, `tool_calls` and `round`). Agent spans carry `agent` (a name)
+ * critical path is then computed per round and summed. An agent span MAY carry an integer attr `wave` (1.., numbered per
+ * round, within the review agents and, apart, within the verifiers): a round's agents are dispatched in waves of at most
+ * `maxConcurrentAgents`, all the agents of a wave together and a wave only once the one before it was collected, so the
+ * waves run one after another (see the critical path). `trace start --attr k=v` records strings, so
+ * a decimal string counts as the integer it spells (`turns`, `tool_calls`, `round` and `wave`). Agent spans carry `agent` (a name)
  * for the report. `review.gate` is not the `review-gate` span of /ensemble-pr-merge's own trace (skills/pr-merge-trace):
  * that one wraps the merge command's whole review step, a different and broader span this module never reads, so the
  * two can share one trace file without either being taken for the other.
@@ -64,11 +67,21 @@
  * critical path counts the verdict, so orchestrator time leaves it out: no minute is in both, and critical path
  * plus orchestrator-only never exceeds the window.
  * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval length cut to the
- * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`), summed over the rounds. It needs a
- * usable orchestrator window. The total is missing when ANY step is missing, when a round has more than one verdict
- * span (which one ends the chain is not known), and when the steps overlap or run out of order (the reviewer must end
- * before the verifier starts, the verifier before the verdict, each round before the next): overlapping steps would
- * count the same minutes twice, so they are never summed.
+ * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`), summed over the rounds. A stage dispatched
+ * in several waves (spans that name different `wave`s) is one step PER WAVE, that wave's slowest span, because the waves ran
+ * one after another: review waves of 40 s and 20 s are 60 s of the chain, never the 40 s of the one slowest reviewer. The
+ * step then carries its `wave`; a stage in one wave, or in spans that name none, is one step as ever, and spans that name
+ * none beside spans that do are one extra wave, with a warning. A recorder that dispatches in waves must name them: spans
+ * that name none cannot be told apart, so agents that ran in several waves under such a recorder are measured as one (a
+ * shorter chain than the real one, with nothing here to say so). HONEST LIMIT: the steps are reviewers, verifiers and the
+ * verdict, as the contract says, so the security lane is never a step: a lane that outlasts the reviewers of its wave is
+ * not counted, and a wave that holds no reviewer (the lane alone in it, which a small cap makes) has no step at all, so the
+ * round says so (`uncountedWaves`, `lowerBound`) instead of passing a shorter chain off as the whole. The critical path
+ * needs a usable orchestrator window. The total is missing when ANY step is missing (a wave whose every span is unusable
+ * is a missing step that names the wave), when a round has more than one verdict span (which one ends the chain is not
+ * known), and when the steps overlap or run out of order (each wave must end before the next starts, the last reviewer wave
+ * before the first verifier wave, the last verifier wave before the verdict, each round before the next): overlapping
+ * steps would count the same minutes twice, so they are never summed.
  *
  * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
  * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
@@ -231,6 +244,15 @@ function roundOf(span) {
   return round !== null && round >= 1 ? round : null;
 }
 
+/** The wave an agent span was dispatched in (attr `wave`, 1..), or null when it names none. */
+function waveOf(span) {
+  const wave = isObject(span.attrs) ? asCount(span.attrs.wave) : null;
+  return wave !== null && wave >= 1 ? wave : null;
+}
+
+/** Orders numbers ascending and the unnumbered (null) last. */
+const nullLast = (a, b) => (a === null ? 1 : b === null ? -1 : a - b);
+
 /** `interval` cut to `window` ({start, end}); null when nothing of it lies inside (a zero-length span inside the window stays one). */
 function clipTo(interval, window) {
   if (window === null) return interval;
@@ -274,6 +296,41 @@ function slowestStep(stage, spans, window = null) {
   return { step: { stage, ...known(best.ms, extra) }, interval: best.interval };
 }
 
+/** A step's name in a report: its stage, and its wave when its stage was dispatched in several. */
+function stepLabel(step) {
+  if (step.wave === undefined) return step.stage;
+  return step.wave === null ? `${step.stage} (unnumbered wave)` : `${step.stage} wave ${step.wave}`;
+}
+
+/**
+ * The steps one stage contributes to a round's chain. A stage dispatched in several waves is one step per wave (that wave's
+ * slowest span), in wave order, because the waves ran one after another; a stage in one wave, or in spans that name none, is
+ * one step as ever. Spans that name no wave beside spans that do are one extra wave, last, with a warning.
+ */
+function stagePicks(stage, spans, window, warnings, roundLabel) {
+  const waves = [...new Set(spans.map(waveOf))].sort(nullLast);
+  if (waves.length <= 1) return [{ label: stage, ...slowestStep(stage, spans, window) }];
+  if (waves.includes(null)) warnings.push(`round ${roundLabel}: some ${stage} spans carry a wave and some do not; the unnumbered ones are one extra wave`);
+  return waves.map((wave) => {
+    const picked = slowestStep(stage, spans.filter((s) => waveOf(s) === wave), window);
+    const step = { ...picked.step, wave };
+    return { label: stepLabel(step), step, interval: picked.interval };
+  });
+}
+
+/**
+ * The waves of a round that no step of its chain counts. The chain's review steps are reviewers, so a wave in which only the
+ * security lane (or another agent role) ran has none: the chain is short by that wave and the round says so. Waves can only
+ * be told apart when the reviewers name theirs.
+ */
+function uncountedWaves(spans, round) {
+  const inRound = spans.filter((s) => AGENT_NAMES.has(s.name) && roundOf(s) === round);
+  const counted = new Set(inRound.filter((s) => s.name === STAGES.reviewer).map(waveOf));
+  if (counted.has(null)) return [];
+  const others = inRound.filter((s) => s.name !== STAGES.reviewer && s.name !== STAGES.verifier).map(waveOf);
+  return [...new Set(others)].filter((wave) => wave !== null && !counted.has(wave)).sort((a, b) => a - b);
+}
+
 const CHAIN = Object.freeze(['reviewer', 'verifier', 'verdict']);
 
 /** The first adjacent pair of `chain` ([{label, interval}], in the order the steps must run) that overlaps or runs backwards. */
@@ -292,7 +349,7 @@ function overlapReason([previous, next]) {
 /** Why a round has no total: each missing step with its own reason, and what a missing verifier usually means. */
 function gapReason(gaps) {
   return gaps
-    .map((s) => `${s.stage}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none)' : ''}`)
+    .map((s) => `${stepLabel(s)}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none)' : ''}`)
     .join('; ');
 }
 
@@ -314,18 +371,23 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
   if (numbered > 0 && numbered < all.length) {
     warnings.push('some reviewer/verifier/verdict spans carry a round and some do not; the unnumbered ones are one extra group');
   }
-  const keys = [...new Set(all.map(roundOf))].sort((a, b) => (a === null ? 1 : b === null ? -1 : a - b));
+  const keys = [...new Set(all.map(roundOf))].sort(nullLast);
   const labelOf = (round) => (round === null ? '(unnumbered)' : round);
   const chains = [];
   // Cutting a step to the window presumes timestamps that agree with the recorder; on a stepped timeline the steps are only measured.
   const cutTo = timeline.ok ? window : null;
   const rounds = keys.map((round) => {
-    const picks = CHAIN.map((stage) => slowestStep(stage, byStage[stage].filter((s) => roundOf(s) === round), cutTo));
+    const inRound = (stage) => byStage[stage].filter((s) => roundOf(s) === round);
+    // reviewer waves, then verifier waves, then the verdict: the order the steps must run in
+    const picks = [
+      ...stagePicks('reviewer', inRound('reviewer'), cutTo, warnings, labelOf(round)),
+      ...stagePicks('verifier', inRound('verifier'), cutTo, warnings, labelOf(round)),
+      { label: 'verdict', ...slowestStep('verdict', inRound('verdict'), cutTo) },
+    ];
     const steps = picks.map((p) => p.step);
     const gaps = steps.filter((s) => s.missing);
     if (gaps.length > 0) return { round, steps, ...missing(gapReason(gaps)) };
-    const verdicts = byStage.verdict
-      .filter((s) => roundOf(s) === round)
+    const verdicts = inRound('verdict')
       .map(intervalOf)
       .filter((found) => found.ok && clipTo(found, cutTo) !== null).length;
     if (verdicts > 1) {
@@ -333,12 +395,13 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
     }
     if (window === null) return { round, steps, ...missing(windowReason) };
     if (!timeline.ok) return { round, steps, ...missing(timeline.reason) };
-    const chain = picks.map((p, i) => ({ label: CHAIN[i], interval: p.interval }));
+    const chain = picks.map((p) => ({ label: p.label, interval: p.interval }));
     const overlap = firstOverlap(chain);
     if (overlap) return { round, steps, ...missing(overlapReason(overlap)) };
     chains.push(chain.map((step) => ({ ...step, label: `round ${labelOf(round)} ${step.label}` })));
-    const lowerBound = steps.some((s) => s.lowerBound);
-    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), lowerBound ? { lowerBound: true } : {}) };
+    const uncounted = uncountedWaves(spans, round);
+    const lowerBound = uncounted.length > 0 || steps.some((s) => s.lowerBound);
+    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), { ...(lowerBound ? { lowerBound: true } : {}), ...(uncounted.length > 0 ? { uncountedWaves: uncounted } : {}) }) };
   });
   const gaps = rounds.filter((r) => r.missing);
   if (gaps.length > 0) {
@@ -563,10 +626,11 @@ function formatReviewTiming(timing) {
   out.push(`  critical path:               ${fmtFigure(timing.criticalPath)}`);
   for (const round of timing.criticalPath.rounds) {
     const steps = round.steps
-      .map((s) => `${s.stage} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}${s.clippedMs ? ` [cut to the window by ${fmtMs(s.clippedMs)}]` : ''}`}`)
+      .map((s) => `${stepLabel(s)} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}${s.clippedMs ? ` [cut to the window by ${fmtMs(s.clippedMs)}]` : ''}`}`)
       .join(' -> ');
     const why = round.missing && round.steps.every((s) => !s.missing) ? `  [MISSING: ${round.reason}]` : '';
-    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}`);
+    const uncounted = Array.isArray(round.uncountedWaves) ? `  [lower bound: no reviewer in review wave ${round.uncountedWaves.join(', ')}, so no step counts it]` : '';
+    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}${uncounted}`);
   }
   out.push(`  dispatched agents: ${timing.agents.count} (${timing.agents.unusable.length} unusable)`);
   if (timing.agents.lingerMs > 0) out.push(`  idle linger after the agents' last messages, not counted: ${fmtMs(timing.agents.lingerMs)}`);
