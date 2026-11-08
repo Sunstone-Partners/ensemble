@@ -56,18 +56,19 @@
  *     its key), so the next sweep, which finds the rest held, retries only what failed. A repository with
  *     no usable tracker, or an adapter without the capability, is UNAVAILABLE with the `skip-finding-beads`
  *     fallback: nothing was recorded and the caller says so. An entry whose identity cannot be read is
- *     reported under `invalid` and counts as an error; it is never dropped silently.
+ *     reported under `invalid` (its kind, position and reason, never its text) and counts as an error; it is never dropped silently.
  *   - ONLY CREATES. The sweep never updates, relabels, closes or reopens a bead.
  *   - TEXT IS UNTRUSTED. The facts come from the host (bot comment text, check names): every field that
  *     reaches a bead is cut to one line of bounded length, stripped of control characters and redacted,
  *     and each finished title and description is redacted once more as a whole, because the store is
  *     tracked by git. No text goes into the key, and a value never starts with `-` (the runner refuses it).
+ *     The answer is redacted the same way: it is printed, and a tool's message can echo what the facts said.
  *
  * Everything with an effect (git, the host, the tracker) is INJECTED (`io`), so tests need no process.
  */
 
 const trackerFindings = require('./tracker-findings');
-const { findUntracked } = require('./local-ci-sweep');
+const { findUntracked, isId, isCount } = require('./local-ci-sweep');
 const { redact } = require('./pr-review-state');
 
 /** The label every bead of a sweep carries; `br list --label merge-sweep` finds them for cleanup. */
@@ -88,6 +89,7 @@ const URL_MAX = 300;
 const SHORT_SHA = 7;
 const COMMIT_RE = /^[0-9a-f]{7,40}$/i;
 const LINK_RE = /^https?:\/\/[^\s\u0000-\u001f\u007f-\u009f]+$/;
+const USERINFO_RE = /^https?:\/\/[^/?#]*@/;
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -105,9 +107,9 @@ function flat(value, max) {
 /** A finished title or description, redacted once more as a whole: the last stop before the git-tracked store. */
 const clean = (text) => redact(text);
 
-/** A link the facts carry, or null: http(s) only, one token, bounded. A link is a convenience, never a reason to refuse. */
+/** A link the facts carry, or null: http(s) only, one token, bounded, with no credentials in it (`user:pass@`). A link is a convenience, never a reason to refuse. */
 function linkOf(value) {
-  return typeof value === 'string' && value.length <= URL_MAX && LINK_RE.test(value) ? flat(value, URL_MAX) : null;
+  return typeof value === 'string' && value.length <= URL_MAX && LINK_RE.test(value) && !USERINFO_RE.test(value) ? flat(value, URL_MAX) : null;
 }
 
 function shaOf(value) {
@@ -213,6 +215,17 @@ function unavailableResult(envelope, extra) {
 }
 
 /**
+ * What the answer says about an entry whose identity cannot be read: which one (kind and position) and why. Never its
+ * text: it is host data, and an entry with no usable id can still quote a credential in its body.
+ */
+function invalidSummary({ kind, entry, index }) {
+  const wanted = kind === 'finding' ? ['prNumber', 'commentId'] : ['checkRunId'];
+  if (!isObject(entry)) return { kind, index, reason: 'the entry is not an object' };
+  const bad = wanted.filter((field) => !(field === 'prNumber' ? isCount(entry[field]) : isId(entry[field])));
+  return { kind, index, reason: `no readable ${bad.join(' and ')}: a pull request number is a number or its digits, a comment or check run id a number, its digits or a node id` };
+}
+
+/**
  * The answer, from what was decided. Counts cover every entry that was keyed (and the unreadable ones as errors):
  * `create` the beads created (or, in a dry run, planned), `skip` the keys the tracker already held (a deleted bead
  * still holds its key: see `heldWithoutListing`), `error` the ambiguous keys, failed creates and unreadable entries.
@@ -238,7 +251,7 @@ function outcome({ dryRun, actions, invalid }) {
     counts: { create: count('create'), skip: count('skip'), error: errors },
     actions,
     beads,
-    invalid,
+    invalid: invalid.map(invalidSummary),
   };
 }
 
@@ -420,4 +433,7 @@ function sweep(input, io) {
   return recordSweep(facts, tracker, { dryRun, repo, pr, headSha });
 }
 
-module.exports = { sweep, recordSweep, beadFor, SWEEP_LABEL, KINDS };
+/** The answer is printed, and it carries tool messages and reasons that can echo what the facts said: redact it like the beads. */
+const answered = (fn) => (...args) => redact(fn(...args));
+
+module.exports = { sweep: answered(sweep), recordSweep: answered(recordSweep), beadFor, SWEEP_LABEL, KINDS };

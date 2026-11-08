@@ -212,8 +212,8 @@ describe('what a bead holds', () => {
 
   test('an entry with only its identifiers still makes a readable bead', () => {
     const tracker = fakeTracker();
-    recordSweep(facts([{ prNumber: 3, commentId: 'IC_kwDOabc' }], [{ checkRunId: 'run-9' }]), tracker, OPTIONS);
-    expect(tracker.issues.map((issue) => issue.title)).toEqual(['[bot-finding] PR #3: comment IC_kwDOabc', '[ci-failure] hosted CI failed (check run run-9)']);
+    recordSweep(facts([{ prNumber: 3, commentId: 'IC_kwDOabc' }], [{ checkRunId: 'CR_kwDOabc' }]), tracker, OPTIONS);
+    expect(tracker.issues.map((issue) => issue.title)).toEqual(['[bot-finding] PR #3: comment IC_kwDOabc', '[ci-failure] hosted CI failed (check run CR_kwDOabc)']);
     expect(tracker.issues[0].description).not.toMatch(/Location:|Reported by:|Finding:/);
   });
 
@@ -269,6 +269,18 @@ describe('what a bead holds', () => {
     }
   });
 
+  test('a link with credentials in it (user:pass@host) is left out of the bead, the rest of the finding is kept (kata mdfr review round 2)', () => {
+    const tracker = fakeTracker();
+    const withPassword = ['https://ci-user', 'pw123456@github.com/acme/widgets/pull/12#discussion_r345'].join(':');
+    recordSweep(facts([finding({ url: withPassword })], [failure({ url: withPassword })]), tracker, OPTIONS);
+    expect(tracker.issues).toHaveLength(2);
+    for (const issue of tracker.issues) {
+      expect(issue.title + issue.description).not.toContain('pw123456');
+      expect(issue.description).not.toContain('ci-user');
+    }
+    expect(tracker.issues[0].description).toContain('Finding: Possible null dereference in foo()');
+  });
+
   test('a field that is not text (an object, a list) is ignored, not printed as [object Object]', () => {
     const tracker = fakeTracker();
     recordSweep(facts([finding({ body: { text: 'x' }, author: ['a'], path: {}, url: 7 })], [failure({ name: { n: 1 }, sha: 12, url: [] })]), tracker, OPTIONS);
@@ -278,6 +290,52 @@ describe('what a bead holds', () => {
   test('beadFor builds exactly what createFinding takes', () => {
     const [entry] = require('../lib/local-ci-sweep').findUntracked(facts([finding()]), []).findings;
     expect(Object.keys(beadFor('finding', entry, OPTIONS)).sort()).toEqual(['description', 'key', 'labels', 'priority', 'title', 'type']);
+  });
+});
+
+describe('the answer never echoes what the facts quoted (kata mdfr review round 2)', () => {
+  const stripe = ['sk', 'live', 'A1b2C3d4E5f6G7h8I9j0K1'].join('_');
+  const glpat = ['glpat', 'A1b2C3d4E5f6G7h8I9j0K1'].join('-');
+  const unsignedJwt = ['eyJhbGciOiJub25lIn0', 'eyJzdWIiOiJ4In0', ''].join('.');
+
+  test('an entry with no readable id is reported by kind, position and reason, never by its text', () => {
+    const quoted = `leaked ${stripe} and ${glpat} and ${unsignedJwt}`;
+    const tracker = fakeTracker();
+    const result = recordSweep(facts([finding(), finding({ commentId: undefined, body: quoted, author: stripe })], [failure({ checkRunId: undefined, name: quoted })]), tracker, OPTIONS);
+    expect(result).toMatchObject({ ok: false, status: 'PARTIAL', counts: { create: 1, skip: 0, error: 2 } });
+    expect(result.invalid).toEqual([
+      { kind: 'finding', index: 1, reason: expect.stringContaining('no readable commentId') },
+      { kind: 'failure', index: 0, reason: expect.stringContaining('no readable checkRunId') },
+    ]);
+    const printed = JSON.stringify(result);
+    for (const secret of [stripe, glpat, unsignedJwt, 'leaked']) expect(printed).not.toContain(secret);
+  });
+
+  test('a tool message that echoes a credential is redacted in the answer, as the beads are', () => {
+    const tracker = fakeTracker({ fail: (capability) => (capability === 'tracker.create-detailed' ? { ok: false, error: { code: 'TOOL_FAILED', message: `br echoed ${stripe} and ${unsignedJwt}` } } : null) });
+    const result = recordSweep(facts([finding()]), tracker, OPTIONS);
+    expect(result).toMatchObject({ ok: false, status: 'PARTIAL' });
+    expect(result.actions[0].error.message).toContain('br echoed');
+    const printed = JSON.stringify(result);
+    for (const secret of [stripe, unsignedJwt]) expect(printed).not.toContain(secret);
+    expect(printed).toContain('[REDACTED]');
+  });
+
+  test.each([
+    ['a Stripe live key', stripe],
+    ['a GitLab token', glpat],
+    ['a signed JSON web token', ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJ4In0', 'abc123_-DEF456xyz'].join('.')],
+    ['a Google API key', `AIza${'A1b2C3d4E5'.repeat(3)}f6G7h`],
+    ['text with a space', 'bad id'],
+    ['a node id with a lowercase prefix', 'ic_kwDOabcdef'],
+    ['more digits than any host id', '1'.repeat(19)],
+    ['a path', '../../etc'],
+  ])('%s is not a comment or check run id: the entry is invalid, and nothing of it reaches a key, a bead or the answer', (_name, value) => {
+    const tracker = fakeTracker();
+    const result = recordSweep(facts([finding({ commentId: value })], [failure({ checkRunId: value })]), tracker, OPTIONS);
+    expect(result).toMatchObject({ ok: false, status: 'PARTIAL', counts: { create: 0, skip: 0, error: 2 } });
+    expect(tracker.calls).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(value);
   });
 });
 
@@ -812,11 +870,15 @@ describe('local-ci-cli sweep', () => {
     }
   });
 
-  test('credential-shaped text in the answer is redacted on the way out', async () => {
+  test('credential-shaped text never reaches the answer: an invalid entry is not echoed, a tool message is redacted', async () => {
     const secret = FAKE_TOKEN;
-    const { body } = await call(input(fx, { facts: facts([{ prNumber: 1, note: secret }]) }));
-    expect(JSON.stringify(body)).not.toContain(secret);
-    expect(JSON.stringify(body)).toContain('[REDACTED]');
+    const echoed = await call(input(fx, { facts: facts([{ prNumber: 1, note: secret }]) }));
+    expect(JSON.stringify(echoed.body)).not.toContain(secret);
+    expect(echoed.body.invalid).toEqual([{ kind: 'finding', index: 0, reason: expect.any(String) }]);
+    const trackerFor = () => fakeTracker({ fail: (c) => (c === 'tracker.create-detailed' ? { ok: false, error: { code: 'TOOL_FAILED', message: `br said ${secret}` } } : null) });
+    const refused = await call(input(fx), { trackerFor });
+    expect(JSON.stringify(refused.body)).not.toContain(secret);
+    expect(JSON.stringify(refused.body)).toContain('[REDACTED]');
   });
 });
 
@@ -956,6 +1018,23 @@ describe('through the real process: the real entry point, the real adapter, a st
     const r = sweepProcess({ facts: FACTS, trackedKeys: [] }, br);
     expect(r.status).toBe(1);
     expect(r.body.error).toContain('unknown payload key(s) "trackedKeys"');
+    expect(br.calls()).toEqual([]);
+  });
+
+  test('an entry with no readable id whose body quotes credentials: exit 1, PARTIAL, and no credential on stdout or stderr (kata mdfr review round 2)', () => {
+    const br = statefulBr();
+    const stripe = ['sk', 'live', 'A1b2C3d4E5f6G7h8I9j0K1'].join('_');
+    const glpat = ['glpat', 'A1b2C3d4E5f6G7h8I9j0K1'].join('-');
+    const unsignedJwt = ['eyJhbGciOiJub25lIn0', 'eyJzdWIiOiJ4In0', ''].join('.');
+    const quoting = { findings: [{ prNumber: 12, body: `leaked ${stripe} ${glpat} ${unsignedJwt}`, author: stripe }], failures: [] };
+    const r = sweepProcess(input(fx, { facts: quoting }), br);
+    expect(r.status).toBe(1);
+    expect(r.body).toMatchObject({ ok: false, status: 'PARTIAL', counts: { create: 0, skip: 0, error: 1 } });
+    expect(r.body.invalid).toEqual([{ kind: 'finding', index: 0, reason: expect.stringContaining('no readable commentId') }]);
+    for (const secret of [stripe, glpat, unsignedJwt, 'leaked']) {
+      expect(JSON.stringify(r.body)).not.toContain(secret);
+      expect(r.stderr).not.toContain(secret);
+    }
     expect(br.calls()).toEqual([]);
   });
 });
