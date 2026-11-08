@@ -34,7 +34,10 @@
  *   - the range of the delta (`deltaRange`): `deltaPlan` and `deltaPaths` are the delta of the range `prepare` computed them
  *                   for, `{ headSha, lastReviewedSha }`, and that range must be this round's own. The facts of an earlier push
  *                   are consistent inside themselves and say nothing of what THIS push changed (a caller it added, an edit to
- *                   the cited file outside the cited window). That their content is what `prepare` computed is trusted;
+ *                   the cited file outside the cited window). Nothing here reads the repository, so the content of `deltaPlan`
+ *                   and `deltaPaths` AND the range are the caller's assertions, the range checked only against this round's own
+ *                   heads: it holds when the orchestrator copies `deltaRange` from the facts of this head, and facts of an
+ *                   earlier push passed with a range written to match this round carry stale verdicts, unseen here;
  *   - the binding of the verdict to THIS round: the PR (`prId`), the base (`baseSha`), the verifier depth and count it was
  *                   settled under (`depth`, `expectedVerifiers`) and the ledger finding it is about (`priorLedger`).
  * What is NOT checked: callers of callers, bare npm packages, and anything the cited file reads at run time that no
@@ -284,7 +287,8 @@ function unreadable(reason) {
  * @param {string[]} input.deltaPaths     The paths changed between `lastReviewedSha` and `headSha` (`facts.delta.changedPaths`);
  *                                        they must be the read set's `changed` entries.
  * @param {{headSha:string, lastReviewedSha:string}} input.deltaRange  The range `deltaPlan` and `deltaPaths` were computed for
- *                                        (`facts.headSha`, `facts.delta.lastReviewedSha`); it must be `headSha` and `lastReviewedSha`.
+ *                                        (`facts.headSha`, `facts.delta.lastReviewedSha`, copied from the facts of this head and never
+ *                                        written from the round's own heads); it must be `headSha` and `lastReviewedSha`.
  * @param {string[]} input.highPaths      The paths classified High or sensitive (the `paths` result), changed or not.
  * @param {Object[]} input.priorVerdicts  `{ id, file, claim, lines, hunkHash, depHashes, head, carriedFrom?, outcome,
  *                                          votes[{verifier, verdict}], prId, baseSha, depth, expectedVerifiers }` as
