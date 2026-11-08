@@ -113,7 +113,7 @@ const RULES = Object.freeze([
 /** What a TRIAGE answer tells the orchestrating model, on top of RULES. */
 const TRIAGE_RULES = Object.freeze([
   'This is a FULL-mode run: nothing is dispatched on this answer. Read the candidates, the coverage and the security lane, then call `collect` again with `triage`.',
-  'Triage can only ADD candidates the reviewers missed (for example an interaction between slices): `{"triage":{"additionalCandidates":[{"locationOrLink":"path/file.js:12","failureMode":"what goes wrong","severity":"important|nit","evidence":"what you read"}]}}`. `{"triage":{}}` adds none. A location must be a line of a regular file of the head, named by a repository-relative path; an entry that matches a candidate the reviewers already raised is dropped and theirs stays as it was.',
+  'Triage can only ADD candidates the reviewers missed (for example an interaction between slices): `{"triage":{"additionalCandidates":[{"locationOrLink":"path/file.js:12","failureMode":"what goes wrong","severity":"important|nit","evidence":"what you read"}]}}`. `{"triage":{}}` adds none. A location must be a line of a regular file of the head, named by a repository-relative path; an entry that matches a candidate the reviewers already raised is dropped and theirs stays as it was. Every entry must also be one a verifier can be briefed with: an entry the verifier brief refuses (for example a claim that reads as a vote, a verdict or a conclusion, or a path with whitespace) is refused as `triage-refused`, naming the entry and why, and nothing of that payload is kept: reword it or leave it out.',
   'Every candidate, yours included, is then settled by independent fresh-context verifiers who are briefed with the claim and its location only. You can not remove, merge away, re-grade, close or waive a candidate, mark a slice reviewed, or decide a verdict: the gate and whether the review is complete are computed by the runner alone.',
   'A `collect` without `triage` repeats this answer; the run cannot reach verification without it.',
 ]);
@@ -633,6 +633,17 @@ function processReview(run, deps, { deferVerification = false } = {}) {
   return planVerifyRound(run, deps);
 }
 
+/**
+ * The verifier's brief for one candidate; THROWS the renderer's refusal. The one place the claim, the location and the path a
+ * verifier is briefed with are assembled: `planVerifyRound` calls it for every candidate, and `triageStep` calls it for what
+ * the orchestrator adds before the run depends on it, so triage accepts exactly what the renderer will brief and the grammar
+ * and the leak screen live in the renderer alone.
+ */
+function verifierBrief(run, deps, candidate) {
+  const file = S.locationFile(candidate.locationOrLink);
+  return deps.renderBrief('verifier', { claim: candidate.failureMode, location: candidate.locationOrLink, paths: file === null ? [] : [file], snapshotDir: run.prepared.snapshotDir });
+}
+
 /** Plans and briefs the verify round for `run.candidates`. Null on success, a RUN_FAILED answer otherwise. */
 function planVerifyRound(run, deps) {
   const deduped = run.candidates;
@@ -648,8 +659,7 @@ function planVerifyRound(run, deps) {
   const sections = new Map();
   for (const candidate of deduped) {
     try {
-      const file = S.locationFile(candidate.locationOrLink);
-      sections.set(candidate.id, deps.renderBrief('verifier', { claim: candidate.failureMode, location: candidate.locationOrLink, paths: file === null ? [] : [file], snapshotDir: run.prepared.snapshotDir }));
+      sections.set(candidate.id, verifierBrief(run, deps, candidate));
     } catch (error) {
       run.unbriefable.push({ id: candidate.id, reason: msg(error) });
     }
@@ -958,12 +968,21 @@ function triageStep(run, input, deps, tracer, startedAt, now) {
   const first = Math.max(0, ...top) + 1;
   const entries = validated.additional.map((raw, index) => S.completeFinding(raw, F.ORCHESTRATOR, `f${first + index}`));
   // An entry the dedupe would merge with an existing candidate is dropped: the existing candidate stays exactly as it was
-  // (id, source, severity), so triage can never displace or re-grade one. Only a distinct entry is appended, unchanged.
+  // (id, source, severity), so triage can never displace or re-grade one. Only a distinct entry is appended, unchanged, and
+  // only when a verifier can be briefed with it. An entry the verifier brief refuses (verifierBrief is the call the verify
+  // round makes) would be kept unverified and block the gate, and the orchestrator that wrote it is the one who can reword it
+  // in this run, so the whole payload is refused here, naming the entry and the renderer's own reason, before anything is kept.
   let candidates = run.candidates;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const combined = dedupeFindings([...candidates, entry]);
     if (!Array.isArray(combined)) return failure('RUN_FAILED', { reason: 'triage-refused', error: combined.reason, runId: run.runId });
-    if (combined.length > candidates.length) candidates = [...candidates, entry];
+    if (combined.length <= candidates.length) continue;
+    try {
+      verifierBrief(run, deps, entry);
+    } catch (error) {
+      return failure('RUN_FAILED', { reason: 'triage-refused', error: `additionalCandidates[${index}] (${entry.locationOrLink}) cannot be briefed to a verifier, so it would stay unverified and block the gate: ${msg(error)}; change its claim or location so the verifier brief accepts it, or leave it out, and call collect again`, runId: run.runId });
+    }
+    candidates = [...candidates, entry];
   }
   const kept = entries.filter((e) => candidates.some((c) => c.id === e.id)).map((e) => e.id);
   run.candidates = candidates;

@@ -589,6 +589,10 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
       ['a line past the end of the file', { additionalCandidates: [{ locationOrLink: 'secure/key.js:31', failureMode: 'x y z' }] }, /not a line of a regular file of the head snapshot/],
       ['a range that runs past the end of the file', { additionalCandidates: [{ locationOrLink: 'secure/key.js:29-31', failureMode: 'x y z' }] }, /not a line of a regular file of the head snapshot/],
       ['no failure mode', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9' }] }, /failureMode/],
+      // A claim the verifier brief refuses is refused here, with the renderer's own reason, before the run depends on it:
+      // accepted, it is appended, refused when the verify round is planned, and left unverified, blocking the gate.
+      ['a claim that names the orchestrator (the verifier brief refuses it)', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'the orchestrator never checks the key' }] }, /additionalCandidates\[0\] \(secure\/key\.js:9\) cannot be briefed to a verifier.*reads as the orchestrator \("orchestrator"\)/],
+      ['a claim that names a verdict (the verifier brief refuses it)', { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'the verdict of the comparison is wrong' }] }, /cannot be briefed to a verifier.*reads as a verdict \("verdict"\)/],
       ['more than 20 candidates', { additionalCandidates: Array.from({ length: 21 }, (_, i) => ({ locationOrLink: `secure/key.js:${i + 1}`, failureMode: 'something is wrong here' })) }, /at most 20/],
     ];
     for (const [name, payload, reason] of refusals) {
@@ -606,6 +610,49 @@ describe('full mode (kata dqcs): the same runner, with Deep depth, the security 
         expect(await h.collect({ triage: {} })).toMatchObject({ status: 'DISPATCH', round: 'verify' });
       });
     }
+
+    test('a path with whitespace is refused at triage with the renderer\'s own reason, because no verifier can be briefed with it', async () => {
+      const h = sensitive();
+      fs.writeFileSync(path.join(h.root, 'prepared', 'snapshot', 'secure', 'my key.js'), `${Array.from({ length: 30 }, (_, i) => `// line ${i + 1}`).join('\n')}\n`);
+      await toTriage(h, { findingsFor: onlyA });
+      const before = h.readRun();
+      const refused = await h.collect({ triage: { additionalCandidates: [{ locationOrLink: 'secure/my key.js:3', failureMode: 'the key file is read without a length check' }] } });
+      expect(refused).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'triage-refused' });
+      expect(refused.error).toMatch(/additionalCandidates\[0\] \(secure\/my key\.js:3\) cannot be briefed to a verifier.*no whitespace/);
+      expect(h.readRun()).toMatchObject({ phase: 'triage', candidates: before.candidates });
+    });
+
+    test('one entry the verifier brief refuses refuses the whole payload; the corrected payload is then all briefed and verified by five verifiers each', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      const before = h.readRun();
+      const good = { locationOrLink: 'secure/key.js:9', failureMode: 'the key is compared with == so a type-juggled value passes' };
+      const refused = await h.collect({ triage: { additionalCandidates: [good, { locationOrLink: 'secure/key.js:12', failureMode: 'the orchestrator trusts the caller here' }] } });
+      expect(refused).toMatchObject({ ok: false, reason: 'triage-refused', error: expect.stringContaining('additionalCandidates[1]') });
+      expect(h.readRun()).toMatchObject({ phase: 'triage', candidates: before.candidates, triage: before.triage });
+      const verify = await h.collect({ triage: { additionalCandidates: [good, { locationOrLink: 'secure/key.js:12', failureMode: 'the caller is trusted here without a check' }] } });
+      expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+      expect(h.readRun().unbriefable).toEqual([]);
+      const perCandidate = new Map();
+      for (const a of verify.agents) for (const id of a.candidateIds) perCandidate.set(id, (perCandidate.get(id) || 0) + 1);
+      expect([...perCandidate.entries()].sort()).toEqual([['f1', 5], ['f2', 5], ['f3', 5]]);
+    });
+
+    // The check is the renderer's own call, not a copy of its grammar: what the renderer refuses is refused here, whatever it
+    // is, and what it accepts is accepted here, even a claim a private word list would have refused.
+    test('triage asks the verifier brief renderer itself and keeps no grammar of its own', async () => {
+      const h = sensitive();
+      await toTriage(h, { findingsFor: onlyA });
+      h.deps.renderBrief = (role, vars) => {
+        if (role === 'verifier' && /zebra/.test(vars.claim)) throw new Error('the verifier brief refuses its input: a zebra is not a failure mode');
+        return renderBriefFromFiles(role, vars);
+      };
+      const refused = await h.collect({ triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'a zebra crosses the comparison' }] } });
+      expect(refused).toMatchObject({ ok: false, reason: 'triage-refused', error: expect.stringContaining('a zebra is not a failure mode') });
+      h.deps.renderBrief = () => '# a brief the renderer accepts';
+      const accepted = await h.collect({ triage: { additionalCandidates: [{ locationOrLink: 'secure/key.js:9', failureMode: 'the orchestrator never checks the key' }] } });
+      expect(accepted).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify' });
+    });
 
     test('triage outside the triage stop is refused (a verify wave in flight, a finished run, a run still in its review round)', async () => {
       const h = sensitive();
