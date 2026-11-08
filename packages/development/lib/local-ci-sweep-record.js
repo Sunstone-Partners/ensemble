@@ -35,11 +35,12 @@
  *     being PARTIAL for good. A dry run only looks up, so it cannot see this and plans the create.
  *   - NOTHING TO RECORD, NOTHING TOUCHED. With no key to look up, git, the host and the tracker are not
  *     asked at all.
- *   - THE REPOSITORY. The checkout `repoRoot` names must BE the pull request's repository: one of its git
- *     remotes names `repo` (`owner/name`, compared without regard to case; https, ssh and scp-like URLs; a fork
- *     checkout that also has the upstream as a remote is fine). A checkout with no remote naming it is REFUSED
- *     `repository-mismatch`, one whose remotes cannot be read or name no `owner/name` is REFUSED
- *     `repository-unknown`, before the host or the tracker is asked: beads never land in another repository's
+ *   - THE REPOSITORY. The repository's PRIMARY checkout (the one that holds the tracker; `repoRoot` may be a
+ *     linked worktree of it) must BE the pull request's repository: its `origin` remote, every fetch and push
+ *     URL of it, names `repo` (`owner/name`, compared without regard to case; https, ssh and scp-like URLs).
+ *     An `origin` that names another repository (a fork checkout, whatever other remote names `repo`) is REFUSED
+ *     `repository-mismatch`; no `origin`, URLs that name no `owner/name`, or a git that cannot list them is REFUSED
+ *     `repository-unknown`; all before the host or the tracker is asked: beads never land in another repository's
  *     tracker. `checkTrust` itself does not bind the checkout to `repo`; the sweep does, here.
  *   - WHERE THE BEADS GO. Into the tracker of the repository the pull request belongs to, resolved by
  *     `pr-review-beads-cli.js` `checkTrust`, the PR-review recorder's own trust checks, unchanged: the
@@ -366,30 +367,35 @@ function remoteRepo(url) {
   return null;
 }
 
+/** A refusal in the shape `checkTrust` refuses with: nothing was read or written, and the caller skips the beads and says why. */
+function refused(code, reason) {
+  return { ok: false, result: { ok: true, status: 'REFUSED', recorded: false, fallback: 'skip-finding-beads', code, reason, actions: [], beads: {} } };
+}
+
 /**
- * Whether the checkout at `root` is the repository `repo`: one of its remotes names it. The beads go into the tracker
- * of this checkout, so a checkout of another repository would record this pull request's findings there.
- * Answers `{ok:true}`, or `{ok:false, result}` with the REFUSED answer (the shape `checkTrust` refuses with).
+ * Whether the checkout at `root` (the primary checkout, which holds the tracker) is the repository `repo`: its `origin`
+ * names it, by EVERY fetch and push URL it has. The beads go into the tracker of this checkout and are committed with it,
+ * so a checkout of another repository (a fork, whose `origin` is the fork) would record this pull request's findings
+ * there, and another remote that happens to name `repo` does not make it the repository.
+ * Answers `{ok:true}` or `{ok:false, result}` with the REFUSED answer.
  */
 function bindRepository(git, root, repo) {
-  const refuse = (code, reason) => ({
-    ok: false,
-    result: { ok: true, status: 'REFUSED', recorded: false, fallback: 'skip-finding-beads', code, reason, actions: [], beads: {} },
-  });
   const listed = git(['remote', '-v'], { cwd: root });
   if (!isObject(listed) || listed.status !== 0) {
-    return refuse('repository-unknown', `the remotes of ${root} could not be read, so it is not known to be ${repo}: nothing was recorded`);
+    return refused('repository-unknown', `the remotes of ${root} could not be read, so it is not known to be ${repo}: nothing was recorded`);
   }
-  const named = new Set();
+  const urls = [];
   for (const line of String(listed.stdout).split('\n')) {
-    const match = /^\S+\s+(\S+)\s+\((?:fetch|push)\)\s*$/.exec(line);
-    const id = match && remoteRepo(match[1]);
-    if (id) named.add(id);
+    const match = /^(\S+)\s+(\S+)\s+\((?:fetch|push)\)\s*$/.exec(line);
+    if (match && match[1] === 'origin') urls.push(match[2]);
   }
-  if (named.size === 0) return refuse('repository-unknown', `${root} has no remote that names an owner/name, so it is not known to be ${repo}: nothing was recorded`);
-  if (!named.has(repo.toLowerCase())) {
-    return refuse('repository-mismatch', `${root} is a checkout of ${[...named].join(', ')}, not ${repo}: nothing was recorded`);
+  if (urls.length === 0) return refused('repository-unknown', `${root} has no remote named origin, so it is not known to be ${repo}: nothing was recorded`);
+  const named = urls.map(remoteRepo);
+  if (named.includes(null)) {
+    return refused('repository-unknown', `the origin of ${root} is not a URL that names an owner/name, so it is not known to be ${repo}: nothing was recorded`);
   }
+  const others = [...new Set(named.filter((id) => id !== repo.toLowerCase()))];
+  if (others.length > 0) return refused('repository-mismatch', `the origin of ${root} names ${others.join(', ')}, not ${repo}: nothing was recorded`);
   return { ok: true };
 }
 
@@ -416,7 +422,13 @@ function sweep(input, io) {
   const resolved = resolveProjectRootFlag(repoRoot);
   if (resolved.error) return failed(resolved.error.message);
 
-  const bound = bindRepository(io.git, resolved.projectRoot, repo);
+  // The tracker is in the PRIMARY checkout, so that is the checkout whose identity must match: a linked worktree can carry
+  // its own remote configuration (`extensions.worktreeConfig`), the primary's is what the beads are written under.
+  const primary = require('./pr-review-repo').primaryWorktree(io.git, resolved.projectRoot);
+  if (!primary.ok) {
+    return refused('no-primary-worktree', `the repository's primary checkout, which holds its tracker, could not be found from ${resolved.projectRoot} (${primary.reason}): nothing was recorded`).result;
+  }
+  const bound = bindRepository(io.git, primary.path, repo);
   if (!bound.ok) return bound.result;
 
   const { checkTrust } = require('./pr-review-beads-cli');
