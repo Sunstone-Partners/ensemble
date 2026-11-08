@@ -184,7 +184,7 @@ unfinished agent makes the orchestrator-only time an upper bound (`bound: 'upper
 Copy the answer into `state.timing` verbatim; do not round, fill in or drop a
 missing figure. Timing is observational only: a `timing` call that fails or answers
 `ok: false` is recorded as it answered, or left out, and never blocks the review,
-the gate or a merge. HONEST LIMIT: nothing in this procedure records the stage spans
-yet (the `review-run` runner is the intended recorder), so until it does a run
-without a hand-written trace has no `timing`, and the report says nothing about
-timing rather than a made-up figure.
+the gate or a merge. `review-run` (`lib/review-run-cli.js`) records these stage spans for a
+light-mode run into its own trace (it does not record `turns` or `tool_calls`), so `timing` with that run's id answers.
+HONEST LIMIT: the narrated Steps 1-10 record no stage spans, so a run without a hand-written trace has no `timing`, and
+the report says nothing about timing rather than a made-up figure.

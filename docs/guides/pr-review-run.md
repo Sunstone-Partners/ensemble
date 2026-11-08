@@ -140,11 +140,23 @@ beyond the orchestrator's own: reviewers, the security lane, verifiers and the a
 
 ## Trace
 
-Stage spans (precheck, prepare-head, one per agent, the gate) go to
-`<repoRoot>/.ensemble/state/toolchain/trace-<traceRunId>.jsonl`. `traceRunId` defaults to the review's own `runId`, so a
-review writes a trace file of its own. Its spans land in the same file as a `/ensemble-pr-merge` run's trace only when the
-caller passes that run's id as `traceRunId`. Nothing passes it automatically and the `/ensemble-pr-merge` prose does not
-today, so a merge's trace and its review's trace are separate files unless the caller joins them. Tracing never fails a run.
+Stage spans go to
+`<repoRoot>/.ensemble/state/toolchain/trace-<traceRunId>.jsonl` under the names `pr-review-cli timing` reads
+(`lib/pr-review-timing.js` holds the contract, the runner imports its names and kinds): one `review` root span per run
+(opened by `prepare`, closed by the call that ends the run), `review.head-read` (fetching the base and head and finding
+the merge base), `review.gate` (the host reads and the gate), `review.verdict` (deriving the review status) and one
+`review.<role>` span per dispatched agent (`review.reviewer`, `review.verifier`, `review.security-lane`) with its `agent`
+name. Each carries `round` (1; 2 when `lastReviewedSha` makes the run a delta re-review). An agent span opens when the
+agent is dispatched and closes when its result is collected, with `last_message_ts` set to the moment its result file
+arrived, so the reader counts the agent to its last message and not to the `collect` call. `precheck` and
+`prepare-head` spans are kept; the reader ignores them. Limits: the root opens after the first read of the PR head (the
+run id depends on it), `turns` and `tool_calls` are not recorded (the runner cannot see the model, so the reader reports
+them missing), and a `Quick` review has no verifier, so its critical path is missing. `traceRunId` defaults to the
+review's own `runId`, so a review writes a trace file of its own, which is what `timing` needs: its spans land in the
+same file as a `/ensemble-pr-merge` run's trace only when the caller passes that run's id as `traceRunId`, and a file that
+holds two `review` roots (two runs sharing a `traceRunId`) has no usable window. Nothing passes it automatically and the
+`/ensemble-pr-merge` prose does not today. A `collect` with `adjudications` re-runs the gate and the verdict after the root
+has closed; those spans lie outside the window and the reader leaves them out of the critical path. Tracing never fails a run.
 
 ## Left open
 
