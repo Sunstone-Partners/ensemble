@@ -3173,6 +3173,18 @@ describe('review sizing (kata sfpb): the plan follows what there is to read, and
       expect(lines.find((line) => line.startsWith('whole-range read NOT REVIEWED (reviewer-range: paths-not-reviewed; paths it did not list: '))).toBeDefined();
     });
 
+    test('fail closed: the reader is asked for EVERY changed path, not for one slice: a list that stops one path short (the whole first slice and more) still leaves the read not reviewed and names exactly the missing path', async () => {
+      const h = real271({ policyJson: { highPaths: [] } });
+      const m = await h.prepare();
+      const paths = allPaths(h);
+      const last = paths[paths.length - 1];
+      answerReview(m, { lane: { findings: [], pathsReviewed: paths }, partial: { 'reviewer-range': paths.slice(0, -1) } });
+      const done = await h.collect();
+      expect(done.notReviewed.unreviewedSlices).toEqual(['whole-range']);
+      expect(done.coverage.complete).toBe(false);
+      expect(done.reducedReview).toContain(`whole-range read NOT REVIEWED (reviewer-range: paths-not-reviewed; paths it did not list: ${last})`);
+    });
+
     test('fail closed: a whole-range reader that arrives after its 36-minute deadline is expired and its read is not reviewed; the slices and the lane are unaffected', async () => {
       const h = real271({ policyJson: { highPaths: [] } });
       const m = await h.prepare();
