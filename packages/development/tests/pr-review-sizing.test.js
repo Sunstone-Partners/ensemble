@@ -485,7 +485,7 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(guide).toMatch(/The 15-minute deadline \(kata `sfpb`\) is addressed by a size model[^;]*not yet measured on a live run/);
     expect(guide).not.toMatch(/is fixed by the size model/);
     expect(reference).not.toContain('are NOT fixed here and are tracked on their own: (a)');
-    expect(reference).toMatch(/Two are NOT fixed here and are tracked on their own: \(b\)/);
+    expect(reference).toMatch(/One is NOT fixed here and is tracked on its own: `review-run-cli\.js` `peekRun`/);
   });
 
   test('REVIEW.md\'s policy table says what the runner does with sliceThreshold and lists the three new keys and the base deadline', () => {
