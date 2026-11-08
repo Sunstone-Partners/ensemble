@@ -552,6 +552,75 @@ describe('the cited line is carried forward through every round (a fix after an 
   });
 });
 
+describe('a force-push between rounds clears nothing (an entry raised at a head that left the PR is never judged against another baseline)', () => {
+  let w;
+  let b0;
+  let dead;
+  let s;
+  let h;
+  const top = 'top1\ntop2\ntop3\ntop4\ntop5\n';
+  const at = (extra) => deriveCleared({ git: defaultGit(), cwd: w, baseSha: b0, incoming: [], now: () => 0, ...extra });
+  const entryOf = (round, id = 'F') => round.ledger.find((e) => e.id === id);
+
+  beforeAll(() => {
+    w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prr-clear-force-')));
+    roots.push(w);
+    sh(w, ['init', '-q', '-b', 'main']);
+    sh(w, ['config', 'user.name', 'T']);
+    sh(w, ['config', 'user.email', 't@example.com']);
+    sh(w, ['config', 'commit.gpgsign', 'false']);
+    b0 = commit(w, { 'src/a.js': numbered(30) }, 'base');
+    // Round 1 reviewed this head: the defect is on line 20.
+    dead = commit(w, { 'src/a.js': numbered(30, { 20: 'DEFECT' }) }, 'round 1 head');
+    // The author rebuilds the branch from the base and force-pushes: `dead` is no longer on the PR. The rebuilt head
+    // carries the defect five lines lower (line 25), and round 2's review did not raise it again.
+    sh(w, ['checkout', '-q', '-b', 'rebuilt', b0]);
+    s = commit(w, { 'src/a.js': top + numbered(30, { 20: 'DEFECT' }) }, 'round 2 head (rebuilt)');
+    // Round 3: an UNRELATED edit lands on line 20 (the number the defect had at `dead`); the defect is still on line 25.
+    h = commit(w, { 'src/a.js': top + numbered(30, { 20: 'DEFECT', 15: 'unrelated edit' }) }, 'round 3 head');
+    sh(w, ['checkout', '-q', 'main']);
+  });
+
+  const raisedAtDead = () => finding('F', 'src/a.js:20', 'defect', { headSha: dead });
+
+  test('round 2 keeps the entry unstamped (its baseline, the dead head, is not on the PR); round 3 must not judge it by lastReviewedSha', () => {
+    const e = raisedAtDead();
+    const round2 = at({ headSha: s, lastReviewedSha: dead, ledger: [e] });
+    expect(round2.kept).toEqual([{ id: 'F', reason: 'recorded-head-not-on-pr' }]);
+    expect(entryOf(round2)).toEqual(e);
+
+    const round3 = at({ headSha: h, lastReviewedSha: s, ledger: round2.ledger });
+    expect(round3.cleared).toEqual([]);
+    expect(round3.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
+    expect(entryOf(round3)).toEqual(e);
+  });
+
+  test('an own head the repository no longer holds is no better: location-unanchored, never cleared', () => {
+    for (const headSha of ['a'.repeat(40), 'not a commit', 12345]) {
+      const r = at({ headSha: h, lastReviewedSha: s, ledger: [finding('F', 'src/a.js:20', 'defect', { headSha })] });
+      expect(r.cleared).toEqual([]);
+      expect(r.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
+    }
+  });
+
+  test('a file-only citation is held the same way: the entry says nothing the verb can place', () => {
+    const r = at({ headSha: h, lastReviewedSha: s, ledger: [finding('F', 'src/a.js', 'defect', { headSha: dead })] });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toEqual([{ id: 'F', reason: 'location-unanchored' }]);
+  });
+
+  test('the entry is let go again once a review raises it: re-reported, stamped, and compared from there', () => {
+    const r = at({ headSha: h, lastReviewedSha: s, ledger: [raisedAtDead()], incoming: [finding('N', 'src/a.js:25', 'defect')] });
+    expect(r.kept).toEqual([{ id: 'F', reason: 're-reported' }]);
+    expect(r.ledger[0]).toMatchObject({ locationOrLink: 'src/a.js:25', locationAsOf: h });
+  });
+
+  test('control: an entry with no head of its own is still compared from lastReviewedSha (that is its documented baseline)', () => {
+    const r = at({ headSha: h, lastReviewedSha: s, ledger: [finding('F', 'src/a.js:20', 'defect')] });
+    expect(r.cleared.map((c) => c.id)).toEqual(['F']);
+  });
+});
+
 describe('entry point', () => {
   test('reads the payload on stdin and prints one JSON result', () => {
     const payload = { repoRoot: dir, baseSha: base, headSha: p2, ledger: [finding('hit', 'src/widget.js:12', 'bad', { headSha: p1 })], incoming: [] };
