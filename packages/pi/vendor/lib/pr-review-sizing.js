@@ -43,10 +43,11 @@
  *                     different lenses (security against general).
  *             2 is the round number above the first two. It is below the third on purpose: the rates are the lane's, the slower
  *             of that pair, so a reviewer's estimate is already 2.26 times what s1-a took. A deadline of one times the estimate
- *             would expire an agent no slower than the slowest one seen. The choice moves the plan: at 2.5 the limits are 6 paths
- *             and 490 lines, the real PR needs four slices (nine agents, one more than the default cap holds in one wave) and the
- *             lane is given 45 minutes. If live runs show agents slower than twice the slowest rate seen, raise the policy's
- *             `deadlineHeadroom`.
+ *             would leave no margin over the slowest agent seen. The choice moves the plan if the CONSTANT moves: at 2.5 the
+ *             limits are 6 paths and 490 lines, the real PR needs four slices (nine agents, one more than the default cap holds
+ *             in one wave) and the lane is given 45 minutes. The policy key `deadlineHeadroom` changes the deadlines only (the
+ *             limits are the keys `sliceMaxFiles` and `sliceTargetLines`); if live runs show agents slower than twice the
+ *             slowest rate seen, raise it.
  *
  *   slice limits    the same model solved for the slice that just fits the base reviewer deadline, with its headroom:
  *     maxFiles    = floor(base / (headroom x MINUTES_PER_FILE))                    8 at 15 minutes and 2x
