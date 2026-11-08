@@ -549,6 +549,10 @@ describe('the readers that cross slices in a delta round with several slices', (
     const brief = fs.readFileSync(reader.briefPath, 'utf8');
     expect(path.basename(/Diff for the whole range: (\S+)/.exec(brief)[1])).toBe('range.diff');
     for (const file of ALL_PATHS) expect(brief).toContain(file);
+    // the reviewer budget (kata: tool calls and snippets) reaches the delta round's reader and slice reviewers
+    expect(brief).toMatch(/Throwaway snippets[^\n]*3/);
+    const sliceBrief = fs.readFileSync(p.out.agents.find((a) => a.name === 'reviewer-s1-a').briefPath, 'utf8');
+    expect(sliceBrief).toMatch(/Throwaway snippets[^\n]*3/);
     expect(p.out.reReview.delta.limits).toContain('read on the whole range in this round: the security lane, the whole-range reader');
     expect(p.out.sizing.slices.every((slice) => ['delta', 'slice'].includes(slice.diff))).toBe(true);
   });
