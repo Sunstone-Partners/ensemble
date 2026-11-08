@@ -477,8 +477,9 @@ function commitAll(cwd, message) {
  * adds the config (`tracker: beads`) and a `.beads` directory. The pull request branch `pr` is checked out in a LINKED
  * worktree (the head being merged) with two commits: `p1` adds a file and `head` (hostile) commits a toolchain config
  * naming a tracker that does not exist. `merged` is what main looks like after a squash merge of the PR.
+ * The primary has the remote `origin` = github.com/Acme/Widgets, the repository every sweep here runs for (`remote: null`: none).
  */
-function makeRepo() {
+function makeRepo({ remote = 'https://github.com/Acme/Widgets.git' } = {}) {
   const sandbox = tempDir('local-ci-sweep-repo-');
   const primary = path.join(sandbox, 'primary');
   fs.mkdirSync(primary);
@@ -486,6 +487,7 @@ function makeRepo() {
   gitIn(primary, 'config', 'user.name', 'ci');
   gitIn(primary, 'config', 'user.email', 'ci@example.invalid');
   gitIn(primary, 'config', 'commit.gpgsign', 'false');
+  if (remote !== null) gitIn(primary, 'remote', 'add', 'origin', remote);
   writeFile(primary, 'README.md', 'root\n');
   const root = commitAll(primary, 'root');
   writeFile(primary, '.ensemble/toolchain.yaml', 'tracker: beads\n');
@@ -546,9 +548,9 @@ describe('sweep(): the repository the beads may go into', () => {
 
   test('the host is asked about the repository and the pull request the payload names', () => {
     const readPr = jest.fn(hostSays(fx));
-    run(input(fx, { repo: 'Acme/Other', pr: 41 }), { readPr });
+    run(input(fx, { repo: 'Acme/Widgets', pr: 41 }), { readPr });
     expect(readPr).toHaveBeenCalledTimes(1);
-    expect(readPr).toHaveBeenCalledWith({ repo: 'Acme/Other', prNumber: 41 });
+    expect(readPr).toHaveBeenCalledWith({ repo: 'Acme/Widgets', prNumber: 41 });
   });
 
   test.each([
@@ -606,6 +608,85 @@ describe('sweep(): the repository the beads may go into', () => {
     const planned = run(input(fx, { dryRun: true }));
     expect(planned.result).toMatchObject({ status: 'PLANNED', counts: { create: 3 } });
     expect(planned.tracker.writes()).toEqual([]);
+  });
+});
+
+describe("sweep(): the checkout must be the pull request's repository (kata mdfr review F1)", () => {
+  let fx;
+  beforeAll(() => {
+    fx = makeRepo();
+  });
+
+  /** Replace the primary's remotes (its linked worktrees share them) with exactly these. */
+  const remotes = (...list) => {
+    for (const name of gitIn(fx.primary, 'remote').split('\n').filter(Boolean)) gitIn(fx.primary, 'remote', 'remove', name);
+    for (const [name, url] of list) gitIn(fx.primary, 'remote', 'add', name, url);
+  };
+  const run = (over = {}, io = {}) => {
+    const tracker = fakeTracker();
+    const readPr = jest.fn(hostSays(fx));
+    const trackerFor = jest.fn(() => tracker);
+    const result = sweep(input(fx, over), { git: cli.defaultDeps().repoGit, readPr, trackerFor, env: {}, ...io });
+    return { result, tracker, readPr, trackerFor };
+  };
+  const REFUSED = { ok: true, status: 'REFUSED', recorded: false, fallback: 'skip-finding-beads', actions: [], beads: {} };
+  const nothingAsked = ({ readPr, trackerFor, tracker }) => {
+    expect(readPr).not.toHaveBeenCalled();
+    expect(trackerFor).not.toHaveBeenCalled();
+    expect(tracker.calls).toEqual([]);
+    expect(tracker.issues).toEqual([]);
+  };
+
+  test.each([
+    ['another owner', 'https://github.com/Attacker/Widgets.git'],
+    ['another name', 'https://github.com/Acme/Widgets-fork.git'],
+    ['an owner that merely starts with it', 'git@github.com:Acme-evil/Widgets.git'],
+    ['a name that merely starts with it', 'ssh://git@github.com/Acme/WidgetsX'],
+  ])('a checkout of %s is REFUSED repository-mismatch: the host and the tracker are never asked and no bead is created', (_name, url) => {
+    remotes(['origin', url]);
+    const asked = run();
+    expect(asked.result).toMatchObject({ ...REFUSED, code: 'repository-mismatch' });
+    expect(asked.result.reason).toContain('not Acme/Widgets');
+    nothingAsked(asked);
+  });
+
+  test.each([
+    ['https', 'https://github.com/Acme/Widgets.git'],
+    ['https without .git', 'https://github.com/Acme/Widgets'],
+    ['https with a trailing slash', 'https://github.com/Acme/Widgets/'],
+    ['https with credentials in it', ['https://ci-user', 'placeholder@github.com/Acme/Widgets.git'].join(':')],
+    ['ssh', 'ssh://git@github.com/Acme/Widgets.git'],
+    ['ssh with a port', 'ssh://git@github.com:22/Acme/Widgets.git'],
+    ['scp-like', 'git@github.com:Acme/Widgets.git'],
+    ['a different case', 'git@github.com:ACME/widgets.git'],
+    ['an enterprise host', 'https://ghe.example.invalid/Acme/Widgets.git'],
+  ])('a checkout whose remote is %s is the repository: the sweep goes on and records', (_name, url) => {
+    remotes(['origin', url]);
+    const { result, tracker } = run();
+    expect(result).toMatchObject({ ok: true, status: 'RECORDED', counts: { create: 3 } });
+    expect(tracker.issues).toHaveLength(3);
+  });
+
+  test('a fork checkout that also has the upstream as a remote is the repository', () => {
+    remotes(['origin', 'https://github.com/someone/Widgets.git'], ['upstream', 'https://github.com/Acme/Widgets.git']);
+    expect(run().result).toMatchObject({ status: 'RECORDED', counts: { create: 3 } });
+  });
+
+  test.each([
+    ['no remote at all', []],
+    ['only a remote that is a local path', [['origin', '/srv/git/widgets.git']]],
+  ])('%s is REFUSED repository-unknown, before the host or the tracker is asked', (_name, list) => {
+    remotes(...list);
+    const asked = run();
+    expect(asked.result).toMatchObject({ ...REFUSED, code: 'repository-unknown' });
+    nothingAsked(asked);
+  });
+
+  test('a git that cannot list the remotes is REFUSED repository-unknown too, and nothing is asked', () => {
+    remotes(['origin', 'https://github.com/Acme/Widgets.git']);
+    const asked = run({}, { git: () => ({ status: 128, stdout: '', stderr: 'fatal: broken' }) });
+    expect(asked.result).toMatchObject({ ...REFUSED, code: 'repository-unknown' });
+    nothingAsked(asked);
   });
 });
 
@@ -838,6 +919,15 @@ describe('through the real process: the real entry point, the real adapter, a st
       expect(swept.body.beads[KEYS[1]]).toEqual({ kind: 'finding', action: 'skip', reason: 'held-not-listed' });
     }
     expect(br.issues().map((issue) => issue.external_ref)).toEqual([KEYS[0], KEYS[2]]);
+  });
+
+  test("a pull request of another repository than the checkout's is REFUSED repository-mismatch: exit 0, the fallback, br never run (kata mdfr review F1)", () => {
+    const br = statefulBr();
+    const refused = sweepProcess(input(fx, { repo: 'Acme/Other' }), br);
+    expect(refused.status).toBe(0);
+    expect(refused.body).toMatchObject({ status: 'REFUSED', code: 'repository-mismatch', fallback: 'skip-finding-beads' });
+    expect(br.calls()).toEqual([]);
+    expect(br.issues()).toEqual([]);
   });
 
   test('a refusal exits 0 with the fallback and br is never run', () => {

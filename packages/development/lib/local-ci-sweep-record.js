@@ -35,6 +35,12 @@
  *     being PARTIAL for good. A dry run only looks up, so it cannot see this and plans the create.
  *   - NOTHING TO RECORD, NOTHING TOUCHED. With no key to look up, git, the host and the tracker are not
  *     asked at all.
+ *   - THE REPOSITORY. The checkout `repoRoot` names must BE the pull request's repository: one of its git
+ *     remotes names `repo` (`owner/name`, compared without regard to case; https, ssh and scp-like URLs; a fork
+ *     checkout that also has the upstream as a remote is fine). A checkout with no remote naming it is REFUSED
+ *     `repository-mismatch`, one whose remotes cannot be read or name no `owner/name` is REFUSED
+ *     `repository-unknown`, before the host or the tracker is asked: beads never land in another repository's
+ *     tracker. `checkTrust` itself does not bind the checkout to `repo`; the sweep does, here.
  *   - WHERE THE BEADS GO. Into the tracker of the repository the pull request belongs to, resolved by
  *     `pr-review-beads-cli.js` `checkTrust`, the PR-review recorder's own trust checks, unchanged: the
  *     host is asked about the pull request (a head on a fork, an unreadable pull request, a head that is
@@ -332,6 +338,48 @@ function recordSweep(facts, tracker, options) {
 // The sweep of one pull request's merge
 // ---------------------------------------------------------------------------
 
+/** The git remote URL forms that name a GitHub-style `owner/name`: `scheme://[userinfo@]host[:port]/owner/name[.git][/]` and scp-like `[user@]host:owner/name[.git][/]`. */
+const REMOTE_URL_FORMS = [
+  /^[a-z][a-z0-9+.-]*:\/\/(?:[^/@]*@)?[^/:@]+(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+  /^(?:[^/@:]+@)?[^/:@]+:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+];
+
+/** The lower-cased `owner/name` a remote URL names, or null (a local path, or a URL of another shape, names none). */
+function remoteRepo(url) {
+  for (const form of REMOTE_URL_FORMS) {
+    const match = form.exec(url);
+    if (match) return `${match[1]}/${match[2]}`.toLowerCase();
+  }
+  return null;
+}
+
+/**
+ * Whether the checkout at `root` is the repository `repo`: one of its remotes names it. The beads go into the tracker
+ * of this checkout, so a checkout of another repository would record this pull request's findings there.
+ * Answers `{ok:true}`, or `{ok:false, result}` with the REFUSED answer (the shape `checkTrust` refuses with).
+ */
+function bindRepository(git, root, repo) {
+  const refuse = (code, reason) => ({
+    ok: false,
+    result: { ok: true, status: 'REFUSED', recorded: false, fallback: 'skip-finding-beads', code, reason, actions: [], beads: {} },
+  });
+  const listed = git(['remote', '-v'], { cwd: root });
+  if (!isObject(listed) || listed.status !== 0) {
+    return refuse('repository-unknown', `the remotes of ${root} could not be read, so it is not known to be ${repo}: nothing was recorded`);
+  }
+  const named = new Set();
+  for (const line of String(listed.stdout).split('\n')) {
+    const match = /^\S+\s+(\S+)\s+\((?:fetch|push)\)\s*$/.exec(line);
+    const id = match && remoteRepo(match[1]);
+    if (id) named.add(id);
+  }
+  if (named.size === 0) return refuse('repository-unknown', `${root} has no remote that names an owner/name, so it is not known to be ${repo}: nothing was recorded`);
+  if (!named.has(repo.toLowerCase())) {
+    return refuse('repository-mismatch', `${root} is a checkout of ${[...named].join(', ')}, not ${repo}: nothing was recorded`);
+  }
+  return { ok: true };
+}
+
 /**
  * Run the sweep for the pull request being merged: the trust checks, the tracker, `recordSweep`.
  *
@@ -354,6 +402,9 @@ function sweep(input, io) {
   const { resolveProjectRootFlag } = require('./toolchain-cli');
   const resolved = resolveProjectRootFlag(repoRoot);
   if (resolved.error) return failed(resolved.error.message);
+
+  const bound = bindRepository(io.git, resolved.projectRoot, repo);
+  if (!bound.ok) return bound.result;
 
   const { checkTrust } = require('./pr-review-beads-cli');
   const trust = checkTrust({ input: { repo, prNumber: pr, headSha }, repoRoot: resolved.projectRoot, baseSha, git: io.git, readPr: io.readPr });

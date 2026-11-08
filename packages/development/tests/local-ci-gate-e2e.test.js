@@ -337,6 +337,7 @@ describe('CLI boundary and output', () => {
     // `sweep` records what the tracker does not hold: the dedupe set comes from the tracker, never from the payload.
     const sweepFx = repoWith();
     sweepFx.git('checkout', '-q', '--detach', sweepFx.baseSha); // the primary checkout sits on the base, as a maintainer's does
+    sweepFx.git('remote', 'add', 'origin', 'https://github.com/owner/name.git'); // the checkout is the repository the sweep names
     const issues = [];
     const tracker = {
       run: (capability, args) =>
