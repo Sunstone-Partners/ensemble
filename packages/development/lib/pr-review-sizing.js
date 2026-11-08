@@ -16,9 +16,9 @@
  * Both were the runner failing closed correctly. What was wrong was the plan it was given: a slice and a deadline that
  * did not depend on how much there was to read.
  *
- * THE OBSERVATION. Everything below is derived from OBSERVED, which is that run's own record (`run.json`: what each agent
- * was dispatched with and when its result file arrived; the result files: the paths each agent listed in `pathsReviewed`).
- * Nothing else is a measurement, and nothing in this file is a number picked to look right.
+ * THE OBSERVATION. Everything below except the headroom is derived from OBSERVED, which is that run's own record (`run.json`:
+ * what each agent was dispatched with and when its result file arrived; the result files: the paths each agent listed in
+ * `pathsReviewed`). The headroom is the one CHOSEN number, and its comment says what it is set against.
  *
  * THE MODEL.
  *   estimate(work)  = max(files x MINUTES_PER_FILE, lines / 100 x MINUTES_PER_100_LINES)       minutes to read `work`
@@ -33,9 +33,20 @@
  *             policy always holds every key, defaulted or not, so an explicit value cannot be told from the default: it is
  *             a floor, never a pin.
  *     MAX     the policy's own ceiling for a deadline, 60 minutes. A modelled need above it is capped AND SAID (`capped`).
- *     headroom  DEFAULT_HEADROOM, the larger of (a) how many times over its own deadline the lane ran (17.75 / 15 = 1.18) and
- *             (b) how far apart the two reviewers were on the SAME assignment (7.84 / 4.62 = 1.70), rounded up to a half: 2.
- *             A deadline of one times the estimate would expire any agent that runs as slowly as the slowest one seen.
+ *     headroom  DEFAULT_HEADROOM = 2: a JUDGEMENT, not a measurement. The run holds ONE observation of each agent, so it cannot
+ *             say how far one agent's time for identical work varies, and nothing here derives that. The three ratios it does
+ *             show, which 2 is set against:
+ *               1.18  the lane's time over the flat deadline it was given (17.75 / 15): the margin the lane lacked;
+ *               1.70  reviewer-s1-a over reviewer-s1-b (7.84 / 4.62), two reviewers of one assignment but NOT of the same
+ *                     work: s1-b listed 5 of the 19 paths and stopped 10.4 minutes inside its deadline;
+ *               2.26  the lane over reviewer-s1-a (17.75 / 7.84), the only two agents that read the same 19 paths, under
+ *                     different lenses (security against general).
+ *             2 is the round number above the first two. It is below the third on purpose: the rates are the lane's, the slower
+ *             of that pair, so a reviewer's estimate is already 2.26 times what s1-a took. A deadline of one times the estimate
+ *             would expire an agent no slower than the slowest one seen. The choice moves the plan: at 2.5 the limits are 6 paths
+ *             and 490 lines, the real PR needs four slices (nine agents, one more than the default cap holds in one wave) and the
+ *             lane is given 45 minutes. If live runs show agents slower than twice the slowest rate seen, raise the policy's
+ *             `deadlineHeadroom`.
  *
  *   slice limits    the same model solved for the slice that just fits the base reviewer deadline, with its headroom:
  *     maxFiles    = floor(base / (headroom x MINUTES_PER_FILE))                    8 at 15 minutes and 2x
@@ -46,13 +57,15 @@
  *   deadline of 15 minutes and a lane deadline of 36.
  *
  * The three numbers a maintainer can set (`sliceMaxFiles`, `sliceTargetLines`, `deadlineHeadroom`) are policy keys; their
- * defaults are the numbers this file derives, and `pr-review-policy.js` takes them from `deriveLimits` and `DEFAULT_HEADROOM`.
+ * defaults are what this file derives (the two limits) and states (the headroom), and `pr-review-policy.js` takes them from
+ * `deriveLimits` and `DEFAULT_HEADROOM`.
  *
  * HONEST LIMITS -- what this model is not:
- *   - ONE run. The rates are one completed read by one agent (the lane) on one PR with one model; the only measure of spread
- *     is two reviewers on one slice. The model is proportional through the origin (no fixed cost for starting an agent), so
- *     it over-states a tiny slice and cannot say anything about a slice shape the run did not have. Recalibrating it is an
- *     edit of OBSERVED with a new run's numbers, in review.
+ *   - ONE run. The rates are one completed read by one agent (the lane) on one PR with one model, and the run holds no spread of
+ *     one agent's time on identical work (the headroom above is a judgement). The model is proportional through the origin (no
+ *     fixed cost for starting an agent) while the lane's elapsed time includes its start-up, so a fixed cost makes it UNDER-state
+ *     a small slice (the 15-minute base covers that in practice), and it cannot say anything about a slice shape the run did not
+ *     have. Recalibrating it is an edit of OBSERVED with a new run's numbers, in review.
  *   - Elapsed time is dispatch to the arrival of the result file: it holds whatever the agent spent starting up and queueing,
  *     and it is the model's and the tooling's speed of that run. A slower model or tool needs a larger `deadlineHeadroom`.
  *   - Time is not the only way a reviewer fails to reach a path. The reviewer that listed 5 of 19 paths (318 of 1450 lines)
@@ -113,13 +126,27 @@ const SLOWEST_COMPLETED_MINUTES = Math.max(...COMPLETED.map(minutesOf));
 const MINUTES_PER_FILE = SLOWEST_COMPLETED_MINUTES / OBSERVED.files;
 const MINUTES_PER_100_LINES = SLOWEST_COMPLETED_MINUTES / (OBSERVED.changedLines / 100);
 
-/** How many times over its deadline the lane ran, and how far apart the reviewers were on the same assignment. */
-const LANE_OVERRUN = minutesOf(OBSERVED.agents.find((agent) => agent.role === 'security')) / OBSERVED.deadlineMinutes;
+/**
+ * The three ratios the run shows between what agents took. None is a spread of ONE agent's time on identical work, which the run
+ * does not hold: the headroom below is set against them, it is not computed from them.
+ *   LANE_OVERRUN        the lane's time over the flat deadline it was given;
+ *   REVIEWER_SPREAD     the slower reviewer over the faster, two reviewers of one assignment that did NOT do the same work (the
+ *                       faster listed 5 of the 19 paths);
+ *   LANE_OVER_REVIEWER  the lane over the reviewer that read the same 19 paths, under a different lens.
+ */
+const LANE = OBSERVED.agents.find((agent) => agent.role === 'security');
+const LANE_OVERRUN = minutesOf(LANE) / OBSERVED.deadlineMinutes;
 const REVIEWER_MINUTES = OBSERVED.agents.filter((agent) => agent.role === 'reviewer').map(minutesOf);
 const REVIEWER_SPREAD = Math.max(...REVIEWER_MINUTES) / Math.min(...REVIEWER_MINUTES);
+const SAME_PATHS_REVIEWER = OBSERVED.agents.find((agent) => agent.role === 'reviewer' && agent.reachedFiles === LANE.reachedFiles);
+const LANE_OVER_REVIEWER = minutesOf(LANE) / minutesOf(SAME_PATHS_REVIEWER);
 
-/** The larger of those two ratios, rounded UP to a half (1.70 -> 2): the deadline is at least this many times the estimate. */
-const DEFAULT_HEADROOM = Math.ceil(Math.max(LANE_OVERRUN, REVIEWER_SPREAD) * 2) / 2;
+/**
+ * How many times the modelled time to read its work an agent's deadline allows. CHOSEN, not derived (see the header): 2, above the
+ * first two ratios and below the third, because the rates are the lane's and so already 2.26 times what a reviewer of the same
+ * paths took.
+ */
+const DEFAULT_HEADROOM = 2;
 
 /** A headroom below 1 would give an agent less time than the model says it needs; above 10 no deadline can be told from the cap. */
 const HEADROOM_MIN = 1;
@@ -219,6 +246,7 @@ module.exports = {
   MINUTES_PER_100_LINES,
   LANE_OVERRUN,
   REVIEWER_SPREAD,
+  LANE_OVER_REVIEWER,
   DEFAULT_HEADROOM,
   HEADROOM_MIN,
   HEADROOM_MAX,

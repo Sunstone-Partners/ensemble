@@ -138,8 +138,9 @@ listed 5 of the 19 paths, and a slice counts as reviewed only when every reviewe
 was reported not reviewed. The runner failed closed, correctly. What was wrong was the plan it was given: nothing in it
 depended on how much there was to read. Now it does.
 
-**The numbers are that run's own.** `lib/pr-review-sizing.js` holds the observation (`OBSERVED`: `arrivedAt - dispatchedAt`
-from the run's `run.json`, and the paths each agent listed in `pathsReviewed`) and derives everything else from it:
+**The numbers are that run's own, except the headroom.** `lib/pr-review-sizing.js` holds the observation (`OBSERVED`:
+`arrivedAt - dispatchedAt` from the run's `run.json`, and the paths each agent listed in `pathsReviewed`) and derives the rates
+and the slice limits from it. The headroom is a judgement, set against what the run shows (below):
 
 | what | value | where it comes from |
 |---|---|---|
@@ -148,13 +149,21 @@ from the run's `run.json`, and the paths each agent listed in `pathsReviewed`) a
 | reviewer-s1-b | 4.62 min, listed 5 paths (318 lines), left 14 (1132 lines) | the run |
 | minutes per path | 0.934 | the slowest agent that read every path (the lane), over its 19 paths |
 | minutes per 100 changed lines | 1.224 | the same agent, over its 14.5 hundred lines |
-| headroom | 2 | the larger of 1.18 (the lane's overrun, 17.75 / 15) and 1.70 (two reviewers on one assignment, 7.84 / 4.62), rounded up to a half |
+| headroom | 2 | a judgement, not a measurement: set above 1.18 (the lane's overrun, 17.75 / 15) and 1.70 (reviewer-s1-a over reviewer-s1-b, 7.84 / 4.62, who did not do the same work) and below 2.26 (the lane over reviewer-s1-a, 17.75 / 7.84: the same 19 paths under a different lens) |
 | `sliceMaxFiles` | 8 | `floor(15 / (2 x 0.934))`: the largest slice the slowest observed reader finishes in half the reviewer deadline |
 | `sliceTargetLines` | 612 | `floor(15 / (2 x 1.224 / 100))`, the same model solved for lines |
 
 Only an agent that read every path gives a time to read a whole slice, so the partial reviewer is no rate. The model is
 `estimate(work) = max(paths x 0.934, changed lines / 100 x 1.224)` minutes: a path costs a read however few lines it holds,
 and a long file costs by its length, so whichever term is larger for the slice is the one that binds.
+
+**The headroom is a judgement.** The run holds one observation of each agent, so it cannot say how far one agent's time for
+identical work varies, and no ratio in it is that spread (the reviewers' 1.70 compares a reviewer that read 19 paths with one
+that stopped after 5). 2 is the round number above the first two ratios and below the third, and it is below it on purpose:
+the rates are the lane's, the slower of the only two agents that read the same paths, so a reviewer's estimate is already 2.26
+times what the faster one took. The choice moves the plan: at 2.5 the limits are 6 paths and 490 lines, the real PR needs four
+slices (nine agents, one more than the default cap holds in one wave) and the lane is given 45 minutes. Raise
+`deadlineHeadroom` if live runs show agents slower than twice the slowest rate seen.
 
 **Slices.** Every PR is cut by size, at every size, in path order, into slices of at most `sliceMaxFiles` paths and about
 `sliceTargetLines` changed lines (policy keys; the defaults above). A path is never cut, so one 355-line file is one slice,
@@ -198,16 +207,17 @@ reviewers at 15 minutes and the lane at 36, all in one wave.
 **Nothing is relaxed.** An agent that arrives after its deadline is `expired` whatever the deadline is: the lane that
 arrives at minute 37 of 36 is not clean and the gate still names `security-review-missing`. A reviewer that lists fewer
 paths than its slice leaves that slice not reviewed (`paths-not-reviewed`) and its paths uncovered; the other slices stay
-reviewed. A slice or a deadline the limits cannot hold is a recorded warning, never a pass. The limits only ever add
-reviewers and time.
+reviewed. A slice or a deadline the limits cannot hold is a recorded warning, never a pass. The limits add reviewers and
+time, and narrow what each reviewer reads (the cross-slice limit below).
 
 **Honest limits.**
 
-- ONE run. The rates are one completed read by one agent on one PR with one model, and the only measure of spread is two
-  reviewers on one slice. The model is proportional through the origin (no fixed cost for starting an agent), so it
-  over-states a tiny slice and says nothing about a shape the run did not have. Elapsed time is dispatch to the arrival
-  of the result file, so it holds start-up and queueing, and it is that run's model and tools: a slower model needs a
-  larger `deadlineHeadroom`. Recalibrating is an edit of `OBSERVED` with a new run's numbers, in review.
+- ONE run. The rates are one completed read by one agent on one PR with one model, and the run holds no spread of one agent's
+  time on identical work (the headroom is a judgement, above). The model is proportional through the origin (no fixed cost
+  for starting an agent) while the lane's elapsed time includes its start-up, so a fixed cost makes it under-state a small
+  slice (the 15-minute base covers that in practice), and it says nothing about a shape the run did not have. Elapsed time
+  is dispatch to the arrival of the result file, so it holds start-up and queueing, and it is that run's model and tools: a
+  slower model needs a larger `deadlineHeadroom`. Recalibrating is an edit of `OBSERVED` with a new run's numbers, in review.
 - Time is not the only way a reviewer misses a path. reviewer-s1-b stopped 10.4 minutes inside its deadline having listed
   5 paths and 318 lines, fewer than a slice may hold; the result files do not say whether the brief's 40-call limit or its
   own choice ended it. Smaller slices and a diff holding only the slice make reaching every path feasible, and nothing here
@@ -217,9 +227,19 @@ reviewers and time.
 - The lane is one agent over the whole PR. Its modelled deadline passes the 60-minute maximum at about 32 paths or 2,450
   changed lines; beyond that the deadline is capped and said, and a lane that does not arrive leaves the security review
   missing. Cutting the lane by slice is not built.
-- A reviewer reads its slice's diff, not the PR's: an interaction between two slices is for the lane (security only) and
-  the `TRIAGE` step to catch. Slices are contiguous runs of paths in path order, so a source file and its vendored mirror
-  are usually in different slices.
+- A reviewer reads its slice's diff, not the PR's, so an interaction between two slices is read as a whole only by the security
+  lane (a security lens over the whole range diff) and, in full mode, by the `TRIAGE` step. A Medium PR in light mode has no
+  `TRIAGE`: above 8 paths or 612 changed lines it used to be one whole-PR review (under the 1500-line threshold) and now has no
+  non-security reader of the whole diff. The final answer says so (`reducedReview`, the `cross-slice` line), and the `TRIAGE`
+  answer carries the range diff's path and the slices' paths (`rangeDiff`, `slices`) for the orchestrator who looks for such an
+  interaction. Slices are contiguous runs of paths in path order, so a source file and its vendored mirror are usually in
+  different slices.
+- A PR with no changed paths plans ONE empty slice (`sizing.work` is 0 paths and 0 lines) and `collect` refuses the reviewers of
+  a slice that has no path to read, so such a run ends refused rather than in a verdict. This is unchanged by the size model and
+  was read from the planner and the collector, not run end to end here.
+- A missing agent holds the run until its own deadline: `collect` answers `PENDING` until the earliest outstanding deadline, so a
+  lane that never arrives now keeps a run waiting 36 minutes for the PR the numbers came from (up to 60 for a larger one), where
+  it waited 15. That is the fail-closed cost of the longer deadline.
 - Like every deadline here, the runner computes it and the dispatcher must enforce it.
 
 ## Run directory
@@ -362,8 +382,8 @@ What kata znd1 asked for and this runner does not do (none is claimed):
 - Deadlines and the concurrency cap are the dispatcher's to enforce. Tier kinds come from paths, not from a classifier agent.
   Carry-over of verdicts, delta-only reading and sharding are not built.
 
-Known defects the one real full-mode run found. The 15-minute deadline (kata `sfpb`) is fixed by the size model (Slices and
-deadlines, above); the other two are not fixed in this change and are tracked on their own:
+Known defects the one real full-mode run found. The 15-minute deadline (kata `sfpb`) is addressed by a size model (Slices and
+deadlines, above) that is not yet measured on a live run; the other two are not fixed in this change and are tracked on their own:
 
 - The verifier brief refuses a claim that names the orchestrator or a verdict, and a path with whitespace (kata `0g9n`). A
   reviewer-raised candidate like that stays `unverified`, listed under `notReviewed.unbriefable`, and blocks the gate. An

@@ -29,6 +29,7 @@ const {
   MINUTES_PER_100_LINES,
   LANE_OVERRUN,
   REVIEWER_SPREAD,
+  LANE_OVER_REVIEWER,
   DEFAULT_HEADROOM,
   HEADROOM_MIN,
   HEADROOM_MAX,
@@ -94,15 +95,25 @@ describe('the model is derived from the observation, not typed in', () => {
     expect(OBSERVED.deadlineMinutes).toBeLessThan(estimateMinutes({ files: OBSERVED.files, lines: OBSERVED.changedLines }));
   });
 
-  test('the headroom is the larger of the lane\'s overrun (1.18) and the reviewers\' spread on one assignment (1.70), rounded up to a half: 2', () => {
+  test('the headroom is a stated JUDGEMENT (2), set above the two smaller ratios the run shows and below the third: the run holds no spread of one agent on identical work', () => {
     expect(LANE_OVERRUN).toBeCloseTo(laneMinutes / OBSERVED.deadlineMinutes, 12);
     expect(REVIEWER_SPREAD).toBeCloseTo(minutesOf(agent('reviewer-s1-a')) / minutesOf(agent('reviewer-s1-b')), 12);
-    expect(LANE_OVERRUN).toBeCloseTo(1.18, 2);
-    expect(REVIEWER_SPREAD).toBeCloseTo(1.7, 2);
+    expect(LANE_OVER_REVIEWER).toBeCloseTo(laneMinutes / minutesOf(agent('reviewer-s1-a')), 12);
+    expect([LANE_OVERRUN, REVIEWER_SPREAD, LANE_OVER_REVIEWER].map((ratio) => Math.round(ratio * 100) / 100)).toEqual([1.18, 1.7, 2.26]);
     expect(DEFAULT_HEADROOM).toBe(2);
     expect(DEFAULT_HEADROOM).toBeGreaterThanOrEqual(Math.max(LANE_OVERRUN, REVIEWER_SPREAD));
-    // the SMALLEST half step that covers both: nothing in the data asks for 2.5
-    expect(DEFAULT_HEADROOM - 0.5).toBeLessThan(Math.max(LANE_OVERRUN, REVIEWER_SPREAD));
+    expect(DEFAULT_HEADROOM).toBeLessThan(LANE_OVER_REVIEWER);
+  });
+
+  test('the two reviewers of one assignment did NOT do the same work, so their times are no spread: the faster one listed 5 of the 19 paths', () => {
+    expect(agent('reviewer-s1-a').reachedFiles).toBe(OBSERVED.files);
+    expect(agent('reviewer-s1-b').reachedFiles).toBeLessThan(agent('reviewer-s1-a').reachedFiles);
+    expect(minutesOf(agent('reviewer-s1-b'))).toBeLessThan(minutesOf(agent('reviewer-s1-a')));
+  });
+
+  test('what the choice moves, stated in the docs: at 2.5 (the third ratio rounded up to a half) the limits are 6 paths and 490 lines and the lane is given 45 minutes', () => {
+    expect(deriveLimits({ baseMinutes: 15, headroom: 2.5 })).toEqual({ maxFiles: 6, targetLines: 490 });
+    expect(sizedMinutes({ base: 15, work: { files: OBSERVED.files, lines: OBSERVED.changedLines }, headroom: 2.5, maximum: 60 }).minutes).toBe(45);
   });
 
   test('the headroom lies inside the range a policy may set', () => {
@@ -465,13 +476,35 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(guide).toContain(`floor(15 / (2 x ${MODEL.minutesPer100Lines} / 100))`);
     expect(guide).toContain('1.18');
     expect(guide).toContain('1.70');
+    expect(guide).toContain('2.26');
+    expect(guide).toMatch(/a judgement, not a measurement/);
   });
 
   test('the sfpb defect is no longer listed as unfixed anywhere the docs list defects', () => {
     expect(guide).not.toContain('None is fixed in this change');
-    expect(guide).toMatch(/The 15-minute deadline \(kata `sfpb`\) is fixed by the size model/);
+    expect(guide).toMatch(/The 15-minute deadline \(kata `sfpb`\) is addressed by a size model[^;]*not yet measured on a live run/);
+    expect(guide).not.toMatch(/is fixed by the size model/);
     expect(reference).not.toContain('are NOT fixed here and are tracked on their own: (a)');
     expect(reference).toMatch(/Two are NOT fixed here and are tracked on their own: \(b\)/);
+  });
+
+  test('REVIEW.md\'s policy table says what the runner does with sliceThreshold and lists the three new keys and the base deadline', () => {
+    const rows = fs.readFileSync(path.join(repoRoot, 'REVIEW.md'), 'utf8').split('\n').filter((line) => line.startsWith('| `'));
+    const rowOf = (key) => rows.find((line) => line.startsWith(`| \`${key}\` |`));
+    expect(rowOf('sliceThreshold')).toMatch(/does not use it to decide whether to slice/);
+    expect(rowOf('sliceMaxFiles')).toContain(`default ${DEFAULT_POLICY.sliceMaxFiles}`);
+    expect(rowOf('sliceTargetLines')).toContain(`default ${DEFAULT_POLICY.sliceTargetLines}`);
+    expect(rowOf('deadlineHeadroom')).toContain(`default ${DEFAULT_POLICY.deadlineHeadroom}`);
+    expect(rowOf('deadlineMinutes')).toMatch(/base/);
+  });
+
+  test('the guide and the reference state the cross-slice limit and what the answers now carry', () => {
+    for (const text of [guide, reference]) {
+      expect(text).toContain('cross-slice');
+      expect(text).toContain('rangeDiff');
+    }
+    expect(guide).toMatch(/no `TRIAGE`/);
+    expect(guide).toMatch(/not run end to end here/);
   });
 
   test('the CHANGELOG entry is the first of Unreleased and says the model is one run and nothing is relaxed', () => {

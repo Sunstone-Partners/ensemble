@@ -110,13 +110,14 @@ The runner sizes the plan to what there is to read, and the manifest says how. W
 agents the manifest names and stop each at its own `deadlineAtIso`; the deadlines are not all alike.
 
 * Slices: every PR is cut, in path order, into slices of at most `sliceMaxFiles` (8) paths and about `sliceTargetLines`
-  (612) changed lines (policy keys; the defaults are derived from the one real full-mode run in `lib/pr-review-sizing.js`),
+  (612) changed lines (policy keys; the defaults are derived from the one real full-mode run in `lib/pr-review-sizing.js`, with
+  a headroom of 2 that is a judgement and not a measurement),
   and never into more slices than let the whole review round and the lane run in ONE wave (`floor((maxConcurrentAgents - 1)
   / lenses per slice)`: 3 at the default cap of 8). A path is never cut and every path is read under at least two lenses.
   With several slices each reviewer's brief names a diff of ITS slice (`slices/slice-<n>.diff`), or the whole range diff when
   its paths cannot all be placed in it; the security lane reads the whole diff.
 * Deadlines: `deadlineMinutes` is the BASE for a reviewer and the lane (15), raised to the modelled time to read the agent's
-  `work` with headroom (`deadlineHeadroom`, 2), at most 60 minutes: `clamp(ceil(max(paths x 0.934, changed lines / 100 x
+  `work` with headroom (`deadlineHeadroom`, 2: a judgement), at most 60 minutes: `clamp(ceil(max(paths x 0.934, changed lines / 100 x
   1.224) x headroom), base, 60)`. A reviewer's `work` is its slice, the lane's is every changed path, a verifier is not sized
   and keeps 5. The run these numbers came from (19 paths, 1450 changed lines) is three slices of 8, 3 and 8 paths with
   reviewers at 15 minutes and the lane at 36, where it needed 17.75.
@@ -128,8 +129,12 @@ agents the manifest names and stop each at its own `deadlineAtIso`; the deadline
   than its slice leaves that slice not reviewed: both are reported in `notReviewed`, never hidden by a bigger deadline or a
   smaller slice.
 * Honest limits: the model is one observed run, and it cannot make a reviewer reach every path (reviewer-s1-b stopped 10.4
-  minutes inside its deadline having listed 5 of 19 paths). The lane is one agent: above about 32 paths or 2,450 changed
-  lines its deadline is capped at 60 minutes and the warning says so. Detail: `docs/guides/pr-review-run.md`.
+  minutes inside its deadline having listed 5 of 19 paths); whether reviewers now reach every path on a live run is not
+  measured. The lane is one agent: above about 32 paths or 2,450 changed lines its deadline is capped at 60 minutes and the
+  warning says so. A reviewer reads its slice's diff, so an interaction between slices is read as a whole only by the
+  security lane and, in full mode, by `TRIAGE` (its answer carries `rangeDiff` and `slices`); the final answer's
+  `reducedReview` has a `cross-slice` line when that applies and carries the plan's warnings. Detail:
+  `docs/guides/pr-review-run.md`.
 
 ## Honest limits
 
