@@ -70,7 +70,7 @@ The baseline (`review-walltime-baseline-2026-11-07.json`) holds six runs on #225
 | measured | scratch PR 286 (the #229 diff at `5351850`, on `dev` at `9519acc`) | high (the runner, `owner-high-path`) | 4 | 280 (+274/-6) | first | 18.79 min |
 | measured | scratch PR 286 after the fix push | high | 4 | 285 | re-review | 16.54 min |
 
-#207 is 5.5 times the size of #225. Scratch PR 286 is the same diff as #229 at the head the baseline reviewed, but another PR object, on a later `dev`, and for the re-review a 5-line test fix on top. `compare` answers `unknown` everywhere (`baseline-too-few-prs`, `current-too-few-prs`); `MINIMUMS` (3 PRs per stratum) were not relaxed and nothing in the compare was edited.
+Measured PR #207 is 5.5 times the size of #225. Scratch PR 286 is the same diff as #229 at the head the baseline reviewed, but another PR object, on a later `dev`, and for the re-review a 5-line test fix on top. `compare` answers `unknown` everywhere (`baseline-too-few-prs`, `current-too-few-prs`); `MINIMUMS` (3 PRs per stratum) were not relaxed and nothing in the compare was edited.
 
 **Could the same work be measured another way?** For the fork PRs, only through the narrated Steps 1 to 10 (the procedure the speedup replaces), not through the runner. The like-for-like route is a same-repository re-creation of a baseline diff: done, with the owner's approval, for #229 only (twice: BEFORE as #277, AFTER as #286, both closed and their branches deleted). For #225 and #228 it is an option (section 9).
 
