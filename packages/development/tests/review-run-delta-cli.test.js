@@ -252,6 +252,11 @@ describe('a re-review of the next head through the real CLI (kata xb4j)', () => 
     const state = readStateFile();
     expect(state.verdicts.map((v) => [v.file, v.head, v.carriedFrom || null]).sort()).toEqual([['med/a02.js', head2, null], ['med/a03.js', head2, fx.head1]]);
     expect(state.carry).toMatchObject({ appliedRange: 'delta', carried: 1 });
+    // timing of a delta run (verify round included) stays readable
+    const timing = spawnSync(process.execPath, [path.join(__dirname, '..', 'lib', 'pr-review-cli.js'), 'timing'], { input: JSON.stringify({ runId: 'b2', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root });
+    expect(JSON.parse(timing.stdout)).toMatchObject({ ok: true });
+    // the delta round's deadlines are sized (and floored) over the read set by the same model as any round
+    for (const agent of p.out.agents) expect(agent.deadlineMinutes).toBeGreaterThanOrEqual(15);
     // the run file records the same plan
     expect(runFile('b2').reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
   });
