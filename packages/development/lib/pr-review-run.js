@@ -35,7 +35,8 @@
  *     `unverified`, a missing security lane is not `clean`.
  *   - A result file an agent REWRITES after the runner read it is never lost in silence (kata 271n). The runner cannot tell that an
  *     agent has finished, so it records what it read of every result (`agent.read`: size, mtime, ctime and sha256, next to
- *     `arrivedAt`) and, at every later `collect`, at the moment a round's results are used (the candidates formed from the review
+ *     `arrivedAt`; a run stored without it is compared with the copy the collector took at the read) and, at every later `collect`,
+ *     at the moment a round's results are used (the candidates formed from the review
  *     round; the verdict computed from the verify round) and when a finished run is replayed, looks at each file again and
  *     compares its bytes. While the results of a wave are not yet used the LATEST valid version in time replaces the earlier one
  *     (a re-read, recorded in `run.rereads` and named in `warnings` and `rereadResults`: the vote then counts); once they are used,
@@ -1063,7 +1064,9 @@ function noteReads(run, wave, collected, now, deps) {
  * asked to take the latest valid version in time (a re-read: `wave.result` is replaced, the vote then counts); for one whose
  * results are used, or are about to be, a file that holds other bytes is FLAGGED (`flagChange`) and never read. A file that is gone
  * is said and ignored: the run keeps the copy it read. The wave's stored result is replaced only by one that still accounts for
- * every agent read, so a look can never shrink what the run holds.
+ * every agent read, so a look can never shrink what the run holds. What a file is compared with is the fingerprint the run stored
+ * when it read it (`agent.read`); a run recorded before that was stored has none, and the collector then compares with the copy it
+ * took at the read (when there is one: with neither there is nothing to compare, and the file is not looked at).
  *
  * @returns {{refused: ?string, changed: boolean, agents: string[]}}  `changed`: the run's record changed (a re-read or a flag);
  *   `agents`: whose; `refused`: why the collector could not be asked (the run must not go on: a file it cannot compare is unverified).
@@ -1072,7 +1075,7 @@ async function lookAgain(run, deps, now, { rounds = ['review', 'verify'], consum
   const outcome = { refused: null, changed: false, agents: [] };
   for (const wave of run.waves) {
     if (wave.status !== 'collected' || !rounds.includes(wave.round)) continue;
-    if (!wave.agents.some((agent) => agent.state === 'arrived' && isObject(agent.read))) continue;
+    if (!wave.agents.some((agent) => agent.state === 'arrived')) continue;
     const used = resultsUsed(run, wave);
     const flagging = used || consuming.includes(wave.round);
     // Never earlier than the call that recorded the wave: an agent expired then is expired now, whatever `now` a caller passes.

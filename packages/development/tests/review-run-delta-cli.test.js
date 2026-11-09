@@ -625,3 +625,32 @@ describe('rolling verification in a delta round with a carried candidate (kata 6
     expect(asked.size).toBe(9);
   });
 });
+
+// kata 271n: a delta round collects its results through the same collector, so a result file rewritten after the round used it is flagged
+// by name like any other, and a round that ends with such a change is no base for the next delta.
+describe('a result file rewritten in a delta round (kata 271n)', () => {
+  test('a reviewer rewrites its result after the delta round used it: flagged by name; the next re-review does not take that round as its base and reads the whole range', () => {
+    firstRound('d1');
+    const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 'fix-d1');
+    const p = prep('d2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p.code).toBe(0);
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
+    answerReview(p.out, { findings: { 'reviewer-s1-a': [finding(...F1), finding(...F2)] } });
+    const verify = coll('d2');
+    expect(verify.out).toMatchObject({ status: 'DISPATCH', round: 'verify' });
+    // reviewer-s1-b was not finished: it rewrites its file after the round was used (a second finding the first file lacked)
+    const b = p.out.agents.find((agent) => agent.name === 'reviewer-s1-b');
+    writeResult(b, { findings: [finding('med/a02.js:7', 'the second loop never stops when the list is empty')], pathsReviewed: b.paths });
+    answerVotes(verify.out);
+    const done = coll('d2');
+    expect(done.code).toBe(0);
+    expect(done.out.status).toBe('DONE');
+    expect(done.out.notReviewed.changedResults).toEqual([expect.objectContaining({ agent: 'reviewer-s1-b', role: 'reviewer', round: 'review', reason: 'result-changed-after-read' })]);
+    expect(done.out.gate.blockers.map((blocker) => blocker.gapId)).toContain('coverage:result-changed:reviewer-s1-b');
+    expect(done.out.ledger.every((entry) => entry.locationOrLink !== 'med/a02.js:7')).toBe(true); // the later finding is in no ledger: said, not hidden
+    const head3 = push(head2, { 'med/a02.js': edited(1, 'FIXED AGAIN') }, 'fix-d2');
+    const next = prep('d3', { lastReviewedSha: head2, remediationShas: [head3] });
+    expect(next.code).toBe(0);
+    expect(next.out.reReview).toMatchObject({ scope: 'full', appliedRange: 'full-range', reasons: expect.arrayContaining([expect.stringMatching(/^prior-round-unusable:state-round-incomplete/)]) });
+  });
+});

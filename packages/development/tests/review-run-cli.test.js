@@ -1031,6 +1031,35 @@ describe('kata 271n: a result file rewritten after the runner read it is re-read
     expect(replay.out.gate.blockers.map((b) => b.gapId)).toEqual(['coverage:result-changed:reviewer-s1-a']);
     expect(replay.out.notReviewed.changedResults.map((c) => c.agent)).toEqual(['reviewer-s1-a']);
   });
+
+  test('the whole-range reader of a Medium PR rewrites its result: while the round is open its later, whole read replaces the short first one (the gate sees a complete read); after the run finished the same kind of rewrite is flagged by name and restates the answer', () => {
+    const medPaths = WIDE_LINES.map((_, index) => widePath(index).replace(/^wide\//, 'med/'));
+    setGh({ head: fx.medwide, reviews: [{ user: { login: 'bob', type: 'User' }, state: 'APPROVED', commit_id: fx.medwide, submitted_at: '2026-01-01T00:00:00Z' }] });
+    fs.rmSync(stateFile(), { force: true });
+    const r = prep({ runId: 'rw-range' });
+    expect(r.code).toBe(0);
+    const wide = r.out;
+    const range = agentOf(wide, 'reviewer-range');
+    // the reader's first file lists four paths of nineteen; the lane has not answered yet
+    answerReview(wide, { changed: medPaths, partial: { 'reviewer-range': medPaths.slice(0, 4) }, skip: ['security-lane'] });
+    expect(coll('rw-range').out).toMatchObject({ status: 'PENDING', waitingOn: ['security-lane'] });
+    // the reader was not finished: its second file lists every path, then the lane answers
+    writeResult(range, { findings: [], pathsReviewed: medPaths });
+    writeResult(agentOf(wide, 'security-lane'), { findings: [], pathsReviewed: medPaths });
+    const done = coll('rw-range');
+    expect(done.code).toBe(0);
+    expect(done.out).toMatchObject({ status: 'DONE', gate: { mergeable: true, blockers: [] }, coverage: { complete: true } });
+    expect(done.out.notReviewed.unreviewedSlices).toEqual([]); // before kata 271n the first, short file stood and the whole-range gap held the gate
+    expect(done.out.rereadResults.map((entry) => entry.agent)).toEqual(['reviewer-range']);
+    // after the verdict the reader rewrites once more, now with the short list: that is not what was counted, and it is said
+    writeResult(range, { findings: [], pathsReviewed: medPaths.slice(0, 4) });
+    const replay = coll('rw-range');
+    expect(replay.code).toBe(0);
+    expect(replay.out.gate.mergeable).toBe(false);
+    expect(replay.out.gate.blockers.map((b) => b.gapId)).toEqual(['coverage:result-changed:reviewer-range']);
+    expect(replay.out.restated).toMatchObject({ reason: 'result-changed-after-read', agents: ['reviewer-range'], previous: { status: 'DONE', mergeable: true } });
+    expect(coll('rw-range').out).toEqual(replay.out);
+  });
 });
 
 describe('a head from outside this repository is never run (review of PR 264, P0)', () => {
