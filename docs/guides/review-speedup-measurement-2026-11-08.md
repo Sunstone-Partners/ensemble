@@ -1,5 +1,7 @@
 # PR review speedup: first real measurement (kata `q3a9`, `gkt9`; epic `ptqb`), 2026-11-08
 
+> **This is the BEFORE measurement** (`origin/dev` `8afd3e3`). The AFTER measurement on the fixed code (`origin/dev` `aea0b19`, 2026-11-09) is [review-speedup-measurement-2026-11-09-after.md](review-speedup-measurement-2026-11-09-after.md): Medium 26.8 to 22.1 min, High first review 20.8 to 18.8 min, High re-review 10.9 to 16.5 min (a full re-review: nothing carried). `walltime compare` is still `unknown` for every stratum and for the 5x claim, and the cohort mismatch of section 1 below applies unchanged.
+
 Real model agents ran the finished review pipeline (`origin/dev` `8afd3e3`: `review-run-cli` light and full modes, spans, `timing`, `walltime`) on a real PR and on a re-created one, and the committed tooling measured it. This file records what was measured, what it can and cannot say, and what failed. It makes no 5x claim.
 
 ## 0. Summary
