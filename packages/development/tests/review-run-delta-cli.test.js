@@ -256,7 +256,8 @@ describe('a re-review of the next head through the real CLI (kata xb4j)', () => 
     const timing = spawnSync(process.execPath, [path.join(__dirname, '..', 'lib', 'pr-review-cli.js'), 'timing'], { input: JSON.stringify({ runId: 'b2', cwd: fx.work }), env: cliEnv(), encoding: 'utf8', cwd: fx.root });
     expect(JSON.parse(timing.stdout)).toMatchObject({ ok: true });
     // the delta round's deadlines are sized (and floored) over the read set by the same model as any round
-    for (const agent of p.out.agents) expect(agent.deadlineMinutes).toBeGreaterThanOrEqual(15);
+    // #282's 22-minute floor applies to a delta round's agents like any other's (the same dispatch computes every deadline)
+    for (const agent of p.out.agents.filter((a) => a.role === 'reviewer')) expect(agent.deadlineMinutes).toBeGreaterThanOrEqual(22);
     // the run file records the same plan
     expect(runFile('b2').reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
   });
@@ -590,5 +591,37 @@ describe('a full-mode delta round with several slices: what the answer says abou
     const done = coll('x2', { triage: {} });
     expect(done.out.status).toBe('DONE');
     expect(done.out.reducedReview).toMatch(/an interaction between slices was read as a whole only by the security lane and the TRIAGE step/);
+  });
+});
+
+describe('a fix push that changes a file with a non-ASCII name', () => {
+  test('the delta slice counts its true lines (git quotes the name in a diff header)', () => {
+    firstRound('y1');
+    const lines = Array.from({ length: 40 }, (_, i) => `// l${i}`).join('\n') + '\n';
+    const head2 = push(fx.head1, { 'med/café.js': lines }, 'y-fix');
+    const p = prep('y2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p.code).toBe(0);
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta', delta: { changedPaths: 1 } });
+    expect(p.out.sizing.work).toEqual({ files: 1, lines: 40 });
+    expect(p.out.sizing.slices[0]).toMatchObject({ files: 1, lines: 40 });
+  });
+});
+
+describe('rolling verification in a delta round with a carried candidate (kata 630v, #282)', () => {
+  test('nine fresh candidates beside one carried verdict: eight verifiers at the cap, the ninth refilled when one arrives, the carried one never verified', () => {
+    firstRound('z1');
+    const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 'z-fix');
+    const p = prep('z2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    const claims = ['the cache key ignores the tenant so entries leak', 'the retry never backs off and hammers the host', 'the parser accepts a negative length and allocates it', 'the lock is released before the write completes', 'the timeout is read in seconds but compared in milliseconds', 'the path join lets a dotted segment climb out of the root', 'the counter is incremented twice on the error branch', 'the callback runs after the handle was closed', 'the loop reads one past the end of the list'];
+    const fresh = claims.map((mode, i) => finding(`med/a02.js:${10 + i * 12}`, mode));
+    answerReview(p.out, { findings: { 'reviewer-s1-a': [...fresh, finding(...F2)] } });
+    const v1 = coll('z2');
+    expect(v1.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 1, verified: 9 } });
+    expect(v1.out.agents.length).toBeLessThanOrEqual(8);
+    answerVotes({ agents: v1.out.agents.slice(0, 1) });
+    const v2 = coll('z2');
+    expect(v2.out).toMatchObject({ status: 'DISPATCH', round: 'verify', refill: true });
+    const asked = new Set([...v1.out.agents, ...v2.out.agents].flatMap((a) => a.candidateIds));
+    expect(asked.size).toBe(9);
   });
 });

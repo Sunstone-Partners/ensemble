@@ -219,7 +219,11 @@ alone were read by the round before, whole (that is why a round that left anythi
 
 **Hash, plan, record.** Every round hashes each candidate at its head (`lib/pr-review-carry-hash.js`: the cited hunk and
 the files it depends on) and records every settled verdict in the state report as `verdicts`, with a `carry` summary
-(`appliedRange`, `carried`, `reverified`, `recorded`, `skipped`). A delta round plans a carry for every candidate
+(`appliedRange`, `carried`, `reverified`, `recorded`, `skipped`). **A verdict persists only while it is re-raised:** the state
+holds the verdicts of the candidates the latest round carried or settled, so a prior finding that no reviewer reports again in
+a delta round is not carried forward as a verdict (its ledger entry stays as recorded, or is cleared if the push fixed it). In
+a single-slice delta a carry happens only when a reviewer reports code outside its slice, because the slice is the read set
+and `planCarry` re-verifies anything in it: the saving there comes mostly from the narrower read, not from the carry. A delta round plans a carry for every candidate
 (`lib/pr-review-carry.js` `planCarry`): a candidate whose cited hunk, dependencies and dependents the push did not touch
 (and whose file is not in the delta or its blast radius) keeps the prior verdict and is NOT put to verifiers again; every
 other candidate is verified again, and every reason `planCarry` lists is re-verification, never a carry. The verify

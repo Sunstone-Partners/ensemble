@@ -65,7 +65,7 @@ describe('priorRound: the last round the runner can stand on', () => {
 
 describe('deltaScope: what a delta round reads', () => {
   const diff = ['diff --git a/src/a.js b/src/a.js', '--- a/src/a.js', '+++ b/src/a.js', '@@ -1,2 +1,3 @@', ' keep', '-old', '+new', '+newer', ''].join('\n');
-  const facts = () => ({ deltaPlan: { mode: 'delta', readSet: [{ path: 'src/b.js', reasons: ['caller-of:src/a.js'] }, { path: 'src/a.js', reasons: ['changed'] }] }, delta: { changedPaths: ['src/a.js'] } });
+  const facts = () => ({ deltaPlan: { mode: 'delta', readSet: [{ path: 'src/b.js', reasons: ['caller-of:src/a.js'] }, { path: 'src/a.js', reasons: ['changed'] }] }, delta: { changedPaths: ['src/a.js'], numstat: [{ path: 'src/a.js', added: 2, deleted: 1, binary: false }] } });
 
   test('the read set, sorted, with the delta diff\'s own line counts (a caller with no hunk counts 0)', () => {
     expect(deltaScope(facts(), diff)).toEqual({
@@ -84,6 +84,21 @@ describe('deltaScope: what a delta round reads', () => {
     ['no delta', (f) => ({ ...f, delta: undefined }), 'delta-paths-unreadable'],
   ])('%s is no delta read', (_name, change, reason) => {
     expect(deltaScope(change(facts()), diff)).toEqual({ ok: false, reason });
+  });
+
+  test('a name git quotes in a diff header (non-ASCII) counts its true lines, from the numstat', () => {
+    const f = { deltaPlan: { mode: 'delta', readSet: [{ path: 'src/café.js', reasons: ['changed'] }] }, delta: { changedPaths: ['src/café.js'], numstat: [{ path: 'src/café.js', added: 7, deleted: 2, binary: false }] } };
+    const quoted = 'diff --git "a/src/caf\\303\\251.js" "b/src/caf\\303\\251.js"\n@@ -1 +1 @@\n-a\n+b\n';
+    expect(deltaScope(f, quoted).numstat).toEqual([{ path: 'src/café.js', added: 7, deleted: 2, binary: false }]);
+  });
+
+  test('a changed path with no numstat entry is no delta read; a binary file keeps its flag', () => {
+    const f = facts();
+    f.delta.numstat = [];
+    expect(deltaScope(f, diff)).toEqual({ ok: false, reason: 'delta-numstat-unreadable' });
+    const g = facts();
+    g.delta.numstat = [{ path: 'src/a.js', added: null, deleted: null, binary: true }];
+    expect(deltaScope(g, diff).numstat[0]).toMatchObject({ binary: true });
   });
 
   test('a delta diff that cannot be read is no delta read', () => {

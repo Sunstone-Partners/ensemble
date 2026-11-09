@@ -109,32 +109,11 @@ function priorRound(input) {
   return { ok: true, state, runId: state.runId };
 }
 
-/** Per-file added/deleted line counts of a git diff, for the listed paths (a path with no hunk, a caller read whole, counts 0). */
-function diffCounts(text, paths) {
-  const counts = new Map();
-  let current = null;
-  let inHunk = false;
-  for (const line of text.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      const at = line.lastIndexOf(' b/');
-      current = at === -1 ? null : line.slice(at + 3);
-      inHunk = false;
-      if (current !== null && !counts.has(current)) counts.set(current, { added: 0, deleted: 0 });
-    } else if (current !== null && line.startsWith('@@')) {
-      inHunk = true;
-    } else if (current !== null && inHunk) {
-      if (line.startsWith('+')) counts.get(current).added += 1;
-      else if (line.startsWith('-')) counts.get(current).deleted += 1;
-    }
-  }
-  return paths.map((file) => ({ path: file, added: (counts.get(file) || { added: 0 }).added, deleted: (counts.get(file) || { deleted: 0 }).deleted, binary: false }));
-}
-
 /**
  * What a delta round reads, from the delta plan of the prepared facts.
  *
  * @param {{deltaPlan:Object, delta:Object}} facts
- * @param {?string} deltaDiffText  The text of `delta.diff`.
+ * @param {?string} deltaDiffText  The text of `delta.diff` (it must be readable; the line counts come from git's own numstat in `facts.delta.numstat`).
  * @returns {{ok:true, readPaths:string[], numstat:Object[], changedPaths:string[]}|{ok:false, reason:string}}
  */
 function deltaScope(facts, deltaDiffText) {
@@ -144,7 +123,16 @@ function deltaScope(facts, deltaDiffText) {
   if (!isObject(facts.delta) || !Array.isArray(facts.delta.changedPaths) || !facts.delta.changedPaths.every(isText) || facts.delta.changedPaths.length === 0) return no('delta-paths-unreadable');
   if (typeof deltaDiffText !== 'string') return no('delta-diff-unreadable');
   const readPaths = [...new Set(plan.readSet.map((entry) => entry.path))].sort();
-  return { ok: true, readPaths, changedPaths: facts.delta.changedPaths, numstat: diffCounts(deltaDiffText, readPaths) };
+  // git's own per-path counts (`diff --numstat -z`, names verbatim: a quoted name in a diff header is never parsed here); a read-set
+  // caller the push did not change has no hunk and counts 0
+  const counts = new Map();
+  for (const entry of Array.isArray(facts.delta.numstat) ? facts.delta.numstat : []) if (isObject(entry) && isText(entry.path)) counts.set(entry.path, entry);
+  if (!facts.delta.changedPaths.every((file) => counts.has(file))) return no('delta-numstat-unreadable');
+  const numstat = readPaths.map((file) => {
+    const entry = counts.get(file);
+    return entry === undefined ? { path: file, added: 0, deleted: 0, binary: false } : { path: file, added: entry.added, deleted: entry.deleted, binary: entry.binary === true };
+  });
+  return { ok: true, readPaths, changedPaths: facts.delta.changedPaths, numstat };
 }
 
 /** The numbers after the highest `f<N>` among the ids of a ledger (and what they merged), so a new round's ids never collide with it. */
