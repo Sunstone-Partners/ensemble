@@ -817,6 +817,19 @@ describe('kata 271n: a result file rewritten after it was read is looked at agai
     expect(two.warnings).toEqual([]);
   });
 
+  test('a rewrite that keeps the size and changes the bytes is a change: the comparison is on the hash, not on the size', () => {
+    const reorder = (value) => (Array.isArray(value) ? value.map(reorder) : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reorder(item)])) : value);
+    write('ver1', first(), T0);
+    const one = collect([verifier('ver1')]);
+    const swapped = reorder(first());
+    expect(Buffer.byteLength(textOf(swapped))).toBe(Buffer.byteLength(textOf(first())));
+    expect(textOf(swapped)).not.toBe(textOf(first()));
+    write('ver1', swapped, T0 + 2 * MIN);
+    const two = collect(withReads(one, [verifier('ver1')]), T0 + 3 * MIN);
+    expect(stateOf(two, 'ver1').changed).toMatchObject({ kind: 'rewritten', usable: true });
+    expect(stateOf(two, 'ver1').changed.now.sha256).toBe(sha(textOf(swapped)));
+  });
+
   test.each([
     ['with the fingerprint handed back', true],
     ['with only the scratch copy to compare with (a crash lost the record)', false],

@@ -4431,4 +4431,21 @@ describe('kata 271n: a result file the runner already read is looked at again at
     const { verify } = await toVerify(clean());
     expect(fs.readFileSync(verify.agents[0].briefPath, 'utf8')).toMatch(/Write the file ONCE, when you are completely finished/);
   });
+
+  test('a wave already collected is looked at again while the round is still open: a reviewer of wave 1 that rewrites its result while wave 2 runs has the later version counted', async () => {
+    const h = harness({ baseline: PASSED, policyJson: { maxConcurrentAgents: 2 }, overrides: { notices: [] } });
+    h.reviews = APPROVED();
+    const first = await h.prepare();
+    expect(first).toMatchObject({ round: 'review', wave: '1 of 2' });
+    answerReview(first, { lane: laneOf(h) });
+    const second = await h.collect();
+    expect(second).toMatchObject({ status: 'DISPATCH', round: 'review', wave: '2 of 2' });
+    expect(second.agents.map((agent) => agent.name)).toEqual(['security-lane']);
+    rewrite(first, 'reviewer-s1-a', { findings: [nit()] }); // reviewer-s1-a was not finished: its file changes while the lane runs
+    answerReview(second, { lane: laneOf(h) });
+    const verify = await h.collect();
+    expect(verify).toMatchObject({ status: 'DISPATCH', round: 'verify' }); // the later Nit is a candidate
+    expect(h.readRun().rereads.map((entry) => entry.agent)).toEqual(['reviewer-s1-a']);
+    expect(h.readRun().resultChanges).toBeUndefined();
+  });
 });
