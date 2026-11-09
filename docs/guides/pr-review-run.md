@@ -48,8 +48,10 @@ unknown payload key are `{ok:false, error}`.
 2. The dispatcher starts the manifest's agents (fresh context, read-only), each with its `prompt` unedited, at
    most `maxConcurrentAgents` at once, each stopped at its `deadlineAtIso`.
 3. `collect` re-reads the head, collects what has arrived and answers one of the statuses below. Verifier agents
-   beyond the concurrency cap come in later waves, each with fresh deadlines, so a queued agent never spends its
-   deadline waiting.
+   beyond the concurrency cap come in later waves, each with its own deadline from its dispatch, so a queued agent never spends
+   its deadline waiting. In the verify round a `collect` that finds free slots dispatches the next verifiers into them while
+   the earlier ones still run (`DISPATCH` with `refill: true` and `stillRunning`: start only the agents it lists; the
+   others are still yours to await; the cap counts both).
 4. Repeat 2-3 on `DISPATCH` and `PENDING` until `DONE` or `ADJUDICATE`. In full mode, after the last review wave is
    collected, `collect` answers `TRIAGE` instead of dispatching verifiers; see Triage.
 
@@ -79,7 +81,7 @@ and is only for the `TRIAGE` status.
 
 | status | ok | meaning |
 |---|---|---|
-| `DISPATCH` | true | manifest: `runId`, `round` (`review` or `verify`), `wave`, `headSha`, `mode`, `tier`, `depth`, `maxConcurrentAgents`, `sizing` (the review round only: the size model, limits, slices and warnings, see Slices and deadlines), `agents[]` (`name`, `role`, `briefPath`, `outPath`, `prompt`, `dispatchedAt`, `deadlineAt`, `deadlineAtIso`, `deadlineMinutes`, and `sliceId`, `paths`, `work`, `candidateIds` where they apply), `next`, `rules` |
+| `DISPATCH` | true | manifest: `runId`, `round` (`review` or `verify`), `wave`, `headSha`, `mode`, `tier`, `depth`, `maxConcurrentAgents`, `refill` and `stillRunning` (a verify refill only: Rolling verification), `sizing` (the review round only: the size model, limits, slices and warnings, see Slices and deadlines), `agents[]` (`name`, `role`, `briefPath`, `outPath`, `prompt`, `dispatchedAt`, `deadlineAt`, `deadlineAtIso`, `deadlineMinutes`, and `sliceId`, `paths`, `work`, `candidateIds` where they apply), `next`, `rules` |
 | `PENDING` | true | agents still outstanding: `waitingOn`, `retryAfterMs`, `earliestDeadlineAt`; call `collect` again |
 | `TRIAGE` | true | full mode only. After the last review wave is collected the runner has deduplicated the candidates and planned verification, and dispatched nothing. The answer carries the candidate list (`id`, `locationOrLink`, `severity`, `failureMode`, `source`, and `unbriefable: {kind, input, reason}` on a candidate the verifier brief refuses), the coverage (`unreviewedSlices`, uncovered paths), the security lane status, the `reReview` decision and the rules. Call `collect` again with `triage` |
 | `DONE` | true | `gate`, `reviewStatus`, `ledger`, `votes`, `notReviewed`, `precheck`, `statePath`, `metrics`, `mode`, `reReview`, `triage` (`{turns, additionalCandidateIds}`) |
@@ -88,8 +90,8 @@ and is only for the `TRIAGE` status.
 | `NEEDS_FULL_MODE` | false | light mode only, a brief the renderer refuses (for example a path with a space): nothing was dispatched and the runner cannot review mechanically; the narrated Steps 1-10 in the skill remain the manual procedure |
 | `RUN_FAILED` | false | a stage failed or a refusal: `head-unreadable` and `pr-not-open` leave a started run retryable; `triage-refused` is not terminal (fix the `triage` payload and call again); `brief-refused` is a full-mode brief the renderer refuses, and its answer carries `decision` and `fallback` (below); `mode-invariant` is a stored run whose mode label, depth, verifier count or lane no longer says what it was prepared as; `cross-repository-head`, `head-repository-unknown`, `pr-not-open` and `base-not-merge-base` at `prepare` mean nothing was run |
 
-An agent that never arrives is reported, never read as having reviewed: its slice is in `notReviewed` and a
-verifier that did not arrive leaves its finding unverified. `REVIEW_COMPLETE` is only ever relayed from the
+An agent that never arrives is reported, never read as having reviewed: its slice is in `notReviewed`, it is a gap of the
+coverage record (below) that stops the merge gate and the local phase, and a verifier that did not arrive leaves its finding unverified. `REVIEW_COMPLETE` is only ever relayed from the
 review status function. Adjudication applies only to items that were listed, records `adjudicatedBy:
 "orchestrator"`, and cannot clear an Important or security finding. `NEEDS_FULL_MODE` (light mode only) means nothing
 was dispatched and the narrated Steps 1-10 in the skill remain the manual procedure; it is never the way into full mode.
@@ -193,13 +195,67 @@ refusal that is not an input's fault (a missing template, a stand-in renderer th
 ## Re-review scope (`reReview`)
 
 The run, the `TRIAGE` answer and the final answer record `reReview: {scope: 'first-review' | 'delta' | 'full',
-reasons: [...]}`. `delta` only when a previous reviewed head was supplied (`lastReviewedSha`), the prepared range is a
-readable delta whose plan says delta, the CLI has seen that head (the review state recorded it) and no path in the delta
-is High or sensitive. `full` (a full re-read) whenever the delta touches a High or sensitive path, the head was never
-seen, or anything is unreadable. `first-review` when there is no previous head. The honest limit: the runner has no
-delta-only read path yet (carry-over of verdicts is kata qw98, PR #268), so every run still has reviewers read the whole
-range, the superset. `reReview.appliedRange` is always `full-range` today; the field records the decision for the
-carry-over work to consume.
+reasons: [...], appliedRange}`. A re-review is asked for with `lastReviewedSha` (the head the last round reviewed) and
+`remediationShas` (the commits of the fix push) and nothing else: the runner reads the previously reviewed head and base
+itself, from the review state it recorded at `lastReviewedSha` (`.ensemble/pr-review/pr-<n>.json`) and the run record
+that wrote it (kata `xb4j`). `reviewedHeadSha` and `reviewedBaseSha` are not payload keys, so a caller cannot name them.
+
+`delta` only when all of these hold: the state names that head and PR, the run record it points at is a finished run of
+the same head, base and PR, the state holds that round's verdicts, ledger and a complete coverage (`notReviewed` empty:
+no unreviewed slice or path, no incomplete verifier, no unbriefable candidate, no expired agent) and a security lane that
+found nothing, or was not asked for (the lane's findings are not in the ledger, so a round that holds any is read whole again); the prepared
+range is a readable delta, every commit of it is one of `remediationShas`, the delta plan says delta and no path in the
+delta is High or sensitive. Anything else is `full` (a full re-read), with every reason listed, and the run says why the
+last round was unusable as `prior-round-unusable:<reason>` (`state-absent`, `state-other-head`, `state-other-pr`,
+`state-base-unknown`, `state-not-from-a-run`, `state-run-record-mismatch`, `state-ledger-unreadable`,
+`state-verdicts-unrecorded`, `state-round-incomplete`, `state-security-open`, `state-unreadable`). A head that was never
+seen is a full review, never a silent skip. `first-review` when there is no previous head.
+
+**What a delta round does.** `reReview.appliedRange` is `delta`. The slice reviewers are planned over the delta plan's read set (the changed paths, their callers and their tests), read the
+delta diff (`delta.diff`, `lastReviewedSha..headSha`) and are covered for exactly those paths, so a push that touches one file is read
+by one slice (two reviewers and the lane) where a full read of the same PR took eight agents. The plan shows it:
+`reReview.delta` is `{lastReviewedSha, changedPaths, readPaths, agentsPlanned, agentsFullRead}`. The paths the push left
+alone were read by the round before, whole (that is why a round that left anything unread is not a base for a delta).
+
+**Hash, plan, record.** Every round hashes each candidate at its head (`lib/pr-review-carry-hash.js`: the cited hunk and
+the files it depends on) and records every settled verdict in the state report as `verdicts`, with a `carry` summary
+(`appliedRange`, `carried`, `reverified`, `recorded`, `skipped`). **A verdict persists only while it is re-raised:** the state
+holds the verdicts of the candidates the latest round carried or settled, so a prior finding that no reviewer reports again in
+a delta round is not carried forward as a verdict (its ledger entry stays as recorded, or is cleared if the push fixed it). In
+a single-slice delta a carry happens only when a reviewer reports code outside its slice, because the slice is the read set
+and `planCarry` re-verifies anything in it: the saving there comes mostly from the narrower read, not from the carry. A delta round plans a carry for every candidate
+(`lib/pr-review-carry.js` `planCarry`): a candidate whose cited hunk, dependencies and dependents the push did not touch
+(and whose file is not in the delta or its blast radius) keeps the prior verdict and is NOT put to verifiers again; every
+other candidate is verified again, and every reason `planCarry` lists is re-verification, never a carry. The verify
+round's manifest shows `carry: {carried, verified, reasons}`. All the limits of the carry contract hold (direct dependents
+only; bare npm packages and lockfile changes are not seen; a symlink or a computed specifier fails closed to re-verify).
+
+**The ledger.** The delta round's ledger is the prior ledger brought to the new head plus the fresh entries: a carried
+finding is the prior entry restamped with the new head (`carriedFrom` keeps the head that settled it), a finding the push
+fixed (its cited lines touched, nobody re-reported it) is cleared by the same rule as `pr-review-clear-cli.js`
+(`cleared: true`, `clearedBy` the head), a finding the fresh round re-reported is replaced by its new entry, and a finding in
+code nobody re-read stays, as recorded, and keeps blocking. Candidate ids continue after the prior ledger's, so no two
+findings share an id. If the fixed-finding check cannot run, nothing is cleared and nothing is dropped.
+
+**What stays whole.** The security lane, the whole-range reader (when the light run is cut into several slices) and the TRIAGE
+step (full mode) read the whole range (`range.diff`, every changed path of the PR) in a delta round too; a round that planned
+none of them says so in its limits (`reReview.delta.limits` names exactly the ones it planned). A delta's slices are labelled
+`delta` in `sizing.slices`, not `whole-range`. A last round with a path read under too few lenses (`underReviewedPaths`) is never a
+base for a delta. Why the readers stay whole: a defect two hops from the push (a High module importing a module that imports the change)
+is in no read set, and they are the readers that can still see it. A lane that lists fewer paths than it was given is
+`unavailable`, as in any round.
+
+Honest limits (also in the answer as `reReview.delta.limits` and `carry.limits`): the read set is the changed files, their
+direct importers and tests and name matches, so the modules a changed file itself imports, callers of callers and anything the
+graph cannot resolve are in no slice's read set; a delta changes no High or sensitive path, but its read set can include High
+or sensitive files as callers of a changed file (they are read, not exempt); `remediationShas` is still the caller's statement
+that those commits are the fix round's own (the runner cannot tell who pushed a commit); a carried verdict was settled by the
+verifiers of the round before, under the carry's declared limits (direct dependents only, bare npm packages and lockfile changes
+unseen, symlinks and computed specifiers re-verify). A carried finding is never coverage: coverage of a delta round is its own
+readers', and a last round with anything unreviewed (an unreviewed slice or path, an expired agent such as a security lane that
+never returned) is never a base for a delta. The delta-read reasons `delta-read-set-unreadable`, `delta-paths-unreadable` and
+`delta-diff-unreadable` also make a round full. A `not-run` lane (a tier that asked for none) is accepted as a base only when
+no agent expired.
 
 ## Slices and deadlines (the size model)
 
@@ -286,7 +342,7 @@ What the cap does to the real PR (19 paths, three slices wanted, two lenses, wit
 | 4 | 1 (`slice-over-limit`) | no: one slice is the whole range | 3 |
 
 **Deadlines.** For a reviewer and for the lane the policy's `deadlineMinutes` (15) is a BASE: the deadline is
-`clamp(ceil(estimate x headroom), base, 60)` minutes, so the model only ever raises it. The reviewer's work is its slice (the
+`clamp(max(ceil(estimate x headroom), base, 22), 60)` minutes (22: the fixed cost, below), so the model only ever raises it. The reviewer's work is its slice (the
 whole diff when it was handed the whole range diff); the whole-range reader's and the lane's is every changed path. A verifier
 settles at most three claims whatever the PR's size and keeps its 5 minutes.
 `deadlineMinutes` is a floor and not a pin because a loaded policy always holds every key, set or defaulted, and an explicit
@@ -294,20 +350,39 @@ value cannot be told from the default. The brief's timebox is the deadline the a
 
 | agent | work | deadline |
 |---|---|---|
-| a reviewer on a slice at the limits (8 paths, 612 lines) | 7.49 min | 15 (the base: modelled 14.98) |
+| a reviewer on a slice at the limits (8 paths, 612 lines) | 7.49 min | 22 (the fixed-cost floor; modelled 15, which is 14.98 rounded up, base 15) |
+| a reviewer on 4 paths, 280 lines (kata `d9sy`) | 12.8 min, over 15 (stopped), and 7.2 and 7.3 in one re-review | 22 (modelled 8, base 15) |
 | the security lane of the real run (19 paths, 1450 lines) | 17.75 min | 36 (2.03 x what it took; it was given 15) |
 | a verifier | not sized | 5 |
+
+**The fixed cost (kata `d9sy`).** The model is proportional through the origin and was derived at the default effort. The first
+live runs at effort `hi` (kata `q3a9`) show a reviewer's time on a small slice does not follow its size: 77 lines took 14.6 and 9.1
+minutes, 327 lines 10.6 and 9.4, 323 lines 8.2 and 10.6, the 727-line whole-range reader 13.9, and the same four paths (280 lines)
+took 12.8 minutes for one reviewer and more than 15 for another (stopped at its deadline; the slice was reported not reviewed),
+while two other reviewers of a re-review of those four paths took 7.2 and 7.3. What this establishes: no delay at the spawn
+call (the orchestrator's dispatch logs put it 10 to 11 ms after the manifest for the review rounds and about 0.4 s for the verify
+rounds, one wave of three agents under a cap of 8, and the deadline starts at dispatch) and no size effect on a small slice. What
+it does NOT establish: why the lost reviewer was lost. It has no arrival and no last message, so a slow agent cannot be told from
+a hung one, and the agent's own start time is not recorded, so queueing after the spawn call is not excluded. The floor helps the slow case only; a hung agent now holds the run 22 minutes instead of 15 and its slice is still
+reported not reviewed. So a reviewer, the whole-range reader and the lane have a floor, `MIN_AGENT_MINUTES`: the slowest FINISHED
+reviewer measured (14.58 minutes) times `FLOOR_FACTOR` (1.5, a judgement like the headroom), 22 minutes, whatever the policy's
+`deadlineMinutes` says (a policy raises a deadline above it, never below it; a value the policy SETS below it, 15 included, is named in the sizing warnings and recorded in `sizing.model.policyDeadlineMinutes`; an unset value is raised without a warning and the agent is marked `deadlineFloored`).
+It was measured at effort `hi` and the runner records no effort, so it applies at whatever effort the dispatcher uses. The slice
+limits and the headroom are unchanged, because a finer slice does not shorten a fixed cost. A reviewer slower than 22 minutes is
+still `expired` and its slice reported not reviewed. Re-dispatching a lost reviewer is not built.
 
 **The record.** The DISPATCH manifest of the review round and `run.json` carry `sizing`: `model` (the two rates, the
 headroom, the 60-minute maximum and the run it derives from), `limits` (`sliceMaxFiles`, `sliceTargetLines`,
 `slicesAllowed` by the cap, `slicesWanted` by the limits), `work` (the whole PR), `slices[]` (`id`, `files`, `lines`,
 `overLimit`, `diff`) and `warnings[]` (`{code, message}`): `slice-over-limit` (the cap holds fewer slices than the limits ask
 for, so a slice is bigger than they say; the message names the `maxConcurrentAgents` that would hold them), `deadline-capped`
-(the modelled need is over 60 minutes, so the agent is given 60 and may not finish) and `invalid-<key>` (a policy value the
+(the modelled need is over 60 minutes, so the agent is given 60 and may not finish), `deadline-floor-over-policy` (a policy
+`deadlineMinutes` below the 22-minute floor was overridden; the message names the value and the floor, `model.fixedCostFloorMinutes`
+records the floor and an agent whose deadline the floor decided carries `deadlineFloored: true`) and `invalid-<key>` (a policy value the
 facts held unreadably; the default applied). Each agent in the manifest carries its `deadlineMinutes` and its `work`.
 
 For the PR the numbers came from, the plan is three slices of 8, 3 and 8 paths (454, 556 and 440 changed lines), six
-reviewers at 15 minutes and the lane at 36, all in one wave.
+reviewers at 22 minutes (the fixed-cost floor) and the lane at 36, all in one wave.
 
 **Nothing is relaxed.** An agent that arrives after its deadline is `expired` whatever the deadline is: the lane that
 arrives at minute 37 of 36 is not clean and the gate still names `security-review-missing`. A reviewer that lists fewer
@@ -348,6 +423,37 @@ time, and narrow what each reviewer reads (the cross-slice limit below).
   it waited 15. That is the fail-closed cost of the longer deadline.
 - Like every deadline here, the runner computes it and the dispatcher must enforce it.
 
+## Coverage: what nobody read stops the gate (kata `k48x`)
+
+Reporting an unread slice beside a mergeable verdict let a PR merge on a review that never read part of it (the whole-range
+reader of a light run that expired or listed too few paths, a slice whose reviewer did not arrive). The runner now builds one
+record from the stored run, `lib/pr-review-coverage.js`: `{ status: 'complete' | 'incomplete' | 'unavailable', gaps }`, and
+`gate`, `status` and the operator's decision list are all fed from it (the answer shows its effect in `gate.coverage`,
+`reviewStatus.coverage` and the entries of `gate.dispositionChoices`).
+
+- **What counts as incomplete.** A planned slice with a reviewer that expired, failed or listed too few of its paths (the whole
+  slice is unread: `coverage:slice:<id>`); a planned whole-range reader that did the same (`coverage:whole-range`); a changed
+  path no slice held (`coverage:uncovered`); a path read under fewer distinct lenses than the mode requires
+  (`coverage:under-reviewed`; a Quick run needs one lens, so a Quick run whose only reviewer is missing leaves every path
+  unread). A coverage the runner could not compute (an unreadable plan) is `unavailable`: never complete.
+- **What does not.** A reader the plan never made (`reader-not-planned`: a reported limit of the cap, not a read that failed);
+  a candidate the verifier brief refused or that was never verified (it stays in the ledger and blocks by its severity); the
+  security lane (its own mechanism, `security-review-missing`); full mode's `TRIAGE` step (it is a read by the orchestrator, not a
+  reviewer's coverage).
+- **What it stops.** `gate.mergeable` is `false` with one `review-coverage-incomplete` blocker per open gap, naming the slice,
+  its paths and why its reviewers did not arrive; `reviewStatus.localPhase` is `LOCAL_REVIEW_PENDING` with `next:
+  complete-review-coverage` (or `LOCAL_REVIEW_BLOCKED` when the coverage is unavailable). `pr-merge` Phase 5 reads the gate's
+  output, so it stops there too.
+- **The operator's way out is the existing one.** Run the review again on this head (a gap that was read is gone), or decide the
+  gap: the decision list shows it in its own `Not reviewed` group with Accept as its only choice and a reason of its own, and
+  the answer is the same `ledger resolve` record as for a finding (`{ reason, by, headSha, at }`, this head, a person), graded by the
+  same rule; `cleared`, a deferral and a decision for another head close nothing. An accepted gap is reported as
+  `coverage-gap-accepted` and written into the bead the recorder makes for it. An agent never decides it.
+- **Each path.** Light and full runs build it the same way and a Quick run follows the same rule. A finished run replays its stored
+  answer, gap included. The runner always reads the full range, so it carries nothing; a delta round by the narrated procedure
+  carries every gap of the report of the head it resumes (`carry` `coverage`), and only a round of the full range replaces them,
+  so a carried verdict never turns an incomplete coverage into a complete one.
+
 ## Run directory
 
 `<repoRoot>/.ensemble/pr-review/run/<runId>/`: `run.json` (state; phase `review-dispatched`, `verify-dispatched`,
@@ -361,10 +467,22 @@ answer is not returned; nothing is recorded, so it is that commit's answer again
 ## Honest limits
 
 - Deadlines and the concurrency cap are the dispatcher's to enforce; the runner only computes and records them.
-- Carry-over of verdicts, sharding and verification pools are later work. `remediationShas` is only passed through to
-  `prepare`; `lastReviewedSha` feeds the `reReview` decision only, and reviewers read the full range.
+- Sharding is later work. `remediationShas` is the caller's statement of which commits are the fix round's own; it is
+  passed to `prepare`, where it decides whether the delta is vouched for. A re-review's reviewed head and base come from the
+  state this runner recorded, never from the payload (see Re-review scope).
 - `prepare` runs the precheck: it posts one PR comment and starts the local-CI gate in the background unless
   `dryRun` or `skipPrecheck` is set.
+  When the gate does not start, the comment and the answer name the real cause (`missing-file`, `unreadable-file`,
+  `parse-error`, `invalid-config`, `missing-dependency`, `validation-failed`, `config-reader-failed`): a checkout without `node_modules` is a
+  `missing-dependency` refusal naming the module, never "no readable .ensemble/local-ci.yaml".
+- An untrusted policy never lowers the tier (kata `vhpf`): when the base's `REVIEW.md` policy block cannot be used (a
+  stale or foreign `sourceSha` is `policy-not-from-base`, an unparseable block is `policy-unparseable`), the strict
+  defaults have no `highPaths`, so `prepare` classifies every changed path High (`policy-untrusted:<reason>` in
+  `facts.paths`, in the tier's `reasons` and as `policyStatus` in the run state) so a stale base never reviews the PR
+  more lightly than current `dev` would. The cost: it can review MORE heavily than current `dev` (a one-file PR goes
+  to full mode), and a light multi-slice PR becomes a full-mode run, which plans no whole-range reader (open owner
+  decision, pinned by a test). A missing `REVIEW.md` or block is still the documented defaults. A rejected
+  `highPaths` key inside an otherwise valid block (`ok:true`) is not covered.
 - The baseline test run executes the head's own test code in a scratch directory. It is not a sandbox; see
   `docs/guides/pr-review-prepare.md`. It runs the relevant test files only. When it produced no usable result (no
   relevant test files, a timeout) the status fact is `tests skipped`, never a pass and never a failure it did not
@@ -445,8 +563,8 @@ dated before the agent was dispatched is no message of this dispatch (a stale fi
 dated well after the `collect` that read it (clock skew) cannot be placed: it is recorded as it is, so the reader refuses
 that agent's interval instead of counting it to the `collect` call. The answer's `warnings` say so in both cases.
 
-Waves. `maxConcurrentAgents` splits a round's agents into waves, and a wave is dispatched only after the one before it
-was collected, so waves run one after another. `wave` is the agent's number among its kind (the review agents, and apart
+Waves. `maxConcurrentAgents` splits a round's agents into waves. A REVIEW wave is dispatched only after the one before it was
+collected, so review waves run one after another (the verify round is the exception: Rolling verification, below). `wave` is the agent's number among its kind (the review agents, and apart
 from them the verifiers), from 1. The reader's critical path therefore takes the slowest reviewer of each review wave and
 the slowest verifier of each verify wave and sums them (`reviewer wave 1 -> reviewer wave 2 -> verifier -> verdict`), not
 the one slowest agent across the waves. The agents of a wave are dispatched together, so spans that carry one wave number
@@ -458,6 +576,39 @@ with the excess in `byMs` (the default cap puts the lane in the reviewers' wave,
 the usual case: the verifier waited for it), and under `uncountedWaves` each wave that holds no reviewer, which a small
 cap makes (a cap of 2 on two reviewers and the lane leaves the lane alone in wave 2). Whether the lane should be a step
 is the owner's decision; until then the figure says what it leaves out.
+
+Rolling verification (kata `630v`). The first live Medium review (PR 207: 17 candidates x 3 verifiers, at most 3 claims each, 17
+verifiers at a cap of 8) took three barrier waves; `pr-review-cli timing` reads them at 4.5, 5.0 (a verifier stopped at its
+5-minute deadline) and 1.9 minutes, 11.4 minutes of steps and 11.7 from the first dispatch to the last result, for 49.3
+agent-minutes of work: each wave lasted as long as its slowest verifier while the slots of its faster ones stood idle. A `collect`
+that finds verifiers of the dispatched waves still running and slots free (cap minus the agents still running, never more) now
+dispatches the next verifiers of the plan into them: a `DISPATCH` whose manifest carries `refill: true`, `stillRunning` (the agents
+of earlier waves that you keep waiting for) and only the new agents. A refill is at least a quarter of the cap (or everything that
+is left), so the orchestrator is not asked for a manifest per freed slot. The plan is unchanged: `run.verifyAgents` was fixed
+before the first dispatch, the refill takes its next agents in order, each is briefed with its own candidates only, every
+candidate keeps its K distinct verifiers (none a reviewer, none its raiser), each deadline starts at that agent's own dispatch,
+and the run is not collected until every agent of every wave has arrived or expired. An expired verifier is not running, so its
+slot is refilled, and it stays `expired` in the record. A wave dispatched after a refill carries no total (`2 (rolling)`): how
+many there will be depends on when verifiers arrive. The review round is not rolling: its agents differ in kind and the lane is
+the longest.
+
+`pr-review-cli timing` reads the refill waves as ONE `verifier` step (`rolling: true`, `waves: n`): the time at least one verifier
+was running (the union of their intervals, so a gap between two dispatches is not verification time). It does so only when the trace
+bears the marks out: no wave number stamped on spans dispatched apart, wave numbers that agree with the times, every wave that
+overlaps an earlier one marked on every span with `cap` (equal to the review span's `max_concurrent_agents`, which `collect` records
+when it closes the review) and `running` (`running` plus the wave's agents within the cap, no more earlier spans running at its start
+than `running`), and never more verifier spans at once than the cap. Otherwise a warning names the reason and the waves are read one
+after another, so an overlap is refused as before.
+
+The numbers are reproducible: the test `the replay behind the documented verify-round numbers` in `pr-review-run.test.js` drives
+the REAL runner (`collect` on a simulated clock, cap 8) over the 17 measured verifier times and prints the figures
+(`npx jest --runInBand packages/development/tests/pr-review-run.test.js -t "replay behind"`). Barrier: 11.4 to 11.5 minutes (the
+measured 11.7 includes the harness turnaround between waves). Rolling: 7.3 (a poll every second), 7.4 (every 7.5 s) and 7.8
+minutes (every 15 s), saving 4.1, 4.1 and 3.8 minutes (33 to 36% of the verify round), which puts the run at about 22.9 of the
+measured 26.8 minutes; the lower bound is 49.3 / 8 = 6.2 minutes. This is a replay of one run's times, not a live measurement. The
+PR's 8-13 minute target is NOT reached by this: the slowest reviewer alone took 14.6 minutes. Verifying the candidates of the
+reviewers that finish early (8.2 to 10.6 minutes) while the slowest still runs is not built: a duplicate finding of a late reviewer
+would merge into a candidate already settled.
 
 One verdict stays in the window. The verdict span ends `ok` when the verdict was recorded and `error` when that attempt
 did not get that far (a failed state write, or a throw such as `final.json` failing to write); the reader takes an `error`
@@ -487,10 +638,11 @@ What kata znd1 asked for and this runner does not do (none is claimed):
   prose still reaches the gate through the skill only.
 - `reviewDecision` is not consumed: approvals come from the PR's reviews with the existing withdrawal rule.
 - Deadlines and the concurrency cap are the dispatcher's to enforce. Tier kinds come from paths, not from a classifier agent.
-  Carry-over of verdicts, delta-only reading and sharding are not built.
+  Sharding is not built.
 
 Known defects the one real full-mode run found. The 15-minute deadline (kata `sfpb`) is addressed by a size model (Slices and
-deadlines, above) that is not yet measured on a live run; the one other still open is tracked on its own:
+deadlines, above); the first live measurements (effort `hi`, kata `q3a9`) found its flat floor too tight for a SMALL slice and
+added the fixed-cost floor (kata `d9sy`, under Deadlines); the one other still open is tracked on its own:
 
 - `review-run-cli.js` `peekRun` reads `run.json` at a `runId` it has not validated yet, before `collect` rejects a bad
   one (kata `yz76`). Only `repo` and `pr` are taken from it.

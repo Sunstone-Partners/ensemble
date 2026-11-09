@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync, execFileSync } = require('child_process');
 
-const { execute, main, buildDeps } = require('../lib/review-run-cli');
+const { execute, main, buildDeps, peekRun, realFs } = require('../lib/review-run-cli');
 const { defaultDeps: prepareGit } = require('../lib/review-prepare-runtime');
 const { prepareReview } = require('../lib/pr-review-prepare');
 
@@ -25,7 +25,8 @@ const CLI = path.join(__dirname, '..', 'lib', 'review-run-cli.js');
 const PR_REVIEW_CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const FIXTURES = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'znd1', 'fixtures');
 const BODY = '## Testing\nran the relevant tests\n\n## Risk\nlow\n\n## How to revert\nrevert the commit\n';
-const POLICY = '# Review\n\n```ensemble-review-policy\n{"sensitivePaths":["secure/**"],"highPaths":["wide/**"]}\n```\n';
+const SEVERITY = '## Severity\n\n- **Important** \u2014 fixture-important: the change is wrong.\n- **Nit** \u2014 fixture-nit: a preference.\n- **Pre-existing** \u2014 fixture-pre: not this PR.\n\n';
+const POLICY = '# Review\n\n' + SEVERITY + '```ensemble-review-policy\n{"sensitivePaths":["secure/**"],"highPaths":["wide/**"],"reviewerToolCalls":57,"reviewerSnippets":2}\n```\n';
 /** The changed lines of the 19 paths of the one real full-mode run (PR 271), in path order: the `wide` branch adds one new file of each size (kata sfpb). */
 const WIDE_LINES = [1, 127, 1, 159, 1, 145, 12, 8, 76, 125, 355, 38, 1, 8, 76, 159, 1, 145, 12];
 const widePath = (index) => `wide/a${String(index + 1).padStart(2, '0')}.js`;
@@ -40,7 +41,7 @@ const out = (value) => { process.stdout.write(JSON.stringify(value)); process.ex
 const fail = (stderr, stdout) => { process.stderr.write(stderr); if (stdout) process.stdout.write(stdout); process.exit(1); };
 const joined = args.join(' ');
 if (args[0] === 'pr' && args[1] === 'view') {
-  const pr = { headRefOid: state.head, baseRefName: 'main', state: state.prState || 'OPEN', body: state.body, author: { login: 'alice' }, isCrossRepository: state.isCrossRepository === undefined ? false : state.isCrossRepository };
+  const pr = { headRefOid: state.head, baseRefName: state.baseRefName || 'main', state: state.prState || 'OPEN', body: state.body, author: { login: 'alice' }, isCrossRepository: state.isCrossRepository === undefined ? false : state.isCrossRepository };
   if (state.isCrossRepository === 'omit') delete pr.isCrossRepository;
   out(pr);
 }
@@ -207,7 +208,67 @@ describe('the real CLI process on a real git fixture', () => {
     const snapshot = /snapshot of the reviewed commit: (\S+)/.exec(brief)[1];
     expect(fs.readFileSync(path.join(snapshot, 'src', 'b.js'), 'utf8')).toBe('module.exports = () => 1;\n');
     expect(brief).toMatch(/- src\/a\.js\n- src\/b\.js/);
+    // what a reviewer may spend comes from the policy block of REVIEW.md at the base, not from the template (kata yg7k)
+    expect(brief).toMatch(/^Tool calls: 57$/m);
+    expect(brief).toMatch(/^Throwaway snippets: 2$/m);
+    // the meaning of the severity words is the Severity section of REVIEW.md at the base, for every agent that writes findings, the lane too
+    for (const agent of m.agents) {
+      const text = fs.readFileSync(agent.briefPath, 'utf8');
+      expect(text).toContain('fixture-important: the change is wrong.');
+      expect(text).toContain('fixture-nit: a preference.');
+    }
     process.stderr.write(`\nSMOKE manifest: ${JSON.stringify({ status: m.status, runId: m.runId, round: m.round, wave: m.wave, tier: m.tier.effectiveTier, depth: m.depth, agents: m.agents.map((a) => ({ name: a.name, role: a.role, outPath: path.relative(fx.work, a.outPath), deadlineAtIso: a.deadlineAtIso })) })}\n`);
+  });
+
+  /** A base branch whose REVIEW.md policy block carries a stale sourceSha, and a head branch off it holding `files` (rel -> text). */
+  function staleBranches(name, files) {
+    const baseSha = git(fx.work, 'rev-parse', 'main');
+    git(fx.work, 'checkout', '-q', '-b', `${name}base`, baseSha);
+    write(fx.work, 'REVIEW.md', '# Review\n\n```ensemble-review-policy\n{"sourceSha":"4c1639e0000000000000000000000000000000aa","highPaths":["lib/**"]}\n```\n');
+    git(fx.work, 'add', '.');
+    git(fx.work, 'commit', '-q', '-m', 'stale policy base');
+    git(fx.work, 'push', '-q', 'origin', `${name}base`);
+    git(fx.work, 'checkout', '-q', '-b', `${name}head`);
+    for (const [rel, text] of Object.entries(files)) write(fx.work, rel, text);
+    git(fx.work, 'add', '.');
+    git(fx.work, 'commit', '-q', '-m', 'the PR');
+    const head = git(fx.work, 'rev-parse', 'HEAD');
+    git(fx.work, 'checkout', '-q', 'main');
+    return { head, baseRefName: `${name}base` };
+  }
+
+  test('a base whose REVIEW.md policy block is stale (policy-not-from-base) never lowers the tier: the PR is High, with the reason named (kata vhpf)', () => {
+    const { head, baseRefName } = staleBranches('stale', { 'lib/bdd-mode.js': 'module.exports = 1;\n' });
+    setGh({ head, baseRefName });
+    const r = prep({ runId: 'stale' });
+    expect(r.code).toBe(0);
+    expect(r.out.status).toBe('DISPATCH');
+    expect(r.out.tier).toMatchObject({ tier: 'high', effectiveTier: 'high' });
+    expect(r.out.tier.reasons).toEqual(expect.arrayContaining(['owner-high-path', 'policy-untrusted:policy-not-from-base']));
+    expect(r.out.mode).toMatchObject({ mode: 'full' });
+    const state = JSON.parse(fs.readFileSync(path.join(runDir('stale'), 'run.json'), 'utf8'));
+    expect(state.policyStatus).toEqual({ ok: false, reason: 'policy-not-from-base' });
+    const prepared = path.join(fx.work, '.ensemble', 'pr-review', 'prepare', 'stale');
+    const found = fs.readdirSync(prepared, { recursive: true }).filter((f) => String(f).endsWith('facts.json'));
+    expect(found).toHaveLength(1);
+    const facts = JSON.parse(fs.readFileSync(path.join(prepared, found[0]), 'utf8'));
+    expect(facts.policy).toMatchObject({ ok: false, reason: 'policy-not-from-base' });
+    expect(facts.paths.warnings).toContain('policy-untrusted-all-high:policy-not-from-base');
+  });
+
+  test('PINS CURRENT BEHAVIOUR (owner decision pending): a multi-slice PR on a stale base goes light -> full and loses the whole-range reader', () => {
+    const files = {};
+    for (let i = 0; i < 20; i += 1) files[`lib/m${i}.js`] = `${Array.from({ length: 60 }, (_, n) => `// ${i} ${n}`).join('\n')}\n`;
+    const stale = staleBranches('multi', files);
+    setGh(stale);
+    const r = prep({ runId: 'multistale' });
+    expect(r.code).toBe(0);
+    expect(r.out.status).toBe('DISPATCH');
+    expect(r.out.tier.effectiveTier).toBe('high');
+    expect(r.out.mode.mode).toBe('full');
+    const readers = r.out.agents.filter((a) => a.role === 'reviewer');
+    expect(readers.length).toBeGreaterThan(1);
+    expect(r.out.agents.some((a) => /whole|range/i.test(a.name))).toBe(false);
   });
 
   test('prepare -> agents -> collect -> verify wave -> collect -> ADJUDICATE -> adjudicate -> DONE, with the repository untouched', () => {
@@ -273,6 +334,48 @@ describe('the real CLI process on a real git fixture', () => {
     // the run directory is private
     expect(fs.statSync(runDir('flow')).mode & 0o777).toBe(0o700);
     expect(fs.statSync(path.join(runDir('flow'), 'run.json')).mode & 0o777).toBe(0o600);
+  });
+
+  test('rolling verification through the real process (kata 630v): nine candidates need nine verifiers at a cap of 8; the first verifier to arrive frees a slot and the ninth starts at once, in the same plan, and the run ends DONE', () => {
+    const before = snapshotRepo();
+    const claims = ['the loop reads one past the end of the list', 'the cache key ignores the tenant so entries leak', 'the retry never backs off and hammers the host', 'the parser accepts a negative length and allocates it', 'the lock is released before the write completes', 'the timeout is read in seconds but compared in milliseconds', 'the path join lets a dotted segment climb out of the root', 'the counter is incremented twice on the error branch', 'the callback runs after the handle was closed'];
+    const findings = claims.map((failureMode, i) => reviewerFinding({ locationOrLink: i % 2 === 0 ? 'src/a.js:1' : 'src/b.js:1', failureMode, evidence: `read ${failureMode}`, originalTextOrLink: i % 2 === 0 ? 'src/a.js:1' : 'src/b.js:1' }));
+    const review = prep({ runId: 'rolling' }).out;
+    answerReview(review, { findings: { 'reviewer-s1-a': findings } });
+    const v1 = coll('rolling').out;
+    expect(v1).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify', wave: '1 of 2', maxConcurrentAgents: 8 });
+    expect(v1.agents.map((a) => a.name)).toEqual(Array.from({ length: 8 }, (_, i) => `verifier-${i + 1}`));
+
+    // nobody has arrived: PENDING, nothing new dispatched
+    expect(coll('rolling').out).toMatchObject({ status: 'PENDING', round: 'verify' });
+
+    // one verifier arrives: one slot is free and ONE verifier is left (the plan's ninth): it is dispatched while seven still run
+    answerVotes({ agents: v1.agents.slice(0, 1) });
+    const v2 = coll('rolling');
+    expect(v2.code).toBe(0);
+    expect(v2.out).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify', refill: true, wave: '2 (rolling)' });
+    expect(v2.out.agents.map((a) => a.name)).toEqual(['verifier-9']);
+    expect(v2.out.stillRunning).toEqual(v1.agents.slice(1).map((a) => a.name));
+    expect(v2.out.stillRunning.length + v2.out.agents.length).toBeLessThanOrEqual(8);
+    expect(v2.out.agents[0].deadlineAt - v2.out.agents[0].dispatchedAt).toBe(5 * 60 * 1000);
+
+    // the plan: nine verifiers, each candidate with three DISTINCT ones
+    const run = JSON.parse(fs.readFileSync(path.join(runDir('rolling'), 'run.json'), 'utf8'));
+    expect([...v1.agents, ...v2.out.agents].map((a) => a.candidateIds)).toEqual(run.verifyAgents.map((a) => a.candidateIds));
+    const perCandidate = new Map();
+    for (const a of run.verifyAgents) for (const id of a.candidateIds) perCandidate.set(id, [...(perCandidate.get(id) || []), a.name]);
+    expect(perCandidate.size).toBe(9);
+    for (const names of perCandidate.values()) expect(new Set(names).size).toBe(3);
+
+    answerVotes({ agents: v1.agents.slice(1) });
+    answerVotes(v2.out);
+    const done = coll('rolling');
+    expect(done.code).toBe(0);
+    expect(['DONE', 'ADJUDICATE']).toContain(done.out.status);
+    expect(done.out.votes).toMatchObject({ verification: 'performed' });
+    expect(done.out.votes.outcomes).toHaveLength(9);
+    expect(done.out.metrics).toMatchObject({ agentsDispatched: 3 + 9 });
+    expect(snapshotRepo()).toEqual(before);
   });
 
   test('the trace review-run writes is the stage contract pr-review-cli timing reads: ok, every stage found, a critical path inside the window (kata k0sh)', () => {
@@ -442,8 +545,8 @@ describe('the real CLI process on a real git fixture', () => {
     expect(m.sizing.warnings).toEqual([]);
     const reviewers = m.agents.filter((a) => a.role === 'reviewer');
     expect(reviewers.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'reviewer-s2-a', 'reviewer-s2-b', 'reviewer-s3-a', 'reviewer-s3-b']);
-    for (const a of reviewers) expect(a).toMatchObject({ deadlineMinutes: 15 });
-    // the deadlines: 15 minutes for a slice the model says fits, 36 for the lane that took 17m45s on the run this is the shape of
+    for (const a of reviewers) expect(a).toMatchObject({ deadlineMinutes: 22 });
+    // the deadlines: 22 minutes (the fixed-cost floor, kata d9sy) for a slice the model says fits, 36 for the lane that took 17m45s on the run this is the shape of
     const lane = m.agents.find((a) => a.role === 'security');
     expect(lane).toMatchObject({ deadlineMinutes: 36, work: { files: 19, lines: 1450 } });
     expect((lane.deadlineAt - lane.dispatchedAt) / 60000).toBe(36);
@@ -455,7 +558,7 @@ describe('the real CLI process on a real git fixture', () => {
       const diffPath = /Diff for your slice: (\S+)/.exec(brief)[1];
       expect(diffPath).toMatch(/\/slices\/slice-[123]\.diff$/);
       expect(sections(fs.readFileSync(diffPath, 'utf8'))).toEqual(a.paths);
-      expect(brief).toContain('Timebox: 15 minutes');
+      expect(brief).toContain('Timebox: 22 minutes');
     }
     const rangeDiff = /Diff: (\S+)/.exec(fs.readFileSync(lane.briefPath, 'utf8'))[1];
     expect(path.basename(rangeDiff)).toBe('range.diff');
@@ -476,7 +579,7 @@ describe('the real CLI process on a real git fixture', () => {
     const m = r.out;
     expect(m).toMatchObject({ ok: true, status: 'DISPATCH', round: 'review', wave: '1 of 1', mode: { mode: 'full' } });
     expect(m.sizing.slices.map((slice) => [slice.files, slice.diff])).toEqual([[8, 'slice'], [3, 'slice'], [8, 'slice']]);
-    const sized = { 'reviewer-s1-a': 15, 'reviewer-s1-b': 15, 'reviewer-s2-a': 15, 'reviewer-s2-b': 15, 'reviewer-s3-a': 15, 'reviewer-s3-b': 15, 'security-lane': 36 };
+    const sized = { 'reviewer-s1-a': 22, 'reviewer-s1-b': 22, 'reviewer-s2-a': 22, 'reviewer-s2-b': 22, 'reviewer-s3-a': 22, 'reviewer-s3-b': 22, 'security-lane': 36 };
     expect(Object.fromEntries(m.agents.map((a) => [a.name, a.deadlineMinutes]))).toEqual(sized);
     const changed = WIDE_LINES.map((_, index) => widePath(index));
     const KEY = 'compares the submitted key with the stored value using a loose equality so a type juggled key passes the check';
@@ -521,6 +624,11 @@ describe('the real CLI process on a real git fixture', () => {
     const rangeBrief = fs.readFileSync(range.briefPath, 'utf8');
     expect(rangeBrief).toMatch(/^You are reviewing the whole of a pull request/); // its own brief: it reads the whole range, not a slice
     expect(rangeBrief).not.toMatch(/You are reviewing one slice|Your slice:/);
+    // the policy's reviewer budget reaches the whole-range reader's brief, and the contract tells it what `important` means (kata yg7k)
+    expect(rangeBrief).toMatch(/^Tool calls: 57$/m);
+    expect(rangeBrief).toMatch(/^Throwaway snippets: 2$/m);
+    expect(rangeBrief).not.toMatch(/at most (ONE|40)\b/);
+    expect(rangeBrief).toContain('fixture-important: the change is wrong.');
     const rangeDiff = /Diff for the whole range: (\S+)/.exec(rangeBrief)[1];
     expect(path.basename(rangeDiff)).toBe('range.diff');
     expect(fs.readFileSync(rangeDiff, 'utf8').split('\n').filter((line) => line.startsWith('diff --git '))).toHaveLength(19);
@@ -543,6 +651,57 @@ describe('the real CLI process on a real git fixture', () => {
     expect(timing.agents).toMatchObject({ count: 8, unusable: [], byRole: { reviewer: { count: 7 }, 'security-lane': { count: 1 } } });
     process.stderr.write(`\nSMOKE medium-wide: ${JSON.stringify({ agents: m.agents.map((a) => `${a.name}:${a.deadlineMinutes}`), notReviewed: done.out.notReviewed.unreviewedSlices })}\n`);
     expect(snapshotRepo()).toEqual(before);
+  });
+
+  test('kata k48x, through the real process with stand-in agents: a MEDIUM PR holding the one approval it needs is mergeable when every reader arrived whole, and NOT mergeable when the whole-range reader is short or expired (a named blocker, a pending local phase, an Accept-only list entry); a replay says the same', () => {
+    const approval = { user: { login: 'bob', type: 'User' }, state: 'APPROVED', commit_id: fx.medwide, submitted_at: '2026-01-01T00:00:00Z' };
+    const medPaths = WIDE_LINES.map((_, index) => widePath(index).replace(/^wide\//, 'med/'));
+    /** The reader's deadline passed with no result: what the collector measures arrival against is the stored run. */
+    const expireAgent = (runId, name) => {
+      const file = path.join(runDir(runId), 'run.json');
+      const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const wave of stored.waves) {
+        for (const agent of wave.agents) {
+          if (agent.name !== name) continue;
+          agent.dispatchedAt = Date.now() - 40 * 60 * 1000;
+          agent.deadlineAt = Date.now() - 60 * 1000;
+        }
+      }
+      fs.writeFileSync(file, JSON.stringify(stored));
+    };
+    const run = (runId, { answer = {}, expire } = {}) => {
+      setGh({ head: fx.medwide, reviews: [approval] });
+      fs.rmSync(path.join(fx.work, '.ensemble', 'pr-review', 'pr-7.json'), { force: true });
+      const r = prep({ runId });
+      expect(r.code).toBe(0);
+      expect(r.out.agents.map((a) => a.name)).toContain('reviewer-range');
+      answerReview(r.out, { changed: medPaths, ...answer });
+      if (expire !== undefined) expireAgent(runId, expire);
+      const done = coll(runId);
+      expect(done.code).toBe(0);
+      expect(done.out.status).toBe('DONE');
+      return done.out;
+    };
+
+    const complete = run('cov-complete');
+    expect(complete.gate).toMatchObject({ mergeable: true, blockers: [], coverage: { status: 'complete' } });
+    expect(complete.reviewStatus.reasons.join(' ')).not.toMatch(/incomplete review coverage/);
+
+    for (const [runId, options] of [
+      ['cov-short', { answer: { partial: { 'reviewer-range': medPaths.slice(0, 4) } } }],
+      ['cov-expired', { answer: { skip: ['reviewer-range'] }, expire: 'reviewer-range' }],
+    ]) {
+      const out = run(runId, options);
+      expect([runId, out.gate.mergeable]).toEqual([runId, false]);
+      expect([runId, out.gate.blockers.map((b) => b.code)]).toEqual([runId, ['review-coverage-incomplete']]); // approvals, description and the lane are fine: the coverage alone stops it
+      expect(out.gate.blockers[0]).toMatchObject({ gapId: 'coverage:whole-range', gapType: 'whole-range' });
+      expect(out.gate.coverage).toMatchObject({ status: 'incomplete', open: ['coverage:whole-range'] });
+      expect(out.reviewStatus).toMatchObject({ status: 'REVIEW_PENDING', next: 'complete-review-coverage' });
+      expect(out.reviewStatus.localPhase).not.toBe('LOCAL_REVIEW_COMPLETE');
+      expect(out.gate.dispositionChoices.map((c) => [c.id, c.choices.map((x) => x.id)])).toEqual([['coverage:whole-range', ['accept']]]);
+      expect(out.notReviewed.unreviewedSlices).toEqual(['whole-range']);
+      expect(coll(runId).out.gate.mergeable).toBe(false); // the replay of the finished run is the stored answer, gap included
+    }
   });
 
   test('through the real process: a triage claim the verifier brief refuses is triage-refused (exit 1, not terminal), and a mode label rewritten to light is mode-invariant (exit 1, nothing finalised) (review of PR 271)', () => {
@@ -908,5 +1067,140 @@ describe('in-process: every process the runner starts is recorded', () => {
     expect(code).toBe(1);
     expect(JSON.parse(text)).toMatchObject({ ok: false, reason: 'invalid-input' });
     expect(buildDeps({ repo: 'o/r', pr: 1, repoRoot: fx.work }, {}).notices).toEqual([]);
+  });
+});
+
+describe('collect reads nothing for a runId collect would refuse (kata yz76: peekRun before validateCollect)', () => {
+  const SCRATCH = path.join(os.homedir(), '.omp', 'pr-review-speedup', 'yz76', `t${process.pid}`);
+  const root = path.join(SCRATCH, 'repo');
+  const runBase = path.join(root, '.ensemble', 'pr-review', 'run');
+  const outside = path.join(SCRATCH, 'outside');
+  const canary = JSON.stringify({ repo: 'evil/evil', pr: 99 });
+  let reads;
+  let spy;
+
+  beforeEach(() => {
+    fs.rmSync(SCRATCH, { recursive: true, force: true });
+    fs.mkdirSync(runBase, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'run.json'), canary);
+    fs.mkdirSync(path.join(runBase, 'real'));
+    fs.writeFileSync(path.join(runBase, 'real', 'run.json'), JSON.stringify({ repo: 'o/r', pr: 7 }));
+    reads = [];
+    const original = fs.readFileSync;
+    spy = jest.spyOn(fs, 'readFileSync').mockImplementation((file, ...rest) => {
+      if (typeof file === 'string' && file.startsWith(SCRATCH)) reads.push(file);
+      return original.call(fs, file, ...rest);
+    });
+  });
+  afterEach(() => {
+    spy.mockRestore();
+    fs.rmSync(SCRATCH, { recursive: true, force: true });
+  });
+
+  const collectOf = (payload) => execute('collect', { readJson: () => payload });
+  const peeked = () => reads.filter((file) => file.endsWith('run.json'));
+
+  test.each([
+    ['dot-dot segments', '../../../../outside'],
+    ['four dot-dots reaching the outside run.json', '../../../../outside'],
+    ['a nested path', 'real/../real'],
+    ['an absolute path', outside],
+    ['a backslash path', '..\\outside'],
+    ['a dotted name', 'real.json'],
+    ['empty', ''],
+    ['over-long (129 characters)', 'a'.repeat(129)],
+    ['a NUL byte', 'real\0x'],
+    ['not text', 7],
+  ])('%s: invalid-input and run.json is never read', async (_label, runId) => {
+    const answer = await collectOf({ repoRoot: root, runId });
+    expect(answer.code).toBe(1);
+    expect(answer.result).toMatchObject({ ok: false, reason: 'invalid-input' });
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a relative repoRoot is not read from either', async () => {
+    const answer = await collectOf({ repoRoot: path.relative(process.cwd(), root), runId: 'real' });
+    expect(answer.result).toMatchObject({ ok: false, reason: 'invalid-input' });
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a run directory that is a symlink out of the run area is not followed', async () => {
+    fs.symlinkSync(outside, path.join(runBase, 'linked'));
+    expect(peekRun({ repoRoot: root, runId: 'linked' })).toEqual({});
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a run.json that is a symlink to a file elsewhere is not read', async () => {
+    fs.mkdirSync(path.join(runBase, 'sneaky'));
+    fs.symlinkSync(path.join(outside, 'run.json'), path.join(runBase, 'sneaky', 'run.json'));
+    expect(peekRun({ repoRoot: root, runId: 'sneaky' })).toEqual({});
+    expect(peeked()).toEqual([]);
+  });
+
+  test('a real run is still peeked (the guard does not refuse good input)', async () => {
+    expect(peekRun({ repoRoot: root, runId: 'real' })).toEqual({ repo: 'o/r', pr: 7 });
+    expect(peeked()).toEqual([path.join(runBase, 'real', 'run.json')]);
+  });
+
+  // ---- the loader and the writers: the same containment, not only the peek (review round 1)
+  const stored = () => JSON.stringify({ schema: 1, runId: 'linked', repoRoot: root, repo: 'o/r', pr: 7, phase: 'collecting', marker: 'untouched' });
+  const noRun = { run: async () => ({ code: 1, stdout: '', stderr: 'no process runs here' }) };
+  const answerOf = (promise) => promise.then((answer) => answer.result);
+  const link = (name, target) => fs.symlinkSync(target, path.join(runBase, name));
+
+  test('collect does not load or rewrite a run through a symlinked run directory', async () => {
+    fs.writeFileSync(path.join(outside, 'run.json'), stored());
+    link('linked', outside);
+    const result = await answerOf(execute('collect', { readJson: () => ({ repoRoot: root, runId: 'linked' }), ...noRun }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).not.toBe('mode-invariant');
+    expect(fs.readFileSync(path.join(outside, 'run.json'), 'utf8')).toBe(stored());
+    expect(fs.readdirSync(outside)).toEqual(['run.json']);
+  });
+
+  test('collect does not load a symlinked run.json, and leaves its target and the link as they were', async () => {
+    fs.mkdirSync(path.join(runBase, 'linked'));
+    fs.writeFileSync(path.join(outside, 'target.json'), stored());
+    fs.symlinkSync(path.join(outside, 'target.json'), path.join(runBase, 'linked', 'run.json'));
+    const result = await answerOf(execute('collect', { readJson: () => ({ repoRoot: root, runId: 'linked' }), ...noRun }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).not.toBe('mode-invariant');
+    expect(fs.readFileSync(path.join(outside, 'target.json'), 'utf8')).toBe(stored());
+    expect(fs.lstatSync(path.join(runBase, 'linked', 'run.json')).isSymbolicLink()).toBe(true);
+  });
+
+  test('a dangling run.json link is refused, never written through or replaced', () => {
+    fs.mkdirSync(path.join(runBase, 'linked'));
+    fs.symlinkSync(path.join(outside, 'nothing.json'), path.join(runBase, 'linked', 'run.json'));
+    const area = realFs({ runArea: runBase });
+    expect(() => area.readText(path.join(runBase, 'linked', 'run.json'))).toThrow(/symbolic link/);
+    expect(() => area.writeAtomic(path.join(runBase, 'linked', 'run.json'), 'x', 0o600)).toThrow(/symbolic link/);
+    expect(fs.existsSync(path.join(outside, 'nothing.json'))).toBe(false);
+    expect(fs.lstatSync(path.join(runBase, 'linked', 'run.json')).isSymbolicLink()).toBe(true);
+  });
+
+  test('the guard covers a link at any depth below the run area, directories and writes included, and nothing outside it', () => {
+    link('linked', outside);
+    const area = realFs({ runArea: runBase });
+    expect(() => area.mkdirp(path.join(runBase, 'linked', 'results'), 0o700)).toThrow(/symbolic link/);
+    expect(() => area.writeAtomic(path.join(runBase, 'linked', 'results', 'final.json'), 'x', 0o600)).toThrow(/symbolic link/);
+    expect(fs.readdirSync(outside).sort()).toEqual(['run.json']);
+    expect(area.readText(path.join(runBase, 'real', 'run.json'))).toContain('o/r');
+    expect(area.readText(path.join(runBase, 'real', 'missing.json'))).toBeNull();
+    expect(area.readText(path.join(outside, 'run.json'))).toBe(canary);
+  });
+
+  test('the result collector is not pointed through a link either', () => {
+    link('linked', outside);
+    const deps = buildDeps({ repo: 'o/r', pr: 7, repoRoot: root }, noRun);
+    expect(() => deps.collectResults({ expected: [], dir: path.join(runBase, 'linked', 'results', '1'), now: Date.now() })).toThrow(/symbolic link/);
+  });
+
+  test('prepare does not treat a symlinked run directory as an existing run or write through it', async () => {
+    link('linked', outside);
+    const result = await answerOf(execute('prepare', { readJson: () => ({ repo: 'o/r', pr: 7, repoRoot: root, runId: 'linked', agentAuthored: false }), ...noRun }));
+    expect(result.ok).toBe(false);
+    expect(fs.readdirSync(outside)).toEqual(['run.json']);
   });
 });

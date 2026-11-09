@@ -91,7 +91,7 @@
  * `maxConcurrentAgents` (the lane is the longest agent: it must not wait behind a wave of reviewers). With several slices each
  * reviewer's brief names a diff of ITS slice (`slices/slice-<n>.diff`), not the whole range. An agent's deadline is the policy's
  * `deadlineMinutes` as a floor, raised to the modelled time to read what it was given (a reviewer: its slice; the lane: every
- * changed path), with headroom, at most 60 minutes. Everything is recorded in `run.sizing` and the DISPATCH manifest, and nothing
+ * changed path), with headroom, never below the fixed cost of an agent (`MIN_AGENT_MINUTES`, kata d9sy; a policy value SET below it is overridden and named in `run.sizing.warnings`), at most 60 minutes. Everything is recorded in `run.sizing` and the DISPATCH manifest, and nothing
  * relaxes a fail-closed rule: an agent that arrives after its (larger) deadline is `expired`, a reviewer that lists fewer paths
  * than its slice leaves the slice not reviewed, a slice or deadline the limits cannot hold is a recorded warning and not a pass.
  *
@@ -124,7 +124,7 @@ const { isValidRunId } = require('./toolchain/run-id');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
 const { selectMode } = require('./pr-review-mode');
 const { planSlices, verifyCoverage } = require('./pr-review-depth');
-const { reviewDeadlines, toVotesInput } = require('./pr-review-results');
+const { reviewDeadlines, toVotesInput, floorOverrideMessage } = require('./pr-review-results');
 const { DEFAULT_POLICY, DEADLINE_MINUTES_MAX } = require('./pr-review-policy');
 const SZ = require('./pr-review-sizing');
 const { dedupeFindings, isActionable, normalizeSeverity, validateLedger } = require('./pr-review-ledger');
@@ -133,8 +133,10 @@ const { evaluateApprovals } = require('./pr-review-approvals');
 const { checkDescription } = require('./pr-review-description');
 const { evaluateGate, SECURITY_REQUIRED_TIERS } = require('./pr-review-gate');
 const { buildDispositionChoices } = require('./pr-review-disposition');
+const { buildCoverage } = require('./pr-review-coverage');
 const { deriveStatus } = require('./pr-review-status');
-const { statePath } = require('./pr-review-state');
+const { statePath, readState } = require('./pr-review-state');
+const D = require('./pr-review-run-delta');
 const { assessProtection } = require('./pr-review-precheck');
 const { REFUSAL_KINDS } = require('./pr-review-briefs');
 const S = require('./pr-review-run-support');
@@ -159,6 +161,7 @@ const COLLECT_KEYS = Object.freeze(['repoRoot', 'runId', 'now', 'adjudications',
 const RULES = Object.freeze([
   'Start exactly the agents of `agents`, in fresh contexts with READ-ONLY access, and pass each `prompt` through unedited; compose nothing yourself.',
   'Never run more agents at once than `maxConcurrentAgents`. The runner records the cap and cannot enforce it: the dispatcher must.',
+  'A DISPATCH with `refill: true` lists only NEW verifiers: start exactly those, and keep waiting for the agents in `stillRunning`, which are still running (the cap counts both).',
   'Stop every agent at its `deadlineAtIso`. The runner records the deadline and cannot stop an agent: the dispatcher must. A result written later is not read.',
   'When the agents are done (or their deadlines have passed), call `collect`. Never read a result file, tally votes or decide a gate yourself.',
   'On ADJUDICATE decide only the findings listed, with a reason, and call `collect` with `adjudications`.',
@@ -265,6 +268,13 @@ function loadRun(deps, repoRoot, runId) {
   }
 }
 
+/** The run record of a prior run id read from a state report: null for an id that is not a plain run id, an absent or unreadable record. */
+function loadRunRecord(deps, repoRoot, runId) {
+  if (typeof runId !== 'string' || !isValidRunId(runId)) return null;
+  const run = loadRun(deps, repoRoot, runId);
+  return isObject(run) ? run : null;
+}
+
 /** The hunks of the prepared range diff, or null when it cannot be read (a claim that needs it is then not borne out). */
 function readDiffIndex(deps, file) {
   try {
@@ -322,6 +332,21 @@ function summarisePrecheck(result) {
     gate: result.gate,
     comment,
   };
+}
+
+/** The diff the review agents read: the delta's in a delta round, the whole range's otherwise. */
+function reviewDiffOf(run) {
+  return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta' ? run.prepared.deltaDiff : run.prepared.rangeDiff;
+}
+
+/** True in a round that applied the delta read. */
+function deltaRoundOf(run) {
+  return run.priorRound !== undefined && isObject(run.reReview) && run.reReview.appliedRange === 'delta';
+}
+
+/** The review agents a slice plan dispatches: a reviewer per (slice, lens), the whole-range reader and the security lane. */
+function agentCountOf(run, sliced) {
+  return sliced.plan.reviewerAssignments.length + (sliced.sizing.wholeRangeReader === true ? 1 : 0) + (run.securityLane ? 1 : 0);
 }
 
 /** The changed lines of one `numstat` entry: added plus deleted (a binary file holds none). */
@@ -393,8 +418,10 @@ function planRunSlices(run, numstat) {
       message: `no whole-range reader is planned: ${plan.slices.length} slices of ${lenses} lenses${lane === 1 ? ' and the security lane' : ''} make ${withReader - 1} agents at once, the concurrency cap is ${run.maxConcurrentAgents} and the reader would be one more; raise maxConcurrentAgents to ${withReader} (the policy allows at most 32) to add it`,
     });
   }
+  // the deadlineMinutes the policy block SET for a role (null: none, the default applies), so the floor's override is auditable
+  const policySet = (role) => (isObject(run.policyExplicit) && isObject(run.policyExplicit.deadlineMinutes) && Number.isInteger(run.policyExplicit.deadlineMinutes[role]) ? run.policyExplicit.deadlineMinutes[role] : null);
   const sizing = {
-    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run },
+    model: { ...SZ.MODEL, headroom: resolved.headroom, maxMinutes: DEADLINE_MINUTES_MAX, derivedFrom: SZ.OBSERVED.run, fixedCostFloorMinutes: SZ.MIN_AGENT_MINUTES, policyDeadlineMinutes: { reviewer: policySet('reviewer'), security: policySet('security') } },
     limits: { sliceMaxFiles: resolved.maxFiles, sliceTargetLines: resolved.targetLines, slicesAllowed: maxSlices, slicesWanted: wanted.slices.length },
     work: { files: paths.length, lines: plan.totalLines },
     slices,
@@ -411,9 +438,9 @@ function planRunSlices(run, numstat) {
  * WHOLE range diff: more to read, never less. Which each slice got is recorded in `run.sizing.slices[n].diff`.
  */
 function sliceDiffFiles(run, deps, dir) {
-  const whole = run.prepared.rangeDiff;
+  const whole = reviewDiffOf(run);
   const files = run.slices.map(() => whole);
-  for (const entry of run.sizing.slices) entry.diff = 'whole-range';
+  for (const entry of run.sizing.slices) entry.diff = deltaRoundOf(run) ? 'delta' : 'whole-range';
   if (run.slices.length <= 1) return files;
   let text = null;
   try {
@@ -446,36 +473,54 @@ function buildReviewAgents(run, deps, ctx) {
   // The deadline the agent is given at dispatch (`dispatchWave` asks the same question of the same inputs), so a brief's timebox is
   // its deadline. A modelled need over the maximum is capped and said, once per slice or lane.
   const deadline = (agent, work, label) => {
-    const answer = reviewDeadlines({ role: agent.role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy, work });
+    const answer = reviewDeadlines({ role: agent.role, now: ctx.now, tier: run.tier.effectiveTier, depth: run.depth.mode, policy: run.policy, explicit: run.policyExplicit, work });
     if (answer.ok !== true) throw new Error(`no deadline for ${agent.name}: ${answer.reason}`);
     if (answer.sizing !== undefined && answer.sizing.capped) {
       const message = `${label}: reading ${work.files} paths and ${work.lines} changed lines is modelled at ${answer.sizing.modeledMinutes} minutes, over the ${DEADLINE_MINUTES_MAX}-minute maximum, so its deadline is capped at ${DEADLINE_MINUTES_MAX} minutes; if it does not arrive in time it is reported not reviewed`;
       if (!run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-capped', message });
     }
+    if (answer.sizing !== undefined && answer.sizing.overridesPolicy) {
+      const message = floorOverrideMessage({ role: agent.role, policyMinutes: answer.sizing.policyMinutes, floorMinutes: answer.sizing.floorMinutes });
+      if (!run.sizing.warnings.some((warning) => warning.message === message)) run.sizing.warnings.push({ code: 'deadline-floor-over-policy', message });
+    }
     return answer;
   };
+  // What a reviewer may spend (policy `reviewerToolCalls`, `reviewerSnippets`; the default when the policy holds neither).
+  const stated = (key, fallback) => (run.policy && Number.isInteger(run.policy[key]) ? run.policy[key] : fallback);
+  // a REVIEW.md whose Severity section could not be read is NAMED, never replaced by the built-in copy in silence ('no-rules-file' is the documented defaults)
+  if (run.severityGuide === null && run.severityGuideProblem !== null && run.severityGuideProblem !== 'no-rules-file') {
+    run.sizing.warnings.push({ code: 'severity-guide-fallback', message: `REVIEW.md at the base has no readable Severity section (${run.severityGuideProblem}), so the reviewers are given the built-in copy of the severity words, not your edit; fix the section (a "## Severity" heading with one "- **Important** ...", "- **Nit** ..." and "- **Pre-existing** ..." bullet, under 2000 characters)` });
+  }
+  const budget = { toolCalls: stated('reviewerToolCalls', DEFAULT_POLICY.reviewerToolCalls), snippets: stated('reviewerSnippets', DEFAULT_POLICY.reviewerSnippets) };
   run.slices.forEach((slice, sliceIndex) => {
     // a reviewer handed the WHOLE range diff (its slice could not be cut from it) reads the whole diff: its deadline is sized for that
-    const wholeDiff = run.slices.length > 1 && run.sizing.slices[sliceIndex].diff === 'whole-range';
+    const wholeDiff = run.slices.length > 1 && ['whole-range', 'delta'].includes(run.sizing.slices[sliceIndex].diff);
     const work = wholeDiff ? { files: run.changedPaths.length, lines: run.sizing.work.lines } : { files: slice.paths.length, lines: slice.lines };
     // one reviewer per (slice, lens) pass; the lenses come from the shared plan (planSlices), the names stay `reviewer-s<n>-<a|b|..>`
     run.assignments.filter((assignment) => assignment.sliceId === slice.id).forEach((assignment, lensIndex) => {
       const agent = { name: `reviewer-s${sliceIndex + 1}-${S.LENSES[lensIndex]}`, role: 'reviewer', sliceId: slice.id, lens: assignment.lens, paths: slice.paths, work, _role: 'reviewer' };
-      agent._vars = { slice: slice.id, lens: assignment.lens, timeboxMinutes: deadline(agent, work, `slice ${slice.id}`).minutes, paths: slice.paths, diffPath: diffs[sliceIndex], snapshotDir: run.prepared.snapshotDir };
+      agent._vars = { slice: slice.id, lens: assignment.lens, timeboxMinutes: deadline(agent, work, `slice ${slice.id}`).minutes, ...budget, paths: slice.paths, diffPath: diffs[sliceIndex], snapshotDir: run.prepared.snapshotDir };
       agents.push(agent);
     });
   });
+  // The two agents that read ACROSS slices (the whole-range reader and the security lane) keep the WHOLE range in a delta round: a
+  // defect two hops from the push (a High module importing a module that imports the change) is in no read set, and these are
+  // the readers that can still see it.
+  const delta = deltaRoundOf(run);
+  const wholePaths = delta ? run.allChangedPaths : run.changedPaths;
+  const wholeDiff = delta ? run.prepared.rangeDiff : reviewDiffOf(run);
+  const wholeWork = { files: wholePaths.length, lines: delta ? run.numstat.reduce((n, entry) => n + changedLines(entry), 0) : run.sizing.work.lines };
   if (run.sizing.wholeRangeReader === true) {
-    const work = { files: run.changedPaths.length, lines: run.sizing.work.lines };
+    const work = wholeWork;
     const lens = run.assignments[0].lens;
     // its own brief (`range-reviewer`): the whole range, and what only a reader of the whole range can find
-    const reader = { name: RANGE_NAME, role: 'reviewer', sliceId: RANGE_COVERAGE_SLICE, lens, paths: run.changedPaths, work, _role: 'range-reviewer' };
-    reader._vars = { lens, timeboxMinutes: deadline(reader, work, 'the whole-range reader').minutes, paths: run.changedPaths, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir };
+    const reader = { name: RANGE_NAME, role: 'reviewer', sliceId: RANGE_COVERAGE_SLICE, lens, paths: wholePaths, work, _role: 'range-reviewer' };
+    reader._vars = { lens, timeboxMinutes: deadline(reader, work, 'the whole-range reader').minutes, ...budget, paths: wholePaths, diffPath: wholeDiff, snapshotDir: run.prepared.snapshotDir };
     agents.push(reader);
   }
   if (run.securityLane) {
-    const work = { files: run.changedPaths.length, lines: run.sizing.work.lines };
-    const lane = { name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: run.changedPaths, work, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: run.prepared.rangeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } };
+    const work = wholeWork;
+    const lane = { name: LANE_NAME, role: 'security', sliceId: LANE_COVERAGE_SLICE, lens: 'security', paths: wholePaths, work, _role: 'security-lane', _vars: { range: `${run.baseSha}..${run.headSha}`, diffPath: wholeDiff, snapshotDir: run.prepared.snapshotDir, sensitivePaths: run.sensitivePaths } };
     deadline(lane, work, 'the security lane');
     agents.push(lane);
   }
@@ -486,7 +531,7 @@ function buildReviewAgents(run, deps, ctx) {
     const rendered = deps.renderBrief(_role, _vars);
     const full = { ...record, briefPath, outPath };
     deps.fs.mkdirp(path.dirname(briefPath), 0o700);
-    deps.fs.writeAtomic(briefPath, `${rendered.replace(/\s*$/, '\n')}\n${S.reviewerContract(full)}`, 0o600);
+    deps.fs.writeAtomic(briefPath, `${rendered.replace(/\s*$/, '\n')}\n${S.reviewerContract(full, run.severityGuide)}`, 0o600);
     return full;
   });
 }
@@ -503,9 +548,10 @@ function dispatchWave(run, wave, now, deps, tracer) {
     agent.deadlineAt = deadline.deadlineAt;
     agent.deadlineAtIso = deadline.deadlineAtIso;
     agent.deadlineMinutes = deadline.minutes;
+    if (deadline.sizing !== undefined && deadline.sizing.floored === true) agent.deadlineFloored = true;
     agent.prompt = S.agentPrompt(agent);
     const stage = stageOfAgent(agent);
-    agent.spanId = tracer.start(stage, STAGE_KINDS[stage], { agent: agent.name, role: agent.role, round: run.round, wave: wave.wave });
+    agent.spanId = tracer.start(stage, STAGE_KINDS[stage], { agent: agent.name, role: agent.role, round: run.round, wave: wave.wave, ...(wave.refill === true ? { refill: true, cap: run.maxConcurrentAgents, running: wave.stillRunning.length } : {}) });
     dispatched.push(agent);
   }
   wave.status = 'dispatched';
@@ -519,13 +565,14 @@ function manifestOf(run, wave) {
     status: 'DISPATCH',
     runId: run.runId,
     round: wave.round,
-    wave: `${wave.wave} of ${wave.of}`,
+    wave: waveLabel(wave),
     headSha: run.headSha,
     mode: run.mode,
     ...(run.reReview === undefined ? {} : { reReview: run.reReview }),
     tier: run.tier,
     depth: { mode: run.depth.mode, reviewersPerSlice: run.depth.reviewersPerSlice, verifiersPerCandidate: run.depth.verifiersPerCandidate, bounds: run.depth.bounds },
     maxConcurrentAgents: run.maxConcurrentAgents,
+    ...(wave.refill === true ? { refill: true, stillRunning: wave.stillRunning } : {}),
     ...(wave.round === 'review' && run.sizing !== undefined ? { sizing: run.sizing } : {}),
     agents: wave.agents.map((a) => ({
       name: a.name,
@@ -537,13 +584,21 @@ function manifestOf(run, wave) {
       deadlineAt: a.deadlineAt,
       deadlineAtIso: a.deadlineAtIso,
       ...(a.deadlineMinutes === undefined ? {} : { deadlineMinutes: a.deadlineMinutes }),
+      ...(a.deadlineFloored === true ? { deadlineFloored: true } : {}),
       ...(a.work === undefined ? {} : { work: a.work }),
       ...(a.sliceId !== undefined && a.role === 'reviewer' ? { sliceId: a.sliceId, paths: a.paths } : {}),
       ...(a.candidateIds !== undefined ? { candidateIds: a.candidateIds } : {}),
     })),
+    ...(wave.round === 'verify' && run.priorRound !== undefined ? { carry: carryPlanOf(run) } : {}),
     next: `node review-run-cli.js collect  (payload {"repoRoot": ${JSON.stringify(run.repoRoot)}, "runId": ${JSON.stringify(run.runId)}})`,
     rules: run.mode && run.mode.mode === 'full' ? [...RULES, 'Full mode: when the review round is collected the runner answers TRIAGE, not a verify wave; follow its rules.'] : RULES,
   };
+}
+
+/** The verify round's plan in a delta round: how many verdicts were kept and how many candidates a verifier is asked about again. */
+function carryPlanOf(run) {
+  const carry = isObject(run.carry) ? run.carry : { carriedIds: [], reasons: ['no-carry-plan'] };
+  return { carried: carry.carriedIds.length, verified: run.candidates.length - carry.carriedIds.length, reasons: carry.reasons };
 }
 
 /** The span a dispatched agent is recorded under: `review.<role>`, the security lane being `review.security-lane`. */
@@ -641,6 +696,18 @@ async function prepareStages(input, deps, ctx) {
   // 3. prepare (snapshot, diffs, facts, baseline)
   const options = { repoRoot: input.repoRoot, runId, baseSha, headSha };
   for (const key of ['lastReviewedSha', 'remediationShas', 'stateRoot', 'testFiles', 'testCommand', 'baselineTimeoutMs', 'nodeModules']) if (input[key] !== undefined) options[key] = input[key];
+  // A re-review's previously reviewed head and base are what THIS runner recorded at `lastReviewedSha` (kata xb4j), never a
+  // caller's word: the state report and the run record that wrote it say so, or prepare is not told and the round is a full read.
+  const prior = input.lastReviewedSha === undefined ? null : D.priorRound({
+    read: (head) => (typeof deps.readState === 'function' ? deps.readState(statePath(input.pr, input.repoRoot), head) : null),
+    readRun: (id) => loadRunRecord(deps, input.repoRoot, id),
+    pr: input.pr,
+    lastReviewedSha: input.lastReviewedSha,
+  });
+  if (prior !== null && prior.ok === true) {
+    options.reviewedHeadSha = prior.state.reviewedHeadSha;
+    options.reviewedBaseSha = prior.state.baseSha;
+  }
   const prepared = await settle(() => deps.prepareReview(options));
   if (!isObject(prepared) || prepared.ok !== true) {
     return failure('RUN_FAILED', { reason: 'prepare-failed', error: isObject(prepared) ? `${prepared.reason || 'unknown'}: ${prepared.detail || ''}`.trim() : 'prepare returned nothing', stage: isObject(prepared) ? prepared.stage : undefined, precheck });
@@ -697,7 +764,14 @@ async function prepareStages(input, deps, ctx) {
     changedPaths: facts.changedPaths,
     numstat: facts.numstat,
     policy: isObject(facts.policy) && isObject(facts.policy.policy) ? facts.policy.policy : null,
+    // Whether the base policy was usable; ok:false names why every path is High (kata vhpf).
+    policyStatus: isObject(facts.policy) ? { ok: facts.policy.ok !== false, reason: facts.policy.ok === false ? facts.policy.reason || 'policy-untrusted' : null } : null,
     policyRejected: isObject(facts.policy) && Array.isArray(facts.policy.rejected) ? facts.policy.rejected : [],
+    // what the policy block SET (loadPolicy's `explicit`), apart from the defaults a loaded policy always holds
+    policyExplicit: isObject(facts.policy) && isObject(facts.policy.explicit) ? facts.policy.explicit : { deadlineMinutes: {} },
+    // the Severity bullets of REVIEW.md at the base (null: a cached prepare without them, or a REVIEW.md without the section)
+    severityGuide: isObject(facts.guidance) && typeof facts.guidance.severityGuide === 'string' ? facts.guidance.severityGuide : null,
+    severityGuideProblem: isObject(facts.guidance) && typeof facts.guidance.severityGuideProblem === 'string' ? facts.guidance.severityGuideProblem : null,
     sensitivePaths: isObject(facts.paths) && Array.isArray(facts.paths.sensitive) ? facts.paths.sensitive : [],
     phase: 'preparing',
     waves: [],
@@ -722,8 +796,25 @@ async function prepareStages(input, deps, ctx) {
   run.tier = tier;
   run.mode = mode;
   const isFull = mode.mode === 'full';
-  if (isFull) {
+  if (isFull || input.lastReviewedSha !== undefined) {
     run.reReview = F.planReReview({ lastReviewedSha: input.lastReviewedSha, rangeMode: prepared.mode, deltaPlan: facts.deltaPlan, delta: facts.delta, paths: facts.paths });
+    if (prior !== null && prior.ok !== true) run.reReview = { ...run.reReview, scope: run.reReview.scope === 'delta' ? 'full' : run.reReview.scope, reasons: [...run.reReview.reasons, `prior-round-unusable:${prior.reason}`] };
+  }
+  // A delta round reads the delta plan's read set, not the whole range (kata xb4j). Only when the run's own facts say delta AND
+  // the last round is on record, whole, with its verdicts; any other round reads everything, as every round did before.
+  run.allChangedPaths = facts.changedPaths;
+  let deltaRead = null;
+  if (run.reReview !== undefined && run.reReview.scope === 'delta' && prior !== null && prior.ok === true) {
+    const deltaText = typeof run.prepared.deltaDiff === 'string' ? deps.fs.readText(run.prepared.deltaDiff) : null;
+    const scope = D.deltaScope(facts, deltaText);
+    if (scope.ok === true) {
+      deltaRead = scope;
+      run.priorRound = { lastReviewedSha: input.lastReviewedSha, baseSha: prior.state.baseSha, runId: prior.runId, ledger: prior.state.ledger, verdicts: prior.state.verdicts };
+      run.carryFacts = D.carryFacts(facts);
+      run.changedPaths = scope.readPaths;
+    } else {
+      run.reReview = { ...run.reReview, scope: 'full', reasons: [...run.reReview.reasons, scope.reason] };
+    }
   }
 
   // 7-8. depth, then the slices from the size model (kata sfpb)
@@ -734,8 +825,13 @@ async function prepareStages(input, deps, ctx) {
   run.securityLane = isFull || SECURITY_REQUIRED_TIERS.includes(tier.tier) || SECURITY_REQUIRED_TIERS.includes(tier.effectiveTier) || mode.securityLane === true;
   const cap = run.policy && Number.isInteger(run.policy.maxConcurrentAgents) ? run.policy.maxConcurrentAgents : DEFAULT_MAX_CONCURRENT;
   run.maxConcurrentAgents = cap;
-  const sliced = planRunSlices(run, facts.numstat);
+  const sliced = planRunSlices(run, deltaRead === null ? facts.numstat : deltaRead.numstat);
   if (sliced.ok !== true) return failure('RUN_FAILED', { reason: 'slices-refused', error: sliced.reason, precheck });
+  if (deltaRead !== null) {
+    // What the same push would have cost as a full re-read, so the plan shows the saving it makes.
+    const whole = planRunSlices(run, facts.numstat);
+    run.reReview = { ...run.reReview, appliedRange: 'delta', delta: { lastReviewedSha: input.lastReviewedSha, changedPaths: deltaRead.changedPaths.length, readPaths: deltaRead.readPaths.length, agentsPlanned: agentCountOf(run, sliced), agentsFullRead: whole.ok === true ? agentCountOf(run, whole) : null, limits: D.deltaLimits({ lane: run.securityLane, reader: sliced.sizing.wholeRangeReader === true, triage: isFull }) } };
+  }
   run.slices = sliced.plan.slices;
   run.assignments = sliced.plan.reviewerAssignments;
   run.sliced = sliced.plan.sliced;
@@ -863,11 +959,12 @@ function processReview(run, deps, { deferVerification = false } = {}) {
     return headFiles.get(rel);
   };
   const linesOf = (rel) => (headFileOf(rel) === null ? null : headFileOf(rel).lines);
-  const diff = claimsPreExisting ? { index: readDiffIndex(deps, run.prepared.rangeDiff), changedPaths: run.changedPaths, snapshotDir, exists: (rel) => headFileOf(rel) !== null, lines: linesOf } : null;
+  const diff = claimsPreExisting ? { index: readDiffIndex(deps, run.prepared.rangeDiff), changedPaths: run.allChangedPaths || run.changedPaths, snapshotDir, exists: (rel) => headFileOf(rel) !== null, lines: linesOf } : null;
 
   const completed = [];
   const laneFindings = [];
-  let nextId = 0;
+  // a delta round's ids start after the prior ledger's, so a carried finding and a new one never share an id
+  let nextId = run.priorRound === undefined ? 0 : D.idSeed(run.priorRound.ledger);
   let nextLaneId = 0;
   for (const finding of raw) {
     const name = finding.reviewer;
@@ -893,7 +990,20 @@ function processReview(run, deps, { deferVerification = false } = {}) {
   const rangeFailure = unreviewed.get(RANGE_COVERAGE_SLICE) || null;
   const reviewedBy = agents.filter((a) => a.role === 'reviewer' && a.sliceId !== undefined && a.sliceId !== RANGE_COVERAGE_SLICE && !unreviewed.has(a.sliceId)).map((a) => ({ sliceId: a.sliceId, lens: a.lens, reviewer: a.name, paths: a.paths }));
   const coverage = verifyCoverage({ slices: run.slices, reviewedBy, mode: run.depth.mode, changedPaths: run.changedPaths });
-  run.coverage = { ok: coverage.ok, complete: coverage.ok === true && coverage.covered === true && rangeFailure === null, reviewedSlices: coverage.reviewedSlices || [], unreviewedSlices: [...(coverage.unreviewedSlices || run.slices.map((s) => s.id)), ...(rangeFailure === null ? [] : [RANGE_COVERAGE_SLICE])], uncovered: coverage.uncovered || run.changedPaths.slice(), detail: [...unreviewed.values()].filter((d) => d.sliceId !== LANE_COVERAGE_SLICE) };
+  // A coverage the module could not compute is never "nothing is unreviewed": `verifyCoverage` answers empty lists then, so the
+  // fallback to every slice and every path is decided here and not by `||` (an empty list is truthy).
+  const computed = coverage.ok === true;
+  run.coverage = {
+    ok: coverage.ok,
+    complete: computed && coverage.covered === true && rangeFailure === null,
+    reviewedSlices: coverage.reviewedSlices || [],
+    unreviewedSlices: [...(computed ? coverage.unreviewedSlices : run.slices.map((s) => s.id)), ...(rangeFailure === null ? [] : [RANGE_COVERAGE_SLICE])],
+    uncovered: computed ? coverage.uncovered : run.changedPaths.slice(),
+    underReviewed: computed ? coverage.underReviewed : [],
+    requiredLenses: computed ? coverage.requiredLenses : undefined,
+    ...(computed ? {} : { reason: coverage.reason }),
+    detail: [...unreviewed.values()].filter((d) => d.sliceId !== LANE_COVERAGE_SLICE),
+  };
 
   // the security lane: only a lane that arrived AND covered every changed path is ever `clean`
   const lane = agents.find((a) => a.name === LANE_NAME);
@@ -960,7 +1070,13 @@ function briefCandidates(run, deps, candidates) {
  * asks), is recorded in `run.unbriefable`, and stays in the ledger unverified, named and unmistakable (`buildLedger`).
  */
 function planVerifyRound(run, deps) {
-  const candidates = run.candidates;
+  // Every candidate is hashed at this head, so the verdict it settles can be carried by the next round (kata xb4j); in a
+  // delta round the candidates whose cited hunk and dependencies the push left alone keep the prior round's verdict and are
+  // not put to a verifier again.
+  run.hashed = D.hashCandidates(run, run.candidates, typeof deps.hashCitations === 'function' ? deps.hashCitations : null);
+  run.carry = run.priorRound === undefined ? null : D.planRunCarry(run, run.hashed);
+  const carriedIds = new Set(run.carry === null ? [] : run.carry.carriedIds);
+  const candidates = run.candidates.filter((candidate) => !carriedIds.has(String(candidate.id)));
   const k = run.depth.verifiersPerCandidate;
   run.unbriefable = [];
   run.verifyAgents = [];
@@ -995,6 +1111,46 @@ function addWaves(run, round, agents) {
   const groups = S.chunk(agents, run.maxConcurrentAgents);
   groups.forEach((group, index) => run.waves.push({ round, wave: index + 1, of: groups.length, status: 'planned', agents: group }));
 }
+
+/**
+ * Rolling verification (kata 630v). A verify round with more verifiers than the cap used to run in barrier waves: wave 2 was
+ * dispatched only when EVERY agent of wave 1 had arrived, so each wave lasted as long as its slowest verifier while the slots
+ * its faster verifiers freed stood idle (measured: 17 verifiers at cap 8, waves of 4.5, 5.0 and 1.9 minutes, 11.4 minutes for 49
+ * agent-minutes of work). Now, while some verifiers of the dispatched waves are still running, a `collect` that finds free slots
+ * dispatches the next planned verifiers into them, so the round lasts about its total work divided by the cap.
+ *
+ * What does not change: the plan. `run.verifyAgents` (which candidates each verifier is briefed with, K distinct verifiers per
+ * candidate, nobody verifying a finding they raised) was fixed before the first dispatch, and a refill only takes the next agents
+ * of that plan in order; briefs and deadlines are the agent's own (the deadline starts at ITS dispatch). The cap: agents still
+ * running (not arrived, not past their deadline, in any dispatched wave) plus the agents of the refill never exceed
+ * `maxConcurrentAgents`. The refill is at least a quarter of the cap (or all that is left), so the orchestrator is not asked
+ * for a manifest per freed slot. Review waves keep the barrier: their agents differ in kind and the lane is the longest.
+ *
+ * @param {Object} run
+ * @param {string[]} running  Names of the agents of the dispatched waves that have not arrived and are not past their deadline.
+ * @returns {Object|null}  the new wave (planned, to be emitted), or null when nothing is to be dispatched yet.
+ */
+function refillVerifyWave(run, running) {
+  const planned = run.waves.filter((w) => w.round === 'verify' && w.status === 'planned');
+  const free = run.maxConcurrentAgents - running.length;
+  if (planned.length === 0 || free < 1) return null;
+  const queue = planned.flatMap((w) => w.agents);
+  const batch = Math.min(queue.length, Math.max(1, Math.floor(run.maxConcurrentAgents / 4)));
+  if (free < batch) return null;
+  const take = queue.slice(0, free);
+  const rest = queue.slice(free);
+  // A wave already dispatched keeps its number and its total; the waves from here on are numbered on and carry no total (`of: null`):
+  // how many more there will be depends on when verifiers arrive.
+  run.waves = run.waves.filter((w) => !(w.round === 'verify' && w.status === 'planned'));
+  let number = run.waves.filter((w) => w.round === 'verify').length;
+  const refill = { round: 'verify', wave: (number += 1), of: null, status: 'planned', refill: true, stillRunning: [...running], agents: take };
+  run.waves.push(refill);
+  for (const group of S.chunk(rest, run.maxConcurrentAgents)) run.waves.push({ round: 'verify', wave: (number += 1), of: null, status: 'planned', agents: group });
+  return refill;
+}
+
+/** `1 of 3`; a wave of a rolling verify round has no total: `2 (rolling)`. */
+const waveLabel = (wave) => (wave.of === null || wave.of === undefined ? `${wave.wave} (rolling)` : `${wave.wave} of ${wave.of}`);
 
 /* ------------------------------------------------------------- finalisation */
 
@@ -1038,7 +1194,7 @@ function withUnbriefable(tally, findings, refused) {
   };
 }
 
-function buildLedger(run) {
+function buildLedger(run, deps) {
   const verifyWaves = run.waves.filter((w) => w.round === 'verify' && w.status === 'collected');
   const votes = verifyWaves.flatMap((w) => w.result.votes);
   const incompleteVerifiers = verifyWaves.flatMap((w) => w.result.incompleteVerifiers);
@@ -1046,28 +1202,62 @@ function buildLedger(run) {
   // The tally and the plan range over the candidates a verifier was asked about; the others (`run.unbriefable`) are never
   // given an assignment, a vote or a tally (a plan stored before they were planned out lists them too: it is read as if not).
   const refusals = new Map(run.unbriefable.map((u) => [String(u.id), u]));
-  const verifiable = run.candidates.filter((candidate) => !refusals.has(String(candidate.id)));
+  const carriedIds = new Set(run.carry === null || run.carry === undefined ? [] : run.carry.carriedIds);
+  // A carried candidate keeps the prior round's verdict: it is no one's to verify here, and its ledger entry is the prior one.
+  const fresh = run.candidates.filter((candidate) => !carriedIds.has(String(candidate.id)));
+  const verifiable = fresh.filter((candidate) => !refusals.has(String(candidate.id)));
   const planned = new Set(verifiable.map((candidate) => String(candidate.id)));
   const input = toVotesInput({ votes, incompleteVerifiers, agents, findings: [] }, { depth: run.depth.mode, expectedVerifiers: run.depth.verifiersPerCandidate, candidates: verifiable });
   if (input.ok === false) return { ok: false, reason: input.reason };
   const asked = tallyVotes({ findings: input.findings, depth: input.depth, expectedVerifiers: input.expectedVerifiers, assignment: run.assignment.filter((entry) => planned.has(String(entry.id))) });
   if (asked.ok !== true) return { ok: false, reason: `votes blocked: ${asked.reason}` };
   const byId = new Map(asked.findings.map((f) => [String(f.id), f]));
-  const findings = run.candidates.map((candidate) => (refusals.has(String(candidate.id)) ? unbriefableEntry(candidate, refusals.get(String(candidate.id))) : byId.get(String(candidate.id))));
-  const tally = refusals.size === 0 ? asked : withUnbriefable(asked, findings, refusals.size);
+  const findings = fresh.map((candidate) => (refusals.has(String(candidate.id)) ? unbriefableEntry(candidate, refusals.get(String(candidate.id))) : byId.get(String(candidate.id))));
+  const freshTally = refusals.size === 0 ? asked : withUnbriefable(asked, findings, refusals.size);
   // The ledger is every deduped candidate, unchanged, with its verification outcome UNDER `verification`: tally fields
   // such as `reason` would otherwise read as a ledger deferral reason.
-  const ledger = run.candidates.map((candidate, index) => {
+  const freshEntries = fresh.map((candidate, index) => {
     const t = findings[index];
     return { ...candidate, verification: { outcome: t.outcome, reason: t.reason, authorLabel: t.authorLabel, presented: t.presented, tally: t.tally, assigned: t.assigned, incompleteVerifiers: t.incompleteVerifiers, ignoredVotes: t.ignoredVotes, ...(t.unbriefable === undefined ? {} : { unbriefable: t.unbriefable }) } };
   });
-  return { ok: true, ledger, tally };
+  // What this round settled, for the next one to carry: the verdicts it carried and the ones it just recorded.
+  const verdicts = D.verdictRecords(run, asked.findings);
+  if (run.priorRound === undefined) return { ok: true, ledger: freshEntries, tally: freshTally, verdicts };
+  const carriedTally = Array.isArray(run.carry && run.carry.tally) ? run.carry.tally : [];
+  const composed = D.composeDeltaLedger(run, freshEntries, typeof deps.deriveCleared === 'function' ? deps.deriveCleared : null);
+  if (composed.ok !== true) return { ok: false, reason: composed.reason };
+  const tally = { ...freshTally, findings: [...freshTally.findings, ...carriedTally], presented: [...freshTally.presented, ...carriedTally.filter((entry) => entry.presented === true)] };
+  return { ok: true, ledger: composed.ledger, tally, verdicts, cleared: composed.cleared, notes: composed.notes };
 }
 
 function testsFact(baseline) {
   if (!isObject(baseline) || baseline.ran !== true || baseline.timedOut === true || !Number.isInteger(baseline.exitCode)) return undefined;
   const files = Array.isArray(baseline.files) ? baseline.files.length : 0;
   return { exitCode: baseline.exitCode, skipped: false, command: `relevant test files only (${files} file${files === 1 ? '' : 's'}), not the full suite: ${(baseline.command || []).join(' ')}` };
+}
+
+/**
+ * The run's coverage as the record the gate, the status and the operator's list read (`pr-review-coverage.js`, kata k48x), built
+ * from what the run stored: the unreviewed slices and the whole-range read, the paths nobody read and the paths read under too few
+ * lenses, with why each failed. A coverage the run could not compute is `unavailable`. A run that says `complete: false` and names
+ * nothing (one stored by an earlier version, which kept no `underReviewed`) is still incomplete: it names every changed path.
+ * Nothing here is a decision: it is a pure function of the run, so every `finalise` of one run (an adjudication included) answers
+ * the same coverage.
+ */
+function coverageOf(run) {
+  const covered = run.coverage;
+  return buildCoverage({
+    changedPaths: run.changedPaths,
+    slices: run.slices,
+    unreviewedSlices: covered.unreviewedSlices,
+    uncovered: covered.uncovered,
+    underReviewed: covered.underReviewed,
+    requiredLenses: covered.requiredLenses,
+    detail: covered.detail,
+    incomplete: covered.complete !== true,
+    origin: `review run ${run.runId}`,
+    ...(covered.ok === true ? {} : { unavailable: covered.reason || 'the coverage module refused its input' }),
+  });
 }
 
 /** One read, and ONE retry of it, before it is called unavailable. */
@@ -1131,8 +1321,9 @@ async function gateStage(run, built, deps, tracer) {
   const description = checkDescription({ body: head.pr.body, agentAuthored: run.agentAuthored });
   const policy = run.policy === null ? undefined : run.policy;
   const approvals = evaluateApprovals({ reviews, headSha: run.headSha, headTreeSha, tier: run.tier, policy, author: run.author, directedBy: description.directedBy || undefined, agentAuthored: run.agentAuthored });
-  const gate = evaluateGate({ ledger: built.ledger, approvals, tier: run.tier, description, security: run.security, headSha: run.headSha, policy, unavailable });
-  const disposition = buildDispositionChoices({ ledger: built.ledger, security: run.security, votes: built.tally, policy, headSha: run.headSha });
+  const coverage = coverageOf(run);
+  const gate = evaluateGate({ ledger: built.ledger, approvals, tier: run.tier, description, security: run.security, coverage, headSha: run.headSha, policy, unavailable });
+  const disposition = buildDispositionChoices({ ledger: built.ledger, security: run.security, coverage, votes: built.tally, policy, headSha: run.headSha });
   tracer.end(span, gate.mergeable === true ? 'ok' : 'blocked', { mergeable: gate.mergeable, blockers: gate.blockers.length });
   const gated = { ...gate, dispositionChoices: disposition.dispositionChoices, dispositionGroups: disposition.groups, mergeConfirmation: disposition.mergeConfirmation, ...(disposition.ok === true ? {} : { dispositionReason: disposition.reason }) };
   const protection = assessProtection(protectionRead, run.baseRefName, { required: approvals.humansRequired });
@@ -1155,6 +1346,10 @@ async function gateStage(run, built, deps, tracer) {
       reviewedHeadSha: run.headSha,
       ...(headTreeSha === undefined ? {} : { reviewedTreeSha: headTreeSha, headTreeSha }),
       findingCounts: { total: built.ledger.length, actionable, deferred },
+      // An incomplete coverage is not a complete review: the status is given the same record the gate was (and the policy that
+      // says who may decide a gap), so the local phase that publication is gated on can never rest on paths nobody read.
+      coverage,
+      ...(policy === undefined ? {} : { policy }),
       // No usable baseline (no relevant test files, a timed-out run, none at all) is a run that did not happen, never a
       // failure it did not have: recorded as skipped, so the status reads `tests skipped` and can never be complete.
       tests: tests === undefined ? { skipped: true, command: 'none: the baseline run produced no usable result (no relevant test files, a timed-out run or no run)' } : tests,
@@ -1166,7 +1361,7 @@ async function gateStage(run, built, deps, tracer) {
     tracer.end(verdictSpan, 'error', { error: msg(error) });
     throw error;
   }
-  return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection, unavailable, warnings, headState: head.pr.state, verdictSpan };
+  return { gate: gated, approvals, description, reviewStatus, headTreeSha, tests, protection, unavailable, warnings, headState: head.pr.state, verdictSpan, coverage };
 }
 
 function reducedReviewNotice(run, built, notReviewed, stage) {
@@ -1179,6 +1374,10 @@ function reducedReviewNotice(run, built, notReviewed, stage) {
     if (notReviewed.unreviewedPaths.length > 0) parts.push(`path(s) ${notReviewed.unreviewedPaths.join(', ')}`);
     lines.push(`NOT REVIEWED: ${parts.join('; ')}`);
   }
+  // The gate does not pass on an unread path: said here, where the report is read, as well as in the gate's blockers.
+  const gaps = stage.coverage.status === 'complete' ? [] : stage.coverage.gaps;
+  if (stage.coverage.status === 'unavailable') lines.push(`coverage UNAVAILABLE (${stage.coverage.reason}): the merge gate is not mergeable until the review is run again`);
+  else if (gaps.length > 0) lines.push(`the merge gate is NOT MERGEABLE on ${gaps.length} coverage gap(s) (${gaps.map((gap) => gap.id).join(', ')}) until the review is run again on this head or the operator accepts each with a recorded reason`);
   const sizing = isObject(run.sizing) ? run.sizing : null;
   if (sizing !== null && Array.isArray(sizing.warnings)) for (const warning of sizing.warnings) lines.push(`plan ${warning.code}: ${warning.message}`);
   const rangeDetail = isObject(run.coverage) && Array.isArray(run.coverage.detail) ? run.coverage.detail.find((d) => d.sliceId === RANGE_COVERAGE_SLICE) : undefined;
@@ -1210,6 +1409,7 @@ function notReviewedOf(run) {
   return {
     unreviewedSlices: run.coverage.unreviewedSlices,
     unreviewedPaths: run.coverage.uncovered,
+    underReviewedPaths: Array.isArray(run.coverage.underReviewed) ? run.coverage.underReviewed : [],
     incompleteVerifiers: verifyWaves.flatMap((w) => w.result.incompleteVerifiers),
     unbriefable: run.unbriefable,
     expiredAgents: agents.filter((a) => a.state !== 'arrived').map((a) => ({ name: a.name, role: a.role, state: a.state, reason: a.reason })),
@@ -1237,16 +1437,46 @@ async function finalise(run, built, deps, now, startedAt, tracer, extra) {
     return outcome;
   }
   tracer.end(stage.verdictSpan, 'ok', { status: isObject(stage.reviewStatus) ? stage.reviewStatus.status : undefined });
-  if (outcome.closesRoot) endRoot(tracer, run.rootSpanId, 'ok', { phase: 'done' });
+  if (outcome.closesRoot) endRoot(tracer, run.rootSpanId, 'ok', { phase: 'done', max_concurrent_agents: run.maxConcurrentAgents });
   return { answer: outcome.answer };
+}
+
+/**
+ * What the round carried and what it did not (kata xb4j): in the final answer and the state report. A round that read the whole
+ * range says `full-range`; a delta round says how many paths it read, how many verdicts it kept, how many candidates a verifier
+ * was asked about again, and what the push cleared.
+ */
+function carrySummaryOf(run) {
+  const info = isObject(run.verdictInfo) ? run.verdictInfo : { recorded: 0, skipped: [] };
+  const base = { appliedRange: 'full-range', carried: 0, reverified: Array.isArray(run.candidates) ? run.candidates.length : 0, recorded: info.recorded || 0, skipped: Array.isArray(info.skipped) ? info.skipped : [] };
+  if (run.priorRound === undefined) return base;
+  const carry = isObject(run.carry) ? run.carry : { carriedIds: [], unmatched: 0, reasons: ['no-carry-plan'] };
+  const delta = isObject(run.deltaLedger) ? run.deltaLedger : { cleared: [], notes: [] };
+  return {
+    ...base,
+    appliedRange: 'delta',
+    lastReviewedSha: run.lastReviewedSha,
+    readPaths: run.changedPaths.length,
+    carried: carry.carriedIds.length,
+    reverified: base.reverified - carry.carriedIds.length,
+    unmatchedPrior: carry.unmatched,
+    reasons: carry.reasons,
+    cleared: delta.cleared,
+    notes: delta.notes,
+    limits: run.reReview.delta.limits,
+  };
 }
 
 /** Records the verdict of a run: the state report, `final.json` and the run file. `{invalid, moved}` when the state report cannot be written. */
 async function recordFinal(run, built, stage, deps, now, startedAt, extra) {
+  // The verdicts and the delta's clearing are recorded once, by the build that made the ledger; an adjudication re-records them.
+  if (built.verdicts !== undefined) run.verdictInfo = built.verdicts;
+  if (built.cleared !== undefined) run.deltaLedger = { cleared: built.cleared, notes: built.notes || [] };
+  const carry = carrySummaryOf(run);
   const notReviewed = notReviewedOf(run);
   const adjudicate = S.adjudicateList(built.ledger);
   const reducedReview = reducedReviewNotice(run, built, notReviewed, stage);
-  const fullFields = run.mode.mode === 'full' ? { reReview: run.reReview, triage: run.triage } : {};
+  const fullFields = run.mode.mode === 'full' ? { reReview: run.reReview, triage: run.triage } : run.reReview === undefined ? {} : { reReview: run.reReview };
   const state = {
     ...stage.reviewStatus,
     prId: run.pr,
@@ -1257,6 +1487,9 @@ async function recordFinal(run, built, stage, deps, now, startedAt, extra) {
     verification: { verification: built.tally.verification, reason: built.tally.reason, recoveryAction: built.tally.recoveryAction },
     reducedReview,
     ledger: built.ledger,
+    // What the next round may carry (kata xb4j): the settled verdicts, each bound to the hunk and dependency hashes of this head.
+    verdicts: isObject(run.verdictInfo) ? run.verdictInfo.verdicts : [],
+    carry,
     security: run.security,
     notReviewed,
     gate: { mergeable: stage.gate.mergeable, blockers: stage.gate.blockers },
@@ -1284,6 +1517,7 @@ async function recordFinal(run, built, stage, deps, now, startedAt, extra) {
     gate: stage.gate,
     reviewStatus: stage.reviewStatus,
     ledger: built.ledger,
+    carry,
     votes: { verification: built.tally.verification, reason: built.tally.reason, recoveryAction: built.tally.recoveryAction, outcomes: built.tally.findings.map((f) => ({ id: f.id, outcome: f.outcome, reason: f.reason, authorLabel: f.authorLabel, tally: f.tally })) },
     security: run.security,
     coverage: { complete: run.coverage.complete && run.security.status !== 'not-run', unreviewedSlices: run.coverage.unreviewedSlices, uncovered: run.coverage.uncovered },
@@ -1363,6 +1597,7 @@ function triageManifest(run, deps) {
       return { id: c.id, locationOrLink: c.locationOrLink, severity: c.severity, failureMode: c.failureMode, source: c.source, ...(refusal === undefined ? {} : { unbriefable: { kind: refusal.kind, ...(refusal.input === undefined ? {} : { input: refusal.input }), reason: refusal.reason } }) };
     }),
     coverage: { complete: run.coverage.complete, unreviewedSlices: run.coverage.unreviewedSlices, uncovered: run.coverage.uncovered },
+    // the TRIAGE step reads the WHOLE range in a delta round too (like the lane and the whole-range reader)
     rangeDiff: isObject(run.prepared) && typeof run.prepared.rangeDiff === 'string' ? run.prepared.rangeDiff : null,
     slices: Array.isArray(run.slices) ? run.slices.map((slice) => ({ id: slice.id, paths: slice.paths })) : [],
     security: { status: run.security.status, findings: run.security.findings.length, ...(run.security.reason === undefined ? {} : { reason: run.security.reason }) },
@@ -1403,7 +1638,7 @@ function triageStep(run, input, deps, tracer, startedAt, now) {
     }
   }
 
-  const used = run.candidates.flatMap((c) => [c.id, ...(Array.isArray(c.mergedFrom) ? c.mergedFrom.map((m) => m.id) : [])]);
+  const used = [...run.candidates, ...(run.priorRound === undefined ? [] : run.priorRound.ledger)].flatMap((c) => [c.id, ...(Array.isArray(c.mergedFrom) ? c.mergedFrom.map((m) => m.id) : [])]);
   const top = used.map((id) => /^f(\d+)$/.exec(String(id))).filter((m) => m !== null).map((m) => Number(m[1]));
   const first = Math.max(0, ...top) + 1;
   const entries = validated.additional.map((raw, index) => S.completeFinding(raw, F.ORCHESTRATOR, `f${first + index}`));
@@ -1457,7 +1692,7 @@ async function collectRun(input, deps) {
   const answer = await collectStages(input, deps, ctx);
   const { run, tracer } = ctx;
   if (run !== null && run.rootSpanId !== null && run.rootSpanId !== undefined && run.rootEnded !== true && TERMINAL_PHASES.includes(run.phase)) {
-    endRoot(tracer, run.rootSpanId, run.phase === 'done' ? 'ok' : 'error', { phase: run.phase });
+    endRoot(tracer, run.rootSpanId, run.phase === 'done' ? 'ok' : 'error', { phase: run.phase, max_concurrent_agents: run.maxConcurrentAgents });
     run.rootEnded = true;
     try {
       saveRun(deps, run);
@@ -1532,23 +1767,33 @@ async function collectStages(input, deps, ctx) {
     if (triaged !== null) return triaged;
   }
 
-  // ---- 2. the outstanding wave
-  const wave = run.waves.find((w) => w.status === 'dispatched');
-  if (wave !== undefined) {
+  // ---- 2. the outstanding waves. Exactly one, except in the verify round, where a wave may be dispatched while agents of an
+  // earlier one are still running (refillVerifyWave).
+  const outstanding = run.waves.filter((w) => w.status === 'dispatched');
+  const waiting = [];
+  for (const wave of outstanding) {
     const collected = await settle(() => deps.collectResults({ expected: expectedOf(wave), dir: path.join(runDirOf(run.repoRoot, run.runId), 'results', wave.round), now }));
     if (!isObject(collected) || !Array.isArray(collected.agents)) {
       return failure('RUN_FAILED', { reason: 'collect-refused', error: isObject(collected) ? collected.reason || collected.error : 'no answer', runId: run.runId });
     }
     const pending = collected.agents.filter((a) => a.pending === true);
     if (pending.length > 0) {
-      const earliest = Math.min(...pending.map((a) => a.deadlineAt));
-      logCall(run, 'collect', startedAt, deps);
-      saveRun(deps, run);
-      return { ok: true, status: 'PENDING', runId: run.runId, round: wave.round, wave: `${wave.wave} of ${wave.of}`, waitingOn: pending.map((a) => a.name), retryAfterMs: Math.max(1000, Math.min(15000, earliest - now)), earliestDeadlineAt: earliest, earliestDeadlineAtIso: new Date(earliest).toISOString() };
+      waiting.push({ wave, pending });
+      continue;
     }
     recordWave(run, wave, collected, now, tracer, deps);
-    saveRun(deps, run);
   }
+  if (waiting.length > 0) {
+    const running = waiting.flatMap((entry) => entry.pending);
+    const refill = outstanding.every((w) => w.round === 'verify') ? refillVerifyWave(run, running.map((a) => a.name)) : null;
+    if (refill !== null) return emit(run, refill, deps, tracer, startedAt, now);
+    const first = waiting[0].wave;
+    const earliest = Math.min(...running.map((a) => a.deadlineAt));
+    logCall(run, 'collect', startedAt, deps);
+    saveRun(deps, run);
+    return { ok: true, status: 'PENDING', runId: run.runId, round: first.round, wave: waveLabel(first), waitingOn: running.map((a) => a.name), retryAfterMs: Math.max(1000, Math.min(15000, earliest - now)), earliestDeadlineAt: earliest, earliestDeadlineAtIso: new Date(earliest).toISOString() };
+  }
+  if (outstanding.length > 0) saveRun(deps, run);
 
   // ---- 3. what comes next: another planned wave, the verify round, or the end
   const next = run.waves.find((w) => w.status === 'planned');
@@ -1572,7 +1817,7 @@ async function collectStages(input, deps, ctx) {
     saveRun(deps, run);
   }
 
-  const built = buildLedger(run);
+  const built = buildLedger(run, deps);
   if (built.ok !== true) return terminate(run, 'failed', failure('RUN_FAILED', { reason: 'ledger-refused', error: built.reason, runId: run.runId }), 'collect', startedAt, deps);
   const validation = validateLedger(built.ledger);
   if (validation.ok !== true) return terminate(run, 'failed', failure('RUN_FAILED', { reason: 'ledger-unusable', error: `findings fail validation: ${validation.offendingIds.join(', ')}`, runId: run.runId }), 'collect', startedAt, deps);

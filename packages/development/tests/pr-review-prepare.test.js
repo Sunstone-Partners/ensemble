@@ -37,7 +37,7 @@ const POLICY_RELAXED = '# Review\n\n```ensemble-review-policy\n{"sensitivePaths"
  * base -> reviewed (R) -> head (H): R changes lib/thing.js; H is a remediation commit that changes it again and adds
  * awkward names, a binary file, a rename and a relaxed REVIEW.md. `refs/heads/pr` points at H.
  */
-function makeFixture({ extra = {} } = {}) {
+function makeFixture({ extra = {}, headReview = POLICY_RELAXED } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prepare-fixture-'));
   roots.push(root);
   git(root, ['init', '-q', '-b', 'main']);
@@ -61,7 +61,7 @@ function makeFixture({ extra = {} } = {}) {
   write(root, '\u00fcn\u00ef/caf\u00e9.txt', 'unicode\n');
   fs.writeFileSync(path.join(root, 'blob.bin'), Buffer.from([0, 1, 2, 0, 255]));
   git(root, ['mv', 'lib/old-name.js', 'lib/new-name.js']);
-  write(root, 'REVIEW.md', POLICY_RELAXED);
+  write(root, 'REVIEW.md', headReview);
   write(root, 'tests/thing.test.js', "const test = require('node:test');\nconst assert = require('node:assert');\nconst fs = require('fs');\ntest('thing', () => { fs.writeFileSync('written-by-test.txt', 'x'); assert.strictEqual(require('../lib/thing.js')(), 'v2'); });\n");
   git(root, ['add', '-A']);
   git(root, ['commit', '-q', '-m', 'remediation']);
@@ -392,6 +392,34 @@ describe('delta.diff is absent with a reason unless review-range says delta (AC4
   });
 });
 
+describe('the severity guide comes from the BASE REVIEW.md, never from the head (kata yg7k)', () => {
+  const sev = (word) => `## Severity\n\n- **Important** \u2014 ${word}-important.\n- **Nit** \u2014 ${word}-nit.\n- **Pre-existing** \u2014 ${word}-pre.\n\n`;
+  const factsOfFixture = (fx) => {
+    const r = prepareReview(opts(fx, { lastReviewedSha: undefined, remediationShas: undefined }));
+    return JSON.parse(fs.readFileSync(r.artifacts['facts.json'].path, 'utf8'));
+  };
+
+  it('a head whose REVIEW.md rewrites the Severity section does not steer: the guide is the base\'s', () => {
+    const fx = makeFixture({ extra: { 'REVIEW.md': `${sev('base')}${POLICY_BASE}` }, headReview: `${sev('head')}${POLICY_RELAXED}` });
+    const facts = factsOfFixture(fx);
+    expect(facts.guidance.severityGuide).toContain('base-important.');
+    expect(facts.guidance.severityGuide).not.toContain('head-');
+    expect(facts.guidance.severityGuideProblem).toBeNull();
+  });
+
+  it('a head that ADDS a Severity section to a base without one does not steer either: the problem is named and no guide is carried', () => {
+    const fx = makeFixture({ headReview: `${sev('head')}${POLICY_RELAXED}` });
+    const facts = factsOfFixture(fx);
+    expect(facts.guidance.severityGuide).toBeNull();
+    expect(facts.guidance.severityGuideProblem).toBe('severity-section-missing');
+  });
+
+  it('a base REVIEW.md with a malformed section names why', () => {
+    const facts = factsOfFixture(makeFixture({ extra: { 'REVIEW.md': `## Severity\n\n- **Important:** a.\n\n${POLICY_BASE}` } }));
+    expect(facts.guidance).toMatchObject({ severityGuide: null, severityGuideProblem: 'severity-bullets-malformed' });
+  });
+});
+
 describe('facts.json', () => {
   it('reads policy and CODEOWNERS from the BASE commit, never the head that relaxed them', () => {
     const fx = makeFixture({ extra: { '.github/CODEOWNERS': 'lib/** @team/core\n' } });
@@ -406,6 +434,56 @@ describe('facts.json', () => {
     expect(facts.tierInputs.paths).toEqual(facts.paths);
     expect(facts.tierInputs.kinds).toBeNull();
     expect(facts).toMatchObject({ baseSha: fx.base, headSha: fx.head, range: { mode: 'full' } });
+  });
+
+  describe('an untrusted policy never lowers the tier (kata vhpf)', () => {
+    const STALE = '# Review\n\n```ensemble-review-policy\n{"sourceSha":"4c1639e0000000000000000000000000000000aa","highPaths":["lib/**"]}\n```\n';
+    const factsOf = (fx) => JSON.parse(fs.readFileSync(prepareReview(opts(fx, { lastReviewedSha: undefined, remediationShas: undefined })).artifacts['facts.json'].path, 'utf8'));
+
+    it('a stale sourceSha in the base REVIEW.md: every changed path is High, with the reason named', () => {
+      const facts = factsOf(makeFixture({ extra: { 'REVIEW.md': STALE } }));
+      expect(facts.policy).toMatchObject({ ok: false, reason: 'policy-not-from-base', source: 'defaults' });
+      expect(facts.paths.ok).toBe(true);
+      expect(facts.paths.high.sort()).toEqual(facts.changedPaths.slice().sort());
+      expect(facts.paths.high).toContain('lib/thing.js');
+      expect(facts.paths.warnings).toContain('policy-untrusted-all-high:policy-not-from-base');
+      expect(facts.paths.paths.every((p) => p.high && p.highMatchedBy === 'policy-untrusted:policy-not-from-base')).toBe(true);
+    });
+    it('an unparseable policy block fails up the same way', () => {
+      const bad = '# Review\n\n```ensemble-review-policy\n{not json\n```\n';
+      const facts = factsOf(makeFixture({ extra: { 'REVIEW.md': bad } }));
+      expect(facts.paths.high.length).toBe(facts.changedPaths.length);
+      expect(facts.paths.warnings).toContain('policy-untrusted-all-high:policy-unparseable');
+    });
+    it('a trusted policy keeps its own highPaths and is not untrusted', () => {
+      const good = '# Review\n\n```ensemble-review-policy\n{"highPaths":["lib/**"]}\n```\n';
+      const facts = factsOf(makeFixture({ extra: { 'REVIEW.md': good } }));
+      expect(facts.policy.ok).toBe(true);
+      expect(facts.paths.high).toContain('lib/thing.js');
+      expect(facts.paths.high).not.toContain('a b.txt');
+      expect(facts.paths.warnings.some((w) => w.startsWith('policy-untrusted'))).toBe(false);
+    });
+    it('a base with NO REVIEW.md is the documented defaults, never untrusted: no High path, no policy-untrusted warning', () => {
+      const fx = makeFixture();
+      git(fx.root, ['rm', '-q', '--cached', 'REVIEW.md']);
+      git(fx.root, ['commit', '-q', '-m', 'drop review']);
+      const nextBase = git(fx.root, ['rev-parse', 'HEAD']);
+      write(fx.root, 'x.txt', 'x\n');
+      git(fx.root, ['add', 'x.txt']);
+      git(fx.root, ['commit', '-q', '-m', 'more']);
+      const head = git(fx.root, ['rev-parse', 'HEAD']);
+      const r = prepareReview(opts(fx, { baseSha: nextBase, headSha: head, headRef: undefined, lastReviewedSha: undefined, remediationShas: undefined }));
+      const facts = JSON.parse(fs.readFileSync(r.artifacts['facts.json'].path, 'utf8'));
+      expect(facts.policy).toMatchObject({ ok: true, source: 'defaults' });
+      expect(facts.paths.high).toEqual([]);
+      expect(facts.paths.warnings.some((w) => w.startsWith('policy-untrusted'))).toBe(false);
+    });
+    it('a REVIEW.md with no policy fence is the defaults too, never untrusted', () => {
+      const facts = factsOf(makeFixture({ extra: { 'REVIEW.md': '# Review\n\nprose only, no fence\n' } }));
+      expect(facts.policy).toMatchObject({ ok: true, source: 'defaults' });
+      expect(facts.paths.high).toEqual([]);
+      expect(facts.paths.warnings.some((w) => w.startsWith('policy-untrusted'))).toBe(false);
+    });
   });
 
   it('a base with no REVIEW.md yields the defaults, said so, not an error', () => {
