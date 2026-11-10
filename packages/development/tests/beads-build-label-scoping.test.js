@@ -24,9 +24,10 @@
  *
  * Step 3b therefore HALTs in exactly two cases -- tracker.list unavailable (the scope cannot be
  * verified at all) and no bead carrying the label (an unrecognized label, where dispatching
- * would run the repo-wide plan) -- and otherwise drops the out-of-label ids and dispatches what
- * remains. A plan with nothing left in-label is zero actionable tracks, which Step 7 already
- * reports as blocked; it is not a HALT.
+ * would run the repo-wide plan) -- and otherwise truncates every track at its first out-of-label
+ * id (that id and every id after it are dropped, never the out-of-label id alone: a later in-label
+ * bead may depend on the dropped one) and dispatches what remains. A plan with nothing left
+ * in-label is zero actionable tracks, which Step 7 already reports as blocked; it is not a HALT.
  */
 
 const fs = require('fs');
