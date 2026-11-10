@@ -497,11 +497,17 @@ counted: the verdict never uses the later file. The security lane and the whole-
 the next `collect` re-finalises: the answer says `restated: {reason: 'result-changed-after-read', agents, previous: {status,
 mergeable}, at}`, the state report and `final.json` are rewritten with the gap, and every later replay is that answer again. A
 restate is not an adjudication call (`metrics.adjudicationCalls` does not count it). A run never repeats a `mergeable: true`
-it can no longer vouch for.
+it can no longer vouch for. That replay re-derives the gate from the live reviews, branch protection and PR body, not from the stored
+answer, so its blocker set can differ from the stored answer's (a blocker that has since cleared is gone) and an earlier accept is
+not carried into it: `restated` names only the result change.
 
 **A delta re-review.** A round that ends with a changed result is not a base for the next delta: a recorded
 `notReviewed.changedResults` that is not an empty list is `prior-round-unusable:state-round-incomplete`, and that re-review reads
-the whole range. **A refused look.** A collector answer that does not account for every agent of a wave (a request it refused)
+the whole range. `prepare` also looks at the last round's result files again before it carries their verdicts (read-only: the prior
+run is not restated or rewritten): an arrived result whose bytes differ from what that run read, including one rewritten after the
+run finished and before any `collect` saw it, is `prior-round-unusable:prior-result-changed:<agents>` and the re-review reads the
+whole range. A state report written before this change has no `changedResults`, so the first delta re-review of each in-flight PR
+is a full re-review once. **A refused look.** A collector answer that does not account for every agent of a wave (a request it refused)
 is `RUN_FAILED` with reason `collect-refused`, at the round, at a later look and at a replay: an empty answer is never read as
 "nothing to report".
 

@@ -653,4 +653,34 @@ describe('a result file rewritten in a delta round (kata 271n)', () => {
     expect(next.code).toBe(0);
     expect(next.out.reReview).toMatchObject({ scope: 'full', appliedRange: 'full-range', reasons: expect.arrayContaining([expect.stringMatching(/^prior-round-unusable:state-round-incomplete/)]) });
   });
+
+  // The planner carries the last round's stored verdicts after checking the stored state report. A result file of that run that was
+  // rewritten after the run finished and before any collect saw it is in no state report: prepare looks at the files again.
+  test.each([
+    ['a verifier', 'pcv', (first) => first.verify.agents[0]],
+    ['a reviewer', 'pcr', (first) => first.prepare.agents.find((agent) => agent.name === 'reviewer-s1-a')],
+  ])('%s of the last round rewrites its result file after that run finished: the next re-review refuses to carry the round (named reason, whole range read, nothing carried) and leaves the prior run as it was', (_label, id, pick) => {
+    const first = firstRound(`${id}1`);
+    const agent = pick(first);
+    const finalFile = path.join(fx.work, '.ensemble', 'pr-review', 'run', `${id}1`, 'final.json');
+    const stored = fs.readFileSync(finalFile, 'utf8');
+    // the agent was not finished after all: a different file appears after the run finished
+    writeResult(agent, agent.role === 'verifier' ? { votes: agent.candidateIds.map((candidate) => ({ candidateId: candidate, verdict: 'not-real', evidence: 'changed my mind' })) } : { findings: [], pathsReviewed: agent.paths });
+    const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, `fix-${id}`);
+    const p = prep(`${id}2`, { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p.code).toBe(0);
+    expect(p.out.reReview).toMatchObject({ scope: 'full', appliedRange: 'full-range', reasons: expect.arrayContaining([`prior-round-unusable:prior-result-changed:${agent.name}`]) }); // before: a delta that carried the stored verdicts, saying nothing
+    expect(p.out.agents).toHaveLength(8); // the whole range, as a first review reads it
+    expect(fs.readFileSync(finalFile, 'utf8')).toBe(stored); // read-only on the prior run: not restated, not rewritten by a prepare
+  });
+
+  test('a result file of the last round rewritten with the same bytes is no change: the re-review is still a delta', () => {
+    const first = firstRound('pct1');
+    const agent = first.verify.agents[0];
+    writeResult(agent, { votes: agent.candidateIds.map((candidate) => ({ candidateId: candidate, verdict: 'real', evidence: 'read it' })) }); // exactly what answerVotes wrote
+    const head2 = push(fx.head1, { 'med/a02.js': edited(1, 'FIXED') }, 'fix-pct');
+    const p = prep('pct2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p.code).toBe(0);
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta' });
+  });
 });

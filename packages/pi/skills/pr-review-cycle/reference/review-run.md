@@ -271,7 +271,7 @@ reasoning, and why a rewrite or a re-run of the reviewer was not chosen, is in `
   (the 5x target is not claimed for it). Measuring it is kata `q3a9`'s job, not this runner's.
 * Triage is a model judgement, but it can only add candidates, and what it adds is verified by fresh-context verifiers
   that never see its reasoning; it never removes, grades or closes anything, and never sets a verdict.
-* Call `collect` one at a time per run: the run file has no lock, and two overlapping calls can each emit the next wave.
+* Call `collect` one at a time per run: the run file has no lock, and two overlapping calls can each emit the next wave. The same holds for a `collect` and a replay racing on a finished run, and the fields kata `271n` added (`agent.read`, `resultChanges`, `rereads`) raise the cost of an entry lost that way.
 * A finished run's stored answer is as of its finalise: a repeat `collect` re-reads only the head and the PR's open
   state, so the approvals, branch protection and `mergeable` it holds can be out of date. Start a new run for a
   current verdict.
@@ -289,7 +289,12 @@ reasoning, and why a rewrite or a re-run of the reviewer was not chosen, is in `
   replay (kata `271n`): the runner cannot know an agent has finished, so a rewrite is flagged (or, while the round is open,
   re-read), never prevented, and collecting before the agents finish is the dispatcher's error. The comparison is on bytes, not on
   what the votes mean; a deleted file is only a notice; a change after the call that finalised the run is seen by the next
-  `collect` only. A round that ends with a changed result is no base for a delta re-review. The rules are in
+  `collect` only. A round that ends with a changed result is no base for a delta re-review, and `prepare` looks at the last round's
+  result files again before it carries their verdicts (a file whose bytes differ from what that run read is
+  `prior-round-unusable:prior-result-changed:<agents>`, a full re-review; the prior run is not restated or rewritten). A state report
+  written before this change has no `changedResults`, so the first delta re-review of each in-flight PR is a full re-review once. A
+  restated replay re-derives the gate from the live reviews, branch protection and PR body, so its blocker set can differ from the
+  stored answer's and an earlier accept is not carried into it (`restated` names only the result change). The rules are in
   `docs/guides/pr-review-run.md`, "Result files that change after they were read".
 
 Guide with a worked example: `docs/guides/pr-review-run.md`.

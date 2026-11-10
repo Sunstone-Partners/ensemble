@@ -714,12 +714,19 @@ async function prepareStages(input, deps, ctx) {
   for (const key of ['lastReviewedSha', 'remediationShas', 'stateRoot', 'testFiles', 'testCommand', 'baselineTimeoutMs', 'nodeModules']) if (input[key] !== undefined) options[key] = input[key];
   // A re-review's previously reviewed head and base are what THIS runner recorded at `lastReviewedSha` (kata xb4j), never a
   // caller's word: the state report and the run record that wrote it say so, or prepare is not told and the round is a full read.
-  const prior = input.lastReviewedSha === undefined ? null : D.priorRound({
+  let prior = input.lastReviewedSha === undefined ? null : D.priorRound({
     read: (head) => (typeof deps.readState === 'function' ? deps.readState(statePath(input.pr, input.repoRoot), head) : null),
     readRun: (id) => loadRunRecord(deps, input.repoRoot, id),
     pr: input.pr,
     lastReviewedSha: input.lastReviewedSha,
   });
+  // kata 271n: the stored report says nothing of a result file rewritten after that run finished (no collect saw it). Look at the run's
+  // files again, read-only, before any verdict of it is carried: a file that differs from what the run read makes the round no base.
+  if (prior !== null && prior.ok === true) {
+    const priorRun = loadRunRecord(deps, input.repoRoot, prior.runId);
+    const changed = isObject(priorRun) ? await priorResultsChanged(priorRun, deps) : ['unreadable'];
+    if (changed.length > 0) prior = { ok: false, reason: `prior-result-changed:${changed.join(',')}` };
+  }
   if (prior !== null && prior.ok === true) {
     options.reviewedHeadSha = prior.state.reviewedHeadSha;
     options.reviewedBaseSha = prior.state.baseSha;
@@ -1119,6 +1126,31 @@ async function lookAgain(run, deps, now, { rounds = ['review', 'verify'], consum
     }
   }
   return outcome;
+}
+
+/**
+ * The agents of a PRIOR run whose result file holds other bytes than the run read (kata 271n). The delta planner carries a finished
+ * round's stored verdicts after checking its state report; a result file rewritten after that run finished, and before any collect saw
+ * it, is in no state report, so `prepare` looks at the files again before it carries anything. A round whose results changed counted
+ * the first versions: its verdicts may miss a vote or a finding and are not carried (the re-review reads the whole range). READ-ONLY on
+ * the prior run: it is not restated and nothing of it is rewritten here. A file that is gone is no change (the run kept what it read);
+ * a collector that cannot answer for every agent is `unreadable`: a round that cannot be looked at is not carried.
+ *
+ * @returns {Promise<string[]>}  the agents whose result changed (`unreadable` when the round could not be looked at); empty when none did
+ */
+async function priorResultsChanged(prior, deps) {
+  const changed = [];
+  for (const wave of Array.isArray(prior.waves) ? prior.waves : []) {
+    if (wave.status !== 'collected' || !Array.isArray(wave.agents) || !wave.agents.some((agent) => agent.state === 'arrived')) continue;
+    const asked = Math.max(deps.now(), Number.isFinite(wave.collectedAt) ? wave.collectedAt : 0);
+    const collected = await settle(() => deps.collectResults({ expected: expectedOf(wave), dir: resultDirOf(prior, wave), now: asked }));
+    if (!isObject(collected) || !Array.isArray(collected.agents) || collected.agents.length !== wave.agents.length) return ['unreadable'];
+    for (const record of collected.agents) {
+      const agent = wave.agents.find((candidate) => candidate.name === record.name);
+      if (agent !== undefined && agent.state === 'arrived' && isObject(record.changed) && record.changed.kind !== 'removed') changed.push(agent.name);
+    }
+  }
+  return changed;
 }
 
 /** Everything after the review round: complete and dedupe the findings, the lane, the coverage, the verification plan. */
