@@ -211,9 +211,13 @@ describe('bundleCodeFiles', () => {
       // The walk must follow a symlinked directory: packages/full is built out of them,
       // and a dirent for one reports itself as a link rather than a directory.
       fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'linked'));
+      // The root is not the only link: one inside the walked tree is followed too. `nested` is a
+      // real directory, so a walk that asked the dirent (isDirectory()) would still find b.js
+      // through it; only a walk that stats through the link also finds it through `nested-link`.
+      fs.symlinkSync(path.join(dir, 'real', 'nested'), path.join(dir, 'real', 'nested-link'));
 
       const found = bundleCodeFiles(path.join(dir, 'linked')).map(f => path.basename(f)).sort();
-      expect(found).toEqual(['a.js', 'b.js']);
+      expect(found).toEqual(['a.js', 'b.js', 'b.js']);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
