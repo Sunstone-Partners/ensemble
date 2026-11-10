@@ -39,7 +39,7 @@ The 5x claim stays `unknown` (`fiveX.claim`): three strata unknown and no high-t
 
 **Delta and carry (section 6).** Not exercised. The re-review's `prepare` answered `full`: the first round had 3 of 12 verifiers expire at their deadline, and a delta base must hold no incomplete verifier. `carried` is 0.
 
-Everything unmet or defective is a kata issue under `ptqb` (section 8): `dx53`, `p5dt`, `271n`, `6n0y` are new; `630v`, `yg7k`, `xb4j`, `d9sy` carry this evidence. Orchestrator turns are MISSING (no span records them); the runner's lower bounds are 20, 17 and 10.
+Everything unmet or defective is a kata issue (section 8). Status after this measurement (owner decision): `271n` was fixed and merged (#287, `d90faa5`, after this measurement: the figures here were taken on `aea0b19` and do not include it); `dx53`, `p5dt`, `6n0y` were detached from the epic and stay open as standalone follow-ups; `630v`, `yg7k`, `xb4j`, `d9sy` carry this evidence. Orchestrator turns are MISSING (no span records them); the runner's lower bounds are 20, 17 and 10.
 
 ## 1. Read this first: the cohort mismatch
 
@@ -204,7 +204,7 @@ What a faithful High delta measurement needs: a first round with no expired veri
 5. **Fixture.** Scratch PR 286 (draft, `[scratch measurement, do not merge]`, no label) and its branch `scratch/measure-229` were **closed and deleted (remote and local) after the last run**; its worktree was removed. `ensemble.prs-measure` (branch `feat/prs-measure`, this PR) remains, with gitignored `node_modules` and run state.
 6. **One agent reported a harness notice in a tool result as a tool issue** (the security lane of the Medium run). It did not change any finding.
 
-## 8. Kata issues (all under `ptqb`, label `pr-review-speedup`; none closed or relabelled)
+## 8. Kata issues (as filed by the measurement, all under `ptqb`, label `pr-review-speedup`; status as of the owner's decision: `271n` closed by #287, `dx53`, `p5dt`, `6n0y` detached from the epic and open, the rest open with this evidence)
 
 | Issue | Priority | What |
 |---|---|---|
@@ -219,8 +219,8 @@ What a faithful High delta measurement needs: a first round with no expired veri
 
 ## 9. What next (the owner decides)
 
-1. Fix `dx53` and `p5dt` first: both change what the next numbers mean (a first round with no expired verifier is the precondition of every delta and carry measurement).
-2. Make `271n` safe before the next recall scoring: a vote or a finding can be lost silently.
+1. `dx53` and `p5dt` (standalone, open): both change what the next numbers mean (a first round with no expired verifier is the precondition of every delta and carry measurement).
+2. `271n` is fixed (#287, merged after this measurement; not re-measured). Follow-ups from its review are in kata `1r7k`.
 3. Repeat the AFTER measurement on re-created #228 and #225 (owner approval needed) and another real or re-created High PR so each stratum holds three PRs; only then can `compare` say MET or NOT MET.
 4. For a carry, choose a fix push that touches a file no cited file depends on.
 
