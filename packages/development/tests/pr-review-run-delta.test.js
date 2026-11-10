@@ -4,7 +4,8 @@
 
 const {
   priorRound, deltaScope, idSeed, hashCandidates, planRunCarry, deltaLimits, composeDeltaLedger, reverifyPrior, leftoverUnverified, withLastRoundUnverified,
-  lastRoundUnverified, NOT_REVIEWED_LISTS, UNREAD_LISTS, VERIFIER_LISTS,
+  lastRoundUnverified,
+  lacksVerifier, NOT_REVIEWED_LISTS, UNREAD_LISTS, VERIFIER_LISTS,
 } = require('../lib/pr-review-run-delta');
 
 const HEAD = 'a'.repeat(40);
@@ -131,6 +132,19 @@ describe('priorRound: a round that lost a verifier (kata p5dt)', () => {
     expect(askWith(lost(change))).toEqual({ ok: false, reason: 'state-round-incomplete' });
   });
 
+  // kata dx53: a candidate a strict majority of the expected verifiers settled while a verifier did not return is `present` with the missing
+  // verifier still named. It is no verdict to carry, but the loss is accounted for in the ledger, so such a round is a base too.
+  const byMajority = (id) => ({ id, verification: { outcome: 'present', reason: 'verifier-majority', settledOnMajority: true } });
+
+  test('a lost verifier whose candidates a majority of the other verifiers settled is accounted for too, beside the ones left unverified', () => {
+    expect(askWith(lost((s) => ({ ...s, ledger: [settled('f1'), byMajority('f2'), unverified('f3')] })))).toMatchObject({ ok: true });
+    expect(askWith(lost((s) => ({ ...s, ledger: [settled('f1'), byMajority('f2'), byMajority('f3')] })))).toMatchObject({ ok: true });
+  });
+
+  test('a candidate settled present with no majority mark is no candidate of a lost verifier', () => {
+    expect(askWith(lost((s) => ({ ...s, ledger: [settled('f1'), settled('f2'), byMajority('f3')] })))).toEqual({ ok: false, reason: 'state-round-incomplete' });
+  });
+
   test('a lost verifier does not excuse a security finding or an unavailable lane: those are refused for what they are', () => {
     expect(askWith(lost((s) => ({ ...s, security: { status: 'findings', findings: [{}] } })))).toEqual({ ok: false, reason: 'state-security-open' });
     expect(askWith(lost((s) => ({ ...s, security: { status: 'unavailable' } })))).toEqual({ ok: false, reason: 'state-security-open' });
@@ -244,7 +258,7 @@ describe('deltaLimits: the last round\'s unverified candidates (kata p5dt)', () 
     const three = deltaLimits({ ...plan, unverified: 3 });
     expect(three.slice(0, 5)).toEqual(none);
     expect(three).toHaveLength(6);
-    expect(three[5]).toMatch(/^the last round left 3 candidates unverified \(a verifier did not return\)/);
+    expect(three[5]).toMatch(/^the last round left 3 candidates unverified or settled on a majority \(a verifier did not return\)/);
     expect(deltaLimits({ ...plan, unverified: 1 })[5]).toMatch(/^the last round left 1 candidate unverified/);
     expect(Object.isFrozen(three)).toBe(true);
   });
@@ -426,5 +440,29 @@ describe('what a round says about the last round\'s unverified candidates it did
     // a round that verified nothing stays not performed, and nothing leftover leaves the tally as it is
     expect(withLastRoundUnverified({ ...performed, verification: 'not-performed', reason: 'verifier-incomplete' }, leftover).verification).toBe('not-performed');
     expect(withLastRoundUnverified(performed, [])).toBe(performed);
+  });
+});
+
+describe('a finding settled on a majority while a verifier did not return (kata dx53 beside p5dt)', () => {
+  const byMajority = (id) => ({ id, verification: { outcome: 'present', reason: 'verifier-majority', settledOnMajority: true } });
+  const complete = (id) => ({ id, verification: { outcome: 'present', reason: 'verifier-majority' } });
+  const unverified = (id) => ({ id, verification: { outcome: 'unverified', reason: 'verifier-incomplete' } });
+
+  test('it lacks a verifier like an unverified finding does, and a finding every expected verifier settled, or any other outcome, does not', () => {
+    expect(lacksVerifier(byMajority('f1'))).toBe(true);
+    expect(lacksVerifier(unverified('f1'))).toBe(true);
+    expect(lacksVerifier(complete('f1'))).toBe(false);
+    expect(lacksVerifier({ id: 'f1', verification: { outcome: 'filtered', reason: 'verifier-majority', settledOnMajority: true } })).toBe(false);
+  });
+
+  test('lastRoundUnverified lists it beside the unverified ones, and not a cleared one', () => {
+    const ledger = [byMajority('f1'), complete('f2'), unverified('f3'), { ...byMajority('f4'), cleared: true }];
+    expect(lastRoundUnverified(ledger).map((entry) => entry.id)).toEqual(['f1', 'f3']);
+  });
+
+  test('leftoverUnverified says it was settled on a majority, with why it was not verified again', () => {
+    const ledger = [byMajority('f1'), unverified('f2')];
+    const run = { reverifyPrior: { reverified: [], kept: [{ id: 'f1', reason: 'location-unanchored' }] } };
+    expect(leftoverUnverified(run, ledger, new Set())).toEqual([{ id: 'f1', reason: 'settled-on-a-majority, location-unanchored' }, { id: 'f2', reason: 'not-verified-again' }]);
   });
 });

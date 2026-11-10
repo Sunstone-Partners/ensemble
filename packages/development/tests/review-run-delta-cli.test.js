@@ -140,8 +140,19 @@ function answerReview(manifest, { findings = {}, skip = [], lanePaths = ALL_PATH
     writeResult(agent, { findings: findings[agent.name] || [], pathsReviewed: agent.paths || lanePaths });
   }
 }
+/** Every agent votes `verdict` on every candidate it holds, or `verdict(agent, candidateId)` when that is a function. */
 const answerVotes = (manifest, verdict = 'real') => {
-  for (const agent of manifest.agents) writeResult(agent, { votes: agent.candidateIds.map((id) => ({ candidateId: id, verdict, evidence: 'read it' })) });
+  for (const agent of manifest.agents) writeResult(agent, { votes: agent.candidateIds.map((id) => ({ candidateId: id, verdict: typeof verdict === 'function' ? verdict(agent, id) : verdict, evidence: 'read it' })) });
+};
+/**
+ * Votes that leave each candidate the silent verifier holds one real vote short of a strict majority of the `expected` verifiers, and
+ * confirm the rest. Kata dx53 settles a candidate on that majority although a verifier did not return, so all-real votes would settle
+ * what the silent verifier held; these keep it unverified (a split never settles).
+ */
+const shortOfMajority = (agents, silent, expected) => (agent, id) => {
+  if (!silent.candidateIds.includes(id)) return 'real';
+  const voters = agents.filter((other) => other.name !== silent.name && other.candidateIds.includes(id));
+  return voters.findIndex((other) => other.name === agent.name) < Math.ceil(expected / 2) - 1 ? 'real' : 'not-real';
 };
 
 /** Round one on `fx.head1`: two settled findings (med/a02.js:5 and med/a03.js:1), both confirmed by every verifier. */
@@ -710,7 +721,7 @@ describe('a last round with a verifier that did not return is a delta base (kata
    * each, so the one verifier that never writes its file leaves the three candidates it holds `unverified` (verifier-incomplete) and
    * leaves the fourth, which its three other verifiers all answered, settled: the shape of the measured High run (2 settled, 5 unverified).
    */
-  function roundWithSilentVerifier(runId, { findings = [X1, X2, X3, X4], hold } = {}) {
+  function roundWithSilentVerifier(runId, { findings = [X1, X2, X3, X4], hold, majority = false } = {}) {
     setGh({ head: fx.head1 });
     fs.rmSync(statePath(), { force: true });
     const p = prep(runId);
@@ -723,19 +734,27 @@ describe('a last round with a verifier that did not return is a delta base (kata
     // the verifier that never writes: the first, or (`hold`) one that holds the candidate citing that file, so that candidate is left unverified
     const held = hold === undefined ? null : runFile(runId).candidates.find((candidate) => candidate.locationOrLink.startsWith(hold)).id;
     const silent = held === null ? v.out.agents[0] : v.out.agents.find((agent) => agent.candidateIds.includes(held));
-    answerVotes({ agents: v.out.agents.filter((agent) => agent.name !== silent.name) });
+    // by default the voters leave the silent verifier's candidates a vote short of a majority; `majority` lets 2 of 3 real settle them (kata dx53)
+    answerVotes({ agents: v.out.agents.filter((agent) => agent.name !== silent.name) }, majority ? 'real' : shortOfMajority(v.out.agents, silent, 3));
     const done = coll(runId, { now: pastEveryDeadline() });
     expect(done.out).toMatchObject({ ok: true, status: 'DONE', votes: { verification: 'partial' } });
     const state = readStateFile();
-    const settled = state.ledger.filter((entry) => outcomeOf(entry) === 'present');
-    const waiting = state.ledger.filter((entry) => outcomeOf(entry) === 'unverified');
+    const byMajority = (entry) => entry.verification.settledOnMajority === true;
+    const settled = state.ledger.filter((entry) => outcomeOf(entry) === 'present' && !byMajority(entry));
+    // what the silent verifier held: unverified, or (`majority`) present on 2 of the 3 expected verifiers with the missing one named
+    const waiting = state.ledger.filter((entry) => (majority ? byMajority(entry) : outcomeOf(entry) === 'unverified'));
     // what the round recorded, as the measured run recorded it: one verifier named with its candidates, nothing unread, one verdict
     expect(state.notReviewed).toMatchObject({ unreviewedSlices: [], unreviewedPaths: [], underReviewedPaths: [], unbriefable: [], changedResults: [] });
     expect(state.notReviewed.incompleteVerifiers).toEqual([expect.objectContaining({ verifier: silent.name, candidateIds: silent.candidateIds })]);
     expect(state.notReviewed.expiredAgents).toEqual([expect.objectContaining({ name: silent.name, role: 'verifier' })]);
     expect(settled).toHaveLength(1);
     expect(waiting).toHaveLength(3);
-    expect(waiting.map((entry) => entry.verification.reason)).toEqual(['verifier-incomplete', 'verifier-incomplete', 'verifier-incomplete']);
+    if (majority) {
+      for (const entry of waiting) expect(entry.verification).toMatchObject({ outcome: 'present', reason: 'verifier-majority', settledOnMajority: true, tally: { real: 2, expected: 3 } });
+    } else {
+      expect(waiting.map((entry) => entry.verification.reason)).toEqual(['verifier-incomplete', 'verifier-incomplete', 'verifier-incomplete']);
+    }
+    // a verdict settled on a majority is not recorded for a carry (kata dx53): only the one every expected verifier settled is
     expect(state.verdicts.map((verdict) => verdict.id)).toEqual([settled[0].id]);
     return { prepare: p.out, verify: v.out, done: done.out, silent, state, settled: settled[0], waiting };
   }
@@ -864,16 +883,16 @@ describe('a last round with a verifier that did not return is a delta base (kata
     expect(p2.out.reReview).toMatchObject({ scope: 'delta', delta: { unverifiedFromLastRound: 3 } });
     answerReview(p2.out);
     const v2 = coll('pe2');
-    // three candidates, three verifiers each holding all three: the one that never writes leaves all three unverified again
+    // three candidates, three verifiers each holding all three: two that never write leave one vote of three, short of a majority, so all three are unverified again
     expect(v2.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 0, verified: 3 } });
     expect(v2.out.agents).toHaveLength(3);
-    answerVotes({ agents: v2.out.agents.slice(1) });
+    answerVotes({ agents: v2.out.agents.slice(2) });
     const done2 = coll('pe2', { now: pastEveryDeadline() });
     // every candidate this round asked about is unverified again, so by the votes contract the round's own verification was not performed
     expect(done2.out).toMatchObject({ status: 'DONE', carry: { carried: 0, reverified: 3 }, votes: { verification: 'not-performed', reason: 'verifier-incomplete' } });
     expect(idsOf(done2.out.ledger)).toEqual(idsOf(first.state.ledger));
     expect(idsOf(done2.out.ledger.filter((entry) => outcomeOf(entry) === 'unverified'))).toEqual(idsOf(first.waiting));
-    expect(readStateFile().notReviewed.incompleteVerifiers).toHaveLength(1);
+    expect(readStateFile().notReviewed.incompleteVerifiers).toHaveLength(2);
     // the third round is a delta again, and this time the verifiers return
     const head3 = push(head2, { 'med/a07.js': `${body(LINES[6])}// extra\n` }, 'pe-fix2');
     const p3 = prep('pe3', { lastReviewedSha: head2, remediationShas: [head3] });
@@ -915,6 +934,37 @@ describe('a last round with a verifier that did not return is a delta base (kata
     expectFullRead(prep('pg2', { lastReviewedSha: fx.head1, remediationShas: [head3] }), ['prior-round-unusable:state-round-incomplete']);
   });
 
+  // Kata dx53 settles a candidate present on the strict majority of its expected verifiers although one did not return (the missing one stays
+  // named) and the carry refuses such a verdict (it needs every expected vote). The delta round must not carry it either, and verifies it
+  // again like an unverified one.
+  test('a candidate a majority of the verifiers settled while one did not return is no verdict to carry: the delta verifies it again under its id, and one a reviewer raises again is verified as a fresh candidate', () => {
+    const first = roundWithSilentVerifier('pm1', { majority: true });
+    const raised = first.waiting[0];
+    const head2 = push(fx.head1, { 'med/a05.js': `${body(LINES[4])}// extra\n` }, 'pm-fix');
+    const p = prep('pm2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    // before: the round named a lost verifier, so state-round-incomplete and a full read; its ledger accounts for the loss
+    expect(p.out.reReview).toMatchObject({ scope: 'delta', appliedRange: 'delta', delta: { unverifiedFromLastRound: 3 } });
+    expect(p.out.reReview.reasons.some((reason) => reason.startsWith('prior-round-unusable'))).toBe(false);
+    answerReview(p.out, { findings: { 'reviewer-s1-a': [finding(first.settled.locationOrLink, first.settled.failureMode), finding(raised.locationOrLink, raised.failureMode)] } });
+    const v = coll('pm2');
+    // the fully settled verdict is carried; the majority-settled finding the reviewers raised again is a candidate of its own, the other two come back from the ledger
+    expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 1, verified: 3 } });
+    expect([...v.out.carry.unverifiedFromLastRound.verifiedAgain].sort()).toEqual(idsOf(first.waiting.filter((entry) => entry.id !== raised.id)));
+    answerVotes(v.out);
+    const done = coll('pm2');
+    expect(done.out).toMatchObject({ status: 'DONE', carry: { appliedRange: 'delta', carried: 1, reverified: 3 }, votes: { verification: 'performed' } });
+    expect(done.out.ledger).toHaveLength(4);
+    expect(done.out.ledger.filter((entry) => entry.failureMode === raised.failureMode)).toHaveLength(1);
+    for (const entry of done.out.ledger) {
+      expect(outcomeOf(entry)).toBe('present');
+      // all but the carried verdict were settled by THIS round's whole electorate: none is a majority settlement any more
+      if (entry.id !== first.settled.id) expect(entry.verification).toMatchObject({ tally: { real: 3, expected: 3 }, incompleteVerifiers: [] });
+      if (entry.id !== first.settled.id) expect(entry.verification.settledOnMajority).toBeUndefined();
+    }
+    expect(done.out.ledger.find((entry) => entry.id === first.settled.id)).toMatchObject({ carriedFrom: fx.head1 });
+    expect(done.out.notReviewed).toMatchObject({ incompleteVerifiers: [], expiredAgents: [] });
+  });
+
   test('a High-tier first round (Deep depth, the lane, TRIAGE) that lost a verifier: the re-review is a delta that carries the settled verdict, and TRIAGE names the candidates it will verify again', () => {
     git(fx.work, 'checkout', '-q', '-B', 'wide-pa', 'main');
     LINES.forEach((count, index) => write(fx.work, medPath(index).replace(/^med\//, 'wide/'), body(count)));
@@ -934,7 +984,7 @@ describe('a last round with a verifier that did not return is a delta base (kata
     // seven verifiers, five of them on each candidate: the silent one holds three of the four, so it leaves those three unverified
     const silent = v1.out.agents.find((agent) => agent.candidateIds.length === 3);
     expect(silent).toBeDefined();
-    answerVotes({ agents: v1.out.agents.filter((agent) => agent.name !== silent.name) });
+    answerVotes({ agents: v1.out.agents.filter((agent) => agent.name !== silent.name) }, shortOfMajority(v1.out.agents, silent, 5));
     expect(coll('ph1', { now: pastEveryDeadline() }).out).toMatchObject({ status: 'DONE', mode: { mode: 'full' } });
     const state1 = readStateFile();
     const settled = state1.ledger.filter((entry) => outcomeOf(entry) === 'present');

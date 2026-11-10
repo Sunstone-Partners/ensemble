@@ -46,12 +46,18 @@ const VERIFIER_LISTS = Object.freeze(['incompleteVerifiers', 'expiredAgents']);
 const UNREAD_LISTS = Object.freeze(NOT_REVIEWED_LISTS.filter((key) => !VERIFIER_LISTS.includes(key)));
 
 /**
- * A finding the last round left unverified because a verifier that was to vote on it did not return: the `verifier-incomplete`
- * outcome of the votes contract (presented and marked, never confirmed and never refuted).
+ * A finding the last round could not settle with its whole electorate because a verifier that was to vote on it did not return: the
+ * `verifier-incomplete` outcome of the votes contract (`unverified`: presented and marked, never confirmed and never refuted), or, since
+ * kata dx53, a finding `present` that a strict majority of the EXPECTED verifiers settled while the missing ones stayed named
+ * (`verification.settledOnMajority`). The second is never carried (a carry needs every expected vote: `recordVerdicts` skips it), so a
+ * delta round has to verify it again like the first: it is no more a verdict of this head than an unverified finding is.
  */
-const lacksVerifier = (entry) => isObject(entry) && isObject(entry.verification) && entry.verification.outcome === 'unverified' && entry.verification.reason === 'verifier-incomplete';
+const lacksVerifier = (entry) => isObject(entry) && isObject(entry.verification)
+  && ((entry.verification.outcome === 'unverified' && entry.verification.reason === 'verifier-incomplete')
+    || (entry.verification.outcome === 'present' && entry.verification.settledOnMajority === true));
+const settledOnMajority = (entry) => isObject(entry) && isObject(entry.verification) && entry.verification.settledOnMajority === true;
 
-/** The findings of a ledger the last round left unverified for want of a verifier and that nothing has cleared since. */
+/** The findings of a ledger the last round left without their whole electorate for want of a verifier (see `lacksVerifier`) and that nothing has cleared since. */
 const lastRoundUnverified = (ledger) => (Array.isArray(ledger) ? ledger.filter((entry) => lacksVerifier(entry) && entry.cleared !== true) : []);
 
 /**
@@ -59,7 +65,7 @@ const lastRoundUnverified = (ledger) => (Array.isArray(ledger) ? ledger.filter((
  * diff unread: the reviewers read every path and the lane found nothing, and each candidate the verifier held stands in the ledger
  * `unverified`, where a delta round can verify it again. So a round whose ONLY missing agents are verifiers is a delta base, provided
  * that every missing verifier is named with the candidates it was assigned, every one of those candidates stands in the ledger unverified
- * for want of a verifier, and the agents `expiredAgents` lists are exactly the verifiers `incompleteVerifiers` names. Anything that does
+ * for want of a verifier (or settled on a majority without it, kata dx53), and the agents `expiredAgents` lists are exactly the verifiers `incompleteVerifiers` names. Anything that does
  * not add up is no base: a lost reviewer or security lane is never a verifier gap.
  *
  * @param {{incompleteVerifiers:Array, expiredAgents:Array}} notReviewed  both already known to be lists
@@ -102,7 +108,7 @@ function deltaLimits({ lane, reader, triage, unverified = 0 }) {
     'remediationShas is the caller\'s statement of which commits are the fix round\'s own',
   ];
   if (unverified > 0) {
-    limits.push(`the last round left ${unverified} ${unverified === 1 ? 'candidate' : 'candidates'} unverified (a verifier did not return): the ones in code this push left alone are verified again here, one the push fixed is cleared, and one this head cannot place stays unverified as recorded`);
+    limits.push(`the last round left ${unverified} ${unverified === 1 ? 'candidate' : 'candidates'} unverified or settled on a majority (a verifier did not return): the ones in code this push left alone are verified again here, one the push fixed is cleared, and one this head cannot place stays as recorded, without its whole electorate`);
   }
   return Object.freeze(limits);
 }
@@ -390,7 +396,7 @@ function verdictRecords(run, findings) {
 const NOT_COPIED = Object.freeze(['verification', 'locationAsOf', 'cleared', 'clearedBy', 'clearedReason', 'headSha', 'carriedFrom']);
 
 /**
- * The last round's candidates that no verifier returned for, put to verifiers again in this round (kata p5dt). They stand in the prior
+ * The last round's candidates that no verifier returned for (unverified, or settled on a majority without it, kata dx53), put to verifiers again in this round (kata p5dt). They stand in the prior
  * ledger `unverified` (never confirmed, never refuted), so a delta round that only kept them would keep them unverified for good, and the
  * full re-read this replaces dropped the ones nobody raised again. Which ones come back is the fixed-finding check's call, the same one
  * `composeDeltaLedger` applies to every prior finding (`deriveCleared`: git, the cited lines against the push):
@@ -457,7 +463,7 @@ function reverifyPrior(run, fresh, derive) {
  */
 function leftoverUnverified(run, ledger, fresh) {
   const why = new Map((isObject(run.reverifyPrior) && Array.isArray(run.reverifyPrior.kept) ? run.reverifyPrior.kept : []).filter(isObject).map((entry) => [String(entry.id), entry.reason]));
-  return lastRoundUnverified(ledger).filter((entry) => !fresh.has(String(entry.id))).map((entry) => ({ id: entry.id, reason: why.get(String(entry.id)) || 'not-verified-again' }));
+  return lastRoundUnverified(ledger).filter((entry) => !fresh.has(String(entry.id))).map((entry) => ({ id: entry.id, reason: `${settledOnMajority(entry) ? 'settled-on-a-majority, ' : ''}${why.get(String(entry.id)) || 'not-verified-again'}` }));
 }
 
 /**
