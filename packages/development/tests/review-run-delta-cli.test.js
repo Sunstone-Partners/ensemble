@@ -876,6 +876,35 @@ describe('a last round with a verifier that did not return is a delta base (kata
     expect(done.out.gate.blockers.map((blocker) => blocker.code)).toContain('open-important-finding');
   });
 
+  test('a candidate kept because its file was renamed stays kept in the round after that: an unrelated push leaves the old path absent at both ends, and it is not put to verifiers at a path the head does not hold', () => {
+    const first = roundWithSilentVerifier('pr1', { findings: [X1, X2, ['README.md:1', 'the title line names the wrong project'], X4], hold: 'README.md' });
+    const lost = first.waiting.find((entry) => entry.locationOrLink.startsWith('README.md'));
+    expect(lost).toBeDefined();
+    git(fx.work, 'checkout', '-q', '-B', 'pr-rename', fx.head1);
+    fs.mkdirSync(path.join(fx.work, 'docs'), { recursive: true });
+    git(fx.work, 'mv', 'README.md', 'docs/README.md');
+    git(fx.work, 'commit', '-q', '-m', 'move the readme');
+    const head2 = git(fx.work, 'rev-parse', 'HEAD');
+    setGh({ head: head2 });
+    const p2 = prep('pr2', { lastReviewedSha: fx.head1, remediationShas: [head2] });
+    expect(p2.out.reReview).toMatchObject({ scope: 'delta', delta: { unverifiedFromLastRound: 3 } });
+    answerReview(p2.out, { lanePaths: [...ALL_PATHS, 'README.md', 'docs/README.md'] });
+    const v2 = coll('pr2');
+    expect(v2.out.carry.unverifiedFromLastRound.kept).toEqual([{ id: lost.id, reason: 'location-unanchored' }]);
+    answerVotes(v2.out);
+    expect(coll('pr2').out).toMatchObject({ status: 'DONE' });
+    // round three, an unrelated push: README.md is absent at both ends of the diff, so no line of it was touched, which is no place for the candidate
+    const head3 = push(head2, { 'med/a05.js': `${body(LINES[4])}// extra\n` }, 'pr-fix3');
+    const p3 = prep('pr3', { lastReviewedSha: head2, remediationShas: [head3] });
+    expect(p3.out.reReview).toMatchObject({ scope: 'delta', delta: { unverifiedFromLastRound: 1 } });
+    answerReview(p3.out);
+    const done = coll('pr3');
+    // nobody is asked: the candidate stays in the ledger as recorded, unverified, and the round does not read as fully verified
+    expect(done.out).toMatchObject({ status: 'DONE', carry: { unverifiedFromLastRound: { verifiedAgain: [], kept: [{ id: lost.id, reason: 'location-unanchored' }] } } });
+    expect(done.out.votes).toMatchObject({ verification: 'partial', reason: expect.stringContaining(lost.id) });
+    expect(done.out.ledger.find((entry) => entry.id === lost.id).verification).toMatchObject({ outcome: 'unverified', reason: 'verifier-incomplete' });
+  });
+
   test('a delta round whose own verifier did not return leaves its candidates unverified under the same ids and is a base for the next delta, which verifies them', () => {
     const first = roundWithSilentVerifier('pe1');
     const head2 = push(fx.head1, { 'med/a05.js': `${body(LINES[4])}// extra\n` }, 'pe-fix1');

@@ -276,6 +276,13 @@ the last round left unverified, so when most of a first round's verifiers were l
 round's while its reading stays the delta's; `carried` still needs a settled verdict whose candidate this round's reviewers raise again
 (see "Hash, plan, record"); and whether the path is faster in a real review was not measured here (no model-agent run was made for this change).
 
+Three more limits, said plainly. A candidate the delta clears because the push fixed its lines was never verified: `carry.cleared` lists its
+id alone, and the beads recorder closes it as fixed although no verifier ever confirmed it (not new in kind, but this widens it to the candidates
+of a lost verifier). A candidate verified again keeps the disposition, reason and adjudication its entry already had (only the old verification
+and the stamps are dropped), so a Nit deferred with a reason stays deferred whatever the new verdict says, and `adjudicateList` does not present
+it again. And `reReview.delta.unverifiedFromLastRound` is a count while `carry.unverifiedFromLastRound` is an object, whose `verifiedAgain` lists the
+candidates put to verifiers again, some of which can come back unverified again, so it overstates what was verified.
+
 **What stays whole.** The security lane, the whole-range reader (when the light run is cut into several slices) and the TRIAGE
 step (full mode) read the whole range (`range.diff`, every changed path of the PR) in a delta round too; a round that planned
 none of them says so in its limits (`reReview.delta.limits` names exactly the ones it planned). A delta's slices are labelled
