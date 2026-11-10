@@ -215,14 +215,17 @@ const MIN_AGENT_MINUTES = Math.ceil(SLOWEST_FINISHED_MINUTES * FLOOR_FACTOR);
  * one result file when it has finished all of them, so the 8 stopped verifiers of the last measurement left 15 of its 23 candidates
  * unverified (a candidate needs every one of its verifiers back), and 2 more were left by verifiers that arrived with no vote for one claim.
  *
- * What it does NOT show: how long a stopped verifier needed. Its time is only bounded below by the deadline (censored at 5 minutes), so
- * the slowest FINISHED verifier, 4.97, three seconds inside the deadline, understates the tail; the floor does not claim to cover it.
- * The rule is the one of the reviewers' floor above: the slowest finished verifier times FLOOR_FACTOR, 4.97 x 1.5 = 7.46, rounded up
- * to 8 minutes. It is a judgement on one sample, like FLOOR_FACTOR itself; a censored lognormal fit to the 31 verifiers of the last
- * measurement (the test derives it) puts 8 minutes at its 95th percentile (median 3.4, 90th 6.6, 95th 8.0, 99th 11.5), so about one
- * verifier in twenty is still expected to be stopped, and a Weibull fit is more favourable (under 2%). A verifier slower than the floor
- * is still `expired` and its candidates are still not verified by it: nothing here relaxes that. What the floor costs: a round that
- * has a stopped verifier waits for it up to 3 minutes longer (8 minus 5); the verifiers that arrive in under 5 minutes, 51 of 60, are not
+ * What it does NOT show: how long a stopped verifier needed, or the tail. Every verifier that arrived is under the 5-minute deadline by
+ * construction (one past it was stopped, and its time is only known to exceed 5: censored), so the slowest FINISHED verifier, 4.97, three
+ * seconds inside the deadline, is the censoring deadline showing, not a measure of how long a verifier needs. The floor is therefore 1.5
+ * times the deadline the record was censored at: the rule of the reviewers' floor above applied to the slowest finished verifier,
+ * 4.97 x FLOOR_FACTOR = 7.46, rounded up to 8 minutes. It is a judgement on one sample, like FLOOR_FACTOR itself, cross-checked by a
+ * censored lognormal fit to the 31 verifiers of the last measurement (the test derives it: median 3.4, 90th 6.6, 95th 8.0, 99th 11.5; about 5%
+ * of verifiers still past 8 minutes, and a Weibull fit gives under 2%), so about one verifier in twenty is still expected to be stopped.
+ * Pooling hides a change of regime: 1 of 29 verifiers was stopped before the rolling refill (kata 630v) and 8 of 31 after it. A verifier
+ * slower than the floor is still `expired` and its candidates are still not verified by it: nothing here relaxes that. What the floor
+ * costs: a round that has a stopped verifier waits for it up to 3 minutes longer (8 minus 5), and a verifier that is going to be stopped also
+ * holds one of the cap's slots of the rolling refill for those 3 minutes; the verifiers that arrive in under 5 minutes, 51 of 60, are not
  * affected. It was measured at effort `hi` (the runner records no effort), with verifiers holding 2 or 3 claims.
  */
 const OBSERVED_VERIFIERS = deepFreeze({

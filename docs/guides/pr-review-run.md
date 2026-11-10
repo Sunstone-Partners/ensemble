@@ -385,8 +385,8 @@ given those 5 minutes) put that deadline inside the body of the distribution, no
 | `aea0b19`, three rounds (Medium first review, High first review, High re-review) | 31 | 23 | 8 (26%): 3, 3 and 2, one or more in every round |
 | all | 60 | 51 (1.49 to 4.97 minutes, median 2.5) | 9 (15%) |
 
-(The kata and the measurement report quote 1 min 44 s to 4 min 53 s for the verifiers that finished; the traces give 1.49, 1 min
-29 s, to 4.97, 4 min 58 s, and the floor uses the traces.)
+(The kata `dx53` quotes 1 min 44 s to 4 min 53 s for the verifiers that finished; the traces give 1.49, 1 min 29 s, to 4.97,
+4 min 58 s, and the floor uses the traces.)
 
 What the record shows, and what the design follows from it:
 
@@ -405,15 +405,18 @@ What the record shows, and what the design follows from it:
 times `FLOOR_FACTOR` (1.5), rounded up, **8 minutes** (`MIN_VERIFIER_MINUTES` in `lib/pr-review-sizing.js`), whatever the
 policy's `deadlineMinutes.verifier` says: the base (5) is raised to it, a larger policy value is kept, and a value the policy
 SETS below it, 5 included, is overridden and named in the sizing warnings (`deadline-floor-over-policy`; `sizing.model` records
-`verifierFloorMinutes` and `policyDeadlineMinutes.verifier`) and the agent is marked `deadlineFloored`. What it is not: the time
-of a stopped verifier is only known to exceed 5 minutes (censored), so 4.97, three seconds inside the deadline, is the slowest
-that happened to arrive and not an estimate of the tail. As a cross-check (the test re-derives it), a censored lognormal fit to
-the 31 verifiers of the last measurement has its median at 3.4 minutes and its 90th, 95th and 99th percentiles at 6.6, 8.0 and
-11.5, so 8 minutes is about its 95th percentile: one verifier in twenty is still expected to be stopped (a Weibull fit gives under
-2%). The factor and the fit are judgements on one sample. A verifier slower than 8 minutes is `expired` and its candidates are not
-verified by it. The floor was measured at effort `hi`, with verifiers holding two or three claims (the planner's cap), and the
-runner records no effort. What it costs: a round with a stopped verifier waits up to 3 minutes longer for it (8 minus 5); a round
-without one is unchanged, and 51 of the 60 verifiers arrived in under 5 minutes.
+`verifierFloorMinutes` and `policyDeadlineMinutes.verifier`) and the agent is marked `deadlineFloored`. What it is not: a
+measurement of how long a verifier needs. Every verifier that arrived is under 5 minutes by construction (one past it was
+stopped, and its time is only known to exceed 5: censored), so 4.97, three seconds inside the deadline, is the censoring deadline
+showing, and the floor is 1.5 times that deadline, a judgement on one sample like the factor itself. As a cross-check (the test
+re-derives it), a censored lognormal fit to the 31 verifiers of the last measurement has its median at 3.4 minutes and its 90th,
+95th and 99th percentiles at 6.6, 8.0 and 11.5, so 8 minutes is about its 95th percentile: one verifier in twenty is still
+expected to be stopped (a Weibull fit gives under 2%). Pooling hides a change of regime: 1 of the 29 verifiers before the rolling
+refill (kata `630v`) was stopped and 8 of the 31 after it, and the fit is to the 31. A verifier slower than 8 minutes is `expired`
+and its candidates are not verified by it. The floor was measured at effort `hi`, with verifiers holding two or three claims (the
+planner's cap), and the runner records no effort. What it costs: a round with a stopped verifier waits up to 3 minutes longer for
+it (8 minus 5), and a verifier that is going to be stopped also holds one of the cap's slots of the rolling refill for those 3
+minutes; a round without one is unchanged, and 51 of the 60 verifiers arrived in under 5 minutes.
 
 **What a candidate needs of its verifiers (kata `dx53`).** The tally's rule is unchanged: a finding is `present` only when a
 strict majority of the EXPECTED verifiers (2 of 3 at Standard, 3 of 5 at Deep) voted it real, the denominator is the expected
@@ -437,8 +440,8 @@ by a test:
   explicit assignment are never settled.
 - It is not carried. A verdict recorded for the next round to carry needs a full electorate (`lib/pr-review-carry.js`, the
   votes are exactly the expected number), so a candidate settled on a majority is re-verified in a delta round, never carried.
-- The narrated procedure is unchanged: the CLI `votes` (Step 3b of the skill) keeps the strict rule unless its payload says
-  `settleOnMajority: true`.
+- The narrated procedure is unchanged: the CLI `votes` (Step 3b of the skill) keeps the strict rule, and drops a
+  `settleOnMajority` key from its payload whatever its value, because only the runner calls the tally with the option.
 
 On the measured rounds this takes the candidates left unverified from 22 of 47 to 4, with the verifier times as they were; of
 the last measurement's 23, from 17 to 3 (two in the Medium run and one in the High first review: each had one or two real votes
@@ -759,11 +762,15 @@ after another, so an overlap is refused as before.
 
 The numbers are reproducible: the test `the replay behind the documented verify-round numbers` in `pr-review-run.test.js` drives
 the REAL runner (`collect` on a simulated clock, cap 8) over the 17 measured verifier times and prints the figures
-(`npx jest --runInBand packages/development/tests/pr-review-run.test.js -t "replay behind"`). Barrier: 11.4 to 11.5 minutes (the
-measured 11.7 includes the harness turnaround between waves). Rolling: 7.3 (a poll every second), 7.4 (every 7.5 s) and 7.8
-minutes (every 15 s), saving 4.1, 4.1 and 3.8 minutes (33 to 36% of the verify round), which puts the run at about 22.9 of the
-measured 26.8 minutes; the lower bound is 49.3 / 8 = 6.2 minutes. This is a replay of one run's times, not a live measurement. The
-PR's 8-13 minute target is NOT reached by this: the slowest reviewer alone took 14.6 minutes. Verifying the candidates of the
+(`npx jest --runInBand packages/development/tests/pr-review-run.test.js -t "replay behind"`). The stopped verifier is stopped at the
+deadline the runner stores for it, its 8-minute floor since kata `dx53` (the measured run gave it 5), so the figures are the
+floor's: barrier 14.4 to 14.5 minutes (11.4 to 11.5 with the measured 5-minute stop; the measured 11.7 includes the harness
+turnaround between waves). Rolling: 10.3 (a poll every second), 10.4 (every 7.5 s) and 10.5 minutes (every 15 s) (7.3, 7.4 and 7.8
+with the 5-minute stop), saving 4.1, 4.1 and 4.0 minutes (28 to 29% of the verify round: the saving is about the same as before and
+the round is about 3 minutes longer), which puts the run at about 25.6 of 29.8 minutes (22.9 of the measured 26.8 with the 5-minute
+stop); the lower bound is 52.3 / 8 = 6.5 minutes (49.3, and the 3 the stopped verifier now holds its slot longer). This is a replay
+of one run's times, not a live measurement. The PR's 8-13 minute target is NOT reached by this, and a stopped verifier now takes the
+verify round 3 minutes further from it: the slowest reviewer alone took 14.6 minutes. Verifying the candidates of the
 reviewers that finish early (8.2 to 10.6 minutes) while the slowest still runs is not built: a duplicate finding of a late reviewer
 would merge into a candidate already settled.
 

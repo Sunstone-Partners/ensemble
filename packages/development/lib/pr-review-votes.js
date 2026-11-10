@@ -59,13 +59,13 @@
  *     incomplete coverage.
  *
  * SETTLING ON A MAJORITY (kata dx53; OPT-IN: only `input.settleOnMajority === true`, which the review runner sets and nothing
- * else does, so the narrated procedure keeps the rule above to the letter). The last real-model measurement put 8 of 31
+ * else does: the CLI `votes` drops the key from its payload, so the narrated procedure keeps the rule above to the letter). The last real-model measurement put 8 of 31
  * verifiers past their deadline, and 17 of the 23 candidates of those rounds ended `unverified`, 14 of them although the
  * verifiers that did return were already a strict majority. With the option a candidate whose STRICT
  * MAJORITY of the verifiers the depth expects voted `real` is `present` although another assigned verifier returned nothing
  * (expired, or no vote for it). It is not a relaxation, and what keeps it from being one is stated here and tested:
  *   - the denominator is still the expected count, never the arrived votes: 2 real of 3 expected is a majority, 2 real of 2 that
- *     arrived out of 3 expected is not read as one, and 1 real of 3 stays `unverified`;
+ *     arrived out of 5 expected is not read as one, and 1 real of 3 stays `unverified`;
  *   - no vote still missing can change the outcome: `present` needs `real >= needed` and a missing vote can only add to `real`,
  *     so the finding is `present` in every completion of the round (the same outcome the round would have given);
  *   - the missing verifiers stay NAMED on the finding (`incompleteVerifiers`, and `settledOnMajority: true`), so it is never read

@@ -2167,11 +2167,12 @@ describe('the replay behind the documented verify-round numbers (kata 630v, revi
   // on that run's trace reads the three barrier waves at 4.5, 5.0 and 1.9 minutes (11.4 minutes of steps, 11.7 from the first dispatch to the last result).
   const MEASURED = [2.03, 2.13, 2.27, 3.13, 4.5, 2.49, 2.06, 2.68, 3.3, 3.89, 3.42, null, 1.5, 4.41, 2.44, 2.11, 1.9];
   const MIN = 60 * 1000;
-  // The measured run gave every verifier 5 minutes and stopped verifier-12 there. A verifier has an 8-minute floor now (kata dx53), so the
-  // replay keeps the MEASURED stop instead of the runner's current `deadlineAt`: it replays that measurement, whose figures the guide cites,
-  // and not today's deadline (which is pinned where the deadlines are). The test used the stored deadline of the stopped verifier before.
-  const STOPPED_AT = 5 * MIN;
-  const stopAt = (agent) => agent.dispatchedAt + STOPPED_AT;
+  // The measured run gave every verifier 5 minutes and stopped verifier-12 at its deadline. A verifier has an 8-minute floor now (kata dx53),
+  // so the replay takes the stop from the runner's own manifest, the stored `deadlineAt` of the stopped verifier, and every dispatch is
+  // checked to carry the floor: the figures below are the floor's and they move when the floor does. With the measured 5-minute stop the
+  // same replay gave a barrier of 11.4 to 11.5 minutes and a rolling round of 7.3, 7.4 and 7.8 (the figures of the guide's measurement).
+  const STOPPED_AFTER = MIN_VERIFIER_MINUTES * MIN;
+  const stopAt = (agent) => agent.deadlineAt;
   const SEVENTEEN = (n) => (n === 'reviewer-s1-a' ? Array.from({ length: 17 }, (_, i) => finding({ locationOrLink: `src/a.js:${(i % 6) + 1}`, failureMode: `distinct defect number ${i} in a different subsystem ${'x'.repeat(i)} and ${'y'.repeat(17 - i)}` })) : []);
 
   // The agent's arrival time from its dispatch; null = never arrives (stopped at its deadline).
@@ -2184,6 +2185,7 @@ describe('the replay behind the documented verify-round numbers (kata 630v, revi
     answerReview(m1, { findingsFor: SEVENTEEN, lane: { findings: [], pathsReviewed: allPaths(h) } });
     const v1 = await h.collect();
     expect(v1.agents).toHaveLength(8);
+    expect(v1.agents.every((a) => a.deadlineAt - a.dispatchedAt === STOPPED_AFTER)).toBe(true); // the runner stores the floor for every verifier
     const start = v1.agents[0].dispatchedAt;
     let clock = start;
     h.deps.collectResults = ({ expected }) => ({
@@ -2203,7 +2205,10 @@ describe('the replay behind the documented verify-round numbers (kata 630v, revi
       const answer = await h.collect({ now: clock });
       running = new Map([...running].filter(([, a]) => (arrival(a) === null ? clock < stopAt(a) : arrival(a) > clock)));
       if (answer.status === 'DISPATCH') {
-        for (const a of answer.agents) running.set(a.name, a);
+        for (const a of answer.agents) {
+          expect(a.deadlineAt - a.dispatchedAt).toBe(STOPPED_AFTER); // the runner's own deadline for every verifier: its floor
+          running.set(a.name, a);
+        }
         dispatched += answer.agents.length;
         peak = Math.max(peak, running.size);
         expect(running.size).toBeLessThanOrEqual(8); // the cap, at every dispatch
@@ -2220,7 +2225,7 @@ describe('the replay behind the documented verify-round numbers (kata 630v, revi
     const poll = pollMs / MIN;
     let t = 0;
     for (let i = 0; i < MEASURED.length; i += 8) {
-      const wave = MEASURED.slice(i, i + 8).map((m) => (m === null ? 5 : m));
+      const wave = MEASURED.slice(i, i + 8).map((m) => (m === null ? MIN_VERIFIER_MINUTES : m));
       t = Math.ceil((t + Math.max(...wave)) / poll - 1e-9) * poll;
     }
     return t;
@@ -2236,16 +2241,18 @@ describe('the replay behind the documented verify-round numbers (kata 630v, revi
       expect(r.minutes).toBeLessThan(b);
     }
     process.stderr.write(`\nREPLAY verify round (minutes): ${JSON.stringify(rows)}\n`);
-    // the documented rows (docs/guides/pr-review-run.md, Rolling verification), pinned to 0.1 minute: the barrier model gives 11.4 to 11.5
-    // minutes against the measured 11.7 (the difference is the harness turnaround between waves), the real runner's rolling round 7.3,
-    // 7.4 and 7.8, so it saves 4.1, 4.1 and 3.8. The freed-slot release of an expired verifier is pinned by its own test, not by these figures.
+    // the documented rows (docs/guides/pr-review-run.md, Rolling verification), pinned to 0.1 minute, at the verifier floor of kata dx53 (8 minutes,
+    // which the stopped verifier now holds its slot for, where the measured run stopped it at 5): the barrier model gives 14.4 to 14.5 minutes
+    // (11.4 to 11.5 at the measured 5-minute stop, against the measured 11.7: the difference is the harness turnaround between waves), the real
+    // runner's rolling round 10.3, 10.4 and 10.5 (7.3, 7.4 and 7.8), so it saves 4.1, 4.1 and 4.0 (4.1, 4.1 and 3.8): the saving is about the
+    // same and the round is about 3 minutes longer. The freed-slot release of an expired verifier is pinned by its own test, not by these figures.
     const tenth = (minutes) => Math.round(minutes * 10 + 1e-9) / 10;
     expect(rows.map((row) => [row.pollS, tenth(row.barrier), tenth(row.rolling), tenth(row.saved)])).toEqual([
-      [1, 11.4, 7.3, 4.1],
-      [7.5, 11.5, 7.4, 4.1],
-      [15, 11.5, 7.8, 3.8],
+      [1, 14.4, 10.3, 4.1],
+      [7.5, 14.5, 10.4, 4.1],
+      [15, 14.5, 10.5, 4],
     ]);
-    expect(rows.every((row) => row.rolling > 6.2)).toBe(true); // the lower bound: 49.3 agent-minutes / cap 8
+    expect(rows.every((row) => row.rolling > 6.5)).toBe(true); // the lower bound: 52.3 agent-minutes (49.3, and the 3 the stopped verifier now holds its slot longer) / cap 8
   });
 });
 
