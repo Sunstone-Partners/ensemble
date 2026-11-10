@@ -148,8 +148,9 @@
  * agents write `out-<name>.json` and this reads them, instead of the orchestrator
  * parsing what an agent yielded. One payload selects one function via `action`:
  *   deadlines        { role, tier?, depth?, now?, policy? } -- the `dispatchedAt` (= `now`, default: the current time)
- *                    and the `deadlineAt` an agent must be stopped by: reviewer 15 min, verifier 5, security lane 15,
- *                    per-role overridable by the policy's `deadlineMinutes`
+ *                    and the `deadlineAt` an agent must be stopped by: reviewer 15 min, verifier 5, security lane 15 (bases),
+ *                    per-role overridable by the policy's `deadlineMinutes`, and never below a measured floor: a verifier 8 min
+ *                    (kata dx53), a reviewer or the lane 22 min when `work` is given (kata d9sy)
  *   collect          { expected[{ name, role, dispatchedAt, deadlineAt, sliceId?, lens?, paths?, candidateIds?, read?, reread? }], dir,
  *                    now?, scratchDir?, depth?, expectedVerifiers?, candidates? } -- classifies each agent
  *                    arrived|missing|expired|invalid from `<dir>/out-<name>.json`. It arrived when the file's last
