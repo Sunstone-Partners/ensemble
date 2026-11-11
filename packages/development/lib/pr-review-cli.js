@@ -192,9 +192,11 @@
  *              { action: 'row', pr, tier, round, origin, runId, cwd? | timing, id?, source?, notes?, carry? }
  *              -- one cohort row from a `timing` answer: `runId` reads the trace as `timing` does, `timing` takes a
  *              `timing` answer directly (exactly one of the two); `carry` is `{ headSha, verdicts }` from the PR's state report
- *              { action: 'compare', baseline, current, cwd? } -- two cohort documents. Each counted current row's wall time,
+ *              { action: 'compare', baseline, current, cwd?, targetFactors? } -- two cohort documents. Each counted current row's wall time,
  *              chains and gate runs are re-derived from the trace its `run_id` names (<cwd>/.ensemble/state/toolchain/), and a
  *              5x `met` is withheld unless every such row of a required stratum passes; `fiveX.attestation` says what stays attested
+ *              `targetFactors` ({ '<tier>/<round>': factor >= 1 }, default 5) grades a stratum at another factor, marked `rebased`;
+ *              `fiveX` never reads it (kata js1p)
  *
  * The tier, approval and merge-gate subcommands (TRD-026) each take the facts
  * their module grades and answer with that module's result verbatim:
@@ -521,18 +523,20 @@ function runDescription(payload) {
  * is graded IN BAND by its module: a payload the module cannot read is a
  * blocked, deepest-mode or no-plan RESULT (exit 0), never a clean pass.
  *
- * `votes` is a pass-through but for one key: `settleOnMajority` (kata dx53) is the review runner's option, which calls the tally
- * itself, and the narrated procedure keeps the strict rule (AC-006-3), so the key is dropped from the payload here, whatever its
- * value, and the answer is the one the payload without it gives (the caller's object is not changed). `depth` and `slices` each
+ * `votes` is a pass-through but for two keys: `settleOnMajority` (kata dx53) and `quorumFirst` (kata 3ezq) are the review runner's options, which
+ * calls the tally itself, and the narrated procedure keeps the strict rule (AC-006-3) and the whole electorate, so both keys are dropped from the
+ * payload here, whatever their value, and the answer is the one the payload without them gives (the caller's object is not changed; an assignment
+ * entry that leaves seats `unasked` is then refused by the tally, since only a quorum-first tally accepts one). `depth` and `slices` each
  * call exactly two functions of their one module -- resolve then grade, plan then verify --
  * because that is the single question the skill asks; the dispatcher still
  * decides nothing itself, and the only value it combines is `ok`, which it
  * can only make stricter.
  */
 function runVotes(payload) {
-  if (payload !== null && typeof payload === 'object' && !Array.isArray(payload) && Object.prototype.hasOwnProperty.call(payload, 'settleOnMajority')) {
+  if (payload !== null && typeof payload === 'object' && !Array.isArray(payload) && ['settleOnMajority', 'quorumFirst'].some((key) => Object.prototype.hasOwnProperty.call(payload, key))) {
     const strict = { ...payload };
     delete strict.settleOnMajority;
+    delete strict.quorumFirst;
     return tallyVotes(strict);
   }
   return tallyVotes(payload);
@@ -1042,7 +1046,7 @@ function walltimeCompare(payload) {
   for (const run of runs) {
     if (isObject(run) && typeof run.id === 'string' && run.origin === 'real') traceChecks[run.id] = checkRowAgainstTrace(run, cwd);
   }
-  return compareWalltime({ baseline: payload.baseline, current: payload.current, traceChecks });
+  return compareWalltime({ baseline: payload.baseline, current: payload.current, traceChecks, targetFactors: payload.targetFactors });
 }
 
 const WALLTIME_ACTIONS = Object.freeze({
@@ -1057,7 +1061,7 @@ const WALLTIME_ACTIONS = Object.freeze({
   },
   compare: {
     keys: { baseline: OBJECT, current: OBJECT },
-    optional: { cwd: TEXT },
+    optional: { cwd: TEXT, targetFactors: OBJECT },
     run: walltimeCompare,
   },
 });
