@@ -268,7 +268,7 @@ function protectionLines(p, approvals) {
 function gateLine(gate) {
   switch (gate.action) {
     case 'started':
-      return `Local CI gate: started in the background at ${gate.startedAt || 'this run'}${gate.dryRun ? ' (dry run: it will not post a status)' : ''}${gate.logPath ? `, log \`${gate.logPath}\`` : ''}.${gate.dryRun ? '' : ` It posts \`${gate.statusContext}\` on this head when it finishes.`}`;
+      return `Local CI gate: started in the background at ${gate.startedAt || 'this run'}${gate.dryRun ? ' (dry run: it will not post a status)' : ''}${gate.logPath ? `, log \`${gate.logPath}\`` : ''}.${gate.dryRun ? '' : ` It posts \`${gate.statusContext}\` on this head when it finishes, unless hosted CI already verified the head: then it runs nothing and posts nothing (its log says \`stage hosted\`).`}`;
     case 'already-started': {
       const e = isObject(gate.existing) ? gate.existing : {};
       if (e.orphaned === true) {

@@ -44,9 +44,13 @@ const where = (fixture) => ({ headSha: fixture.headSha, baseSha: fixture.baseSha
 /** Verify against a fake GitHub answering with `entries`. `over` replaces input fields, `api` configures the fake, `deps` replaces dependencies. */
 function verify(entries, { fixture = fx, over = {}, api, deps = {} } = {}) {
   const ghApi = actionsApi(entries, api);
-  const r = verifyHosted({ repo: REPO, ...where(fixture), approvalSet: APPROVAL_SET, ...over }, { git, ghApi, ...deps });
+  const r = verifyHosted({ repo: REPO, ...where(fixture), ...BIND, approvalSet: APPROVAL_SET, ...over }, { git, ghApi, ...deps });
   return { r, ghApi };
 }
+
+/** The pull request the fake runs belong to (what every honest run lists in `pull_requests`) and its base branch. */
+const { PR, BASE_BRANCH } = require('./helpers/local-ci-base-repo');
+const BIND = { pr: PR, baseRefName: BASE_BRANCH };
 
 /** A refusal in the documented shape whose reason names every given cause. */
 function refused(r, ...causes) {
@@ -548,7 +552,7 @@ describe('a lookup that fails or answers nonsense is a refusal', () => {
         });
         const isolated = require('../lib/local-ci-hosted');
         const ghApi = actionsApi(honest(HEAD));
-        const r = isolated.verifyHosted({ repo: REPO, ...where(fx), approvalSet: APPROVAL_SET }, { git, ghApi });
+        const r = isolated.verifyHosted({ repo: REPO, ...where(fx), ...BIND, approvalSet: APPROVAL_SET }, { git, ghApi });
         refused(r, 'js-yaml is not resolvable, so the base workflow cannot be read');
         expect(ghApi.calls).toEqual([]);
       });
@@ -562,7 +566,7 @@ describe('the opt-in comes only from the base config, and only well-formed commi
   it.each([[{ hostedReuse: null }], [{}], [undefined], [null]])('an approval set without hosted_reuse (%j) is disabled: neither git nor GitHub is touched', (approvalSet) => {
     const gitSpy = jest.fn();
     const ghApi = jest.fn();
-    const r = verifyHosted({ repo: REPO, ...where(fx), approvalSet }, { git: gitSpy, ghApi });
+    const r = verifyHosted({ repo: REPO, ...where(fx), ...BIND, approvalSet }, { git: gitSpy, ghApi });
     expect(r).toMatchObject({ ok: false, source: 'hosted', disabled: true });
     expect(r.reason).toBe('hosted CI not accepted: hosted_reuse is not enabled in the base-ref config');
     expect(gitSpy).not.toHaveBeenCalled();

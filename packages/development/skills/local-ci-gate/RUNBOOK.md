@@ -66,6 +66,11 @@ Run in order; stop at the first refusal.
    restrictions are untouched and `strict` is carried over.
    The `PUT .../protection` endpoint is deliberately not used: it replaces the
    whole protection and would drop anything the snapshot missed.
+   **Before this step, remove `hosted_reuse`** from `.ensemble/local-ci.yaml` (see
+   [Hosted reuse](#hosted-reuse-skip-a-local-run-that-hosted-ci-already-did)), or
+   always pass `forceLocal: true` to `gate`. A head accepted through hosted jobs
+   never gets an `ensemble/local-ci` status, so with that check required GitHub
+   would block a merge the CLI called ready.
 5. **Owner approval, apply, read back.** The repository admin reviews the plan
    and approves `enable-protection` (see [Owner approvals](#owner-approvals)),
    then applies the `PATCH`. Run the plan's read-only `GET .../protection` and
@@ -102,6 +107,8 @@ hosted_reuse:
 
 Every step in `steps` MUST be listed in `covers`; if one is missing, reuse is off. `extra_workflows` names hosted jobs outside the default approval set. See the comment in this repository's `.ensemble/local-ci.yaml` for the exact current block.
 
+**Rollout order.** A gate CLI older than this change rejects the unknown config key `hosted_reuse` and then refuses every PR once the key reaches `dev`. Release and update clients first, then merge the config block. The change that added hosted reuse adds the client code and the config block together, so any client not yet updated refuses every PR to `dev` until it is.
+
 **Disable.** Remove the `hosted_reuse` block, or delete one name from `covers` (an uncovered step turns reuse off entirely). Either is a normal reviewed change to the config.
 
 **`forceLocal`.** `gate` accepts `forceLocal: true` (a boolean) in its payload to skip the hosted shortcut and run locally.
@@ -114,9 +121,17 @@ Every step in `steps` MUST be listed in `covers`; if one is missing, reuse is of
 
 **Node 22 gap.** Hosted `validate` and `drift` run on Node 24 only, while the local gate runs 22 and 24; accepting hosted results gives up the Node 22 run of those steps, and `generate-validate` is declared covered by the generate step, which hosted `validate` and `drift` run. This is accepted in the config; delete the name from `covers` to refuse it.
 
-**Not verified.** Who triggered the hosted run, and that the workflow's steps are honest beyond the file being identical to the base's. A `pull_request` run executes on the merge commit of head and base, not the bare head.
+**Not verified.** Who triggered the hosted run, and that the workflow's steps are honest beyond the file being identical to the base's. A `pull_request` run executes on the merge commit of head and base, not the bare head, and that base tip may not be the base tip now (the run's `base.sha` is not compared, because `dev` moves constantly and equality would switch reuse off). External actions (`owner/repo@tag`) are trusted as pinned by tag, not by SHA. The verified SHA is not passed to the merge step (`--match-head-commit`): `pr-merge.yaml` is at its word ceiling. `merge` and `gate` re-read the PR once after hosted verification.
 
-**Branch protection.** Never change branch protection from this skill, from the CLI or from any command. Since 2026-11-06 protection on `dev` requires the hosted checks `validate`, `test (22)` and `test (24)` (see Rollback), so GitHub itself waits for hosted CI. With reuse enabled, the gate verdict (`merge`) no longer needs a local gate run once those jobs are green on the head; it still refuses when they are not, and a PR whose workflow files changed is graded by the local gate. Pointing protection back at `ensemble/local-ci` stays a separate owner-approved step (see Enable).
+**Runs are bound to this PR.** Only runs whose `pull_requests` list holds this PR's number with the PR's base branch count. A run of another PR sharing the head SHA, of another base branch, or with an empty `pull_requests` (fork-PR runs, a closed PR) is ignored: it cannot count and cannot mask or replace this PR's run. A fork PR therefore never gets hosted acceptance: the gate runs locally.
+
+**A local failure vetoes hosted acceptance.** A status in the configured context on the exact head with state `failure` or `error` refuses hosted acceptance. `merge` refuses, naming the status; re-run the gate with `forceLocal: true`. `gate` skips the hosted shortcut, runs locally and reports `hostedRefused`; if it cannot read the head's statuses it does not accept hosted results and runs locally.
+
+**Repo-local actions.** Hosted acceptance is refused when a required job of a required base workflow uses a repo-local action or reusable workflow (a `uses:` starting with `./`, at job or step level), because the PR can change those files while the workflow file stays identical.
+
+**A head that moves.** After hosted verification succeeds, `merge` and `gate` re-read the PR and refuse if it is no longer open or its head changed; `gate` then stops at stage `config` and does not fall back to a local run.
+
+**Branch protection.** Never change branch protection from this skill, from the CLI or from any command. Since 2026-11-06 protection on `dev` requires the hosted checks `validate`, `test (22)` and `test (24)` (see Rollback), so GitHub itself waits for hosted CI. With reuse enabled, the gate verdict (`merge`) no longer needs a local gate run once those jobs are green on the head; it still refuses when they are not, and a PR whose workflow files changed is graded by the local gate. Pointing protection back at `ensemble/local-ci` stays a separate owner-approved step (see Enable, which requires removing `hosted_reuse` or always passing `forceLocal: true` first).
 
 ## A PR branch that is behind its base is refused
 

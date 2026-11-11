@@ -483,11 +483,44 @@ function runMerge(payload, deps) {
     });
   }
 
-  const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet }, deps);
+  const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet, pr, baseRefName: baseBranchOf(baseRef) }, deps);
   if (hosted.ok) {
+    // Negative local evidence outranks green hosted jobs: a failure the gate recorded on THIS head is never overridden.
+    const failed = ours.find((s) => (s.state === 'failure' || s.state === 'error') && isText(s.sha) && s.sha.toLowerCase() === headSha.toLowerCase());
+    if (failed) {
+      return {
+        ...localRefusal,
+        reason: `${localRefusal.reason}; hosted CI is green on this head but is not accepted over a recorded local failure (${cfg.approvalSet.statusContext} is ${failed.state} on ${headSha}): re-run the gate with forceLocal:true`,
+        hostedRefused: true,
+        localFailure: true,
+      };
+    }
+    // The head may have moved while GitHub was being asked: re-read the pull request and refuse if it did.
+    const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
+    if (reread) return refuse(`hosted CI verified, but ${reread} (re-read after the hosted lookups)`, { hostedRefused: true });
     return { ok: true, mergeReady: true, headSha, source: 'hosted', hostedJobs: hosted.jobs, hostedCiWaitRequired: false };
   }
   return hosted.disabled ? localRefusal : { ...localRefusal, reason: `${localRefusal.reason}; ${hosted.reason}`, hostedRefused: true };
+}
+
+/** The PR's base branch name, from a baseRef that verifyPullRequest already proved is exactly `origin/<that branch>`. */
+const baseBranchOf = (baseRef) => fullRemoteRef(baseRef).slice('refs/remotes/origin/'.length);
+
+/**
+ * Has the gate itself recorded a failure on this exact head? GitHub lists a commit's statuses newest first, and the latest
+ * one in the configured context decides: `failure` or `error` vetoes hosted acceptance. A list that cannot be read vetoes
+ * too (fail closed). Returns the reason text, or null when nothing is in the way.
+ */
+function recordedLocalFailure(deps, { repo, headSha, statusContext }) {
+  if (typeof deps.ghApi !== 'function') return 'no GitHub lookup is available to read the commit statuses';
+  const got = deps.ghApi(`repos/${repo}/commits/${headSha}/statuses?per_page=100`);
+  if (!got || got.ok !== true || !Array.isArray(got.json)) return `cannot read the commit statuses of ${headSha}: ${(got && got.error) || 'no answer'}`;
+  const want = statusContext.toLowerCase();
+  const latest = got.json.find((s) => isObject(s) && typeof s.context === 'string' && s.context.toLowerCase() === want);
+  if (latest && (latest.state === 'failure' || latest.state === 'error')) {
+    return `the local gate recorded ${latest.state} for ${statusContext} on ${headSha}, and green hosted jobs do not override it (the local run decides)`;
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------------ gate */
@@ -562,11 +595,21 @@ async function runGateFlow(payload, deps) {
   // This reads GitHub and runs nothing, so it stays outside the lock: a PR hosted CI already passed never queues behind a run.
   if (payload.forceLocal !== undefined && typeof payload.forceLocal !== 'boolean') throw new Error('gate: forceLocal must be a boolean');
   if (payload.forceLocal !== true) {
-    const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet }, deps);
+    const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet, pr, baseRefName: baseBranchOf(baseRef) }, deps);
     if (hosted.ok) {
-      return { ...report, stage: 'hosted', ok: true, mergeReady: true, source: 'hosted', hostedJobs: hosted.jobs, ranLocally: false };
+      // Green hosted jobs do not override a failure the local gate recorded on this head: the local run decides then.
+      const failure = recordedLocalFailure(deps, { repo, headSha, statusContext: cfg.approvalSet.statusContext });
+      if (failure) {
+        report.hostedRefused = `hosted CI not accepted: ${failure}`;
+      } else {
+        // The head may have moved while GitHub was being asked: re-read the pull request, as the first check did.
+        const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
+        if (reread) return stop('config', `${reread} (re-read after the hosted lookups)`);
+        return { ...report, stage: 'hosted', ok: true, mergeReady: true, source: 'hosted', hostedJobs: hosted.jobs, ranLocally: false };
+      }
+    } else if (!hosted.disabled) {
+      report.hostedRefused = hosted.reason;
     }
-    if (!hosted.disabled) report.hostedRefused = hosted.reason;
   }
 
   // 3. Run in a clean clone at the exact head (the runner owns checkout and cleanup), one run per user home at a time:

@@ -263,7 +263,7 @@ describe('gate: hosted CI green on the head replaces the local run', () => {
     });
     expect(runGate).not.toHaveBeenCalled();
     expect(post.calls).toEqual([]);
-    expect(ghApi.calls).toHaveLength(4);
+    expect(ghApi.calls).toHaveLength(5); // the runs, the three job listings and the commit statuses read before accepting
   });
 
   it('(f) through main: exit 0, stage hosted, nothing run or posted', async () => {
@@ -447,20 +447,24 @@ describe('through a real process, with a gh that answers the PR and the Actions 
       env: { ...process.env, PATH: `${ghDir}${path.delimiter}${process.env.PATH}` },
     });
   const prAnswer = { baseRefName: 'trusted-base', headRefOid: HEAD, state: 'OPEN' };
-  const EXPECTED_LOOKUPS = [
-    ['pr', 'view', '7', '--repo', REPO, '--json', 'baseRefName,headRefOid,state'],
+  const PR_VIEW = ['pr', 'view', '7', '--repo', REPO, '--json', 'baseRefName,headRefOid,state'];
+  const ACTIONS = [
     ['api', `repos/${REPO}/actions/runs?head_sha=${HEAD}&per_page=100`],
     ['api', `repos/${REPO}/actions/runs/101/jobs?filter=latest&per_page=100`],
     ['api', `repos/${REPO}/actions/runs/102/jobs?filter=latest&per_page=100`],
     ['api', `repos/${REPO}/actions/runs/103/jobs?filter=latest&per_page=100`],
   ];
+  // identity, the Actions lookups, then the PR read again after them (the head may have moved meanwhile)
+  const EXPECTED_MERGE = [PR_VIEW, ...ACTIONS, PR_VIEW];
+  // `gate` also reads the head's commit statuses once hosted CI verified, to see whether the local gate recorded a failure
+  const EXPECTED_GATE = [PR_VIEW, ...ACTIONS, ['api', `repos/${REPO}/commits/${HEAD}/statuses?per_page=100`], PR_VIEW];
 
   it('merge: hosted CI green -> exit 0, source hosted; gh was asked for the PR and exactly the runs and jobs, as separate argv elements', () => {
     const dir = H.fakeGhActionsDir({ pr: prAnswer, entries: H.honest(HEAD), head: HEAD });
     const r = run('merge', mergePayload(fx), dir);
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ ok: true, mergeReady: true, source: 'hosted', hostedJobs: H.VERIFIED });
-    expect(H.ghInvocations(dir)).toEqual(EXPECTED_LOOKUPS);
+    expect(H.ghInvocations(dir)).toEqual(EXPECTED_MERGE);
   });
 
   it('merge: a red job -> exit 1 with both reasons', () => {
@@ -496,6 +500,6 @@ describe('through a real process, with a gh that answers the PR and the Actions 
     const r = run('gate', gatePayload(fx, { dryRun: false }), dir);
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ ok: true, stage: 'hosted', source: 'hosted', ranLocally: false, posted: false, mergeReady: true });
-    expect(H.ghInvocations(dir)).toEqual(EXPECTED_LOOKUPS);
+    expect(H.ghInvocations(dir)).toEqual(EXPECTED_GATE);
   });
 });

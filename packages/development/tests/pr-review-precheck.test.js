@@ -69,6 +69,12 @@ describe('gate start (AC1)', () => {
     expect(calls.startGate).toBe(1);
   });
 
+  it('says the detached gate posts the status when it finishes unless hosted CI already verified the head (then it posts nothing)', async () => {
+    const { deps } = makeDeps();
+    const r = await runPrecheck({}, deps);
+    expect(r.comment.body).toContain(`It posts \`${CONTEXT}\` on this head when it finishes, unless hosted CI already verified the head: then it runs nothing and posts nothing (its log says \`stage hosted\`).`);
+  });
+
   it('does not start it when the configured status is already on this head, whatever its state', async () => {
     for (const state of ['success', 'failure', 'pending', 'error']) {
       const { deps, calls } = makeDeps({ readStatuses: async () => ({ ok: true, statuses: [{ context: CONTEXT, state, sha: HEAD }] }) });

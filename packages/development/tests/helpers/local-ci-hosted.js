@@ -19,7 +19,7 @@ const path = require('path');
 
 const { defaultDeps } = require('../../lib/local-ci-cli');
 const { validateConfig } = require('../../lib/local-ci-config');
-const { makeBaseRepo, REPO, PR } = require('./local-ci-base-repo');
+const { makeBaseRepo, REPO, PR, BASE_BRANCH } = require('./local-ci-base-repo');
 
 const VALIDATE = '.github/workflows/validate.yml';
 const TEST = '.github/workflows/test.yml';
@@ -77,7 +77,7 @@ const APPROVAL_SET = approvalSetOf(CONFIG);
  * `id * 100 + n`. `run` and `job` override fields of the run and of every job (e.g. a different head_sha).
  */
 function hostedRun(id, file, jobNames, head, { run = {}, job = {} } = {}) {
-  const r = { id, name: path.basename(file, '.yml'), path: file, event: 'pull_request', status: 'completed', conclusion: 'success', head_sha: head, head_branch: 'feat/hosted', run_attempt: 1, ...run };
+  const r = { id, name: path.basename(file, '.yml'), path: file, event: 'pull_request', status: 'completed', conclusion: 'success', head_sha: head, head_branch: 'feat/hosted', run_attempt: 1, pull_requests: [{ number: PR, base: { ref: BASE_BRANCH, sha: 'b'.repeat(40) } }], ...run };
   const jobs = jobNames.map((name, i) => ({ id: id * 100 + i + 1, run_id: id, name, status: 'completed', conclusion: 'success', head_sha: r.head_sha, run_attempt: 1, ...job }));
   return { run: r, jobs };
 }
@@ -109,7 +109,7 @@ const withoutJob = (entry, name) => ({ run: entry.run, jobs: entry.jobs.filter((
  * `answer(path, proceed)` takes over a lookup entirely (an error, a malformed body, even `undefined`): call `proceed()`
  * to get the answer the fake would otherwise have given.
  */
-function actionsApi(entries, { repo = REPO, runsTotal, jobsTotal = {}, answer } = {}) {
+function actionsApi(entries, { repo = REPO, runsTotal, jobsTotal = {}, answer, statuses = [] } = {}) {
   const calls = [];
   const honestAnswer = (apiPath) => {
     const runs = /^repos\/([^/]+\/[^/]+)\/actions\/runs\?head_sha=([0-9a-fA-F]+)&per_page=(\d+)$/.exec(apiPath);
@@ -125,6 +125,11 @@ function actionsApi(entries, { repo = REPO, runsTotal, jobsTotal = {}, answer } 
       if (!entry) return { ok: false, error: `HTTP 404: no run ${jobs[2]}` };
       const total = jobsTotal[entry.run.id];
       return { ok: true, json: { total_count: total === undefined ? entry.jobs.length : total, jobs: entry.jobs } };
+    }
+    const statusList = /^repos\/([^/]+\/[^/]+)\/commits\/([0-9a-fA-F]+)\/statuses\?per_page=(\d+)$/.exec(apiPath);
+    if (statusList) {
+      if (statusList[1] !== repo) return { ok: false, error: `HTTP 404: no repository ${statusList[1]}` };
+      return { ok: true, json: statuses };
     }
     return { ok: false, error: `unexpected lookup: ${apiPath}` };
   };
@@ -162,7 +167,7 @@ function cleanupHostedFixtures() {
  * like a 502; 'garbage' makes it exit 0 with output that is not JSON. Every invocation's argv is
  * recorded: read it back with `ghInvocations(dir)`.
  */
-function fakeGhActionsDir({ pr, entries, head, repo = REPO, apiMode = 'ok' }) {
+function fakeGhActionsDir({ pr, entries, head, repo = REPO, apiMode = 'ok', statuses = [] }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-ci-hostedgh-'));
   dirs.push(dir);
   const cases = [];
@@ -173,6 +178,7 @@ function fakeGhActionsDir({ pr, entries, head, repo = REPO, apiMode = 'ok' }) {
   };
   answer(`repos/${repo}/actions/runs?head_sha=${head}&per_page=100`, { total_count: entries.length, workflow_runs: entries.map((e) => e.run) });
   for (const e of entries) answer(`repos/${repo}/actions/runs/${e.run.id}/jobs?filter=latest&per_page=100`, { total_count: e.jobs.length, jobs: e.jobs });
+  answer(`repos/${repo}/commits/${head}/statuses?per_page=100`, statuses);
   fs.writeFileSync(path.join(dir, 'pr.json'), JSON.stringify(pr));
   const api = {
     ok: `if [ "$#" -eq 2 ]; then\n    case "$2" in\n${cases.join('\n')}\n    esac\n  fi`,

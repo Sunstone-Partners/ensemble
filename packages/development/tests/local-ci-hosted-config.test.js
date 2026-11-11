@@ -269,7 +269,7 @@ describe("this repository's own .ensemble/local-ci.yaml", () => {
       hostedRun(102, TEST, ['test (22)', 'test (24)'], fx.headSha),
       hostedRun(103, DRIFT, ['drift'], fx.headSha),
     ];
-    const verify = (list) => verifyHosted({ repo: REPO, headSha: fx.headSha, baseSha: fx.baseSha, repoRoot: fx.dir, approvalSet: real.approvalSet }, { git, ghApi: actionsApi(list) });
+    const verify = (list) => verifyHosted({ repo: REPO, headSha: fx.headSha, baseSha: fx.baseSha, repoRoot: fx.dir, approvalSet: real.approvalSet, pr: require('./helpers/local-ci-base-repo').PR, baseRefName: require('./helpers/local-ci-base-repo').BASE_BRANCH }, { git, ghApi: actionsApi(list) });
 
     it('hosted CI green under exactly those four names is accepted', () => {
       const r = verify(entries());

@@ -42,13 +42,13 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
 
 ### `check` (merge-readiness)
 
-1. Fetch the commit statuses for the PR head and recent commits, for example
+1. Fetch the commit statuses for the PR head and recent commits:
    `gh api repos/$REPO/commits/$HEAD_SHA/status` plus the statuses of earlier
    PR commits, as `[{context, state, description, sha}]` (`sha` = commit the
    status is on).
 2. `merge` with `{headSha, statuses, repoRoot, baseRef, repo, pr}` (add `reviews` when known).
-   `pr` is the PR number. `baseRef` is the PR's base branch, fetched fresh first (for example
-   `git fetch origin $BASE_BRANCH`, then `origin/$BASE_BRANCH`); required.
+   `pr` is the PR number. `baseRef` is the PR's base branch, fetched fresh first
+   (`git fetch origin $BASE_BRANCH`, then `origin/$BASE_BRANCH`); required.
 3. `mergeReady:true`: report ready to merge, quoting the record or `hostedJobs`.
    `mergeReady:false`: report the CLI
    `reason` verbatim and refuse. Typical reasons: no local status (name the
@@ -80,7 +80,7 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
    - `dryRun` and `mergeReady:true`: report readiness, state that nothing was
      posted.
    - `source:"hosted"`, `mergeReady:true`: report hosted CI passed on this head;
-     nothing run or posted. `hostedRefused`: the CLI ran locally instead.
+     nothing run or posted. `hostedRefused`: the CLI ran locally instead. A `failure`/`error` status on the head vetoes hosted (`merge` refuses; `gate` runs locally); fork PRs and workflows using repo-local actions are never accepted hosted.
    - `posted:true`, `mergeReady:true`: report the record; the PR is mergeable.
 3. Never retry with a different SHA, never post by hand, never edit the config
    to make a step pass. Never pass `config`, `path`, `runner` or any key other
@@ -116,8 +116,7 @@ A failed lookup is a refusal. `run` and `config` never post or authorise a
 merge.
 
 `steps` lists the exact commands, in order. The runner runs each in the clean
-clone, once per required Node version, under `bash -e -o pipefail` (as GitHub
-Actions does). PASS is an exit status of exactly 0 that the runner observed; a
+clone, once per required Node version, under `bash -e -o pipefail`. PASS is an exit status of exactly 0 that the runner observed; a
 signal, a missing status or a failed start is a failure.
 Nothing in the PR head (`scripts/ci-local.js`, printed tables, its own config) is
 loaded, executed or believed. A head workflow step that `steps`/`equivalents` do
@@ -128,8 +127,7 @@ The run is voided if, afterwards, any tracked file differs from the head's tree
 clone, the index, HEAD or the clone's git config changed. After EVERY step it is
 also voided if the step left an untracked file outside the base config's
 `output_paths` (default `node_modules`, `coverage`, `.cache`, `dist`; plain
-repo-relative paths, no globs): an untracked file is what a step can plant for a
-later command to read as permission to pass, and the head's `.gitignore` cannot
+repo-relative paths, no globs): a step can plant one for a later command to read as permission to pass, and the head's `.gitignore` cannot
 hide it. A build that writes elsewhere lists that path.
 
 Steps get a minimal environment (PATH, CI, LANG, TERM, TMPDIR and a few more).
@@ -145,8 +143,7 @@ secrets you accept a trusted step handling.
 The payload cannot carry config, paths, scripts, hosted results or runner options (`gate`:
 `repoRoot, headSha, baseRef, repo, pr, dryRun, forceLocal`; `merge`: `headSha, statuses,
 repoRoot, baseRef, repo, pr, reviews`); other keys are rejected. The status
-record's first field is 12 hex of the base-ref config's git blob hash, covering the
-whole command list; `merge` requires it and refuses a different one.
+record's first field is 12 hex of the base-ref config's git blob hash; `merge` requires it and refuses a different one.
 
 ---
 
@@ -164,7 +161,7 @@ when a command asks; same fail-closed rules.
 ## Rollout, rollback and the pre-PR step
 
 Enabling, rolling back, owner approvals, the optional pre-PR gate step and hosted
-reuse are in `RUNBOOK.md` beside this file. Enablement is refused until its
+reuse are in `RUNBOOK.md`. Enablement is refused until its
 preconditions hold; never change branch protection from this skill.
 
 ---

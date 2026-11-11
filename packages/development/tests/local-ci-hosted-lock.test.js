@@ -215,7 +215,7 @@ describe('through the real CLI process, with a live process holding the gate loc
     expect(JSON.parse(fs.readFileSync(lockPathOf(dir), 'utf8'))).toEqual(holder);
     const asked = H.ghInvocations(gh);
     expect(asked[0]).toEqual(['pr', 'view', String(PR), '--repo', REPO, '--json', 'baseRefName,headRefOid,state']);
-    expect(asked.slice(1).every((argv) => argv[0] === 'api' && argv[1].startsWith(`repos/${REPO}/actions/runs`))).toBe(true);
+    expect(asked.slice(1).every((argv) => (argv[0] === 'pr' && argv[1] === 'view') || (argv[0] === 'api' && /^repos\/o\/r\/(actions\/runs|commits\/[0-9a-f]{40}\/statuses)/.test(argv[1])))).toBe(true);
   });
 
   it('(j) hosted CI red: exit 1, stage lock (lock-timeout), hostedRefused names the red job, and gh was asked for nothing to post', () => {
