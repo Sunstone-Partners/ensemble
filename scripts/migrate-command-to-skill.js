@@ -38,8 +38,88 @@ const TOKEN_WARN = 5000;
 const LINE_WARN = 500;
 const ARGS_SENTINEL = '__MIGRATE_ARGS_SENTINEL__';
 
-/** Top-level keys the three renders know about; anything else would be dropped by the migration. */
+/** Top-level keys the three renders know about; every other non-metadata/skill key is carried into SKILL.md as a section. */
 const PROMPT_KEYS = ['mission', 'constraints', 'parameters', 'dispatch', 'workflow', 'expectedOutput'];
+
+/** Top-level keys no runtime renders and the manifest cannot hold, in YAML order. */
+function carriedKeys(parsed) {
+  return Object.keys(parsed).filter((k) => k !== 'metadata' && k !== 'skill' && !PROMPT_KEYS.includes(k));
+}
+
+function titleFromKey(key) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function isContainer(v) {
+  return v !== null && typeof v === 'object';
+}
+
+function nestingDepth(v) {
+  if (!isContainer(v)) return 0;
+  const kids = Array.isArray(v) ? v : Object.values(v);
+  return 1 + kids.reduce((m, c) => Math.max(m, nestingDepth(c)), 0);
+}
+
+function scalarText(v) {
+  return v === null ? 'null' : String(v).trim();
+}
+
+/** Multi-line scalar: continuation lines indented so they stay inside their bullet. */
+function scalarLines(text, indent) {
+  return scalarText(text).split('\n').map((l, i) => (i === 0 ? l : `${indent}${l.trim()}`));
+}
+
+function renderCarriedLines(value, indent) {
+  const lines = [];
+  const pad = ' '.repeat(indent);
+  const entries = Array.isArray(value) ? value.map((v) => [null, v]) : Object.entries(value);
+  for (const [k, v] of entries) {
+    const label = k === null ? '' : `**${k}**:`;
+    if (!isContainer(v)) {
+      const [first, ...rest] = scalarLines(v, `${pad}  `);
+      lines.push(`${pad}- ${label}${label ? ' ' : ''}${first}`, ...rest);
+    } else if (k === null && !Array.isArray(v)) {
+      // list item that is a map: first entry inline, remaining entries nested under the same bullet
+      const sub = renderCarriedLines(v, indent + 2);
+      lines.push(`${pad}- ${sub[0].trimStart().replace(/^- /, '')}`, ...sub.slice(1));
+    } else {
+      lines.push(`${pad}- ${label}`.trimEnd(), ...renderCarriedLines(v, indent + 2));
+    }
+  }
+  return lines;
+}
+
+/** One `## <Title>` section for a carried top-level key. Deeply nested values (>2 levels) become a fenced yaml block. */
+function renderCarriedSection(key, value) {
+  const out = [`## ${titleFromKey(key)}`, ''];
+  if (!isContainer(value)) {
+    out.push(...scalarText(value).split('\n').map((l) => l.trimEnd()), '');
+  } else if (nestingDepth(value) > 2) {
+    out.push('```yaml', yaml.dump(value, { lineWidth: -1, noRefs: true }).trimEnd(), '```', '');
+  } else {
+    out.push(...renderCarriedLines(value, 0), '');
+  }
+  return out;
+}
+
+/** String scalar leaves and key names of a value: every one must survive into the skill. */
+function carriedTokens(value, acc = []) {
+  if (typeof value === 'string') {
+    if (value.trim()) acc.push(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((v) => carriedTokens(v, acc));
+  } else if (isContainer(value)) {
+    for (const [k, v] of Object.entries(value)) {
+      acc.push(String(k));
+      carriedTokens(v, acc);
+    }
+  }
+  return acc;
+}
 
 // ---------------------------------------------------------------------------
 // Loading
@@ -222,6 +302,7 @@ function renderSkillBody(parsed) {
       out.push('');
     }
   }
+  for (const key of carriedKeys(parsed)) out.push(...renderCarriedSection(key, parsed[key]));
 
   return `${out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
 }
@@ -293,9 +374,12 @@ function planMigration(yamlPath, options = {}) {
       'split phases into references/*.md (one level deep, named as backticked relative paths in SKILL.md)'
     );
   }
-  const dropped = Object.keys(parsed).filter((k) => k !== 'metadata' && !PROMPT_KEYS.includes(k));
-  if (dropped.length) {
-    warnings.push(`top-level keys no runtime renders and the manifest cannot hold, dropped: ${dropped.join(', ')}`);
+  const carried = carriedKeys(parsed);
+  if (carried.length) {
+    warnings.push(
+      `top-level keys no runtime renders are carried into SKILL.md as sections: ${carried.join(', ')} ` +
+      '(every runtime\'s model now sees this text; mention the behaviour change in the PR)'
+    );
   }
   if (parsed.dispatch) {
     warnings.push(
@@ -495,6 +579,14 @@ function checkMigrationParity(oldYamlPath, skillDir, options = {}) {
     require_('dispatch', stripMarkup(String(sub.keyword)));
     require_('dispatch', `ensemble:${sub.ref}`);
     if (sub.description) extractUnits(sub.description.trim()).forEach((u) => require_('dispatch', u));
+  }
+
+  for (const key of carriedKeys(parsed)) {
+    require_(`carried:${key}`, stripMarkup(titleFromKey(key)));
+    for (const token of carriedTokens(parsed[key])) {
+      const unit = stripMarkup(token);
+      if (unit) require_(`carried:${key}`, unit);
+    }
   }
 
   return { ok: missing.length === 0, checked, missing };

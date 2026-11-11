@@ -260,7 +260,7 @@ A command can be backed by a skill so that one prompt serves every runtime. Put 
 
 #### Migrating an existing command
 
-`scripts/migrate-command-to-skill.js` does the mechanical part of a conversion. The Claude render omits `constraints` while Pi and OpenCode render them, so converting from one render silently drops text; the tool builds the skill from the union of all three and proves it.
+`scripts/migrate-command-to-skill.js` does the mechanical part of a conversion. The Claude render omits `constraints` while Pi and OpenCode render them, so converting from one render silently drops text; the tool builds the skill from the union of all three and proves it. Top-level keys no runtime renders and the manifest cannot hold (`expectedInput`, `team_configuration`, `usageExamples`, ...) are carried into `SKILL.md` as `## <Title>` sections and checked by the parity step, so no authored content is lost (but every runtime's model now sees that text).
 
 1. **Dry run** (writes nothing): `node scripts/migrate-command-to-skill.js packages/<pkg>/commands/<cmd>.yaml [--name ensemble-<cmd>]`. It prints the files it would write and a size estimate, and warns above 5k tokens or 500 lines (split phases into `references/*.md`, one level deep, named as backticked relative paths in `SKILL.md`). It refuses to run when the skill directory already exists.
 2. **Write**: add `--write`. This creates `skills/<name>/SKILL.md` (frontmatter `name`, `description`, `disable-model-invocation: true`, `metadata.version`, `metadata.category`) and shrinks the YAML to its unchanged `metadata:` block plus `skill:`; the manifest is schema-validated before it is written. Dispatcher commands (`dispatch.subcommands`) need their sub-command pointers fixed by hand.

@@ -252,3 +252,80 @@ describe('checkMigrationParity', () => {
     expect(migrate.checkMigrationParity(repo.yamlPath, repo.skillDir).ok).toBe(true);
   });
 });
+
+describe('carried top-level keys', () => {
+  const CARRIED_YAML = `${fs.readFileSync(FIXTURE, 'utf8').trimEnd()}
+
+expectedInput:
+  description: A topic name and an optional audience.
+  fields:
+    topic: Must be a single noun phrase.
+    audience: Reviewer or maintainer
+  required_flags:
+    - --fast
+usageExamples:
+  - Run the demo with a topic named zebra.
+  - Run the demo in fast mode for the topic giraffe.
+timing_budget: Finish within five minutes of wall clock.
+`;
+  function migrated() {
+    const repo = createRepo(CARRIED_YAML);
+    migrate.writeMigration(migrate.planMigration(repo.yamlPath));
+    return repo;
+  }
+  const skillPath = (repo) => path.join(repo.skillDir, 'SKILL.md');
+
+  test('dry run reports carried keys instead of a dropped warning', () => {
+    const repo = createRepo(CARRIED_YAML);
+    const plan = migrate.planMigration(repo.yamlPath);
+    const text = plan.warnings.join('\n');
+    expect(text).toContain('carried into SKILL.md as sections: expectedInput, usageExamples, timing_budget');
+    expect(text).not.toContain('dropped');
+  });
+
+  test('SKILL.md gets a titled section per key, manifest stays metadata + skill, parity passes', () => {
+    const repo = migrated();
+    const skill = fs.readFileSync(skillPath(repo), 'utf8');
+    expect(skill).toContain('## Expected Input');
+    expect(skill).toContain('## Usage Examples');
+    expect(skill).toContain('## Timing Budget');
+    expect(skill).toContain('- **description**: A topic name and an optional audience.');
+    expect(skill).toContain('  - **topic**: Must be a single noun phrase.');
+    expect(skill).toContain('- Run the demo with a topic named zebra.');
+    expect(skill).toContain('Finish within five minutes of wall clock.');
+    expect(skill.indexOf('## Expected Output')).toBeLessThan(skill.indexOf('## Expected Input'));
+    expect(skill.indexOf('## Expected Input')).toBeLessThan(skill.indexOf('## Usage Examples'));
+    const manifest = yaml.load(fs.readFileSync(repo.yamlPath, 'utf8'));
+    expect(Object.keys(manifest).sort()).toEqual(['metadata', 'skill']);
+    const result = migrate.checkMigrationParity(repo.yamlPath, repo.skillDir);
+    expect(result).toMatchObject({ ok: true, missing: [] });
+  });
+
+  test('values nested more than two levels deep are fenced as yaml and still pass parity', () => {
+    const deep = `${fs.readFileSync(FIXTURE, 'utf8').trimEnd()}\nteam_configuration:\n  a:\n    b:\n      c: deepest leaf value\n`;
+    const repo = createRepo(deep);
+    migrate.writeMigration(migrate.planMigration(repo.yamlPath));
+    const skill = fs.readFileSync(skillPath(repo), 'utf8');
+    expect(skill).toContain('## Team Configuration');
+    expect(skill).toContain('```yaml');
+    expect(migrate.checkMigrationParity(repo.yamlPath, repo.skillDir).ok).toBe(true);
+  });
+
+  test.each([
+    ['a nested leaf', '  - **topic**: Must be a single noun phrase.\n', 'Must be a single noun phrase'],
+    ['a list leaf', '- --fast\n', '--fast'],
+    ['a usage example', '- Run the demo in fast mode for the topic giraffe.\n', 'Run the demo in fast mode'],
+    ['a key name', '**required_flags**:', 'required_flags']
+  ])('mutation: dropping %s from SKILL.md fails parity and names it', (_label, from, expected) => {
+    const repo = migrated();
+    const text = fs.readFileSync(skillPath(repo), 'utf8');
+    expect(text).toContain(from);
+    fs.writeFileSync(skillPath(repo), text.replace(from, ''));
+    const result = migrate.checkMigrationParity(repo.yamlPath, repo.skillDir);
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.text.includes(expected) && m.runtime.startsWith('carried:'))).toBe(true);
+    const out = quiet();
+    expect(migrate.main([repo.yamlPath, '--check-parity'], out)).toBe(1);
+    expect(out.logs.join('\n')).toContain(expected);
+  });
+});
