@@ -23,6 +23,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 const glob = require('glob');
 const { isSkillBacked, resolveSkillFile } = require('../../lib/skill-backed-command');
+const { MIRROR_PACKAGES, owningPackage } = require('../../lib/mirror-packages');
 
 // ---------------------------------------------------------------------------
 // Known argument placeholder mappings per command name.
@@ -435,7 +436,7 @@ class CommandTranslator {
    */
   discoverCommandFiles() {
     const pattern = path.join(this.packagesDir, '*/commands/*.yaml');
-    const files = glob.sync(pattern);
+    const files = glob.sync(pattern).filter((file) => !MIRROR_PACKAGES.has(owningPackage(file, this.packagesDir)));
     return files.sort();
   }
 
