@@ -311,17 +311,28 @@ report (it is not the collector's `restated` flag of a result file rewritten aft
 candidate each restatement was merged into (`restated: [ids]`) and lists the round's `restatements`, the gate's open-finding blocker names and counts
 them (`restated by N later candidates, merged into it: ids`, and `restatedBy` in its extra), and the bead of the finding lists them.
 
-**The bar is fitted, not validated.** 0.35 was chosen from 45 pairs of findings that cite overlapping lines in 12 real ledgers of this repository's
-own reviews (the measurement runs and the review of PR 229), among them the two measured restatements above (0.51 and 0.42): the pairs one defect
-written up twice scored 0.32 to 0.51 and the highest pair of distinct defects 0.29. It was NOT validated on held-out data: no second PR's
-restatements exist yet. The measure is lexical and corpus-relative, so a heavily paraphrased restatement that shares no identifier with the
-finding scores below the bar and stays a separate candidate (the fixtures score such a paraphrase 0.24; a restatement that names the same code,
-0.44 to 0.84), which is the safe side: more findings, never fewer. A false merge is the other side, and it keeps the merged defect from its own
-verification this round (its text and evidence stay in `restatedBy`, and a fix touching the cited lines ends the merge's reach). The first live
-use is the validation: read `carry.restatements.merged` against `.kept` in the next delta run, and treat any merged pair two people would call
-distinct defects as a miss. `tests/pr-review-restated.test.js` pins the measured scores and each pair's merge-or-keep outcome, so a change of the bar
-or of the scoring breaks there. Kata `k7b0` is not changed: a restated finding still inherits its entry's disposition and adjudication (except when
-a more severe restatement raised it), the cleared-never-verified items and the count-versus-object item stand as described above.
+**The bar is fitted, not validated.** 0.35 was chosen from 45 pairs of findings that cite overlapping lines in 7 ledgers of this repository's own
+review runs (21 state files were scanned), among them the two measured restatements above. The pairs are committed, with every entry of each ledger,
+in `tests/fixtures/pr-review-restated-fit-pairs.json`, and `tests/pr-review-restated-fit.test.js` re-scores them, so the fit can be re-derived. Each pair is
+scored over its OWN ledger. By the reading of whoever fitted the bar, 8 of the 45 are one defect written up twice and 35 are distinct defects (2 are unclear):
+the pairs of one defect score 0.51, 0.47, 0.46, 0.45 and 0.42, which the bar merges, and 0.34 and 0.32, which it does NOT (one more is refused for its size
+ratio), so the bar costs recall; the highest of the distinct pairs scores 0.29. **The margin depends on the corpus**: the runner weighs the words over the
+prior ledger and the round's candidates, not over a pair's own ledger, and the same pair scores differently there (a distinct pair of PR 291, f3 and f5, scores
+0.22 over its own ledger and about 0.33 over a union of 98 entries, under the bar by less than two hundredths). With fewer than three findings in play every word
+weighs the same (ln(N/df) is 0 for every shared word of two), the more permissive reading; `dedupeFindings` itself still scores a call of exactly two findings 0, as it
+always did. The bar was NOT validated on held-out data: no second PR's restatements exist yet. The measure is lexical, so a heavily paraphrased restatement that shares
+no identifier with the finding scores below the bar and stays a separate candidate (the hand-written fixtures score such a paraphrase 0.24; a restatement that names the
+same code, 0.44 to 0.84), which is the safe side: more findings, never fewer. A false merge is the other side, and it keeps the merged defect from its own
+verification this round (its text and evidence stay in `restatedBy`, and a fix touching the cited lines ends the merge's reach). The first live use is the validation:
+read `carry.restatements.merged` against `.kept` in the next delta run, and treat any merged pair two people would call distinct defects as a miss.
+`tests/pr-review-restated.test.js` pins how the measure scores hand-written fixture claims (not measured data) and what the matcher does with each, so a change of the bar or
+of the scoring breaks there. Kata `k7b0` is not changed: a restated finding still inherits its entry's disposition and adjudication (except when a more severe
+restatement raised it), the cleared-never-verified items and the count-versus-object item stand as described above.
+
+Two more limits, said plainly. A push that only adds lines inside a cited range clears the finding (kata `bh8w`) even when the added lines are a comment and the defect is
+still there, unless a reviewer of the round raises it again: "cleared" means never verified and never refuted, not fixed. And an entry takes one restatement a round
+(`entry-already-restated`), so when two reviewers restate one finding in one round the better candidate merges and the other stays a candidate of its own: the ledger then
+holds that defect twice, which is more findings, never fewer.
 
 **What stays whole.** The security lane, the whole-range reader (when the light run is cut into several slices) and the TRIAGE
 step (full mode) read the whole range (`range.diff`, every changed path of the PR) in a delta round too; a round that planned
