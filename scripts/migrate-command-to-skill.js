@@ -447,12 +447,16 @@ function withoutDispatch(parsed) {
 function renderClaude(parsed, yamlPath) {
   let md = transformCommandToMarkdown(withoutDispatch(parsed), yamlPath);
   md = md.replace(/^---\n[\s\S]*?\n---\n/, '');
-  // The generated header is a few whole-line HTML comments. Drop those lines rather than
-  // pattern-replacing `<!-- ... -->` anywhere in the text, which could leave a `<!--` behind
-  // when comments nest (CodeQL js/incomplete-multi-character-sanitization).
+  // The generated header is a few whole-line HTML comments (`<!-- ... -->`, each on one line).
+  // Drop those lines by their delimiters instead of pattern-matching markup, which cannot be done
+  // robustly with a regular expression. A comment needs at least `<!--` and `-->`: 7 characters.
+  const isCommentLine = (line) => {
+    const text = line.trim();
+    return text.length >= 7 && text.startsWith('<!--') && text.endsWith('-->');
+  };
   md = md
     .split('\n')
-    .filter((line) => !/^<!--.*-->$/.test(line.trim()))
+    .filter((line) => !isCommentLine(line))
     .join('\n');
   const usage = md.indexOf('\n## Usage');
   return usage === -1 ? md : md.slice(0, usage);
