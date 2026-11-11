@@ -22,13 +22,15 @@
  * `partitionFindings` normalized it before the gate asked `isActionable`. Since #253 the gate takes no deferral of an
  * Important finding as an answer (`applyProvenance` strips `blocking`), which refuses the repro for that reason and masks the
  * hole: on origin/dev the repro's verdict is already `mergeable: false`, so the cases that pin the verdict pass there. They are
- * here so that relaxing the strip can never again let a Critical through (one compiles the real gate without it).
+ * here so that relaxing the strip can never again let a Critical through (one compiles the real gate without it). The one
+ * verdict this change does alter is the stricter one: an escalated finding whose earlier decision was cleared (see above).
  *
- * WHAT "FAILING FIRST" MEANS. The baseline is the library on origin/dev (84c6739), the code this change fixes. A case marked
- * FAILING FIRST fails on that library with an assertion about behaviour. A case without the mark either passes there (it pins
- * behaviour that already held, such as the gate's verdict) or calls `isCritical`, which origin/dev does not export, and fails
- * there with a TypeError because the function is new: that says nothing about behaviour, so it is not marked. The marks are
- * checked by running this file against an export of origin/dev's lib and reading each case's first failure, not by hand.
+ * WHAT "FAILING FIRST" MEANS. The baseline is the library on origin/dev (84c6739; 04c15ec after it holds the same lib), the
+ * code this change fixes. A case marked FAILING FIRST fails on that library with an assertion about behaviour. A case without
+ * the mark either passes there (it pins behaviour that already held, such as the gate's verdict) or calls `isCritical`, which
+ * origin/dev does not export, and fails there with a TypeError because the function is new: that says nothing about
+ * behaviour, so it is not marked. The marks are checked by running this file against an export of origin/dev's lib and
+ * reading each case's first failure, not by hand.
  */
 
 const fs = require('fs');

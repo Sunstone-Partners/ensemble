@@ -175,8 +175,8 @@ function isCriticalWord(word) {
  * finding itself still reads Important or cannot be read at all (it blocks as Important then). That is a Critical the ledger has
  * read, and a Critical claimed beside a lesser Important word, such as `{severity: 'major', originalSeverity: 'critical'}`. It is
  * NOT a Nit or Pre-existing finding that carries the claim: `isActionable` and the merge gate read such a finding as that
- * whatever else it holds, so its Critical is stale and no rule reads it as one (the vote tally, the rank and the operator's
- * list once did, while `isActionable` and the gate did not). The stale word is not erased from the record, and counts again if
+ * whatever else it holds, so its Critical is stale, and the vote tally, the rank and the operator's list read it as a Nit
+ * too, agreeing with them. The stale word is not erased from the record, and counts again if
  * a report raises the finding to Important. A word that is not text is not Critical. `pr-review-votes.js` imports nothing and
  * mirrors this reading; a test pins that the two agree.
  *
@@ -1108,7 +1108,8 @@ function classFindings(ledger) {
  *
  * A decision is about a finding AS IT WAS GRADED: an operator who accepted a Major was not asked about the Critical it became,
  * and a reason written for a Nit does not answer an Important finding. Left on the record it would close the escalated finding
- * (`isActionable`; the merge gate checks only the head and the login) and the escalation would change a word and nothing else.
+ * (`isActionable`; the merge gate asks for a reason, a login, a time and this head, and nothing about what the decision was
+ * about) and the escalation would change a word and nothing else.
  * So the escalation CLEARS it: the finding is open again and the operator decides it anew, with a reason of their own and on
  * the current head. The decision is not lost: `supersededResolutions` keeps each one with the severity it was taken for and the
  * round that superseded it. A `resolved` disposition goes back to the one an open finding has (`fix`, or `adjudicate` when it
