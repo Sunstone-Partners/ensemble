@@ -140,12 +140,20 @@ const answerVotes = (manifest) => {
 /** What the verdict of a run says, without what only names the run or dates it (its id, the time a record was made): the gate, the ledger, the votes and what was not reviewed. */
 const verdictOf = (done) => JSON.stringify({ status: done.status, gate: done.gate, reviewStatus: done.reviewStatus, ledger: done.ledger, votes: done.votes, notReviewed: done.notReviewed, coverage: done.coverage, tier: done.tier, mode: done.mode }, (key, value) => (key === 'at' || key === 'runId' ? undefined : value));
 
-/** One whole review through the CLI; `stats` are the payload keys of the review-round collect and of the verify-round collect. */
-function review(runId, { first = {}, second = {} } = {}) {
+/** Waits in the one thread (the helper below is synchronous, as the CLIs it runs are). */
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * One whole review through the CLI; `first` and `second` are the payload keys of the review-round collect and of the verify-round collect.
+ * `padMs` waits inside the review (after the review agents answered), so that the orchestrator window is long enough, whatever the machine's speed,
+ * to hold samples of a load sampler that runs apart from it at its own interval.
+ */
+function review(runId, { first = {}, second = {}, padMs = 0 } = {}) {
   const p = prep(runId);
   expect(p.code).toBe(0);
   expect(p.out.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
   answerReview(p.out);
+  if (padMs > 0) sleepSync(padMs);
   const v = coll(runId, first);
   expect(v.out).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify' });
   answerVotes(v.out);
@@ -186,7 +194,7 @@ describe('agentStats through the real CLIs (kata nj2d)', () => {
     const sampler = spawn(process.execPath, [LOAD, 'sample', '--run-id', runId, '--cwd', fx.work, '--interval-sec', '1'], { stdio: 'ignore' });
     const stopped = new Promise((resolve) => sampler.on('exit', (code) => resolve(code)));
     try {
-      const r = review(runId, { first: { agentStats: FIGURES }, second: { agentStats: VERIFIER_FIGURES } });
+      const r = review(runId, { first: { agentStats: FIGURES }, second: { agentStats: VERIFIER_FIGURES }, padMs: 2500 });
       expect(r.done.reviewStatus).toBeDefined();
       await new Promise((resolve) => setTimeout(resolve, 1200)); // one more sample after the review is over
     } finally {
