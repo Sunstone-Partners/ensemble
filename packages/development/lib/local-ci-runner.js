@@ -709,7 +709,7 @@ function sweepMarkedProcesses({ marker, list, kill, protect = [process.pid, proc
 /**
  * The end of a run that started step processes: (a) SIGKILL the process group of every step process that still had a member
  * when its step ended, then (b) sweep the processes carrying the run's marker (the ones that left their group). A step that
- * exits normally keeps its daemons until HERE, so a daemon one step starts still serves the next. Both are a courtesy
+ * exits normally keeps the background processes it started until HERE, so one that a step starts still serves the next. Both are a courtesy
  * against a detached child that would post a commit status after the gate's final one; a head that scrubs its child's
  * environment AND leaves the process group survives them. Never throws. Returns how many it killed (a group counts once,
  * however many processes it held).
