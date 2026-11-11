@@ -651,8 +651,9 @@ const STAT_FIGURES = Object.freeze([...STAT_COUNTS, ...Object.keys(STAT_NAMES)])
 const STAT_KEYS = Object.freeze(STAT_FIGURES.flatMap((figure) => [figure, `${figure}_reason`]));
 /** The longest reason a dispatcher may give for a figure it cannot supply. */
 const STAT_REASON_MAX = 300;
+/** A reason is one line of text: no control character (C0, DEL, and the C1 range with NEL U+0085) and no line or paragraph separator (U+2028, U+2029). */
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
 /** A value as an error message shows it: bounded, and a NaN is a NaN (JSON would print it as null). */

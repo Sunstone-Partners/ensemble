@@ -109,7 +109,7 @@
  * agents lacking a figure grouped by reason) because the answer leaves through `process.exit` and a pipe holds only 64 KiB on macOS. `hostLoad` is the
  * 1-minute load average from the samples `lib/pr-review-load.js` appends beside the trace (`io.readLoad`), over the orchestrator window and, per
  * agent, while it ran; no sample is `{ missing: true, reason }`. Nothing read here is a session file, and none of it enters the window, the critical
- * path or a verdict: the existing keys, and their order, are unchanged, and `agentStats` and `hostLoad` come last.
+ * path or a verdict: the existing keys, and their order, are unchanged, and `hostLoad` and `agentStats` come last, in that order.
  *
  * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
  * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
@@ -708,18 +708,34 @@ function loadInfoOf(load, warnings) {
   return { samples, reason: samples.length === 0 ? 'the load samples hold no usable sample' : undefined };
 }
 
+/**
+ * The lowest, the highest and the sum of a list of numbers, by a loop: a sampler that ran for hours leaves a very long list, and a spread of one into
+ * Math.min or Math.max is a RangeError (about 125,000 arguments), which would end `timing` instead of reporting the figure.
+ */
+function extremes(values) {
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
+  for (const value of values) {
+    if (value < min) min = value;
+    if (value > max) max = value;
+    sum += value;
+  }
+  return { min, max, sum };
+}
+
 /** The host load over the orchestrator window (or over every sample when the window is unknown): the 1-minute average's lowest, mean and highest. */
 function hostLoadFigure(info, window) {
   if (info.reason !== undefined) return { missing: true, reason: info.reason };
   const scoped = window === null ? info.samples : info.samples.filter((s) => s.tsMs >= window.start && s.tsMs <= window.end);
   if (scoped.length === 0) return { missing: true, reason: 'no load sample lies inside the orchestrator window' };
-  const loads = scoped.map((s) => s.load1);
+  const { min, max, sum } = extremes(scoped.map((s) => s.load1));
   const cpus = [...scoped].reverse().map((s) => s.cpus).find((n) => Number.isInteger(n) && n > 0);
   return {
     missing: false,
     scope: window === null ? 'every sample (the orchestrator window is unknown)' : 'orchestrator window',
     samples: scoped.length,
-    load1: { min: round2(Math.min(...loads)), mean: round2(loads.reduce((sum, n) => sum + n, 0) / loads.length), max: round2(Math.max(...loads)) },
+    load1: { min: round2(min), mean: round2(sum / scoped.length), max: round2(max) },
     cpus: cpus === undefined ? null : cpus,
     intervalMs: medianGap(scoped),
   };
@@ -734,7 +750,9 @@ function agentHostLoad(interval, info) {
     const gap = medianGap(info.samples);
     return { missing: true, reason: `no load sample was taken while this agent ran${gap === null ? '' : ` (the samples are about ${Math.round(gap / 1000)} s apart)`}` };
   }
-  return { missing: false, samples: inside.length, load1Max: round2(Math.max(...inside.map((s) => s.load1))) };
+  let highest = -Infinity;
+  for (const s of inside) if (s.load1 > highest) highest = s.load1;
+  return { missing: false, samples: inside.length, load1Max: round2(highest) };
 }
 
 /** A role's count figures over its agents: how many have one, the total, the lowest and the highest of those, and a lower bound while some agent has none. */

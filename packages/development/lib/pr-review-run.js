@@ -2178,14 +2178,16 @@ async function collectStages(input, deps, ctx) {
   if (run === null) return failure('RUN_FAILED', { reason: 'run-not-found', error: `no run ${input.runId} under ${input.repoRoot}` });
   if (run === undefined) return failure('RUN_FAILED', { reason: 'run-unreadable', error: 'run.json is not a run of this version' });
   const tracer = safeTracer(deps, run.traceRunId);
-  ctx.run = run;
-  ctx.tracer = tracer;
-  // an agent the run does not have is refused by name (a mistyped name is never dropped in silence): the figures belong to an agent of THIS run
+  // an agent the run does not have is refused by name (a mistyped name is never dropped in silence): the figures belong to an agent of THIS run.
+  // The refusal comes BEFORE `ctx` takes the run up, so it writes nothing at all: `collectRun` closes the root span of a run that is over, and saves
+  // the run, only for a call that took it up (a refused payload on a run whose root span is still open must not do that bookkeeping).
   const stats = S.parseAgentStats(input.agentStats).stats;
   const names = agentNamesOf(run);
   for (const name of stats.keys()) {
     if (!names.has(name)) return failure('RUN_FAILED', { reason: 'invalid-input', error: `agentStats names ${JSON.stringify(name)}, which is no agent of run ${run.runId} (agents are named in the DISPATCH manifests; a verifier exists only once its wave is dispatched)` });
   }
+  ctx.run = run;
+  ctx.tracer = tracer;
   ctx.stats = stats;
 
   if (['invalidated', 'needs-full-mode', 'failed'].includes(run.phase)) return run.result;

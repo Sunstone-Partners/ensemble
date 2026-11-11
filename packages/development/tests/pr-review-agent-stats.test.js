@@ -321,6 +321,10 @@ describe('agentStats: fail closed', () => {
     ['a reason that is not text', { tool_calls: null, tool_calls_reason: 5 }, 'tool_calls_reason'],
     ['a reason over 300 characters', { tool_calls: null, tool_calls_reason: 'r'.repeat(301) }, 'tool_calls_reason'],
     ['a reason with a line break', { tool_calls: null, tool_calls_reason: 'a\nb' }, 'tool_calls_reason'],
+    ['a reason with a NEL (U+0085), which many readers print as a line break', { tool_calls: null, tool_calls_reason: 'a\u0085b' }, 'tool_calls_reason'],
+    ['a reason with a line separator (U+2028)', { tool_calls: null, tool_calls_reason: 'a\u2028b' }, 'tool_calls_reason'],
+    ['a reason with a paragraph separator (U+2029)', { tool_calls: null, tool_calls_reason: 'a\u2029b' }, 'tool_calls_reason'],
+    ['a reason with a C1 control character (U+009B)', { tool_calls: null, tool_calls_reason: 'a\u009bb' }, 'tool_calls_reason'],
     ['a figure nobody asked for', { tokens: 5 }, 'tokens'],
     ['a misspelt figure', { toolcalls: 3 }, 'toolcalls'],
   ];
@@ -470,5 +474,35 @@ describe('agentStats: read back through the real recorder and the real reader (p
     expect(text).toMatch(/reviewer-s1-a[^\n]*tool calls 31/);
     expect(text).toMatch(/reviewer-s1-b[^\n]*tool calls MISSING/);
     expect(text).toContain('the harness job result reports no tool-call count');
+  });
+});
+
+describe('agentStats: a refusal writes nothing, even on a run that is over whose root span is still open', () => {
+  test('an agent the run does not have is refused before the call takes the run up: no root closed, no state saved; the same call without it does the bookkeeping', async () => {
+    const h = harness();
+    await h.prepare();
+    // the head moves: the run is over (invalidated), and the call that found out closes its root span
+    const moved = HEAD.slice(0, 39) + (HEAD.endsWith('0') ? '1' : '0');
+    h.deps.readPr = async () => ({ ok: true, headSha: moved, baseRefName: 'main', state: 'OPEN', body: GOOD_BODY, author: 'alice', isCrossRepository: false });
+    const over = await h.collect();
+    expect(over).toMatchObject({ ok: false, status: 'RUN_INVALIDATED' });
+    // a bookkeeping write that failed leaves the root span open ("a later collect tries the bookkeeping again"): put the run in that state
+    const run = h.readRun();
+    expect(run.rootEnded).toBe(true);
+    run.rootEnded = false;
+    fs.writeFileSync(h.runFile, JSON.stringify(run, null, 2));
+    const file = fs.readFileSync(h.runFile);
+    const ends = h.ends().length;
+
+    const refused = await h.collect({ agentStats: { 'no-such-agent': { tool_calls: 3 } } });
+    expect(refused).toMatchObject({ ok: false, status: 'RUN_FAILED', reason: 'invalid-input' });
+    expect(refused.error).toContain('no-such-agent');
+    expect(fs.readFileSync(h.runFile).equals(file)).toBe(true); // nothing saved
+    expect(h.ends()).toHaveLength(ends); // no span ended
+
+    // the control, so the checks above are not vacuous: without the refused payload the same call closes the root and saves the run
+    expect(await h.collect()).toMatchObject({ ok: false, status: 'RUN_INVALIDATED' });
+    expect(h.ends()).toHaveLength(ends + 1);
+    expect(h.readRun().rootEnded).toBe(true);
   });
 });

@@ -314,3 +314,48 @@ describe('loadReviewTiming and the timing subcommand carry the same answer', () 
     expect(answer.hostLoad).toEqual({ missing: true, reason: 'no load samples were read for this trace' });
   });
 });
+
+describe('host load: the figures are computed by loops, so a long sampler run does not crash the report (a spread of 125,000 or more numbers into Math.min or Math.max is a RangeError)', () => {
+  // pr-review-load.js reads sample files of up to 8 MiB (about 140,000 lines); this is more than twice that, 1 ms apart, all inside the 600 s window
+  const COUNT = 300000;
+  const many = () => Array.from({ length: COUNT }, (_, i) => ({ tsMs: T0 + i, load1: (i % 1000) / 10, load5: 1, load15: 1, cpus: 8 }));
+
+  test('the window figure and the highest load of each agent are right for 300,000 samples, and nothing throws', () => {
+    let timing;
+    expect(() => {
+      timing = computeReviewTiming({ spans: trace(), load: { ok: true, samples: many() } });
+    }).not.toThrow();
+    expect(timing.hostLoad).toMatchObject({ missing: false, scope: 'orchestrator window', samples: COUNT, load1: { min: 0, max: 99.9 }, cpus: 8, intervalMs: 1 });
+    expect(timing.hostLoad.load1.mean).toBeCloseTo(49.95, 2);
+    // the reviewer ran 10 s..310 s: every sample from the 10,000th on is inside its window, and the highest of them is the cycle's top
+    expect(rows(timing)['reviewer-s1-a'].hostLoad).toEqual({ samples: COUNT - 10000, load1Max: 99.9 });
+    // an agent that ran after the last sample has no load, and says why
+    expect(rows(timing)['verifier-1'].hostLoad).toBeNull();
+  });
+
+  test('`timing` through its injected readers, with that many samples, still answers the figure instead of throwing', () => {
+    const spans = trace();
+    const readTrace = () => ({ spans, warnings: [] });
+    const tracePath = (projectRoot, runId) => `${projectRoot}/trace-${runId}.jsonl`;
+    const answer = loadReviewTiming({ runId: 'r', projectRoot: '/p' }, { readTrace, tracePath, readLoad: () => ({ ok: true, samples: many() }) });
+    expect(answer.ok).toBe(true);
+    expect(answer.hostLoad).toMatchObject({ missing: false, samples: COUNT, load1: { max: 99.9 } });
+  });
+});
+
+describe('host load: an agent window holds both of its ends and nothing outside them', () => {
+  // times in milliseconds from T0, so that the ends are hit exactly: the reviewers ran 10 s..310 s and 10 s..250 s, the lane 10 s..280 s, the verifiers 320 s..
+  const edge = (ms, load1) => ({ ts: new Date(T0 + ms).toISOString(), tsMs: T0 + ms, load1, load5: load1, load15: load1, cpus: 8 });
+
+  test('a sample exactly at either end is inside, one a millisecond outside is not, and an agent with none inside has no load', () => {
+    const samples = [edge(9999, 50), edge(10000, 2), edge(150000, 3), edge(250000, 5), edge(310000, 4), edge(310001, 60)];
+    const timing = computeReviewTiming({ spans: trace(), load: { ok: true, samples } });
+    const r = rows(timing);
+    expect(r['reviewer-s1-a'].hostLoad).toEqual({ samples: 4, load1Max: 5 }); // 10000, 150000, 250000, 310000
+    expect(r['reviewer-s1-b'].hostLoad).toEqual({ samples: 3, load1Max: 5 }); // 10000, 150000, 250000 (the end of its window)
+    expect(r['security-lane'].hostLoad).toEqual({ samples: 3, load1Max: 5 }); // 10000, 150000, 250000
+    expect(r['verifier-1'].hostLoad).toBeNull(); // 320 s..400 s: the last sample is at 310.001 s
+    expect(r['verifier-2'].hostLoad).toBeNull();
+    expect(without(timing, 'verifier', 'hostLoad')).toEqual([{ figure: 'hostLoad', reason: expect.stringMatching(/^no load sample was taken while this agent ran/), agents: ['verifier-1', 'verifier-2'] }]);
+  });
+});
