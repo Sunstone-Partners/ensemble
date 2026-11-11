@@ -970,6 +970,8 @@ fails a run.
 
 ## Agent stats and host load (kata `nj2d`)
 
+**On the omp harness this records almost none of what V2-1 was meant to measure.** A finished agent shows only its status, duration and structured output, so `tool_calls`, `turns` and `rate_limits` are `null` with a reason, and V2-1 does NOT deliver the per-agent tool calls, effort and 429s that plan options O5 and O6 (the reviewer budget and tier decisions) need. `effort` and `model` are what the dispatcher ASKED for, not what was used, and a retry or 429 the harness handles inside is invisible. The table below shows what the harness exposes.
+
 Plan v2 section 5 child V2-1 (`docs/plans/pr-review-speed-plan-v2.md`), under owner decision D8: how many tool calls, turns, retries and 429s an
 agent had, and at what effort and model, is recorded from what the HARNESS exposes and never from a session file; a figure it cannot supply is
 `null` with a reason, never 0. The runner cannot see the model, so the dispatcher passes what it knows in `collect`.

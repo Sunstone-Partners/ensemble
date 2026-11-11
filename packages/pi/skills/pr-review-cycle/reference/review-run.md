@@ -244,6 +244,8 @@ reasoning, and why a rewrite or a re-run of the reviewer was not chosen, is in `
 
 ## Agent stats (optional, kata `nj2d`)
 
+On the omp harness a finished agent shows only its status, duration and structured output, so `tool_calls`, `turns` and `rate_limits` come out `null` with a reason (V2-1 does not deliver the reviewer-cost data that plan options O5 and O6 need), `effort` and `model` are what you asked for, not what ran, and a retry or 429 the harness handles inside is invisible.
+
 The runner cannot see an agent's tool calls, turns, effort, model, retries or 429s, so the dispatcher passes the ones it knows. Add
 `agentStats` to the `collect` that records an agent's wave (the one after the agents finished; a `PENDING` answer records nothing, so send
 them again then): `{ "<agent name>": { "tool_calls": 31, "turns": 33, "effort": "hi", "model": "<model id>", "retries": 0,

@@ -6,8 +6,8 @@
  * `pr-review-timing.js`, its text form) prints it by role, with the host load the sampler took while the agents ran.
  *
  * Real: git (an origin, a clone, a small Medium PR), the `review-run-cli.js` process (prepare and collect), prepare, the verify plan, the
- * trace recorder, `pr-review-cli.js timing` and `pr-review-timing.js` as processes, and the load sampler as a process of its own started
- * before the review, as a dispatcher would. Faked: `gh` (an executable stub first on PATH) and the agents, which are this test writing
+ * trace recorder, `pr-review-cli.js timing` and `pr-review-timing.js` as processes, and the load sampler as a process of its own (one sample per
+ * call, taken at a moment the test chooses; the continuous sampler is pr-review-load.test.js's). Faked: `gh` (an executable stub first on PATH) and the agents, which are this test writing
  * `out-<name>.json` files exactly as a dispatched agent would.
  *
  * Fixtures live under ~/.omp/pr-review-speedup/prs-agent-stats/fixtures (never /tmp) and are removed afterwards.
@@ -16,7 +16,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync, execFileSync } = require('child_process');
+const { spawnSync, execFileSync } = require('child_process');
 
 jest.setTimeout(240000);
 
@@ -140,22 +140,20 @@ const answerVotes = (manifest) => {
 /** What the verdict of a run says, without what only names the run or dates it (its id, the time a record was made): the gate, the ledger, the votes and what was not reviewed. */
 const verdictOf = (done) => JSON.stringify({ status: done.status, gate: done.gate, reviewStatus: done.reviewStatus, ledger: done.ledger, votes: done.votes, notReviewed: done.notReviewed, coverage: done.coverage, tier: done.tier, mode: done.mode }, (key, value) => (key === 'at' || key === 'runId' ? undefined : value));
 
-/** Waits in the one thread (the helper below is synchronous, as the CLIs it runs are). */
-const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
 /**
  * One whole review through the CLI; `first` and `second` are the payload keys of the review-round collect and of the verify-round collect.
- * `padMs` waits inside the review (after the review agents answered), so that the orchestrator window is long enough, whatever the machine's speed,
- * to hold samples of a load sampler that runs apart from it at its own interval.
+ * `whileReviewing` runs while the review agents run (dispatched, not yet answered) and `whileVerifying` while the verifiers do, so a test can take a
+ * load sample inside the window of one round's agents and of no other, with no sleep and no race.
  */
-function review(runId, { first = {}, second = {}, padMs = 0 } = {}) {
+function review(runId, { first = {}, second = {}, whileReviewing = () => {}, whileVerifying = () => {} } = {}) {
   const p = prep(runId);
   expect(p.code).toBe(0);
   expect(p.out.agents.map((a) => a.name)).toEqual(['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']);
+  whileReviewing();
   answerReview(p.out);
-  if (padMs > 0) sleepSync(padMs);
   const v = coll(runId, first);
   expect(v.out).toMatchObject({ ok: true, status: 'DISPATCH', round: 'verify' });
+  whileVerifying();
   answerVotes(v.out);
   const done = coll(runId, second);
   expect(done.out).toMatchObject({ ok: true, status: 'DONE' });
@@ -188,19 +186,15 @@ describe('agentStats through the real CLIs (kata nj2d)', () => {
     expect(ends().filter((l) => l.includes('"tool_calls":4'))).toHaveLength(1);
   });
 
-  test('stats supplied, the load sampler running: the trace carries them and timing prints them by role, with the host load', async () => {
+  test('stats supplied, one load sample taken while the reviewers ran: the trace carries the figures and timing prints them by role, with the host load each agent saw', () => {
     const runId = 'stats-full';
-    // the sampler is started first, with the run id the dispatcher chose for `prepare`, and runs apart from the review
-    const sampler = spawn(process.execPath, [LOAD, 'sample', '--run-id', runId, '--cwd', fx.work, '--interval-sec', '1'], { stdio: 'ignore' });
-    const stopped = new Promise((resolve) => sampler.on('exit', (code) => resolve(code)));
-    try {
-      const r = review(runId, { first: { agentStats: FIGURES }, second: { agentStats: VERIFIER_FIGURES }, padMs: 2500 });
-      expect(r.done.reviewStatus).toBeDefined();
-      await new Promise((resolve) => setTimeout(resolve, 1200)); // one more sample after the review is over
-    } finally {
-      sampler.kill('SIGTERM');
-    }
-    expect(await stopped).toBe(0);
+    // the real sampler process, one sample per call (`--max-samples 1`), at a moment the test chooses: while the review agents run and not while the verifiers do
+    const sample = () => {
+      const s = spawnSync(process.execPath, [LOAD, 'sample', '--run-id', runId, '--cwd', fx.work, '--max-samples', '1'], { encoding: 'utf8', env: cliEnv() });
+      expect(s.status).toBe(0);
+    };
+    const r = review(runId, { first: { agentStats: FIGURES }, second: { agentStats: VERIFIER_FIGURES }, whileReviewing: sample });
+    expect(r.done.reviewStatus).toBeDefined();
 
     // the real trace file: every figure on the span of the agent it names, nothing on the others
     const spans = fs.readFileSync(tracePath(runId), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -228,11 +222,11 @@ describe('agentStats through the real CLIs (kata nj2d)', () => {
     expect(row['verifier-3'].toolCalls).toBeNull();
     expect(t.out.agentStats.byRole.reviewer.toolCalls).toMatchObject({ known: 1, missing: 1, total: 31, lowerBound: true });
     expect(t.out.agentStats.byRole.verifier.toolCalls).toMatchObject({ known: 2, missing: 1, total: 9, min: 0, max: 9, lowerBound: true });
-    // the host load the sampler took while the agents ran
-    expect(t.out.hostLoad).toMatchObject({ missing: false, scope: 'orchestrator window', cpus: os.cpus().length });
-    expect(t.out.hostLoad.samples).toBeGreaterThanOrEqual(1);
-    // its samples, or null when none was taken while it ran (a reviewer here lives a second or two, the sampler's interval)
-    expect(row['reviewer-s1-a'].hostLoad === null || typeof row['reviewer-s1-a'].hostLoad.load1Max === 'number').toBe(true);
+    // the host load: the one sample lies inside the orchestrator window and inside the window of every agent of the review round, and of no verifier
+    expect(t.out.hostLoad).toMatchObject({ missing: false, scope: 'orchestrator window', samples: 1, cpus: os.cpus().length });
+    for (const name of ['reviewer-s1-a', 'reviewer-s1-b', 'security-lane']) expect(row[name].hostLoad).toEqual({ samples: 1, load1Max: expect.any(Number) });
+    for (const name of ['verifier-1', 'verifier-2', 'verifier-3']) expect(row[name].hostLoad).toBeNull();
+    expect(t.out.agentStats.byRole.verifier.without).toContainEqual({ figure: 'hostLoad', reason: expect.stringMatching(/^no load sample was taken while this agent ran/), agents: ['verifier-1', 'verifier-2', 'verifier-3'] });
 
     // the text form (`node pr-review-timing.js <runId>`)
     const text = spawnSync(process.execPath, [TIMING, runId, '--cwd', fx.work], { encoding: 'utf8' });
