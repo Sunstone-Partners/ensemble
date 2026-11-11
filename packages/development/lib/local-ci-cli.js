@@ -479,6 +479,9 @@ function runMerge(payload, deps) {
         // trusted, as before; a list that cannot be read refuses.
         const verdict = localRunVerdict(deps, { repo, headSha, cfg });
         if (verdict.kind === 'veto') return refuse(`${verdict.reason}; re-run the gate with forceLocal:true`, { localFailure: verdict.recorded });
+        // The same payload rule the hosted route applies (G): the first verified success must not hide a later adverse entry.
+        const adverse = payloadVeto(ours, { headSha, context: cfg.approvalSet.statusContext, verdict });
+        if (adverse) return refuse(`${adverse}; re-run the gate with forceLocal:true`, { localFailure: true });
         return { ok: true, mergeReady: true, headSha, context: cfg.approvalSet.statusContext, record: v.fields, hostedCiWaitRequired: false };
       }
       problems.push(v.headMismatch || v.setMismatch || v.runnerMismatch || v.error || 'record did not verify');
@@ -502,27 +505,36 @@ function runMerge(payload, deps) {
     // ONE statuses read per merge. The veto is read from GitHub (the same rule `gate` uses), never decided from the payload.
     const verdict = localRunVerdict(deps, { repo, headSha, cfg });
     if (verdict.kind === 'veto') return vetoed(verdict.reason, verdict.recorded);
-    // (G) The caller's own payload is evidence too. A status in our context that is not a success (failure, error, pending,
-    // any other or non-text state) is adverse. With no usable commit SHA it cannot be attributed to another commit, so it
-    // counts against this head whatever GitHub says. On this head with GitHub silent (`none`) it also vetoes: fail closed
-    // relative to the caller's evidence. A verified success on GitHub is NEWER than anything the caller can have sent, and
-    // a status on ANOTHER full commit never vetoes.
-    for (const s of ours) {
-      if (s.state === 'success') continue;
-      const named = typeof s.state === 'string' && s.state !== '' ? s.state : 'unusable-state';
-      if (!(typeof s.sha === 'string' && SHA_RE.test(s.sha))) {
-        return vetoed(`a ${named} status in ${cfg.approvalSet.statusContext} carries no usable commit SHA, so it cannot be attributed to another commit`, true);
-      }
-      if (s.sha.toLowerCase() === headSha.toLowerCase() && verdict.kind === 'none') {
-        return vetoed(`the caller's own ${named} status in ${cfg.approvalSet.statusContext} is on this head and GitHub lists none to supersede it`, true);
-      }
-    }
+    const adverse = payloadVeto(ours, { headSha, context: cfg.approvalSet.statusContext, verdict });
+    if (adverse) return vetoed(adverse, true);
     // The head may have moved while GitHub was being asked: re-read the pull request and refuse if it did.
     const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
     if (reread) return refuse(`hosted CI verified, but ${reread} (re-read after the hosted lookups)`, { hostedRefused: true });
     return { ok: true, mergeReady: true, headSha, source: 'hosted', hostedJobs: hosted.jobs, hostedCiWaitRequired: false };
   }
   return hosted.disabled ? localRefusal : { ...localRefusal, reason: `${localRefusal.reason}; ${hosted.reason}`, hostedRefused: true };
+}
+
+/**
+ * (G) The caller's own payload is evidence too, for BOTH routes of `merge`. A status in our context that is not a success
+ * (failure, error, pending, any other or non-text state) is adverse. With no usable commit SHA it cannot be attributed to
+ * another commit, so it counts against this head whatever GitHub says. On this head with GitHub silent (`verdict.kind` is
+ * `none`) it also vetoes: fail closed relative to the caller's evidence. A verified success on GitHub is NEWER than anything
+ * the caller can have sent, and a status on ANOTHER full commit never vetoes. `ours` is the payload's entries in the
+ * configured context. Returns the reason (no advice text: the caller adds it) or null.
+ */
+function payloadVeto(ours, { headSha, context, verdict }) {
+  for (const s of ours) {
+    if (s.state === 'success') continue;
+    const named = typeof s.state === 'string' && s.state !== '' ? s.state : 'unusable-state';
+    if (!(typeof s.sha === 'string' && SHA_RE.test(s.sha))) {
+      return `a ${named} status in ${context} carries no usable commit SHA, so it cannot be attributed to another commit`;
+    }
+    if (s.sha.toLowerCase() === headSha.toLowerCase() && verdict.kind === 'none') {
+      return `the caller's own ${named} status in ${context} is on this head and GitHub lists none to supersede it`;
+    }
+  }
+  return null;
 }
 
 /** The PR's base branch name, from a baseRef that verifyPullRequest already proved is exactly `origin/<that branch>`. */
