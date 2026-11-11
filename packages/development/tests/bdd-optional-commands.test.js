@@ -10,9 +10,22 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
+const { readCommandProse } = require('../../../scripts/lib/skill-backed-command');
+const { readDevelopmentSkill } = require('./helpers/skill-workflow');
+const { parseWorkflow } = require('../../product/tests/helpers/skill-prompt');
+
+// Every command named here is skill-backed: its YAML is a manifest (metadata + skill) and its prompt
+// is its skill, SKILL.md plus the phase files under references/. `read` is the whole prompt (the
+// manifest, then the skill) where it used to be the YAML text; `load` is the manifest's metadata with
+// the phases, steps and actions read back out of the skill's phase files.
 const COMMANDS = path.join(__dirname, '..', 'commands');
-const read = (name) => fs.readFileSync(path.join(COMMANDS, name), 'utf8');
-const load = (name) => yaml.load(read(name));
+const manifestText = (name) => fs.readFileSync(path.join(COMMANDS, name), 'utf8');
+const manifestOf = (name) => yaml.load(manifestText(name));
+const read = (name) => readCommandProse(path.join(COMMANDS, name), manifestOf(name), manifestText(name));
+const load = (name) => {
+  const manifest = manifestOf(name);
+  return { metadata: manifest.metadata, workflow: { phases: parseWorkflow(readDevelopmentSkill(manifest.skill)) } };
+};
 
 // A line that names Reqnroll must also name the mode, the resolver, or the env var that governs it.
 const GATE = /BDD_MODE|resolve-bdd|ENSEMBLE_BDD/;
@@ -150,7 +163,7 @@ describe('the BDD-on procedure lives in the reqnroll skill, and both commands po
   });
 
   test.each(['create-trd.yaml', 'implement-trd-beads.yaml'])('%s points at that section', (file) => {
-    // raw YAML text: the quotes around TRD commands are escaped inside the double-quoted scalar
+    // skill prose: the quotes around TRD commands are plain here (escaped in the YAML scalar this was written against)
     expect(read(file)).toMatch(/TRD commands\\?" in `packages\/reqnroll\/skills\/reqnroll\/SKILL\.md`/);
   });
 });
