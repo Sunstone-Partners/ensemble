@@ -37,7 +37,7 @@ A failed stage is re-run only after Entry Point Resolution step 4's explicit 'ye
 
 Human checkpoint; nothing past it runs without a recorded approval timestamp.
 
-- Present the accepted PRD/TRD references (artifacts[] from prd_refine/trd_refine) and the bead plan (beadRefs[]) via AskUserQuestion, exactly as recorded in the run, and wait for explicit approval.
+- Present the accepted PRD/TRD references (artifacts[] from prd_refine/trd_refine) and the bead plan (beadRefs[]) via ask, exactly as recorded in the run, and wait for explicit approval.
 - On explicit approval: call RunIndexStore.mutate() setting implementationApprovedAt = now() and advancing stage to "implementation" in the same call.
 - On absent or declined approval: make no mutate() call -- the run stays parked at implementation_approval with implementationApprovedAt null.
 - Foreman mode: when FOREMAN == true, ask nothing (no question, no prompt) -- the Foreman dispatch is the approval. Grant it in a single mutate() call setting implementationApprovedAt = now(), advancing stage to "implementation", and setting stageOutcome to { kind: "approval_wait", detail: "implementation approval granted by --foreman policy (no human present)", recordedAt: now() }. `--status` prints that detail, so an auto-grant is never mistaken for a human approval.
@@ -48,7 +48,7 @@ Optional; requires an approval distinct from implementation_approval's.
 
 - Enter only if the user opts in after implementation completes. Declining makes no PrProvider call at all.
 - On opt-in: construct a GhCliPrProvider and call isAvailable(). If false: create no PR, mutate() to record stageOutcome detail "no PR provider available", and advance stage to "done".
-- If isAvailable() === true: present the target repo/branch/title/body (repo/branch from the run's recorded references, title/body proposed from the accepted PRD/TRD) via AskUserQuestion and require a separate, immediate explicit approval before createPullRequest().
+- If isAvailable() === true: present the target repo/branch/title/body (repo/branch from the run's recorded references, title/body proposed from the accepted PRD/TRD) via ask and require a separate, immediate explicit approval before createPullRequest().
 - On absent/declined approval: create no PR and advance stage to "done".
 - On explicit approval: call RunIndexStore.mutate() setting prApprovedAt = now() and advancing stage to "pr_create" immediately before the create call -- never in the same mutate() call as implementationApprovedAt.
 - Foreman mode: when FOREMAN == true, do not ask for the opt-in or present repo/branch/title/body (no question, no prompt) -- treat the opt-in as yes. Call RunIndexStore.mutate() setting prApprovedAt = now(), advancing stage to "pr_create", and setting stageOutcome detail to "PR approval granted by --foreman policy (no human present)" -- never in the same mutate() call as implementationApprovedAt.

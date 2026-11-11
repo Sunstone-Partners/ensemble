@@ -40,7 +40,7 @@ Resume the active/paused run, or (--status) report it read-only. A failure-parke
 - status=true, STATUS_RUN found: print the run identifier, current stage, last stageOutcome.kind (with detail for a pending decision or failure), and every recorded artifacts[] and beadRefs[] reference; state a "completed"/"abandoned" status explicitly. Claim a PR exists only if STATUS_RUN.prApprovedAt is non-null AND a beadRefs[] entry has the "pr:" prefix; otherwise state plainly that no PR exists. Stop here -- status is always read-only and never proceeds to Stage Resolution.
 - If `status` is false, `abandon` is not provided, and neither `idea` nor `path` is provided: call RunIndexStore.findActive(projectRoot).
 - status=false, not found: print that no active run exists and how to start one (`--idea "<description>"`). Stop.
-- status=false, found, and ACTIVE_RUN.stageOutcome.kind is "failure": the run is paused by failure. Print the parked stage and failure detail and ask the user (AskUserQuestion) 'Retry <stage>? [yes/no]' -- do NOT proceed to Stage Resolution on a bare invocation alone. Only an explicit 'yes' proceeds; otherwise stop with the run unchanged -- no mutate() call is made merely by viewing this prompt.
+- status=false, found, and ACTIVE_RUN.stageOutcome.kind is "failure": the run is paused by failure. Print the parked stage and failure detail and ask the user (ask) 'Retry <stage>? [yes/no]' -- do NOT proceed to Stage Resolution on a bare invocation alone. Only an explicit 'yes' proceeds; otherwise stop with the run unchanged -- no mutate() call is made merely by viewing this prompt.
 - Foreman mode: when FOREMAN == true and the outcome is "failure", do not ask (no question, no prompt). The invocation is the explicit retry: proceed to Stage Resolution, which retries the parked stage once; a second failure is recorded and the run ends.
 - status=false, found, any other stageOutcome.kind ("approval_wait", "decline", or a fresh run): set ACTIVE_RUN and proceed to Stage Resolution; re-running these on resume is normal.
 
@@ -50,7 +50,7 @@ Applies only to invocations from a configured event delivery (.ensemble/new-feat
 
 - Call EventMappingConfig.loadEventMapping(projectRoot) (packages/agent-core/src/new-feature/event-mapping.ts). If it returns null: default-deny -- no run starts and nothing under RunIndexStore is touched. Stop; this is the normal state for a project that has not opted in.
 - Otherwise call validateEventPayload(mapping, event) BEFORE any RunIndexStore call. Rejected (`ok: false`): create no PRD, advance no run, report the exact `reason` as the pending step, and stop.
-- Accepted: present the event source and full payload to the user via AskUserQuestion for explicit review BEFORE any PRD-stage work (the payload's `summary` only seeds the normal PRD elicitation). On decline create no PRD, advance no run, and stop. On approval proceed as Step 2 with `event.summary` as the `idea`.
+- Accepted: present the event source and full payload to the user via ask for explicit review BEFORE any PRD-stage work (the payload's `summary` only seeds the normal PRD elicitation). On decline create no PRD, advance no run, and stop. On approval proceed as Step 2 with `event.summary` as the `idea`.
 - Foreman mode: when FOREMAN == true an accepted payload is NOT auto-approved (untrusted input, no reviewer): create no PRD and no run, and report the pending step as 'human review of the event payload is required; --foreman cannot approve an untrusted event payload'. Stop.
 
 #### Step 1.6: Abandon Confirmation Gate
@@ -59,6 +59,6 @@ Checked before Step 4; when `abandon` is provided, Step 4's resume/status branch
 
 - If `abandon` is provided (empty string counts; only an omitted parameter skips this step): call RunIndexStore.findActive(projectRoot).
 - Not found: print 'No active run exists for this project; nothing to abandon.' and stop -- no mutate()/abandon() call is made, no state is touched.
-- Found: ask the user for explicit confirmation (AskUserQuestion), naming the run's identifier and current stage, before calling RunIndexStore.abandon(). Declined or no response: make no mutate()/abandon() call; the run is left untouched.
+- Found: ask the user for explicit confirmation (ask), naming the run's identifier and current stage, before calling RunIndexStore.abandon(). Declined or no response: make no mutate()/abandon() call; the run is left untouched.
 - Foreman mode: when FOREMAN == true do not ask for confirmation (no question, no prompt) -- `--abandon` with `--foreman` is the explicit instruction: call RunIndexStore.abandon(projectRoot, runId, reason) directly and print the run's identifier and the stage it was abandoned at.
 - On explicit confirmation: call RunIndexStore.abandon(projectRoot, runId, reason), where `reason` is the `abandon` parameter's text (empty string if none). This sets status to "abandoned" and releases active.lock; artifacts and history are retained for a later `--status`.

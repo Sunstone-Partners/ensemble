@@ -13,13 +13,13 @@ Read the TRD and extract structural metadata
 
 Skipped with --collab/--long-lived (SELECTED_ITEMS already populated). Otherwise list real findings, numbered, with NO edits yet. Look for: tasks missing `[satisfies REQ-NNN]` or citing nonexistent REQs; user-facing tasks without a paired TRD-NNN-TEST; wrong `Validates PRD ACs:` fields; underspecified details, error handling, non-functional targets, integration contracts, or unjustified architecture decisions; tasks >= 8h; dependency chains of 3+ hops or cycles; missing/stale Architecture Decision, traceability matrix, or Design Readiness scorecard; tasks without hour estimates; stale references to files/APIs that no longer exist. (PR_FORMAT=true) PR sections missing or with infrastructure-only Shippable State, and forward dependencies on a later PR. (PR_FORMAT=false) legacy Phase/Sprint headings: offer conversion to `### PR N:` as a low-priority suggestion.
 
-Present findings through AskUserQuestion: "Based on my review of <TRD filename>, here are the areas I suggest improving: 1. ... N. ... Which would you like to address? Reply with: all, a comma-separated list of numbers, or skip to exit without changes." Store the reply as SELECTED_ITEMS; `skip` exits with no changes. If there are no real findings, say so and go to the closing step.
+Present findings through ask: "Based on my review of <TRD filename>, here are the areas I suggest improving: 1. ... N. ... Which would you like to address? Reply with: all, a comma-separated list of numbers, or skip to exit without changes." Store the reply as SELECTED_ITEMS; `skip` exits with no changes. If there are no real findings, say so and go to the closing step.
 
 --foreman: still produce the list, skip the question, select every finding, and log "Foreman mode: auto-applying <N> findings:" with the list.
 
 #### Step 2.3: Interview (skip when --collab or --long-lived in $ARGUMENTS)
 
-Skipped with --collab/--long-lived. Otherwise interview ONLY about SELECTED_ITEMS, one AskUserQuestion at a time, asking targeted questions (which REQ a task satisfies, which ACs a test task validates, desired behavior or targets, split boundaries for oversized tasks, parallelism for long chains, what a user gains when a PR merges, whether to move a task across a forward dependency, whether to convert legacy headings to `### PR N:`).
+Skipped with --collab/--long-lived. Otherwise interview ONLY about SELECTED_ITEMS, one ask at a time, asking targeted questions (which REQ a task satisfies, which ACs a test task validates, desired behavior or targets, split boundaries for oversized tasks, parallelism for long chains, what a user gains when a PR merges, whether to move a task across a forward dependency, whether to convert legacy headings to `### PR N:`).
 
 --foreman: skip the interview. For each selected finding apply a best-effort default inferred from the TRD context; where none can be inferred insert an inline `[NEEDS CLARIFICATION: <question>]` marker at the relevant location. Log one line per finding ("Foreman default applied: <finding> -> <default>" or "Foreman: inserted [NEEDS CLARIFICATION: ...] for <finding>").
 

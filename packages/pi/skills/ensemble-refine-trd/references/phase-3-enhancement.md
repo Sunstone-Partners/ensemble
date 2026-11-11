@@ -6,7 +6,7 @@
 If --list is passed (not with --foreman), pick the TRD interactively
 
 - If $ARGUMENTS contains '--list': resolve TRD_CLI per the tool-path-resolution skill (packages/development/skills/tool-path-resolution/SKILL.md) for packages/development/lib/trd-cli.js. If none of the 4 tiers resolve OR 'which node' fails: print 'ERROR: Node.js and the TRD CLI (lib/trd-cli.js) are required. Ensure Node.js is installed and the ensemble-development or ensemble-pi plugin bundle is present.' and HALT.
-- Run node "$TRD_CLI" list --type trd and parse {ok,type,items}; on failure print the error and HALT. Show a table (ID/Name, Status, Score, Last Modified) and ask the user via AskUserQuestion (id 'trd_select') which TRD to refine. Map the slug to docs/TRD/<file>.md (HALT 'ERROR: Could not resolve path for slug <TRD_SLUG>' if missing) and continue with it as the TRD path.
+- Run node "$TRD_CLI" list --type trd and parse {ok,type,items}; on failure print the error and HALT. Show a table (ID/Name, Status, Score, Last Modified) and ask the user via ask (id 'trd_select') which TRD to refine. Map the slug to docs/TRD/<file>.md (HALT 'ERROR: Could not resolve path for slug <TRD_SLUG>' if missing) and continue with it as the TRD path.
 
 #### Step 3.2: Content Refinement
 

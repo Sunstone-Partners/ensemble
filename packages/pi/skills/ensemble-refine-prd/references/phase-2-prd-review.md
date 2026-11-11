@@ -42,13 +42,13 @@ any edits yet. Scan for the following issues:
 
 IF `--from-meeting` is present in $ARGUMENTS: still generate the
 numbered findings list from the scan above (with no edits), but skip
-the AskUserQuestion selection prompt below entirely and do not set
+the ask selection prompt below entirely and do not set
 SELECTED_ITEMS here. There is no live interview in this mode: the
 Meeting-Sourced Review phase classifies every finding against the
 meeting summary and sets SELECTED_ITEMS to the RESOLVABLE_FROM_MEETING
-findings only. Do NOT use AskUserQuestion in this step.
+findings only. Do NOT use ask in this step.
 
-IF `--foreman` is present in $ARGUMENTS: skip the AskUserQuestion
+IF `--foreman` is present in $ARGUMENTS: skip the ask
 selection prompt below entirely. Instead, set SELECTED_ITEMS to
 every finding number (equivalent to the user replying "all") and
 print a log line: "Foreman mode: auto-applying N findings: <list>".
@@ -59,7 +59,7 @@ reusing the `[NEEDS CLARIFICATION: <specific question>]` marker
 convention for anything that cannot be safely resolved without
 human input rather than leaving it silently unresolved.
 
-Otherwise, use the AskUserQuestion tool to present a consolidated numbered list in this
+Otherwise, use the ask tool to present a consolidated numbered list in this
 exact format, then capture the user's selection as SELECTED_ITEMS:
 
 ---
@@ -99,7 +99,7 @@ Otherwise, run the original interview below.
 REQUIRED: Conduct a targeted user interview covering ONLY the topics
 corresponding to SELECTED_ITEMS. Skip any findings the user did not select.
 
-Use the AskUserQuestion tool to present questions interactively:
+Use the ask tool to present questions interactively:
 - Ask questions ONE AT A TIME (not all at once)
 - Wait for user answer before asking the next question
 - Do NOT just write questions in your response text
