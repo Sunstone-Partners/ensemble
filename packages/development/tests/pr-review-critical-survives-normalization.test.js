@@ -228,6 +228,37 @@ describe('dedupe and merge keep a Critical on top however the ledger was written
     expect(mergeFindings([existingCritical], [{ ...major, ...key }])[0].id).toBe('C');
   });
 
+  describe('when both findings are open the rank alone decides, and a Critical outranks a Major however the ledger was written', () => {
+    const openMajor = finding({ id: 'M', source: 'reviewer-a', severity: 'major' });
+    const openCritical = (read) => read(finding({ id: 'C', source: 'reviewer-b' }));
+
+    test.each([
+      ['written as such', (entry) => entry],
+      ['read into the taxonomy (FAILING FIRST)', normalizeFinding],
+    ])('dedupe collapses onto the Critical whichever comes first: %s', (_name, read) => {
+      const critical = openCritical(read);
+
+      for (const group of [[openMajor, critical], [critical, openMajor]]) {
+        const [collapsed] = dedupeFindings(group);
+
+        expect(collapsed.id).toBe('C');
+        expect(isCritical(collapsed)).toBe(true);
+      }
+    });
+
+    test.each([
+      ['written as such', (entry) => entry],
+      ['read into the taxonomy (FAILING FIRST)', normalizeFinding],
+    ])('mergeFindings lets the Critical report replace a recorded Major: %s', (_name, read) => {
+      expect(mergeFindings([normalizeFinding(openMajor)], [openCritical(read)])[0].id).toBe('C');
+    });
+
+    test('and does not let a Major report replace a recorded Critical', () => {
+      expect(mergeFindings([openCritical(normalizeFinding)], [openMajor])[0].id).toBe('C');
+      expect(mergeFindings([openCritical(normalizeFinding)], [normalizeFinding(openMajor)])[0].id).toBe('C');
+    });
+  });
+
   test('a class finding is Important when any of its instances is a Critical, read or written', () => {
     const [classFinding] = classFindings([normalizeFinding(finding({ class: 'unvalidated-input' })), finding({ id: 'G', class: 'unvalidated-input', severity: 'nit' })]);
 
