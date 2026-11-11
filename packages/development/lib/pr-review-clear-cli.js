@@ -111,7 +111,7 @@
 const fs = require('fs');
 const { isObjectId } = require('./pr-review-scope');
 const { redact } = require('./pr-review-state');
-const { clearFixedFindings, fingerprintPath, reRaisedBy } = require('./pr-review-ledger');
+const { clearFixedFindings, fingerprintFinding, fingerprintPath } = require('./pr-review-ledger');
 const repo = require('./pr-review-repo');
 const runtime = require('./review-record-runtime');
 
@@ -143,6 +143,17 @@ function citedFile(entry) {
   if (parsed !== null) return { file: parsed.file, line: parsed.start, endLine: parsed.end === null ? parsed.start : parsed.end };
   const file = fingerprintPath(entry);
   return file === null ? null : { file, line: null, endLine: null };
+}
+
+/** The finding of `incoming` that is the same defect as `entry`, or `null`. */
+function reRaisedBy(entry, incoming) {
+  const own = fingerprintFinding(entry);
+  const match = incoming.find((other) => {
+    const theirs = fingerprintFinding(other);
+    if (own !== null && theirs !== null) return own === theirs;
+    return other.locationOrLink === entry.locationOrLink && other.failureMode === entry.failureMode;
+  });
+  return match === undefined ? null : match;
 }
 
 /** The entry's citation with its line (or `a-b` range) moved through `hunks`, or `null` when it names no line to move. */

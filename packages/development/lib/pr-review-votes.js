@@ -117,9 +117,8 @@ function namesFrom(value) {
 
 /**
  * Everyone who raised a finding, so nobody verifies their own: its `reviewer`, its ledger `source` (the raiser's
- * login: Step 3 candidates are ledger entries, which carry `source` and no `reviewer`), for a finding
- * merged from several raisers each `mergedFrom[]` entry's `source` (or `reviewer`), and for a finding a later round's
- * reviewer restated (kata tmf5) each `restatedBy[]` record's `source` and the raisers it merged. One definition for the
+ * login: Step 3 candidates are ledger entries, which carry `source` and no `reviewer`), and, for a finding
+ * merged from several raisers, each `mergedFrom[]` entry's `source` (or `reviewer`). One definition for the
  * planner (`planVerification`) and for the vote check, so they can never disagree on who the raiser is.
  *
  * @returns {{names:string[], ok:boolean}}  lower-cased names; `ok` is false when a present field cannot be
@@ -141,25 +140,6 @@ function raisersOf(finding) {
       for (const entry of finding.mergedFrom) {
         take(entry.source);
         take(entry.reviewer);
-      }
-    }
-  }
-  // the reviewers of later rounds that restated this defect in their own words raised it too: they never verify it
-  if (finding.restatedBy !== undefined && finding.restatedBy !== null) {
-    if (!Array.isArray(finding.restatedBy) || !finding.restatedBy.every(isObject)) ok = false;
-    else {
-      for (const record of finding.restatedBy) {
-        take(record.source);
-        take(record.reviewer);
-        if (record.mergedFrom !== undefined && record.mergedFrom !== null) {
-          if (!Array.isArray(record.mergedFrom) || !record.mergedFrom.every(isObject)) ok = false;
-          else {
-            for (const member of record.mergedFrom) {
-              take(member.source);
-              take(member.reviewer);
-            }
-          }
-        }
       }
     }
   }

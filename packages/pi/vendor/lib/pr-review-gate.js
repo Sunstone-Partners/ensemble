@@ -62,7 +62,6 @@ const {
 } = require('./pr-review-ledger');
 const { gradeCoverage } = require('./pr-review-coverage');
 const { TIERS, HUMANS_REQUIRED } = require('./pr-review-tier');
-const { restatementsOf } = require('./pr-review-restated');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -393,9 +392,6 @@ function evaluateGate(input) {
           const id = String(entry.id);
           open.push(id);
           const unrecognised = severity === null;
-          // kata tmf5: later rounds' reviewers that stated this defect again in their own words are named, never counted as findings of their own
-          const restated = restatementsOf(entry).map((record) => String(record.id));
-          const restatedClause = restated.length === 0 ? '' : ` (restated by ${restated.length} later candidate${restated.length === 1 ? '' : 's'}, merged into it: ${restated.join(', ')})`;
           // A Critical reads as Important once a ledger has been read (`normalizeFinding`), so `entry.severity` cannot name it:
           // the blocker asks `isCritical`, the one reading, and says what the finding is. The verdict is the same either way.
           const critical = !unrecognised && isCritical(entry);
@@ -404,7 +400,7 @@ function evaluateGate(input) {
               unrecognised ? BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING : BLOCKER_CODES.OPEN_IMPORTANT_FINDING,
               (unrecognised
                 ? `finding ${nameOf(entry)} carries a severity this gate cannot read ('${String(entry.severity)}'), so it is treated as Important and is still open`
-                : `${critical ? 'Critical' : 'Important'} finding ${nameOf(entry)} is still open`) + restatedClause + refusalNote(rejectedBecause, deferralRejected),
+                : `${critical ? 'Critical' : 'Important'} finding ${nameOf(entry)} is still open`) + refusalNote(rejectedBecause, deferralRejected),
               rejectedBecause !== null
                 ? 'fix it, or have the operator record the decision again on the current head with their login, a timestamp and a reason (ledger resolve)'
                 : unrecognised
@@ -414,7 +410,6 @@ function evaluateGate(input) {
                 findingId: id,
                 locationOrLink: entry.locationOrLink || null,
                 severity: critical ? 'critical' : entry.severity,
-                ...(restated.length === 0 ? {} : { restatedBy: restated }),
                 ...(rejectedBecause === null ? {} : { resolutionRejected: rejectedBecause }),
                 ...(deferralRejected === null ? {} : { deferralRejected }),
               }
