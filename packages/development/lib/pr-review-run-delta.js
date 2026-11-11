@@ -27,6 +27,8 @@ const path = require('path');
 const { isObjectId } = require('./pr-review-scope');
 const { planCarry, recordVerdicts, stampLedger, keyOf } = require('./pr-review-carry');
 const { tallyVotes, resolveExpected } = require('./pr-review-votes');
+const { reRaisedBy } = require('./pr-review-ledger');
+const { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds } = require('./pr-review-restated');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -195,11 +197,11 @@ function deltaScope(facts, deltaDiffText) {
   return { ok: true, readPaths, changedPaths: facts.delta.changedPaths, numstat };
 }
 
-/** The numbers after the highest `f<N>` among the ids of a ledger (and what they merged), so a new round's ids never collide with it. */
+/** The numbers after the highest `f<N>` among the ids of a ledger (and what it merged or what restated it), so a new round's ids never collide with it. */
 function idSeed(ledger) {
   let top = 0;
   for (const entry of ledger) {
-    const ids = [entry.id, ...(Array.isArray(entry.mergedFrom) ? entry.mergedFrom.map((m) => isObject(m) ? m.id : undefined) : [])];
+    const ids = [entry.id, ...(Array.isArray(entry.mergedFrom) ? entry.mergedFrom.map((m) => isObject(m) ? m.id : undefined) : []), ...restatedIds(entry)];
     for (const id of ids) {
       const match = /^f(\d+)$/.exec(String(id));
       if (match !== null) top = Math.max(top, Number(match[1]));
@@ -338,17 +340,23 @@ function composeDeltaLedger(run, fresh, derive) {
   const prior = run.priorRound;
   const carry = run.carry;
   const carried = isObject(carry) ? carry.carried : [];
-  // The last round's unverified candidates this round put to verifiers again are the SAME findings (their ids, their records): the
-  // fresh entry takes the prior one's place whatever the fixed-finding check says, so no ledger holds one finding twice (kata p5dt).
-  const again = new Set(isObject(run.reverifyPrior) && Array.isArray(run.reverifyPrior.reverified) ? run.reverifyPrior.reverified.map(String) : []);
+  const carriedIds = new Set(isObject(carry) ? carry.carriedIds.map(String) : []);
+  // The findings of the last round that this round's candidates stand for are the SAME findings (their ids, their records): the fresh entry
+  // takes the prior one's place whatever the fixed-finding check says, so no ledger holds one finding twice. They are the last round's
+  // unverified candidates put to verifiers again (kata p5dt) and the open findings a reviewer restated (kata tmf5), unless the verdict was carried.
+  const restatedEntries = isObject(run.restatements) && Array.isArray(run.restatements.entries) ? run.restatements.entries.map(String) : [];
+  const verifiedAgain = isObject(run.reverifyPrior) && Array.isArray(run.reverifyPrior.reverified) ? run.reverifyPrior.reverified.map(String) : [];
+  const again = new Set([...verifiedAgain, ...restatedEntries].filter((id) => !carriedIds.has(id)));
   let base = prior.ledger.filter((entry) => !again.has(String(entry.id)));
   if (carried.length > 0) {
     const stamped = stampLedger({ ledger: base, carried, headSha: run.headSha });
     if (stamped.ok !== true) return { ok: false, reason: `the prior ledger cannot be restamped: ${stamped.reason}` };
     base = stamped.ledger;
   }
-  const carriedIds = new Set(isObject(carry) ? carry.carriedIds : []);
   const presented = [...fresh, ...run.candidates.filter((candidate) => carriedIds.has(String(candidate.id)))];
+  // A carried finding a reviewer restated keeps its verdict and records the restatement: the candidate that stood for it holds the records.
+  const restatedCarried = new Map(run.candidates.filter((candidate) => carriedIds.has(String(candidate.id)) && restatementsOf(candidate).length > 0).map((candidate) => [String(candidate.id), restatementsOf(candidate)]));
+  const withRestated = (entries) => entries.map((entry) => (restatedCarried.has(String(entry.id)) ? absorbRestatements(entry, restatedCarried.get(String(entry.id))) : entry));
   const notes = [];
   let derived = null;
   if (typeof derive === 'function') {
@@ -361,10 +369,10 @@ function composeDeltaLedger(run, fresh, derive) {
   if (!isObject(derived) || derived.ok !== true || !Array.isArray(derived.ledger)) {
     // Nothing is cleared and nothing is dropped: every prior finding keeps blocking, and a re-reported one appears twice.
     notes.push(`prior findings kept as recorded: ${isObject(derived) && isText(derived.reason) ? derived.reason : 'the fixed-finding check is unavailable'}`);
-    return { ok: true, ledger: [...base, ...fresh], cleared: [], notes };
+    return { ok: true, ledger: [...withRestated(base), ...fresh], cleared: [], notes };
   }
   const replaced = new Set((Array.isArray(derived.kept) ? derived.kept : []).filter((k) => k.reason === 're-reported').map((k) => String(k.id)));
-  const ledger = derived.ledger.filter((entry) => !replaced.has(String(entry.id)));
+  const ledger = withRestated(derived.ledger.filter((entry) => !replaced.has(String(entry.id))));
   return { ok: true, ledger: [...ledger, ...fresh], cleared: (derived.cleared || []).map((c) => String(c.id)), notes };
 }
 
@@ -395,6 +403,127 @@ function verdictRecords(run, findings) {
  */
 const NOT_COPIED = Object.freeze(['verification', 'locationAsOf', 'cleared', 'clearedBy', 'clearedReason', 'headSha', 'carriedFrom']);
 
+/** A ledger entry of the last round as a candidate of this round: the entry as the fixed-finding check placed it, less what `NOT_COPIED` names. */
+function priorCandidate(moved) {
+  const candidate = { ...moved };
+  for (const key of NOT_COPIED) delete candidate[key];
+  return candidate;
+}
+
+/** The dispositions that say a finding was dismissed (an agent's or the orchestrator's): nothing is merged into one of them. */
+const DISMISSED = Object.freeze(['not-applicable', 'duplicate', 'resolved']);
+
+/**
+ * Whether a finding of the last round is one a candidate of this round may be the restatement of (kata tmf5): still open, not a class
+ * finding, not dismissed, with a raiser (a candidate that stands for it is given verifiers who are not its raiser), and a claim this round
+ * can settle or has settled: `present` (a verdict the carry may keep, or one this round verifies again), or left unverified for want of
+ * a verifier (verified again). Never one the verifiers refuted (`filtered`), that needed a person (`disputed`), that nobody could be asked
+ * about (`unbriefable`), that a push cleared or that an operator resolved.
+ */
+function restatable(entry) {
+  if (!isObject(entry) || entry.cleared === true || entry.kind === 'class' || isObject(entry.resolution)) return false;
+  if (DISMISSED.includes(entry.disposition) || (isObject(entry.adjudication) && DISMISSED.includes(entry.adjudication.disposition))) return false;
+  if (!isText(entry.source) && !isText(entry.reviewer)) return false;
+  const verification = entry.verification;
+  return isObject(verification) && (verification.outcome === 'present' || (verification.outcome === 'unverified' && verification.reason === 'verifier-incomplete'));
+}
+
+/**
+ * The fixed-finding check (`deriveCleared`) of the last round's ledger against this round's candidates, asked ONCE for the steps that read it
+ * (`restatedPrior`, `reverifyPrior`), or `null` when nothing needs it: no candidate unverified for want of a verifier to verify again and no
+ * open finding a candidate could restate.
+ *
+ * @param {Object} run
+ * @param {Object[]} fresh  every candidate this round's reviewers raised (what a prior finding is `re-reported` by)
+ * @param {?function(Object):Object} derive  `deriveCleared`
+ * @returns {?({ok:true, derived:Object, why:Map, cleared:Set}|{ok:false, reason:string})}
+ */
+function checkPrior(run, fresh, derive) {
+  const prior = isObject(run.priorRound) ? run.priorRound : null;
+  if (prior === null) return null;
+  if (lastRoundUnverified(prior.ledger).length === 0 && !(fresh.length > 0 && prior.ledger.some(restatable))) return null;
+  if (typeof derive !== 'function') return { ok: false, reason: 'fixed-finding-check-unavailable' };
+  let derived;
+  try {
+    derived = derive({ cwd: run.repoRoot, baseSha: run.baseSha, headSha: run.headSha, lastReviewedSha: run.lastReviewedSha, ledger: prior.ledger, incoming: fresh });
+  } catch (error) {
+    derived = { ok: false, reason: error && error.message ? error.message : String(error) };
+  }
+  if (!isObject(derived) || derived.ok !== true || !Array.isArray(derived.ledger) || derived.ledger.length !== prior.ledger.length) {
+    return { ok: false, reason: `fixed-finding-check-unavailable: ${isObject(derived) && isText(derived.reason) ? derived.reason : 'no usable answer'}` };
+  }
+  return {
+    ok: true,
+    derived,
+    why: new Map((Array.isArray(derived.kept) ? derived.kept : []).filter(isObject).map((entry) => [identity(entry.id), entry.reason])),
+    cleared: new Set((Array.isArray(derived.cleared) ? derived.cleared : []).filter(isObject).map((entry) => identity(entry.id))),
+  };
+}
+
+/**
+ * Which candidates of this round restate an open finding of the last round (kata tmf5; the decision and its measurement are in
+ * `pr-review-restated.js`). A restatement is merged into the finding BEFORE it becomes a candidate: it leaves `fresh`, and the finding
+ * comes back as a candidate of this round instead (its own id, its own claim, the line this head numbers it, `restatedBy` naming the
+ * restatement), so `planCarry` keeps its verdict by the rules it always had or it is verified again as itself. Only a finding the push left
+ * alone is ever matched (the fixed-finding check says `location-unchanged` and gives its line in this head's numbering); one it cleared,
+ * re-reported, could not place or whose line it touched is not, and the candidate stays a candidate of its own. A candidate that is a
+ * prior finding's own claim again (the same path and claim) is a re-report, which the fixed-finding check already handles, never a
+ * restatement.
+ *
+ * @param {Object} run
+ * @param {Object[]} fresh  every candidate this round's reviewers raised
+ * @param {?Object} checked  `checkPrior`'s answer; anything but a usable check merges nothing
+ * @returns {{fresh:Object[], candidates:Object[], merged:Array, kept:Array}}  `fresh` without the restatements; `candidates` the findings that come
+ *   back (one per finding restated); `merged` the restatements, named (`id`, `of`, `source`, `locationOrLink`, `severity`, `similarity`); `kept` the
+ *   candidates that overlapped an open finding and were not merged, with why.
+ */
+function restatedPrior(run, fresh, checked) {
+  const none = { fresh, candidates: [], merged: [], kept: [] };
+  const prior = isObject(run.priorRound) ? run.priorRound : null;
+  if (prior === null || fresh.length === 0 || !isObject(checked) || checked.ok !== true) return none;
+  const priors = [];
+  prior.ledger.forEach((entry, index) => {
+    if (!restatable(entry)) return;
+    const id = identity(entry.id);
+    const moved = checked.derived.ledger[index];
+    if (id === null || checked.why.get(id) !== 'location-unchanged' || !isObject(moved) || identity(moved.id) !== id || !isText(moved.locationOrLink) || !isText(moved.failureMode)) return;
+    priors.push({ entry, moved, locationOrLink: moved.locationOrLink });
+  });
+  if (priors.length === 0) return none;
+
+  const snapshotDir = isObject(run.prepared) ? run.prepared.snapshotDir : undefined;
+  const locate = (location) => {
+    const at = citationOf(location, snapshotDir);
+    if (!isText(at.file)) return null;
+    if (Number.isInteger(at.line)) return { file: at.file, start: at.line, end: at.line };
+    return Array.isArray(at.lines) ? { file: at.file, start: at.lines[0], end: at.lines[1] } : null;
+  };
+  const askable = fresh.filter((candidate) => !prior.ledger.some((entry) => reRaisedBy(entry, [candidate]) !== null));
+  const found = matchRestatements({ candidates: askable, priors, corpus: [...prior.ledger, ...fresh], locate });
+
+  const records = new Map();
+  for (const match of found.merged) {
+    const id = identity(match.entry.id);
+    if (!records.has(id)) records.set(id, []);
+    records.get(id).push(restatementRecord(match.candidate, match.similarity, run.headSha));
+  }
+  const gone = new Set(found.merged.map((match) => match.candidate));
+  const round2 = (value) => Math.round(value * 100) / 100;
+  return {
+    fresh: fresh.filter((candidate) => !gone.has(candidate)),
+    candidates: priors.filter(({ entry }) => records.has(identity(entry.id))).map(({ entry, moved }) => absorbRestatements(priorCandidate(moved), records.get(identity(entry.id)))),
+    merged: found.merged.map((match) => ({
+      id: match.candidate.id,
+      of: match.entry.id,
+      source: isText(match.candidate.source) ? match.candidate.source : match.candidate.reviewer,
+      locationOrLink: match.candidate.locationOrLink,
+      severity: match.candidate.severity,
+      similarity: round2(match.similarity),
+    })),
+    kept: found.kept.map((entry) => ({ id: entry.candidate.id, reason: entry.reason, against: entry.against, similarity: round2(entry.similarity) })),
+  };
+}
+
 /**
  * The last round's candidates that no verifier returned for (unverified, or settled on a majority without it, kata dx53), put to verifiers again in this round (kata p5dt). They stand in the prior
  * ledger `unverified` (never confirmed, never refuted), so a delta round that only kept them would keep them unverified for good, and the
@@ -412,27 +541,21 @@ const NOT_COPIED = Object.freeze(['verification', 'locationAsOf', 'cleared', 'cl
  * @param {Object} run   `run.priorRound`, and the heads and repository `deriveCleared` needs
  * @param {Object[]} fresh  every candidate this round's reviewers raised (what a prior finding is `re-reported` by)
  * @param {?function(Object):Object} derive  `deriveCleared`
+ * @param {?Object} [checked]  `checkPrior`'s answer, when the caller already asked it (the check is then not asked again)
  * @returns {{candidates:Object[], reverified:Array, kept:Array<{id:*, reason:string}>}}
  *   `candidates` are to be verified this round, `reverified` their ids (the prior findings' own), `kept` the ones left unverified, with why.
  */
-function reverifyPrior(run, fresh, derive) {
+function reverifyPrior(run, fresh, derive, checked) {
   const prior = isObject(run.priorRound) ? run.priorRound : null;
   const waiting = new Set(prior === null ? [] : lastRoundUnverified(prior.ledger));
   const out = { candidates: [], reverified: [], kept: [] };
   if (waiting.size === 0) return out;
   const keepAll = (reason) => ({ ...out, kept: [...waiting].map((entry) => ({ id: entry.id, reason })) });
-  if (typeof derive !== 'function') return keepAll('fixed-finding-check-unavailable');
-  let derived;
-  try {
-    derived = derive({ cwd: run.repoRoot, baseSha: run.baseSha, headSha: run.headSha, lastReviewedSha: run.lastReviewedSha, ledger: prior.ledger, incoming: fresh });
-  } catch (error) {
-    derived = { ok: false, reason: error && error.message ? error.message : String(error) };
-  }
-  if (!isObject(derived) || derived.ok !== true || !Array.isArray(derived.ledger) || derived.ledger.length !== prior.ledger.length) {
-    return keepAll(`fixed-finding-check-unavailable: ${isObject(derived) && isText(derived.reason) ? derived.reason : 'no usable answer'}`);
-  }
-  const why = new Map((Array.isArray(derived.kept) ? derived.kept : []).filter(isObject).map((entry) => [identity(entry.id), entry.reason]));
-  const cleared = new Set((Array.isArray(derived.cleared) ? derived.cleared : []).filter(isObject).map((entry) => identity(entry.id)));
+  const check = checked === undefined ? checkPrior(run, fresh, derive) : checked;
+  // `waiting` is not empty, so a check was wanted: a caller that says it was not needed is no check at all
+  if (check === null) return keepAll('fixed-finding-check-unavailable');
+  if (check.ok !== true) return keepAll(check.reason);
+  const { derived, why, cleared } = check;
   prior.ledger.forEach((entry, index) => {
     if (!waiting.has(entry)) return;
     const id = identity(entry.id);
@@ -448,9 +571,7 @@ function reverifyPrior(run, fresh, derive) {
       out.kept.push({ id: entry.id, reason: 'no-raiser' });
       return;
     }
-    const candidate = { ...moved };
-    for (const key of NOT_COPIED) delete candidate[key];
-    out.candidates.push(candidate);
+    out.candidates.push(priorCandidate(moved));
     out.reverified.push(entry.id);
   });
   return out;
@@ -481,4 +602,4 @@ function withLastRoundUnverified(tally, leftover) {
   };
 }
 
-module.exports = { deltaLimits, priorRound, deltaScope, idSeed, hashCandidates, carryFacts, planRunCarry, composeDeltaLedger, verdictRecords, reverifyPrior, leftoverUnverified, withLastRoundUnverified, lastRoundUnverified, lacksVerifier, NOT_REVIEWED_LISTS, UNREAD_LISTS, VERIFIER_LISTS };
+module.exports = { deltaLimits, priorRound, deltaScope, idSeed, hashCandidates, carryFacts, planRunCarry, composeDeltaLedger, verdictRecords, checkPrior, restatedPrior, restatable, reverifyPrior, leftoverUnverified, withLastRoundUnverified, lastRoundUnverified, lacksVerifier, NOT_REVIEWED_LISTS, UNREAD_LISTS, VERIFIER_LISTS };

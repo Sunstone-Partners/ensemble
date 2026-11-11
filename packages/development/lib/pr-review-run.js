@@ -160,6 +160,7 @@ const { buildCoverage } = require('./pr-review-coverage');
 const { deriveStatus } = require('./pr-review-status');
 const { statePath, readState } = require('./pr-review-state');
 const D = require('./pr-review-run-delta');
+const { restatedIds } = require('./pr-review-restated');
 const { assessProtection } = require('./pr-review-precheck');
 const { REFUSAL_KINDS } = require('./pr-review-briefs');
 const S = require('./pr-review-run-support');
@@ -629,13 +630,29 @@ function manifestOf(run, wave) {
   };
 }
 
+/**
+ * What the round did with the candidates that restated an open finding of the last round (kata tmf5), named and counted: the
+ * restatements merged into their finding (`merged`: the candidate's id, the finding it restates (`of`), who said it, where, how alike
+ * (`similarity`) and whether the finding's verdict was carried) and the candidates that overlapped an open finding and stayed
+ * candidates of their own (`kept`, with why). Null when the round had neither.
+ */
+function restatementSummary(run) {
+  const found = isObject(run.restatements) ? run.restatements : null;
+  const merged = found !== null && Array.isArray(found.merged) ? found.merged : [];
+  const kept = found !== null && Array.isArray(found.kept) ? found.kept : [];
+  if (merged.length === 0 && kept.length === 0) return null;
+  const carried = new Set(isObject(run.carry) && Array.isArray(run.carry.carriedIds) ? run.carry.carriedIds.map(String) : []);
+  return { count: merged.length, merged: merged.map((entry) => ({ ...entry, carried: carried.has(String(entry.of)) })), kept };
+}
+
 /** The verify round's plan in a delta round: how many verdicts were kept and how many candidates a verifier is asked about again. */
 function carryPlanOf(run) {
   const carry = isObject(run.carry) ? run.carry : { carriedIds: [], reasons: ['no-carry-plan'] };
   const again = isObject(run.reverifyPrior) ? run.reverifyPrior : { reverified: [], kept: [] };
   // kata p5dt: of the candidates verified, the ones that are the last round's own findings no verifier returned for
   const lastRound = again.reverified.length > 0 || again.kept.length > 0 ? { unverifiedFromLastRound: { verifiedAgain: again.reverified, kept: again.kept } } : {};
-  return { carried: carry.carriedIds.length, verified: run.candidates.length - carry.carriedIds.length, reasons: carry.reasons, ...lastRound };
+  const restated = restatementSummary(run);
+  return { carried: carry.carriedIds.length, verified: run.candidates.length - carry.carriedIds.length, reasons: carry.reasons, ...lastRound, ...(restated === null ? {} : { restatements: restated }) };
 }
 
 /** The span a dispatched agent is recorded under: `review.<role>`, the security lane being `review.security-lane`. */
@@ -1224,9 +1241,18 @@ function processReview(run, deps, { deferVerification = false } = {}) {
   // alone (lib/pr-review-run-delta.js `reverifyPrior`). They join the candidates of this round, so they are planned, briefed, hashed and
   // verified like any other and replace their own ledger entries.
   if (run.priorRound !== undefined) {
-    const again = D.reverifyPrior(run, deduped, typeof deps.deriveCleared === 'function' ? deps.deriveCleared : null);
+    const derive = typeof deps.deriveCleared === 'function' ? deps.deriveCleared : null;
+    // the fixed-finding check is asked once, for both steps below
+    const checked = D.checkPrior(run, deduped, derive);
+    // kata tmf5: a candidate that restates an open finding of the last round is merged into that finding before it becomes a candidate;
+    // the finding comes back as a candidate of this round instead (carried or verified again by `planCarry`'s rules, never loosened)
+    const restated = D.restatedPrior(run, deduped, checked);
+    const again = D.reverifyPrior(run, restated.fresh, derive, checked);
     run.reverifyPrior = { reverified: again.reverified, kept: again.kept };
-    run.candidates = [...deduped, ...again.candidates];
+    run.restatements = { merged: restated.merged, kept: restated.kept, entries: restated.candidates.map((candidate) => String(candidate.id)) };
+    const comeBack = new Map(again.candidates.map((candidate) => [String(candidate.id), candidate]));
+    for (const candidate of restated.candidates) comeBack.set(String(candidate.id), candidate);
+    run.candidates = [...restated.fresh, ...comeBack.values()];
   }
 
   // coverage: a slice is reviewed only when no wave lists it unreviewed
@@ -1723,6 +1749,8 @@ function carrySummaryOf(run) {
   // kata p5dt: the last round's unverified candidates this round put to verifiers again, and the ones it could not
   const verifiedAgain = isObject(run.reverifyPrior) && Array.isArray(run.reverifyPrior.reverified) ? run.reverifyPrior.reverified : [];
   const kept = Array.isArray(delta.unverifiedKept) ? delta.unverifiedKept : [];
+  // kata tmf5: the candidates that restated an open finding of the last round and were merged into it, and those that were not
+  const restated = restatementSummary(run);
   return {
     ...base,
     appliedRange: 'delta',
@@ -1735,6 +1763,7 @@ function carrySummaryOf(run) {
     cleared: delta.cleared,
     notes: delta.notes,
     ...(verifiedAgain.length > 0 || kept.length > 0 ? { unverifiedFromLastRound: { verifiedAgain, kept } } : {}),
+    ...(restated === null ? {} : { restatements: restated }),
     limits: run.reReview.delta.limits,
   };
 }
@@ -1860,6 +1889,9 @@ function applyAdjudications(ledger, listed, adjudications, now) {
 function triageManifest(run, deps) {
   const refused = new Map(briefCandidates(run, deps, run.candidates).refused.map((record) => [String(record.id), record]));
   const fromLastRound = new Set(isObject(run.reverifyPrior) && Array.isArray(run.reverifyPrior.reverified) ? run.reverifyPrior.reverified.map(String) : []);
+  const restated = restatementSummary(run);
+  const restatedInto = new Map();
+  for (const entry of restated === null ? [] : restated.merged) restatedInto.set(String(entry.of), [...(restatedInto.get(String(entry.of)) || []), entry.id]);
   return {
     ok: true,
     status: 'TRIAGE',
@@ -1872,8 +1904,9 @@ function triageManifest(run, deps) {
     dispatched: [],
     candidates: run.candidates.map((c) => {
       const refusal = refused.get(String(c.id));
-      return { id: c.id, locationOrLink: c.locationOrLink, severity: c.severity, failureMode: c.failureMode, source: c.source, ...(fromLastRound.has(String(c.id)) ? { fromLastRound: true } : {}), ...(refusal === undefined ? {} : { unbriefable: { kind: refusal.kind, ...(refusal.input === undefined ? {} : { input: refusal.input }), reason: refusal.reason } }) };
+      return { id: c.id, locationOrLink: c.locationOrLink, severity: c.severity, failureMode: c.failureMode, source: c.source, ...(fromLastRound.has(String(c.id)) ? { fromLastRound: true } : {}), ...(restatedInto.has(String(c.id)) ? { restated: restatedInto.get(String(c.id)) } : {}), ...(refusal === undefined ? {} : { unbriefable: { kind: refusal.kind, ...(refusal.input === undefined ? {} : { input: refusal.input }), reason: refusal.reason } }) };
     }),
+    ...(restated === null ? {} : { restatements: restated }),
     // a result that changed after it was read makes the coverage incomplete (kata 271n); named once, here, so the orchestrator is not told to triage as if the review were whole
     coverage: { complete: run.coverage.complete && changesOf(run).length === 0, unreviewedSlices: run.coverage.unreviewedSlices, uncovered: run.coverage.uncovered, ...(changesOf(run).length > 0 ? { changedResults: changesOf(run).map((change) => change.agent) } : {}) },
     // the TRIAGE step reads the WHOLE range in a delta round too (like the lane and the whole-range reader)
@@ -1917,7 +1950,7 @@ function triageStep(run, input, deps, tracer, startedAt, now) {
     }
   }
 
-  const used = [...run.candidates, ...(run.priorRound === undefined ? [] : run.priorRound.ledger)].flatMap((c) => [c.id, ...(Array.isArray(c.mergedFrom) ? c.mergedFrom.map((m) => m.id) : [])]);
+  const used = [...run.candidates, ...(run.priorRound === undefined ? [] : run.priorRound.ledger)].flatMap((c) => [c.id, ...(Array.isArray(c.mergedFrom) ? c.mergedFrom.map((m) => m.id) : []), ...restatedIds(c)]);
   const top = used.map((id) => /^f(\d+)$/.exec(String(id))).filter((m) => m !== null).map((m) => Number(m[1]));
   const first = Math.max(0, ...top) + 1;
   const entries = validated.additional.map((raw, index) => S.completeFinding(raw, F.ORCHESTRATOR, `f${first + index}`));
