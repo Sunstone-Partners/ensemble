@@ -414,7 +414,7 @@ function writeMigration(plan) {
   } catch (error) {
     fs.rmSync(plan.skillDir, { recursive: true, force: true });
     const detail = Array.isArray(error) ? error.map((e) => e.message || String(e)).join('; ') : error.message;
-    throw new Error(`generated manifest fails the command schema, nothing written: ${detail}`);
+    throw new Error(`generated manifest fails the command schema, nothing written: ${detail}`, { cause: error });
   }
   fs.writeFileSync(plan.yamlPath, plan.manifest);
 }
@@ -546,7 +546,9 @@ function readBaseYaml(yamlPath, base) {
       maxBuffer: 64 * 1024 * 1024
     });
   } catch (error) {
-    throw new Error(`cannot read ${yamlPath} at ${base} via git show: ${String(error.stderr || error.message).trim()}`);
+    throw new Error(`cannot read ${yamlPath} at ${base} via git show: ${String(error.stderr || error.message).trim()}`, {
+      cause: error
+    });
   }
 }
 
