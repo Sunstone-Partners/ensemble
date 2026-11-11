@@ -414,6 +414,7 @@ The design rests on honest-actor trust, not on a forge-resistant mechanism (see 
     - [ ] Given no `hosted_reuse` key, or a `steps` entry missing from `covers`, when reuse is evaluated, then reuse is off and behaviour is unchanged
     - [ ] Given check runs or commit statuses named like the required jobs, when reuse is evaluated, then they are ignored because only Actions runs and jobs are read
     - [ ] Given `forceLocal:true`, when `gate` runs, then the hosted shortcut is skipped
+    - [ ] Given hosted results are accepted, when `gate` runs, then the gate lock is never asked for, so it does not queue behind a running gate; given they are not accepted (or `forceLocal:true`, or no opt-in), then the local run takes the lock like any other run
 
 - [ ] **TRD-015-TEST** Hosted reuse verification and refusal [Verifies TRD-015] [Satisfies REQ-019] [Depends: TRD-015] (4h)
   - Target Files: `packages/development/tests/local-ci-hosted*.test.js`
@@ -427,6 +428,8 @@ The design rests on honest-actor trust, not on a forge-resistant mechanism (see 
     - [ ] Scenario: not opted in or uncovered step -- Given no `hosted_reuse` or a step missing from `covers`, When evaluated, Then reuse is off
     - [ ] Scenario: forceLocal -- Given hosted green and `forceLocal:true`, When `gate` runs, Then it runs locally
     - [ ] Scenario: merge ordering -- Given a verified local status and a red hosted job, When `merge` runs, Then the local status wins; given neither, Then the refusal carries both reasons
+    - [ ] Scenario: hosted check precedes the lock -- Given hosted green and a lock held by another live process, When `gate` runs, Then it returns `source:'hosted'` at once and leaves the lock untouched; given hosted refused, Then it stops at `stage:'lock'` with `hostedRefused` set and runs nothing
+
 ## Acceptance Criteria Traceability
 
 | REQ | Description | Implementation Tasks | Test Tasks |
@@ -460,7 +463,7 @@ Informational only; `implement-trd-beads` does not parse this section.
 
 ## Sprint 2: Integrate and roll out
 - PR 3 (TRD-007 to TRD-009) -- 24h including tests.
-- PR 4 (TRD-013, TRD-010, TRD-011) -- 21h including tests. TRD-013 precedes TRD-010 because the runbook refuses enablement without the measurement note.
+- PR 4 (TRD-013, TRD-010, TRD-011, TRD-015) -- 31h including tests. TRD-013 precedes TRD-010 because the runbook refuses enablement without the measurement note.
 
 ## Architecture Self-Critique
 
@@ -494,7 +497,7 @@ Informational only; `implement-trd-beads` does not parse this section.
 
 ## Notes
 
-- **Total tasks:** 26 (13 implementation, 13 test). **Total estimate:** 99h (PR 1: 6h, PR 2: 38h, PR 3: 24h, PR 4: 31h). Figures were summed by hand when TRD-015 was added; the parser is the check.
+- **Total tasks:** 26 (13 implementation, 13 test). **Total estimate:** 99h (PR 1: 6h, PR 2: 38h, PR 3: 24h, PR 4: 31h). Checked against `trd-cli parse` (26 tasks, 13 and 13; phase sums 6, 38, 24 and 31 hours, no warnings) when TRD-015 was landed.
 - **Constitution compliance:** passed (`docs/standards/constitution.md`). Rule 1 (no secrets): TRD-014 owns the never-handle-the-`gh`-token rule and redaction; TRD-012 keeps workflow secrets and `GH_TOKEN` out of steps and results. Rule 2 (input validation): TRD-005 CLI boundary and TRD-002 config validation. Rule 3 (tests accompany features): every task has a `-TEST` pair. Rule 4 (no second dispatcher): TRD-008 and REQ-012. Rule 6 (reachable from entry point): TRD-009 wires the gate into `pr-merge`. Rule 7 (a check can fail): TRD-006. Rule 8 (user-editable behavior in skills): the skill and config own procedure and policy. Rule 9: no test pins another actor's write order.
 - **Open decision carried forward:** the numeric cycle-time target and minimum post-change cohort are set after the baseline (TRD-011), per PRD REQ-013.
 - **Status description and head SHA (resolved by PRD 1.0.2):** GitHub's status description is length-capped (working limit 140 characters, unconfirmed in current documentation), so TRD-003 bounds the record at 100 characters, TRD-014 refuses anything longer, the head SHA is carried implicitly by the commit the status is posted on, and `verifyRecord` checks that commit. PRD AC-004-5 was reworded in v1.0.2 to say exactly this, so this is no longer an interpretation of the PRD but its stated requirement.

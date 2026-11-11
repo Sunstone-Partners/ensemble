@@ -94,7 +94,7 @@ When hosted CI has already passed on the PR's exact head, `gate` and `merge` can
 
 ```yaml
 hosted_reuse:
-  covers: [install, scripts-tests, validate, generate-validate, generated-drift, test]   # every name in `steps` (this repo lists nine)
+  covers: [install, scripts-tests, validate, generate-validate, generated-drift, test]   # abbreviated: list EVERY name in `steps` (this repository's file lists all nine)
   extra_workflows:
     - file: .github/workflows/generated-drift.yml
       jobs:
