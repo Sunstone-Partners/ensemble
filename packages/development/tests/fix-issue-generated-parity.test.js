@@ -76,12 +76,18 @@ describe('fix-issue generated parity', () => {
     expect(rendered.map(({ phase, title }) => ({ phase, title }))).toEqual(
       sourceSteps.map(({ phase, title }) => ({ phase, title }))
     );
+    // The Pi generator deliberately maps the Claude tool name AskUserQuestion to Pi's `ask`, in a
+    // command's skill as in its prompt (packages/pi/src/transformers/skill-copier.ts).
+    const forTarget = (text) => (_label.startsWith('Pi') ? text.replaceAll('AskUserQuestion', 'ask') : text);
     sourceSteps.forEach((step, i) => {
-      expect({ title: step.title, complete: rendered[i].text.includes(step.text) }).toEqual({
+      expect({ title: step.title, complete: rendered[i].text.includes(forTarget(step.text)) }).toEqual({
         title: step.title,
         complete: true,
       });
     });
+    if (_label.startsWith('Pi')) {
+      expect(fs.readFileSync(file, 'utf-8')).not.toContain('AskUserQuestion');
+    }
   });
 
   test.each(Object.entries(GENERATED_STUBS))('%s: is a stub that points at the skill and copies no step', (_label, file) => {
