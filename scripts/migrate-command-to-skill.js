@@ -446,7 +446,14 @@ function withoutDispatch(parsed) {
 /** Real Claude render, minus frontmatter, generated header and the `## Usage` footer. */
 function renderClaude(parsed, yamlPath) {
   let md = transformCommandToMarkdown(withoutDispatch(parsed), yamlPath);
-  md = md.replace(/^---\n[\s\S]*?\n---\n/, '').replace(/<!--[\s\S]*?-->/g, '');
+  md = md.replace(/^---\n[\s\S]*?\n---\n/, '');
+  // The generated header is a few whole-line HTML comments. Drop those lines rather than
+  // pattern-replacing `<!-- ... -->` anywhere in the text, which could leave a `<!--` behind
+  // when comments nest (CodeQL js/incomplete-multi-character-sanitization).
+  md = md
+    .split('\n')
+    .filter((line) => !/^<!--.*-->$/.test(line.trim()))
+    .join('\n');
   const usage = md.indexOf('\n## Usage');
   return usage === -1 ? md : md.slice(0, usage);
 }
