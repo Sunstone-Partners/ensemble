@@ -550,8 +550,8 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     // the text collapses whitespace: entries are told apart by their prefix; an entry filed far from the top is a misplaced one
     const newer = unreleased.slice(0, start).split('- **packages/development:**').slice(1);
     expect(newer.length).toBeLessThanOrEqual(9);
-    // the entries known to sit above it: the restatement merge and the insertion clear (katas tmf5 and bh8w) are the first (the bound above went from 8 to 9 for that entry), the re-review that is a delta although a verifier was lost (kata p5dt) the next, the verifier deadline and the majority rule (kata dx53) after it, the result files read again (kata 271n) after that, the re-review delta (kata xb4j) next, the small-slice deadlines (katas d9sy and 630v) last
-    expect(newer[0]).toMatch(/^ a delta re-review merges a reviewer's restatement of an open finding into that finding, and a fix that only adds lines inside a cited range clears it \(katas `tmf5` and `bh8w`/);
+    // the entries known to sit above it: the insertion clear (kata bh8w) is the first, the re-review that is a delta although a verifier was lost (kata p5dt) the next, the verifier deadline and the majority rule (kata dx53) after it, the result files read again (kata 271n) after that, the re-review delta (kata xb4j) next, the small-slice deadlines (katas d9sy and 630v) last
+    expect(newer[0]).toMatch(/^ a fix that only adds lines inside a cited range clears the finding it fixes \(kata `bh8w`/);
     expect(newer[1]).toMatch(/^ a re-review is a delta, not a full re-read, when the first round lost a verifier, and the delta verifies what that verifier left unverified \(kata `p5dt`/);
     expect(newer[2]).toMatch(/^ `review-run` gives a verifier the time its first live runs showed it needs and settles a candidate on the strict majority of its verifiers when one did not return \(kata `dx53`/);
     expect(newer[3]).toMatch(/^ `review-run` no longer loses an agent's result file when the agent rewrites it after `collect` read it \(kata `271n`/);
