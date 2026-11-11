@@ -15,7 +15,17 @@
  *   3. installed:  every package's `skills/<dir>/` -- adapters shipped inside a package tree.
  *                   Any subdirectory of a package's `skills/` is a candidate; there is no
  *                   required directory-name prefix, since one manifest's declared `adapter` id
- *                   is what selects it, not its directory name (TRD interpretation I7). The
+ *                   is what selects it, not its directory name (TRD interpretation I7). A
+ *                   subdirectory that carries no `adapter.yaml` of its own is treated as a
+ *                   GROUP and its own immediate children are scanned, one level and no deeper
+ *                   (#138): `packages/full/skills/git` is a symlink to `../../git/skills`, so
+ *                   in the full bundle the five git adapters sit one level below the flat ones
+ *                   beside them, and a children-only scan found `adapter-tracker-beads` while
+ *                   `adapter-workflow-plain-git` was invisible -- `beads-build-wave` stopped at
+ *                   `HEALTH_FAILED: plain-git: could not load the adapter for category
+ *                   'workflow'` and dispatched nothing. A directory that DOES carry a manifest
+ *                   is the adapter and is not also descended into, because a subdirectory of a
+ *                   real adapter is part of that adapter rather than a second one. The
  *                   "installed" tier scans TWO independent sets of package roots, in this
  *                   order, collapsed to a single deduplicated (by `fs.realpathSync`) list of
  *                   "skills root" directories before any of them is read:
@@ -474,6 +484,28 @@ function discoverAdapters(ctx = {}) {
       const manifest = readManifest(dir);
       if (manifest && typeof manifest.adapter === 'string') {
         found.push({ name: manifest.adapter, origin: 'installed', dir });
+        continue;
+      }
+      // No manifest here, so this MAY be a GROUP directory: scan its own children, one level
+      // and no deeper (#138). The full bundle's `skills/git` symlink puts the git adapters here.
+      //
+      // A directory carrying its own SKILL.md is a SKILL, not a container of skills, so it is
+      // not descended into. That is what keeps the descent cheap: the installed roots hold 181
+      // non-adapter directories and all but a handful are ordinary skills. Measured on this
+      // repo, descending into every one of them costs 11.8ms per discovery against 5.2ms
+      // before #138, and `toolchain-cli explain` calls discovery enough times to turn that
+      // into ~2.5s -- which took scripts/tests/toolchain-detect.test.js's 5000ms subprocess
+      // budget from ~1.8s to ~4.5s and made it fail intermittently. Skipping skill
+      // directories costs 7.0ms and finds the SAME 51 adapters.
+      if (fs.existsSync(path.join(dir, SKILL_FILE))) {
+        continue;
+      }
+      for (const nestedName of listSubdirs(dir)) {
+        const nestedDir = path.join(dir, nestedName);
+        const nestedManifest = readManifest(nestedDir);
+        if (nestedManifest && typeof nestedManifest.adapter === 'string') {
+          found.push({ name: nestedManifest.adapter, origin: 'installed', dir: nestedDir });
+        }
       }
     }
   }
@@ -626,7 +658,8 @@ function loadAdapter(name, ctx = {}) {
       `adapters directory (${path.join(repoLocalRoot, name)}), the user adapters directory ` +
       `(${path.join(userRoot, name)}), ` +
       installedSearched +
-      `(each as <root>/<dir>/adapter.yaml declaring \`adapter: ${name}\`); install a marketplace package ` +
+      `(each as <root>/<dir>/adapter.yaml, or <root>/<group>/<dir>/adapter.yaml one level in, ` +
+      `declaring \`adapter: ${name}\`); install a marketplace package ` +
       `that provides '${name}' (for example, "/plugin install <package>@ensemble" in Claude Code) or place its ` +
       `skill directory in one of the locations above.`
   );
