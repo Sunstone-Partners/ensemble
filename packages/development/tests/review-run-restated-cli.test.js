@@ -182,14 +182,14 @@ const pastEveryDeadline = (hours = 2) => Date.now() + hours * 3600 * 1000;
  * Round one on head1 with the four findings of ROUND (LOOP, CACHE, RETRY, LOCK): four candidates at Standard depth make a pool of four
  * verifiers holding three candidates each, so the one verifier that never writes its file leaves the three candidates it holds
  * `unverified` (verifier-incomplete) and the fourth, which its three other verifiers all answered, settled: the shape of the measured
- * High run. `severities` overrides a claim's severity by its id.
+ * High run. `severities` overrides a claim's severity by its id; `claims` is the round's four findings (default ROUND).
  */
-function silentRound(runId, severities = {}) {
+function silentRound(runId, severities = {}, claims = ROUND) {
   setGh({ head: fx.head1 });
   fs.rmSync(statePath(), { force: true });
   const p = prep(runId);
   expect(p.code).toBe(0);
-  const [a, b, c, d] = ROUND.map((one) => raised(one, severities[one.id] ? { severity: severities[one.id] } : {}));
+  const [a, b, c, d] = claims.map((one) => raised(one, severities[one.id] ? { severity: severities[one.id] } : {}));
   answerReview(p.out, { findings: { 'reviewer-s1-a': [a, b], 'reviewer-s2-a': [c], 'reviewer-s3-a': [d] } });
   const v = coll(runId);
   expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify' });
@@ -329,6 +329,10 @@ describe('a restatement of an open finding is that finding, not a new candidate 
     const settled = done.out.ledger.find((entry) => entry.id === first.settled.id);
     expect(settled).toMatchObject({ headSha: head2, carriedFrom: fx.head1, verification: { outcome: 'present' } });
     expect(settled.restatedBy).toEqual([expect.objectContaining({ id: expect.any(String), source: 'reviewer-s1-a', headSha: head2, severity: 'important', failureMode: RESTATEMENT[first.settled.locationOrLink].said })]);
+    // the record says which code-like names confirmed the restatement beside its similarity
+    expect(settled.restatedBy[0].sharedIdentifiers.length).toBeGreaterThan(0);
+    expect(settled.restatedBy[0].similarity).toBeGreaterThanOrEqual(STEP);
+    for (const merged of summary.merged) expect(merged.sharedIdentifiers.length).toBeGreaterThan(0);
     const waiting = done.out.ledger.find((entry) => entry.id === first.waiting[0].id);
     expect(waiting.carriedFrom).toBeUndefined();
     expect(waiting).toMatchObject({ verification: { outcome: 'present', reason: 'verifier-majority', tally: { real: 3, notReal: 0, expected: 3 } } });
@@ -445,24 +449,47 @@ describe('a restatement of an open finding is that finding, not a new candidate 
     expect(done.out.ledger).toHaveLength(4);
   });
 
-  test('a restatement in a round of ONE finding is merged too: with two findings in play ln(N/df) weighed every shared word 0 and called it "different-description, similarity 0"', () => {
+  test('a round of ONE finding refuses to merge: fewer than three findings weigh no words, so the restatement stays a duplicate candidate, named as kept with the reason (the owner\'s decision: fail toward more findings)', () => {
     const first = settledRound('o1', { 'reviewer-s1-a': [raised(C.LOOP)] });
     expect(first.done.ledger).toHaveLength(1);
     const loop = first.done.ledger[0];
     const head2 = push(fx.head1, UNRELATED, 'o-fix');
     answerReview(deltaPrepare('o2', head2), { findings: { 'reviewer-s1-a': [restating(C.LOOP.at)] } });
-    let answer = coll('o2');
-    // the only finding is carried and its restatement is the only candidate: there may be nothing left to verify
-    if (answer.out.status === 'DISPATCH') {
-      answerVotes(answer.out);
-      answer = coll('o2');
-    }
-    expect(answer.out).toMatchObject({ ok: true, status: 'DONE', carry: { appliedRange: 'delta', carried: 1, restatements: { count: 1, kept: [] } } });
-    expect(answer.out.carry.restatements.merged).toEqual([expect.objectContaining({ of: loop.id, carried: true, source: 'reviewer-s1-a' })]);
-    expect(answer.out.carry.restatements.merged[0].similarity).toBeGreaterThanOrEqual(STEP);
-    // one open finding, not two for one defect
-    expect(answer.out.ledger).toHaveLength(1);
-    expect(answer.out.ledger[0]).toMatchObject({ id: loop.id, carriedFrom: fx.head1, headSha: head2 });
-    expect(answer.out.ledger[0].restatedBy).toHaveLength(1);
+    const v = coll('o2');
+    // before the fix of the review of PR 299 the measure scored this pair 0 ("different-description"), and under a uniform weight it would have merged a distinct pair too
+    expect(v.out).toMatchObject({ status: 'DISPATCH', round: 'verify', carry: { carried: 0, verified: 1 } });
+    expect(v.out.carry.restatements).toMatchObject({ count: 0, merged: [], kept: [expect.objectContaining({ reason: 'corpus-too-small', against: [loop.id], similarity: 0 })] });
+    answerVotes(v.out);
+    const done = coll('o2');
+    expect(done.out).toMatchObject({ ok: true, status: 'DONE' });
+    // the cost, said plainly: one defect, two open entries
+    expect(done.out.ledger).toHaveLength(2);
+    expect(done.out.ledger.filter((entry) => entry.locationOrLink === C.LOOP.at)).toHaveLength(2);
+    expect(done.out.ledger.filter((entry) => entry.restatedBy !== undefined)).toEqual([]);
+  });
+
+  test('a distinct defect on the same line that clears the bar on shared vocabulary but names no identifier in common stays a separate candidate (the second signal), while the restatement that does name one still merges beside it', () => {
+    const first = silentRound('g1', {}, [C.LOOP, C.CACHE, C.RETRY, C.DROP]);
+    const drop = first.byAt(C.DROP.at);
+    const loop = first.byAt(C.LOOP.at);
+    const head2 = push(fx.head1, UNRELATED, 'g-fix');
+    answerReview(deltaPrepare('g2', head2), { findings: { 'reviewer-s1-a': [raised(C.RETRIED), restating(C.LOOP.at)] } });
+    const v = coll('g2');
+    const summary = v.out.carry.restatements;
+    // the stream handler that drops the final frame and the one that sends it twice are two defects on one line; the bar alone (0.35) merged them at 0.51
+    expect(summary.kept).toEqual([expect.objectContaining({ reason: 'no-shared-identifier', against: [drop.id] })]);
+    expect(summary.kept[0].similarity).toBeGreaterThanOrEqual(STEP);
+    expect(summary.merged).toEqual([expect.objectContaining({ of: loop.id, sharedIdentifiers: ['items.length'] })]);
+    // the distinct defect is verified, as a candidate of its own
+    expect(askedOf(v.out).has(summary.kept[0].id)).toBe(true);
+    answerVotes(v.out);
+    const done = coll('g2');
+    const retried = done.out.ledger.find((entry) => entry.failureMode === C.RETRIED.said);
+    expect(retried).toMatchObject({ locationOrLink: C.DROP.at, verification: { outcome: 'present' } });
+    expect(retried.id).not.toBe(drop.id);
+    expect(retried.restatedBy).toBeUndefined();
+    expect(done.out.ledger.find((entry) => entry.id === drop.id).restatedBy).toBeUndefined();
+    expect(done.out.ledger.find((entry) => entry.id === loop.id).restatedBy).toHaveLength(1);
+    expect(done.out.ledger).toHaveLength(5);
   });
 });

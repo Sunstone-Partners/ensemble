@@ -1,7 +1,7 @@
 {
  "about": "The pairs the restatement bar (RESTATED_MIN_SIMILARITY, lib/pr-review-restated.js) was FITTED on: every pair of findings that cite overlapping lines of one file (single-citation grammar path:line or path:a-b) in the review ledgers of this repository's own runs (the speedup measurement runs, the review of PR 229, the runs of PR 207). It is NOT held-out data: the bar was chosen from these pairs.",
  "measure": "resemblanceOver of lib/pr-review-ledger.js (the dedupe measure) over the corpus named per pair. The corpus is every entry of the pair's OWN ledger (`ledgers[pair.ledger]`); the runner's own corpus is the prior ledger plus the round's candidates, so the same pair scores differently there (a distinct pair of PR 291, f3 and f5, scores 0.22 over its own ledger and about 0.33 over a union of 98 entries).",
- "calls": "same = the two findings are one defect in other words (the reading of whoever fitted the bar; the two measured restatements of run m2-pr293-re and the PR 292 pair were confirmed by the reviewer of PR 299); distinct = another defect; unclear = related, counted in neither group.",
+ "calls": "same = the two findings are one defect in other words; distinct = another defect; unclear = related, or one defect with an extra aspect, counted in neither group. Every call is a reading of the two claims' TEXT by whoever fitted the bar (the two measured restatements of run m2-pr293-re and the PR 292 pair were confirmed by the reviewer of PR 299). In the second review round of PR 299 the 14 distinct calls that had cited the in-round same-source rule (a provenance rule, not a reading, which the restatement path does not apply) were re-read from the text and every one is distinct by it; `sameSource` is recorded per pair and is not part of any call. pr-207 f4~f16, first called same, is unclear (see its basis). Counts: 7 same, 35 distinct, 3 unclear.",
  "bar": 0.35,
  "ledgers": {
   "pr229/pr-Sunstone-Partners_ensemble_229.json": [
@@ -946,7 +946,8 @@
    "comparable": true,
    "sizeRatio": 0.775,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure2/pr-207.json",
@@ -966,7 +967,8 @@
    "comparable": true,
    "sizeRatio": 0.959,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure/pr-207.json",
@@ -986,7 +988,8 @@
    "comparable": true,
    "sizeRatio": 0.666,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure/pr-207.json",
@@ -1006,7 +1009,8 @@
    "comparable": true,
    "sizeRatio": 0.738,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure2/pr-293.json",
@@ -1026,7 +1030,8 @@
    "comparable": true,
    "sizeRatio": 0.785,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure/pr-207.json",
@@ -1045,8 +1050,9 @@
    "score": 0.34,
    "comparable": true,
    "sizeRatio": 0.902,
-   "call": "same",
-   "basis": "read: the same defect in other words"
+   "call": "unclear",
+   "basis": "read in full: f16 repeats f4's defect (the injected fixture field is always named _fixture and the authoring agent is never told its name) and adds a second aspect (the imports are fixed to System.Threading.Tasks, Microsoft.Playwright and Xunit); it may be one defect or two (the reviewer of PR 299 read it as possibly two), so it is counted in neither group; it scores 0.34, under the bar either way",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure2/pr-292.json",
@@ -1066,7 +1072,8 @@
    "comparable": true,
    "sizeRatio": 0.899,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1086,7 +1093,8 @@
    "comparable": true,
    "sizeRatio": 0.94,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "prs-measure/pr-207.json",
@@ -1106,7 +1114,8 @@
    "comparable": true,
    "sizeRatio": 0.696,
    "call": "unclear",
-   "basis": "read: related, not clearly one defect; counted in neither group"
+   "basis": "read: related, not clearly one defect; counted in neither group",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1126,7 +1135,8 @@
    "comparable": true,
    "sizeRatio": 0.405,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure2/pr-291.json",
@@ -1146,7 +1156,8 @@
    "comparable": true,
    "sizeRatio": 0.784,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1166,7 +1177,8 @@
    "comparable": true,
    "sizeRatio": 0.516,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1186,7 +1198,8 @@
    "comparable": true,
    "sizeRatio": 0.547,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1206,7 +1219,8 @@
    "comparable": true,
    "sizeRatio": 0.85,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1226,7 +1240,8 @@
    "comparable": true,
    "sizeRatio": 0.667,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "prs-measure2/pr-207.json",
@@ -1246,7 +1261,8 @@
    "comparable": true,
    "sizeRatio": 0.92,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1266,7 +1282,8 @@
    "comparable": true,
    "sizeRatio": 0.607,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "prs-measure2/pr-207.json",
@@ -1286,7 +1303,8 @@
    "comparable": true,
    "sizeRatio": 0.933,
    "call": "unclear",
-   "basis": "read: related, not clearly one defect; counted in neither group"
+   "basis": "read: related, not clearly one defect; counted in neither group",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1306,7 +1324,8 @@
    "comparable": true,
    "sizeRatio": 0.773,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1326,7 +1345,8 @@
    "comparable": true,
    "sizeRatio": 0.785,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1346,7 +1366,8 @@
    "comparable": true,
    "sizeRatio": 0.91,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1366,7 +1387,8 @@
    "comparable": true,
    "sizeRatio": 0.469,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1386,7 +1408,8 @@
    "comparable": true,
    "sizeRatio": 0.679,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "code-review-improvements/pr-trd-2026-70e784f2-code-review-process-phase-2-6.json",
@@ -1406,7 +1429,8 @@
    "comparable": true,
    "sizeRatio": 0.796,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1426,7 +1450,8 @@
    "comparable": true,
    "sizeRatio": 0.863,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "prs-measure2/pr-207.json",
@@ -1446,7 +1471,8 @@
    "comparable": true,
    "sizeRatio": 0.523,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1467,7 +1493,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1488,7 +1515,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1509,7 +1537,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1530,7 +1559,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1551,7 +1581,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1572,7 +1603,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1593,7 +1625,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1614,7 +1647,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1635,7 +1669,8 @@
    "why": "size-ratio",
    "sizeRatio": 0.303,
    "call": "same",
-   "basis": "read: the same defect in other words"
+   "basis": "read: the same defect in other words",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1656,7 +1691,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1677,7 +1713,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1698,7 +1735,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1719,7 +1757,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1740,7 +1779,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1761,7 +1801,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1782,7 +1823,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "read: another defect"
+   "basis": "read from the two claims' text: another defect",
+   "sameSource": false
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1803,7 +1845,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1824,7 +1867,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   },
   {
    "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
@@ -1845,7 +1889,8 @@
    "why": "kind",
    "sizeRatio": 0,
    "call": "distinct",
-   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+   "basis": "read from the two claims' text: another defect (the two share a source, which is recorded here and is not part of the call)",
+   "sameSource": true
   }
  ]
 }

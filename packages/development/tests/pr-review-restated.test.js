@@ -14,12 +14,12 @@
  * distinct defects is a miss.
  */
 
-const { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds, RESTATED_MIN_SIMILARITY, KEPT_REASONS, EVIDENCE_KEPT } = require('../lib/pr-review-restated');
+const { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds, identifiersOf, sharedIdentifiers, isIdentifier, RESTATED_MIN_SIMILARITY, KEPT_REASONS, EVIDENCE_KEPT, IDENTIFIERS_KEPT } = require('../lib/pr-review-restated');
 const { checkPrior, restatedPrior, restatable, idSeed, composeDeltaLedger } = require('../lib/pr-review-run-delta');
 const { raisersOf } = require('../lib/pr-review-votes');
 const { evaluateGate, BLOCKER_CODES } = require('../lib/pr-review-gate');
 const { planBeads, beadKeys } = require('../lib/pr-review-beads');
-const { resemblanceOver } = require('../lib/pr-review-ledger');
+const { resemblanceOver, RESEMBLANCE_MIN_CORPUS } = require('../lib/pr-review-ledger');
 const { CLAIMS: C, raised, entryOf } = require('./helpers/pr-review-restated-claims');
 
 const HEAD = 'a'.repeat(40);
@@ -82,32 +82,38 @@ describe('the bar and what it separates (FITTED on one set of pairs, not validat
     expect(out.kept[0].candidate.id).toBe('f5');
   });
 
-  test('with only two findings in play (a round of one finding and its restatement) the words weigh the same: the restatement merges where ln(N/df) scored every pair 0', () => {
-    // the pairs that merge among five findings (0.54, 0.46, 0.84, 0.44) score the plain overlap of the two descriptions here
-    for (const [was, again, score] of [['LOOP', 'LOOP_AGAIN', 0.64], ['CACHE', 'CACHE_AGAIN', 0.57], ['RETRY', 'RETRY_AGAIN', 0.9], ['LOCK', 'LOCK_AGAIN', 0.55]]) {
+  test('with fewer than three findings in play NOTHING is merged and the reason says why: a restatement in a round of one finding stays a candidate of its own', () => {
+    // the four pairs that merge among five findings (0.54, 0.46, 0.84, 0.44) are refused here, not scored 0 and not scored by another measure
+    for (const [was, again] of [['LOOP', 'LOOP_AGAIN'], ['CACHE', 'CACHE_AGAIN'], ['RETRY', 'RETRY_AGAIN'], ['LOCK', 'LOCK_AGAIN']]) {
       const out = match([prior(was, 'f1')], [cand(again, 'f2')]);
-      expect(out.kept).toEqual([]);
-      expect(out.merged.map((m) => [m.candidate.id, m.entry.id])).toEqual([['f2', 'f1']]);
-      expect(near(out.merged[0].similarity, score)).toBe(true);
+      expect(out.merged).toEqual([]);
+      expect(out.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.CORPUS_TOO_SMALL, against: ['f1'], similarity: 0 })]);
+      expect(out.kept[0].candidate.id).toBe('f2');
     }
-    // a distinct defect on the same line is still kept apart (0.18), and the reason is a real one, not a similarity of 0
-    const other = match([prior('LOCK', 'f1')], [cand('LOCK_OTHER', 'f2')]);
-    expect(other.merged).toEqual([]);
-    expect(other.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.DIFFERENT_DESCRIPTION, against: ['f1'] })]);
-    expect(near(other.kept[0].similarity, 0.18)).toBe(true);
-    // the plain overlap is the more permissive measure: the abstract paraphrase that stays apart among five findings (0.24) merges here (0.38)
-    const paraphrase = match([prior('CACHE', 'f1')], [cand('CACHE_ABSTRACT', 'f2')]);
-    expect(paraphrase.merged.map((m) => m.entry.id)).toEqual(['f1']);
-    expect(near(paraphrase.merged[0].similarity, 0.38)).toBe(true);
+    // a distinct defect on the same line and an abstract paraphrase are kept apart for the same reason: no measure at all
+    for (const [was, other] of [['LOCK', 'LOCK_OTHER'], ['CACHE', 'CACHE_ABSTRACT']]) {
+      const out = match([prior(was, 'f1')], [cand(other, 'f2')]);
+      expect(out.merged).toEqual([]);
+      expect(out.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.CORPUS_TOO_SMALL, against: ['f1'] })]);
+    }
+    // two prior findings and a candidate make three: weighed, so the same pair that merges among five is scored (0.37 here)
+    const three = match([prior('LOOP', 'f1'), prior('CACHE', 'f2')], [cand('LOOP_AGAIN', 'f3')]);
+    expect(three.kept).toEqual([]);
+    expect(three.merged.map((m) => [m.candidate.id, m.entry.id])).toEqual([['f3', 'f1']]);
+    expect(near(three.merged[0].similarity, 0.37)).toBe(true);
   });
 
-  test('three findings keep the corpus weights (0.37 for the pair that scores 0.64 by plain overlap): the fallback is for fewer than three only', () => {
+  test('three findings are the least that weigh words: 0.37 for the pair that merges at 0.54 among five; two findings are refused, whatever the two say', () => {
+    expect(RESEMBLANCE_MIN_CORPUS).toBe(3);
     const findings = [prior('LOOP', 'f1'), prior('CACHE', 'f2'), cand('LOOP_AGAIN', 'f3')];
     expect(near(resemblanceOver(findings)(findings[2], findings[0]).similarity, 0.37)).toBe(true);
-    expect(near(resemblanceOver(findings.slice(0, 1).concat(findings.slice(2)))(findings[2], findings[0]).similarity, 0.64)).toBe(true);
+    const two = [findings[0], findings[2]];
+    expect(resemblanceOver(two)(two[1], two[0])).toMatchObject({ comparable: false, why: 'corpus-too-small', similarity: 0 });
+    // exact duplicates are one finding: three entries of two distinct findings are a corpus of two
+    expect(resemblanceOver([findings[0], findings[0], findings[2]])(findings[2], findings[0]).why).toBe('corpus-too-small');
   });
 
-  test('a corpus with fewer than two distinct findings cannot measure anything and says so: never a similarity of 0 under another reason', () => {
+  test('a corpus of fewer than three distinct findings (one, none, or no list at all) measures nothing and says so: never a similarity of 0 under another reason', () => {
     const only = prior('LOOP', 'f1');
     expect(resemblanceOver([only])(cand('LOOP_AGAIN', 'f2'), only)).toMatchObject({ comparable: false, why: 'corpus-too-small', similarity: 0 });
     expect(resemblanceOver([])(only, only).why).toBe('corpus-too-small');
@@ -115,6 +121,70 @@ describe('the bar and what it separates (FITTED on one set of pairs, not validat
     const out = matchRestatements({ candidates: [cand('LOOP_AGAIN', 'f2')], priors: asPriors([only]), corpus: [only], locate });
     expect(out.merged).toEqual([]);
     expect(out.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.CORPUS_TOO_SMALL, against: ['f1'] })]);
+  });
+
+  test('a distinct pair that clears the bar on shared vocabulary but names no identifier in common stays a separate candidate: kept as no-shared-identifier, with the score that cleared the bar', () => {
+    // the stream handler that drops the final frame and the one that sends it twice: two defects on one line, 0.54 alike, no code named in either claim
+    const priors = [prior('LOOP', 'f1'), prior('CACHE', 'f2'), prior('RETRY', 'f3'), prior('LOCK', 'f4'), prior('DROP', 'f5')];
+    const out = match(priors, [cand('RETRIED', 'f6')]);
+    expect(out.merged).toEqual([]);
+    expect(out.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.NO_SHARED_IDENTIFIER, against: ['f5'] })]);
+    expect(out.kept[0].similarity).toBeGreaterThanOrEqual(RESTATED_MIN_SIMILARITY);
+    expect(near(out.kept[0].similarity, 0.54)).toBe(true);
+  });
+
+  test('a pair that names an identifier in common and clears the bar merges, and says which: the merge carries the identifiers that confirmed it', () => {
+    const out = match([prior('LOOP', 'f1'), prior('CACHE', 'f2'), prior('RETRY', 'f3'), prior('LOCK', 'f4')], [cand('LOOP_AGAIN', 'f5'), cand('CACHE_AGAIN', 'f6'), cand('RETRY_AGAIN', 'f7'), cand('LOCK_AGAIN', 'f8')]);
+    expect(out.merged.map((m) => m.shared)).toEqual([['items.length'], ['cacheKey'], ['retry()'], ['write()', 'release()']]);
+  });
+
+  test('an entry the bar and the signal both confirm is the one a candidate merges into: a second entry that clears the bar without a shared identifier is no ambiguity', () => {
+    // LOOP_AGAIN names items.length, like LOOP; the second prior entry is LOOP's wording with the identifier spelled as words (so it clears the bar too) and names none
+    const wordsOnly = prior('LOOP', 'f2', { failureMode: C.LOOP.said.replace(/`/g, '').replace(/items\.length/g, 'items length'), locationOrLink: 'med/a02.js:4-6' });
+    const out = match([prior('LOOP', 'f1'), wordsOnly, prior('CACHE', 'f3'), prior('RETRY', 'f4'), prior('LOCK', 'f5')], [cand('LOOP_AGAIN', 'f6')]);
+    expect(identifiersOf(wordsOnly, 'med/a02.js').size).toBe(0);
+    expect(out.merged.map((m) => [m.candidate.id, m.entry.id])).toEqual([['f6', 'f1']]);
+  });
+});
+
+describe('the second signal: a restatement must also name a code-like identifier the finding names (a heuristic, not a proof)', () => {
+  test('what is an identifier: a call, snake_case, camelCase, a dotted name or a file name; never a plain word, a hyphenated compound, an acronym, an abbreviation or a number', () => {
+    for (const token of ['retry()', 'write()', 'items.length()', 'LABEL_IDS', '_fixture', 'not_installed', 'cacheKey', 'dirnamePaths', 'xUnit', 'PascalCase', 'items.length', 'adapters.js', 'validate-all.js', 'Microsoft.Playwright.Xunit']) {
+      expect([token, isIdentifier(token)]).toEqual([token, true]);
+    }
+    for (const token of ['retry', 'cache', 'Important', 'comment-stripped', 'end-to-end', 'JSON', 'E2E', 'README', 'e.g', 'i.e', 'v1.2', '1.5', '0.35', 'a_b', 'go()', '()', '_', '__', 'x.y']) {
+      expect([token, isIdentifier(token)]).toEqual([token, false]);
+    }
+  });
+
+  test('identifiersOf reads the claim, not the evidence; leaves out the cited file, the generic list and repeats; keeps the claim\'s spelling', () => {
+    const finding = {
+      failureMode: 'dirnamePaths in scripts/validate-all.js counts the line of stripComments, and stripComments again; GitHub and package.json are named too, and so are comment-stripped text and end-to-end runs',
+      evidence: 'secretHelper() was run against the file',
+    };
+    expect([...identifiersOf(finding, 'scripts/validate-all.js').values()]).toEqual(['dirnamePaths', 'stripComments']);
+    // the cited file is another file here: its name is an identifier of the claim
+    expect([...identifiersOf(finding, 'src/other.js').values()]).toEqual(['dirnamePaths', 'validate-all.js', 'stripComments']);
+    for (const generic of ['JavaScript', 'TypeScript', 'GitHub', 'GitLab', 'macOS', 'iOS', 'PostgreSQL', 'MongoDB', 'GraphQL', 'OpenAI', 'NaN', 'README.md', 'CHANGELOG.md', 'package.json', 'package-lock.json']) {
+      expect([generic, identifiersOf({ failureMode: `${generic} is named here` }, 'a.js').size]).toEqual([generic, 0]);
+    }
+    for (const bad of [null, undefined, 'x', {}, { failureMode: 3 }, { failureMode: '  ' }]) expect(identifiersOf(bad, 'a.js').size).toBe(0);
+  });
+
+  test('sharedIdentifiers: the names both claims use, compared without case, in the first claim\'s spelling and order; none when one claim names nothing', () => {
+    const a = { failureMode: 'cacheKey and readManifest and the _fixture field' };
+    const b = { failureMode: 'CacheKey is wrong, and so is _FIXTURE, but readManifest is fine' };
+    expect(sharedIdentifiers(a, b, 'a.js')).toEqual(['cacheKey', 'readManifest', '_fixture']);
+    expect(sharedIdentifiers(b, a, 'a.js')).toEqual(['CacheKey', '_FIXTURE', 'readManifest']);
+    expect(sharedIdentifiers(a, { failureMode: 'nothing code-like here at all' }, 'a.js')).toEqual([]);
+    expect(sharedIdentifiers(a, null, 'a.js')).toEqual([]);
+  });
+
+  test('the record names the identifiers that confirmed the restatement, at most IDENTIFIERS_KEPT of them, and none when there are none', () => {
+    const many = Array.from({ length: IDENTIFIERS_KEPT + 3 }, (_, k) => `name${k}Part`);
+    expect(restatementRecord({ id: 'f5', failureMode: 'x', locationOrLink: 'a:1' }, 0.4, HEAD, many).sharedIdentifiers).toEqual(many.slice(0, IDENTIFIERS_KEPT));
+    expect(restatementRecord({ id: 'f5', failureMode: 'x', locationOrLink: 'a:1' }, 0.4, HEAD, ['cacheKey']).sharedIdentifiers).toEqual(['cacheKey']);
+    for (const none of [undefined, [], null]) expect(restatementRecord({ id: 'f5', failureMode: 'x', locationOrLink: 'a:1' }, 0.4, HEAD, none)).not.toHaveProperty('sharedIdentifiers');
   });
 });
 
@@ -276,7 +346,7 @@ describe('the delta steps: which prior findings a candidate may restate', () => 
     const before = JSON.stringify(entries);
     const { out } = through(entries, fresh, derive());
     expect(out.fresh.map((c) => c.id)).toEqual(['f6']);
-    expect(out.merged).toEqual([{ id: 'f5', of: 'f1', source: 'reviewer-s1-b', locationOrLink: 'med/a02.js:5', severity: 'important', similarity: expect.any(Number) }]);
+    expect(out.merged).toEqual([{ id: 'f5', of: 'f1', source: 'reviewer-s1-b', locationOrLink: 'med/a02.js:5', severity: 'important', similarity: expect.any(Number), sharedIdentifiers: ['items.length'] }]);
     expect(out.kept).toEqual([]);
     expect(out.candidates).toHaveLength(1);
     const [back] = out.candidates;

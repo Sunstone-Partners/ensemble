@@ -73,6 +73,7 @@ const EVIDENCE_KEPT = 600;
 /** Why a candidate that overlapped an open finding was kept as a candidate of its own. */
 const KEPT_REASONS = Object.freeze({
   DIFFERENT_DESCRIPTION: 'different-description',
+  NO_SHARED_IDENTIFIER: 'no-shared-identifier',
   DIFFERENT_KIND: 'different-kind',
   UNSETTLED: 'unsettled',
   CORPUS_TOO_SMALL: 'corpus-too-small',
@@ -84,6 +85,57 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const identity = (value) => (isText(value) ? value.trim() : Number.isFinite(value) ? String(value) : null);
 const round2 = (value) => Math.round(value * 100) / 100;
+
+/** How many shared identifiers a restatement record and the answer name. */
+const IDENTIFIERS_KEPT = 8;
+
+/** A token of a claim: letters, digits, `_` and `$`, joined by `.` or `-`, a trailing `()` kept (`write()`, `items.length`, `validate-all.js`). */
+const TOKEN = /[A-Za-z0-9_$]+(?:[.-][A-Za-z0-9_$]+)*(?:\(\))?/g;
+
+/**
+ * Tokens of the right shape that name no piece of the code under review: proper nouns that are camelCase by spelling (a language, a
+ * host), the literal `NaN` and files every repository has. A short list, the rest is the shape's work (see `isIdentifier`).
+ */
+const GENERIC_TOKENS = new Set(['javascript', 'typescript', 'github', 'gitlab', 'macos', 'ios', 'postgresql', 'mongodb', 'graphql', 'openai', 'nan', 'readme.md', 'changelog.md', 'package.json', 'package-lock.json']);
+
+/**
+ * Whether a token is shaped like a name in code, which a plain word never is: a call (`retry()`, three characters or more before the
+ * parentheses), snake_case or SCREAMING_SNAKE or a leading underscore (an underscore and two letters in a row), camelCase or PascalCase
+ * (a lowercase letter followed by an uppercase one: `dirnamePaths`, `stripComments`), or a dotted name or a file name (every part two
+ * characters or more with a letter in it: `items.length`, `adapters.js`, `Microsoft.Playwright.Xunit`; not `e.g`, `1.5` or `v1.2`).
+ * A plain hyphenated compound (`comment-stripped`, `end-to-end`) and a plain word are not, nor is an acronym (`JSON`, `E2E`).
+ */
+function isIdentifier(token) {
+  const call = token.endsWith('()');
+  const name = call ? token.slice(0, -2) : token;
+  if (call && name.length >= 3 && /[A-Za-z]/.test(name)) return true;
+  if (name.includes('_') && /[A-Za-z]{2}/.test(name)) return true;
+  if (/[a-z][A-Z]/.test(name)) return true;
+  return name.includes('.') && name.split('.').every((part) => part.length >= 2 && /[A-Za-z]/.test(part));
+}
+
+/**
+ * The identifiers a claim names (`failureMode`, not the evidence: what the claim says is wrong, not what the reviewer ran): tokens that
+ * pass `isIdentifier`, are not on the short generic list and are not the cited file's own name (two findings that overlap cite one file,
+ * so naming it says nothing about which code they are about). Keyed by the lower-cased token, valued by the spelling the claim uses.
+ */
+function identifiersOf(finding, file) {
+  const found = new Map();
+  if (!isObject(finding) || !isText(finding.failureMode)) return found;
+  const base = isText(file) ? file.toLowerCase().split('/').pop() : null;
+  for (const match of finding.failureMode.matchAll(TOKEN)) {
+    const key = match[0].toLowerCase();
+    if (!isIdentifier(match[0]) || GENERIC_TOKENS.has(key) || key === base || found.has(key)) continue;
+    found.set(key, match[0]);
+  }
+  return found;
+}
+
+/** The identifiers both claims name (in `a`'s spelling, in the order `a` names them): the second signal a restatement must show beside the resemblance bar. */
+function sharedIdentifiers(a, b, file) {
+  const named = identifiersOf(b, file);
+  return [...identifiersOf(a, file)].filter(([key]) => named.has(key)).map(([, spelling]) => spelling);
+}
 
 /** The restatements an entry records, read defensively: the objects of `restatedBy` that name an id; anything else is not one. */
 function restatementsOf(entry) {
@@ -97,7 +149,7 @@ function restatedIds(entry) {
 }
 
 /** One restatement as the entry records it: who said it, where, how, when (the head of the round that saw it) and what made it a restatement. */
-function restatementRecord(candidate, similarity, headSha) {
+function restatementRecord(candidate, similarity, headSha, shared) {
   return {
     id: candidate.id,
     source: isText(candidate.source) ? candidate.source : isText(candidate.reviewer) ? candidate.reviewer : undefined,
@@ -106,6 +158,7 @@ function restatementRecord(candidate, similarity, headSha) {
     failureMode: candidate.failureMode,
     ...(isText(candidate.evidence) ? { evidence: candidate.evidence.length > EVIDENCE_KEPT ? `${candidate.evidence.slice(0, EVIDENCE_KEPT)}...` : candidate.evidence } : {}),
     similarity: round2(similarity),
+    ...(Array.isArray(shared) && shared.length > 0 ? { sharedIdentifiers: shared.slice(0, IDENTIFIERS_KEPT) } : {}),
     headSha,
     ...(Array.isArray(candidate.mergedFrom) && candidate.mergedFrom.length > 0
       ? { mergedFrom: candidate.mergedFrom.filter(isObject).map(({ id, source, locationOrLink }) => ({ id, source, locationOrLink })) }
@@ -122,7 +175,7 @@ function restatementRecord(candidate, similarity, headSha) {
  *                                  kind) and its citation in THIS head's numbering (`locationOrLink`). The caller has already excluded every entry that cannot be one.
  * @param {Object[]} input.corpus   Every finding in play, the weights of the words are read over (the prior ledger and the candidates).
  * @param {function(string):?{file:string,start:number,end:number}} input.locate  Reads a citation; null for one that names no file and line.
- * @returns {{merged:Array<{candidate:Object, entry:Object, similarity:number, sizeRatio:number}>, kept:Array<{candidate:Object, reason:string, against:Array, similarity:number}>}}
+ * @returns {{merged:Array<{candidate:Object, entry:Object, similarity:number, sizeRatio:number, shared:string[]}>, kept:Array<{candidate:Object, reason:string, against:Array, similarity:number}>}}
  *   `kept` lists only the candidates that overlapped an open finding and were NOT merged, each with why: the others never came near one.
  */
 function matchRestatements({ candidates, priors, corpus, locate }) {
@@ -141,13 +194,17 @@ function matchRestatements({ candidates, priors, corpus, locate }) {
       const there = places[p];
       if (there === null || there.file !== where.file || where.start > there.end || there.start > where.end) return;
       const look = resemble(candidate, prior.entry);
-      const entry = { at: p, similarity: look.similarity, sizeRatio: look.sizeRatio };
-      if (look.comparable && look.similarity >= RESTATED_MIN_SIMILARITY) {
+      const shared = look.comparable && look.similarity >= RESTATED_MIN_SIMILARITY ? sharedIdentifiers(candidate, prior.entry, where.file) : [];
+      const entry = { at: p, similarity: look.similarity, sizeRatio: look.sizeRatio, shared };
+      // the two signals: the resemblance reaches the bar AND the claims name a code-like identifier in common
+      if (shared.length > 0) {
         if (!confirmed.has(c)) confirmed.set(c, []);
         confirmed.get(c).push(entry);
         return;
       }
-      const why = look.comparable ? KEPT_REASONS.DIFFERENT_DESCRIPTION : look.why === 'kind' ? KEPT_REASONS.DIFFERENT_KIND : look.why === 'unsettled' ? KEPT_REASONS.UNSETTLED : look.why === 'corpus-too-small' ? KEPT_REASONS.CORPUS_TOO_SMALL : KEPT_REASONS.DIFFERENT_DESCRIPTION;
+      const why = !look.comparable
+        ? look.why === 'kind' ? KEPT_REASONS.DIFFERENT_KIND : look.why === 'unsettled' ? KEPT_REASONS.UNSETTLED : look.why === 'corpus-too-small' ? KEPT_REASONS.CORPUS_TOO_SMALL : KEPT_REASONS.DIFFERENT_DESCRIPTION
+        : look.similarity >= RESTATED_MIN_SIMILARITY ? KEPT_REASONS.NO_SHARED_IDENTIFIER : KEPT_REASONS.DIFFERENT_DESCRIPTION;
       const best = nearest.get(c);
       if (best === undefined || entry.similarity > best.similarity) nearest.set(c, { ...entry, reason: why });
     });
@@ -175,7 +232,7 @@ function matchRestatements({ candidates, priors, corpus, locate }) {
   candidates.forEach((candidate, c) => {
     const verdict = decided.get(c);
     if (verdict !== undefined && verdict.merge !== undefined) {
-      merged.push({ candidate, entry: priors[verdict.merge.at].entry, similarity: verdict.merge.similarity, sizeRatio: verdict.merge.sizeRatio });
+      merged.push({ candidate, entry: priors[verdict.merge.at].entry, similarity: verdict.merge.similarity, sizeRatio: verdict.merge.sizeRatio, shared: verdict.merge.shared });
     } else if (verdict !== undefined) {
       kept.push({ candidate, reason: verdict.reason, against: verdict.against, similarity: verdict.similarity });
     } else if (nearest.has(c)) {
@@ -207,4 +264,4 @@ function absorbRestatements(entry, records) {
   return out;
 }
 
-module.exports = { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds, RESTATED_MIN_SIMILARITY, KEPT_REASONS, EVIDENCE_KEPT };
+module.exports = { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds, identifiersOf, sharedIdentifiers, isIdentifier, RESTATED_MIN_SIMILARITY, KEPT_REASONS, EVIDENCE_KEPT, IDENTIFIERS_KEPT };

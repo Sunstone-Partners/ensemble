@@ -369,3 +369,45 @@ describe('gate head binding (final-gate F17): no head, no pass', () => {
     expect(codesOf(result)).toContain('approvals-tier-mismatch');
   });
 });
+
+describe('a finding a later round restated (kata tmf5): the open-finding blocker names and counts what was merged into it', () => {
+  const record = (id) => ({ id, source: 'reviewer-s1-b', locationOrLink: 'packages/development/lib/pr-review-gate.js:12', severity: 'important', failureMode: 'the same defect in other words', similarity: 0.5, headSha: HEAD });
+  const openBlocker = (ledger) =>
+    evaluateGate(cleanInput({ ledger })).blockers.find((blocker) => [BLOCKER_CODES.OPEN_IMPORTANT_FINDING, BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING].includes(blocker.code));
+  const WHERE = 'F-1 (packages/development/lib/pr-review-gate.js:12)';
+
+  test('an Important finding: the clause counts the restatements and names their ids, and the blocker extra carries them', () => {
+    const one = openBlocker([finding({ restatedBy: [record('F-9')] })]);
+    expect(one.message).toBe(`Important finding ${WHERE} is still open (restated by 1 later candidate, merged into it: F-9)`);
+    expect(one.restatedBy).toEqual(['F-9']);
+    const two = openBlocker([finding({ restatedBy: [record('F-9'), record('F-10')] })]);
+    expect(two.message).toBe(`Important finding ${WHERE} is still open (restated by 2 later candidates, merged into it: F-9, F-10)`);
+    expect(two.restatedBy).toEqual(['F-9', 'F-10']);
+  });
+
+  test('a Critical finding is named Critical AND carries the clause (the two sides of the merge with kata 1jp6 keep each other)', () => {
+    const blocker = openBlocker([finding({ severity: 'critical', restatedBy: [record('F-9'), record('F-10')] })]);
+    expect(blocker.message).toBe(`Critical finding ${WHERE} is still open (restated by 2 later candidates, merged into it: F-9, F-10)`);
+    expect(blocker).toMatchObject({ code: BLOCKER_CODES.OPEN_IMPORTANT_FINDING, findingId: 'F-1', severity: 'critical', restatedBy: ['F-9', 'F-10'] });
+  });
+
+  test('a severity the gate cannot read keeps the clause too, before the refusal note', () => {
+    const blocker = openBlocker([finding({ severity: 'catastrophic', restatedBy: [record('F-9')] })]);
+    expect(blocker.code).toBe(BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING);
+    expect(blocker.message).toBe(`finding ${WHERE} carries a severity this gate cannot read ('catastrophic'), so it is treated as Important and is still open (restated by 1 later candidate, merged into it: F-9)`);
+    expect(blocker.restatedBy).toEqual(['F-9']);
+  });
+
+  test('no restatement, no clause and no extra: a finding read as it always was, and a malformed restatedBy names nothing', () => {
+    for (const severity of ['important', 'critical']) {
+      const plain = openBlocker([finding({ severity })]);
+      expect(plain.message).toBe(`${severity === 'critical' ? 'Critical' : 'Important'} finding ${WHERE} is still open`);
+      expect(plain).not.toHaveProperty('restatedBy');
+    }
+    for (const restatedBy of ['x', {}, [], [null, 3, { source: 'no id' }]]) {
+      const blocker = openBlocker([finding({ restatedBy })]);
+      expect(blocker.message).toBe(`Important finding ${WHERE} is still open`);
+      expect(blocker).not.toHaveProperty('restatedBy');
+    }
+  });
+});

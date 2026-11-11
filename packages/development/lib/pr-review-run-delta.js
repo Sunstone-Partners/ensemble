@@ -32,7 +32,7 @@ const { isObjectId } = require('./pr-review-scope');
 const { planCarry, recordVerdicts, stampLedger, keyOf } = require('./pr-review-carry');
 const { tallyVotes, resolveExpected } = require('./pr-review-votes');
 const { reRaisedBy } = require('./pr-review-ledger');
-const { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds } = require('./pr-review-restated');
+const { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds, IDENTIFIERS_KEPT } = require('./pr-review-restated');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -509,7 +509,7 @@ function restatedPrior(run, fresh, checked) {
   for (const match of found.merged) {
     const id = identity(match.entry.id);
     if (!records.has(id)) records.set(id, []);
-    records.get(id).push(restatementRecord(match.candidate, match.similarity, run.headSha));
+    records.get(id).push(restatementRecord(match.candidate, match.similarity, run.headSha, match.shared));
   }
   const gone = new Set(found.merged.map((match) => match.candidate));
   const round2 = (value) => Math.round(value * 100) / 100;
@@ -523,6 +523,7 @@ function restatedPrior(run, fresh, checked) {
       locationOrLink: match.candidate.locationOrLink,
       severity: match.candidate.severity,
       similarity: round2(match.similarity),
+      sharedIdentifiers: match.shared.slice(0, IDENTIFIERS_KEPT),
     })),
     kept: found.kept.map((entry) => ({ id: entry.candidate.id, reason: entry.reason, against: entry.against, similarity: round2(entry.similarity) })),
   };

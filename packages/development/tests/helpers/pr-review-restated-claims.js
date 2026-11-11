@@ -55,14 +55,14 @@ const CLAIMS = Object.freeze({
   RETRY: claim(
     'RETRY',
     'med/a06.js:20',
-    '`retry(call)` on line 20 never backs off, so a host that is down is called again at once, in a tight loop until the attempt limit is reached, and the caller waits on every one of those calls.',
-    'Stubbed the host to fail: `retry(call)` made five calls in under a millisecond with no delay between them.',
+    '`retry()` on line 20 never backs off, so a host that is down is called again at once, in a tight loop until the attempt limit is reached, and the caller waits on every one of those calls.',
+    'Stubbed the host to fail: `retry()` made five calls in under a millisecond with no delay between them.',
   ),
   RETRY_AGAIN: claim(
     'RETRY_AGAIN',
     'med/a06.js:20',
-    'When the host is down, `retry(call)` on line 20 calls it again with no delay between attempts, so the loop is tight until the attempt limit and the caller waits on every one of those calls.',
-    'Made the host fail and timed `retry(call)`: five calls came in under a millisecond, with no wait between attempts.',
+    'When the host is down, `retry()` on line 20 calls it again with no delay between attempts, so the loop is tight until the attempt limit and the caller waits on every one of those calls.',
+    'Made the host fail and timed `retry()`: five calls came in under a millisecond, with no wait between attempts.',
   ),
   LOCK: claim(
     'LOCK',
@@ -81,6 +81,18 @@ const CLAIMS = Object.freeze({
     'med/a10.js:30',
     "The error that `acquire()` raises on line 30 when the lock is already held is swallowed by the caller's catch block, so a failed acquire looks like success and the write is skipped without any message.",
     'Held the lock in another process and ran the writer: it exited with status 0 and wrote nothing.',
+  ),
+  DROP: claim(
+    'DROP',
+    'med/a10.js:60',
+    'The handler drops the response when the stream closes early, so the client waits forever for the final frame of the stream.',
+    'Closed the stream after the first frame: the client never received the final frame and kept waiting.',
+  ),
+  RETRIED: claim(
+    'RETRIED',
+    'med/a10.js:60',
+    'The handler retries the request when the stream closes early, so the client receives the final frame of the stream twice.',
+    'Closed the stream after the first frame: the client received the final frame two times.',
   ),
   PARSE: claim(
     'PARSE',
