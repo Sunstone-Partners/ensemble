@@ -10,9 +10,10 @@
  *   - `planDepth`          resolveDepth + checkBounds, re-planned until no bound is violated or refused;
  *   - `completeFinding`    a reviewer's finding -> a ledger entry, completing (never dropping) what is missing;
  *   - `parseDiffHunks`, `gradePreExisting`  a `pre-existing` label is a claim about provenance, checked against the diff and the head;
+ *   - `splitDiffBySlice`  the range diff cut into one text per slice, so a reviewer reads the diff of ITS slice (kata sfpb);
  *   - `planVerifierPool`   planVerification with a pool sized so no verifier holds more than 3 candidates;
  *   - `chunk`              agents -> waves of at most `maxConcurrentAgents`;
- *   - `reviewerContract`, `verifierContract`, `agentPrompt`  the text an agent is given;
+ *   - `reviewerContract`, `verifierContract`, `agentPrompt`  the text an agent is given (a reviewer's also states what the verifier brief refuses, kata 0g9n);
  *   - `adjudicateList`     the findings a person must decide;
  *   - `computeMetrics`     the AC5 timing record, from the run's own call log and agent times.
  */
@@ -22,6 +23,7 @@ const path = require('path');
 const { resolveDepth, checkBounds } = require('./pr-review-depth');
 const { normalizeSeverity } = require('./pr-review-ledger');
 const { planVerification } = require('./pr-review-verify-assign');
+const { claimRules } = require('./pr-review-briefs');
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -254,6 +256,70 @@ function parseDiffHunks(text) {
   return { files };
 }
 
+/**
+ * The names one `diff --git` section holds. A file that is not renamed or copied has ONE name, spelled twice in the header
+ * (`diff --git a/<path> b/<path>`), and the length of the header tells it from a path with ` b/` inside it; a renamed or
+ * copied file has two, which its `rename from`/`rename to` (`copy from`/`copy to`) lines give. A name git quoted (a tab, a
+ * quote, a non-ASCII byte) is unquoted. Hunk lines start with a space, `+`, `-` or a backslash, so no hunk line is read as one
+ * of these headers.
+ */
+function sectionNames(lines) {
+  const names = new Set();
+  const rest = lines[0].slice('diff --git '.length);
+  const half = (rest.length - 5) / 2;
+  if (Number.isInteger(half) && half >= 1 && rest.startsWith('a/') && rest.slice(2 + half) === ` b/${rest.slice(2, 2 + half)}`) names.add(rest.slice(2, 2 + half));
+  const quoted = /^"a\/((?:[^"\\]|\\.)*)" "b\/\1"$/.exec(rest);
+  if (quoted !== null) {
+    const name = unquoteGitPath(`"${quoted[1]}"`);
+    if (name !== null) names.add(name);
+  }
+  for (const line of lines) {
+    const moved = /^(?:rename|copy) (?:from|to) (.+)$/.exec(line);
+    if (moved === null) continue;
+    const name = unquoteGitPath(moved[1]);
+    if (name !== null) names.add(name);
+  }
+  return names;
+}
+
+/**
+ * A unified diff (`git diff`, prefixes a/ and b/) cut into one text per slice: every file section that names one of the
+ * slice's paths, in the order the diff has them, so a reviewer handed the slice reads the slice's hunks and not the whole
+ * pull request's. A section naming paths of two slices (a rename across them) is in both.
+ *
+ * FAIL CLOSED toward more to read, never less: a slice path that no section names is listed in `missing` (the diff has no
+ * hunk for it, or spells it in a way this does not read), and the caller then hands that slice the WHOLE diff.
+ *
+ * @param {string} text
+ * @param {Array<{id:string, paths:string[]}>} slices
+ * @returns {Array<{id:string, text:string, missing:string[]}>|null}  null when `text` is not a string
+ */
+function splitDiffBySlice(text, slices) {
+  if (typeof text !== 'string' || !Array.isArray(slices)) return null;
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  const sections = [];
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) sections.push([line]);
+    else if (sections.length > 0) sections[sections.length - 1].push(line);
+  }
+  const holders = new Map(); // path -> indexes of the sections that name it
+  const rendered = sections.map((section, index) => {
+    for (const name of sectionNames(section)) holders.set(name, [...(holders.get(name) || []), index]);
+    return `${section.join('\n')}\n`;
+  });
+  return slices.map((slice) => {
+    const wanted = new Set();
+    const missing = [];
+    for (const path of slice.paths) {
+      const found = holders.get(path);
+      if (found === undefined) missing.push(path);
+      else for (const index of found) wanted.add(index);
+    }
+    return { id: slice.id, text: [...wanted].sort((a, b) => a - b).map((index) => rendered[index]).join(''), missing };
+  });
+}
+
 /** `file:line` or `file:start-end`. The file part holds no colon, so `file:12:5` is not read as a file named `file:12`. */
 const CITED_LOCATION = /^([^:]+):(\d+)(?:-(\d+))?$/;
 
@@ -359,8 +425,45 @@ function locationFile(location) {
   return match === null ? null : match[1];
 }
 
+/**
+ * What a reviewer is told about the claim it writes (kata 0g9n): the verifier brief refuses some claims and locations, and a
+ * finding it refuses is not verified. Built from `claimRules`, the tables the renderer itself checks with, so the instruction
+ * and the refusal cannot disagree. The security lane's findings are never put to verifiers, so its contract omits it.
+ */
+function claimRuleBullet() {
+  const rules = claimRules();
+  const words = rules.refusedWords.map((word) => `"${word}"`).join(', ');
+  return `- Each finding's \`failureMode\` and \`locationOrLink\` are handed, word for word, to independent verifiers who must judge the claim for themselves, so the verifier brief refuses anything that could carry a verdict, and a finding it refuses is NOT verified: the run lists it as unbriefable and a person must decide it without a verifier's help. Say what goes wrong in the code in your own words, and name the code (the function, the step, the field) rather than the review machinery. In \`failureMode\` never use these words or phrases, or their other forms: ${words}; no doubled curly braces, no control characters, at most ${rules.maxClaimLength} characters. \`locationOrLink\` must be one \`path:line\` or \`path:start-end\` with a repository-relative path of ${rules.pathGrammar}.`;
+}
+
+/**
+ * What `important`, `nit` and `pre-existing` mean to a reviewer (kata yg7k). The first measured Medium run gave its reviewers no
+ * definition at all: the contract named the words and nothing else. The definition is the repository's own: the Severity bullets of
+ * REVIEW.md read at the base commit (`extractSeverityGuide`), so a maintainer edits the meaning in that file and nothing here widens it.
+ * `DEFAULT_SEVERITY_GUIDE` is the same bullets as REVIEW.md carries them, used when the base has no such section (a test pins that the two
+ * agree). Nothing is added to it: no sentence, category or example.
+ */
+const DEFAULT_SEVERITY_GUIDE = [
+  '- **Important** \u2014 the change is wrong, unsafe or unproven: a defect a user or another agent would hit, a security or secret exposure, a gate that cannot fail, a claim with no command behind it, or a generated artifact that no longer matches its source. An Important finding must be answered before merge.',
+  '- **Nit** \u2014 a preference that does not change behaviour: naming, wording, ordering, formatting, a comment that could be clearer. A Nit never blocks a merge and is never worth a review round on its own.',
+  '- **Pre-existing** \u2014 a real defect in code this pull request did not introduce. It is reported separately, never blocks this PR, and belongs in an issue rather than this review.',
+].join('\n');
+
+function severityBullet(guide) {
+  const text = typeof guide === 'string' && guide.trim() !== '' ? guide : DEFAULT_SEVERITY_GUIDE;
+  return `- Severity (the repository's REVIEW.md, "Severity"):\n${text.split('\n').map((line) => `  ${line}`).join('\n')}`;
+}
+
+/**
+ * What an agent is told about WHEN to write (kata 271n). The runner cannot tell that an agent has finished: it reads a result file as
+ * soon as it sees one, and a file the agent rewrites later is not read in place of the first once its round is used. It is looked at
+ * again, and reported as changed after it was read, which holds the review open until a person decides it: a rewrite buys the agent
+ * nothing it can keep.
+ */
+const WRITE_ONCE_BULLET = '- Write the file ONCE, when you are completely finished, and never touch it again. The runner reads it when the dispatcher collects, which is done only after you have finished: a later version of the file counts only until the review of your results starts (until the verdict, for a verifier), and a rewrite after that is reported as changed after it was read and holds the review open until a person decides it. Put everything in the first file you write.';
+
 /** The text a reviewer or the lane writes its result as. */
-function reviewerContract(agent) {
+function reviewerContract(agent, severityGuide) {
   return [
     '## Output contract (generated by the runner; it is not part of the policy text above)',
     '',
@@ -382,7 +485,10 @@ function reviewerContract(agent) {
     '- Set `"uncertain": true` on a finding you cannot settle yourself; a person then decides it.',
     '- Do not write `resolution`, `cleared` or `blocking`: they are ignored.',
     '- Use severity `pre-existing` only for a defect in lines this change did not touch. The runner checks the `file:line` you cite against the diff and the head: a pre-existing finding whose cited lines are inside a hunk of the diff, whose location it cannot place, whose path is not a regular file at the head (cite the full repository-relative path, spelled exactly; a symlink is not followed) or whose line is past the end of that file is graded Important.',
+    severityBullet(severityGuide),
+    ...(agent.role === 'reviewer' ? [claimRuleBullet()] : []),
     `- Write the file atomically: a temp file in the same directory, then rename it to \`${agent.outPath}\`. Finish before ${agent.deadlineAtIso || 'your deadline'}; a result that arrives later is not read.`,
+    WRITE_ONCE_BULLET,
     '',
   ].join('\n');
 }
@@ -400,6 +506,7 @@ function verifierContract(agent) {
     '',
     '- A candidate you reached no conclusion on gets NO entry: you are then recorded as incomplete for it, which is the honest answer.',
     `- Write the file atomically: a temp file in the same directory, then rename it to \`${agent.outPath}\`. Finish before ${agent.deadlineAtIso || 'your deadline'}; a result that arrives later is not read.`,
+    WRITE_ONCE_BULLET,
     '',
   ].join('\n');
 }
@@ -409,7 +516,7 @@ function agentPrompt(agent) {
   return [
     `You are the ${agent.role} agent "${agent.name}" of an automated pull-request review. You start with a fresh context and have READ-ONLY access: change no file in the repository, the snapshot or anywhere else, except your one result file.`,
     `1. Read the brief at ${agent.briefPath} and follow it exactly.`,
-    `2. Write your JSON result atomically (a temp file in the same directory, then rename) to ${agent.outPath}.`,
+    `2. Write your JSON result atomically (a temp file in the same directory, then rename) to ${agent.outPath}, ONCE, when you are completely finished: it is read when the dispatcher collects, after you have finished. A later version counts only until the review of your results starts (until the verdict, for a verifier); a rewrite after that is reported as changed and holds the review open.`,
     `3. Finish before ${agent.deadlineAtIso}. A result that arrives after that is not read and you are recorded as not having reviewed.`,
     'Do not add, edit or interpret anything the brief does not ask for.',
   ].join('\n');
@@ -479,6 +586,7 @@ function computeMetrics(run, endAt) {
     agentsDispatched: agents.length,
     agentsByRole,
     adjudicationCalls: calls.filter((c) => c.adjudication === true).length,
+    ...(run.mode && run.mode.mode === 'full' ? { triageCalls: calls.filter((c) => c.triage === true).length } : {}),
     orchestratorTurns: { atLeast: calls.length + waves.length, basis: ORCHESTRATOR_TURNS_BASIS },
     runnerMs,
     agentActiveMs,
@@ -491,11 +599,13 @@ module.exports = {
   planDepth,
   completeFinding,
   parseDiffHunks,
+  splitDiffBySlice,
   gradePreExisting,
   planVerifierPool,
   chunk,
   locationFile,
   reviewerContract,
+  DEFAULT_SEVERITY_GUIDE,
   verifierContract,
   agentPrompt,
   adjudicateList,

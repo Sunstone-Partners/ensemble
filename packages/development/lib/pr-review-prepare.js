@@ -84,7 +84,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { chooseReviewRange, isObjectId } = require('./pr-review-scope');
-const { loadPolicy } = require('./pr-review-policy');
+const { loadPolicy, extractSeverityGuide } = require('./pr-review-policy');
 const { classifyPaths } = require('./pr-review-paths');
 const { planDeltaReview } = require('./pr-review-delta');
 const { buildImportGraph, mentionNeedles, SCANNED_EXTENSIONS } = require('./pr-review-import-graph');
@@ -116,6 +116,12 @@ class PrepareError extends Error {
     this.stage = stage;
     this.detail = detail;
   }
+}
+
+/** What the reviewers' contract is told about the severity words: the guide from the base REVIEW.md, or the named reason it could not be read. */
+function severityGuideFacts(reviewText) {
+  const { guide, problem } = extractSeverityGuide(reviewText);
+  return { severityGuide: guide, severityGuideProblem: problem };
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -756,7 +762,8 @@ function scanNameLines(deps, repoRoot, headSha, files, changedPaths) {
 function deriveDelta(deps, options, range, entries, declarationInput) {
   if (range.mode !== 'delta') return { delta: null, deltaPlan: planDeltaReview({ delta: range }) };
   const { repoRoot } = options;
-  const deltaPaths = listChanged(deps, repoRoot, [range.lastReviewedSha, range.headSha]).map((f) => f.path);
+  const deltaNumstat = listChanged(deps, repoRoot, [range.lastReviewedSha, range.headSha]);
+  const deltaPaths = deltaNumstat.map((f) => f.path);
   const lines = scanReferenceLines(deps, repoRoot, range.headSha);
   const importGraph = lines === null ? undefined : buildImportGraph({ filePaths: entries.map((entry) => entry.path), lines });
   const nameLines = importGraph !== undefined && importGraph.computed.length > 0
@@ -771,7 +778,7 @@ function deriveDelta(deps, options, range, entries, declarationInput) {
     importGraph,
     nameLines,
   });
-  return { delta: { lastReviewedSha: range.lastReviewedSha, reviewedHeadSha: reviewed.headSha, reviewedBaseSha: reviewed.baseSha, changedPaths: deltaPaths }, deltaPlan };
+  return { delta: { lastReviewedSha: range.lastReviewedSha, reviewedHeadSha: reviewed.headSha, reviewedBaseSha: reviewed.baseSha, changedPaths: deltaPaths, numstat: deltaNumstat }, deltaPlan };
 }
 
 /**
@@ -808,7 +815,12 @@ function deriveFromGit(deps, options, range, nodeModules, treeSha, entries) {
   }
   const policy = loadPolicy({ text: reviewText, baseSha, sourceSha: baseSha });
   const declaration = { sourceSha: baseSha, sensitive: policy.policy.sensitivePaths, high: policy.policy.highPaths };
-  const pathsInput = { changedPaths, declaration, codeowners: codeowners === null ? undefined : codeowners, baseSha };
+  // An untrusted policy (ok:false: foreign or stale sourceSha, unparseable, ...) must not lower the tier: every path is
+  // High and the reason is carried in the classification warnings (kata vhpf).
+  const pathsInput = {
+    changedPaths, declaration, codeowners: codeowners === null ? undefined : codeowners, baseSha,
+    ...(policy.ok === false ? { policyUntrusted: policy.reason || 'policy-untrusted' } : {}),
+  };
   const classification = classifyPaths(pathsInput);
   const { delta, deltaPlan } = deriveDelta(deps, options, range, entries, pathsInput);
 
@@ -839,7 +851,7 @@ function deriveFromGit(deps, options, range, nodeModules, treeSha, entries) {
       deleted: numstat.reduce((n, f) => n + (f.deleted || 0), 0),
       binary: numstat.filter((f) => f.binary).length,
     },
-    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath },
+    guidance: { sourceSha: baseSha, rulesFile: RULES_FILE, rulesFilePresent: reviewText !== null, codeownersPath, ...severityGuideFacts(reviewText) },
     policy,
     pathsInput,
     paths: classification,

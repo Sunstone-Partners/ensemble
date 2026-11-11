@@ -168,6 +168,36 @@ describe('buildDispositionChoices', () => {
     expect(build([finding()]).dispositionChoices[0].votes).toBeNull();
   });
 
+  // kata 0g9n: a finding nobody could vote on must not look like one the verifiers looked at. The operator decides it alone.
+  describe('verification: an unverified finding says so, and why (kata 0g9n)', () => {
+    const refused = { kind: 'leak', input: 'claim', reason: 'the verifier brief refuses its input: \'claim\' reads as the orchestrator ("orchestrator")' };
+    const entryOf = (vote) => build([finding({ id: 'F-1' })], { votes: { ok: true, findings: [{ id: 'F-1', presented: true, ...vote }] } }).dispositionChoices[0];
+
+    test('a claim the verifier brief refused: no tally to show, the outcome, the reason and the renderer\'s reason are', () => {
+      const entry = entryOf({ outcome: 'unverified', reason: 'unbriefable', tally: null, unbriefable: refused });
+      expect(entry.votes).toBeNull();
+      expect(entry.verification).toEqual({ outcome: 'unverified', reason: 'unbriefable', unbriefable: refused });
+      expect(entry.group).toBe('blocking'); // the operator still decides it: nothing about verification opens or closes the gate
+      expect(entry.choices.map((c) => c.id)).toEqual(['fix-here', 'accept']);
+    });
+
+    test('a finding whose verifiers did not all return keeps the tally it has and is marked unverified, not read as a majority', () => {
+      const entry = entryOf({ outcome: 'unverified', reason: 'verifier-incomplete', tally: { real: 3, notReal: 0, abstain: 1, expected: 5, needed: 3 } });
+      expect(entry.votes).toEqual({ real: 3, notReal: 0, abstain: 1, expected: 5 });
+      expect(entry.verification).toEqual({ outcome: 'unverified', reason: 'verifier-incomplete' });
+    });
+
+    test.each(['present', 'filtered', 'disputed'])('a %s finding is described by its tally alone: no verification field', (outcome) => {
+      const entry = entryOf({ outcome, tally: { real: 3, notReal: 2, abstain: 0, expected: 5, needed: 3 } });
+      expect(entry).not.toHaveProperty('verification');
+      expect(entry.votes).toEqual({ real: 3, notReal: 2, abstain: 0, expected: 5 });
+    });
+
+    test('no votes at all: no verification field either (the narrated flow without a tally is unchanged)', () => {
+      expect(build([finding()]).dispositionChoices[0]).not.toHaveProperty('verification');
+    });
+  });
+
   test('collapse boundary: threshold stays individual, one more collapses', () => {
     const same = build(nits(COLLAPSE_THRESHOLD));
     expect(same.dispositionChoices).toHaveLength(COLLAPSE_THRESHOLD);
@@ -246,5 +276,68 @@ describe('buildDispositionChoices', () => {
     expect(result.ok).toBe(true);
     expect(result.dispositionChoices.map((e) => e.id)).toEqual([7]);
     expect(result.dispositionChoices[0].votes).toEqual({ real: 3, notReal: 0, abstain: 0, expected: 3 });
+  });
+});
+
+describe('buildDispositionChoices: a live finding whose bead was closed', () => {
+  test('a blocking finding with only closedBeadId is not an open bead, is reported as closed, and still blocks', () => {
+    const result = build([finding({ id: 'F-1', closedBeadId: 'bd-9' })]);
+    const mc = result.mergeConfirmation;
+
+    expect(mc.openBeads).toBe(0);
+    expect(mc.findingsWithoutBead).toBe(1);
+    expect(mc.findingsWithClosedBead).toEqual(['F-1']);
+    expect(mc.undecidedBlocking).toEqual(['F-1']);
+    expect(mc.summary).toContain('live with a closed bead (F-1)');
+    expect(mc.summary).toBe('0 open bead(s); 0 blocking findings accepted; 1 blocking finding(s) undecided; 1 finding(s) live with a closed bead (F-1)');
+    expect(result.dispositionChoices[0].beadId).toBeNull();
+    expect(result.dispositionChoices[0].closedBeadId).toBe('bd-9');
+  });
+
+  test('an open beadId wins over closedBeadId', () => {
+    const result = build([finding({ id: 'F-1', beadId: 'bd-1', closedBeadId: 'bd-9' })]);
+
+    expect(result.dispositionChoices[0].beadId).toBe('bd-1');
+    expect(result.dispositionChoices[0].closedBeadId).toBeNull();
+    expect(result.mergeConfirmation.openBeads).toBe(1);
+    expect(result.mergeConfirmation.findingsWithoutBead).toBe(0);
+    expect(result.mergeConfirmation.findingsWithClosedBead).toEqual([]);
+    expect(result.mergeConfirmation.summary).not.toContain('closed bead');
+  });
+
+  test('a collapsed nit group reports open and closed bead ids per member, in member order', () => {
+    const ledger = nits(4).map((f, i) => {
+      if (i === 0) return { ...f, beadId: 'bd-open-0' };
+      if (i === 1) return { ...f, closedBeadId: 'bd-closed-1' };
+      if (i === 2) return { ...f, beadId: 'bd-open-2', closedBeadId: 'bd-closed-2' };
+      return { ...f, closedBeadId: 'bd-closed-3' };
+    });
+    const result = build(ledger);
+    const collapsed = result.dispositionChoices[0];
+
+    expect(collapsed.collapsed).toBe(true);
+    expect(collapsed.beadIds).toEqual(['bd-open-0', 'bd-open-2']);
+    expect(collapsed.closedBeadIds).toEqual(['bd-closed-1', 'bd-closed-3']);
+    expect(result.mergeConfirmation.openBeads).toBe(2);
+    expect(result.mergeConfirmation.findingsWithoutBead).toBe(2);
+    expect(result.mergeConfirmation.findingsWithClosedBead).toEqual(['N-2', 'N-4']);
+  });
+
+  test('without any closedBeadId the merge confirmation is exactly the old one plus an empty findingsWithClosedBead', () => {
+    const result = build([
+      finding({ id: 'F-1', beadId: 'bd-1' }),
+      finding({ id: 'F-2' }),
+    ]);
+
+    expect(result.mergeConfirmation).toEqual({
+      undecided: ['F-1', 'F-2'],
+      undecidedBlocking: ['F-1', 'F-2'],
+      openBeads: 1,
+      findingsWithoutBead: 1,
+      findingsWithClosedBead: [],
+      acceptedBlocking: [],
+      staleResolutions: [],
+      summary: '1 open bead(s); 0 blocking findings accepted; 2 blocking finding(s) undecided',
+    });
   });
 });

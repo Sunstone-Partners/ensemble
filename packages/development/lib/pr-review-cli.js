@@ -12,7 +12,7 @@
  * direct `require(...)` call on the same input can never diverge. NO
  * business logic lives here, NO network calls, NO shell calls.
  *
- * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|carry|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing> < payload.json
+ * Usage: node pr-review-cli.js <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|carry|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing|walltime> < payload.json
  *
  * `review-range` (TRD-013) is a thin pass-through to `chooseReviewRange`:
  * given `lastReviewedSha`, `commits` and `remediationShas` on top of what
@@ -55,8 +55,15 @@
  * nothing here re-grades, trims or defaults a recorded decision.
  *
  * `status` grades the accumulated review facts IN BAND (a missing or invalid fact is a BLOCKED result, never a default):
- *   status     { baseSha, headSha, reviewedHeadSha, findingCounts{ total, actionable, deferred }, tests?, remotePhase?,
- *                reviewedTreeSha?, headTreeSha?, roundsUsed?, roundCap?, access?, prUrl?, reportPath?, reviewOnly? }
+ *   status     { baseSha, headSha, reviewedHeadSha, findingCounts{ total, actionable, deferred }, coverage, tests?, remotePhase?,
+ *                reviewedTreeSha?, headTreeSha?, roundsUsed?, roundCap?, access?, prUrl?, reportPath?, reviewOnly?, policy? }
+ *              `coverage` (kata k48x) is the review's coverage record (lib/pr-review-coverage.js: the `coverage` the `slices`
+ *              answer carries when it is given `reviewedBy`, or the one `carry` `coverage` answers for a delta round) and is a
+ *              REQUIRED fact: absent, unreadable or `unavailable` is a missing fact (LOCAL_REVIEW_BLOCKED, named), and an open
+ *              gap (a slice, the whole-range read or a path nobody read, with no operator decision bound to this head) is
+ *              LOCAL_REVIEW_PENDING (`next: complete-review-coverage`): a review that left a path unread is never
+ *              LOCAL_REVIEW_COMPLETE. The record is echoed as `coverage`, so the state report written from this result carries it.
+ *              `policy` (optional) is the base-branch policy block: a gap's decision counts only from a login it lets decide.
  *              `tests` is ONE of two facts, and `passed` is never supplied -- it is derived:
  *                { exitCode, skipped?, command? }     a LOCAL run the caller really made (`skipped: true` needs no exit code)
  *                { source: 'ci', checkRuns[{ id?, name?, commitSha, conclusion }], totalCount, command? }
@@ -92,7 +99,7 @@
  * `pr-review-brief-files.js`); it refuses -- exit 1, an `error` -- an unknown
  * role, a missing or undeclared input and, for a verifier, anything but the
  * claim, its cited `file:line`, the path list and the snapshot directory:
- *   brief            { role: reviewer|verifier|classifier|second-assessor|security-lane,
+ *   brief            { role: reviewer|range-reviewer|verifier|classifier|second-assessor|security-lane,
  *                      vars: { ...the inputs that role declares } }
  *                    -> { ok: true, role, brief }
  *
@@ -132,16 +139,20 @@
  *           lenses at Standard and Deep; at Quick ONE slice, however large the PR, and one reviewer); when
  *           `reviewedBy` is given, names every changed path that was not read under enough distinct lenses
  *           (`uncovered` when nobody read it, `underReviewed` when too few lenses did, or when no reviewer's `paths`
- *           names it: a lens counts for the paths it read, never for the rest of its slice)
+ *           names it: a lens counts for the paths it read, never for the rest of its slice) and answers `coverage`, the
+ *           coverage record (lib/pr-review-coverage.js) `status` and `gate` take as it is (kata k48x): `complete`, or
+ *           `incomplete` with one gap per unread slice, per unplanned path and per under-read path, or `unavailable` (always so
+ *           when `changedPaths` is not given: a plan cannot be held against files it was never cut from).
  *
  * `results` (kata et2k) is the file-based half of the verification subcommands:
  * agents write `out-<name>.json` and this reads them, instead of the orchestrator
  * parsing what an agent yielded. One payload selects one function via `action`:
  *   deadlines        { role, tier?, depth?, now?, policy? } -- the `dispatchedAt` (= `now`, default: the current time)
- *                    and the `deadlineAt` an agent must be stopped by: reviewer 15 min, verifier 5, security lane 15,
- *                    per-role overridable by the policy's `deadlineMinutes`
- *   collect          { expected[{ name, role, dispatchedAt, deadlineAt, sliceId?, lens?, paths?, candidateIds? }], dir, now?,
- *                    scratchDir?, depth?, expectedVerifiers?, candidates? } -- classifies each agent
+ *                    and the `deadlineAt` an agent must be stopped by: reviewer 15 min, verifier 5, security lane 15 (bases),
+ *                    per-role overridable by the policy's `deadlineMinutes`, and never below a measured floor: a verifier 8 min
+ *                    (kata dx53), a reviewer or the lane 22 min when `work` is given (kata d9sy)
+ *   collect          { expected[{ name, role, dispatchedAt, deadlineAt, sliceId?, lens?, paths?, candidateIds?, read?, reread? }], dir,
+ *                    now?, scratchDir?, depth?, expectedVerifiers?, candidates? } -- classifies each agent
  *                    arrived|missing|expired|invalid from `<dir>/out-<name>.json`. It arrived when the file's last
  *                    change (its inode change time, never the modification time a writer can set) is within
  *                    [dispatchedAt, deadlineAt]; an older file is stale, a later one expired. A reviewer given a
@@ -170,6 +181,21 @@
  *              -- `runId` reads `<cwd or the current directory>/.ensemble/state/toolchain/trace-<runId>.jsonl`;
  *              `spans` takes materialized run-trace spans directly. Exactly one of the two is required.
  *
+ * `walltime` (kata vrda) answers review WALL TIME by tier from cohort documents (the committed
+ * docs/guides/review-walltime-baseline-<date>.json is one) and compares a post-change cohort with that baseline:
+ * median and p75 per tier and round, gate runs and review chains per PR, and whether the 5x claim may be made. The
+ * schema, the minimum of three PRs per stratum, the 20% target and the carry rule are in lib/pr-review-walltime.js and
+ * docs/guides/pr-review-walltime.md. One `action` per call; a payload key the action does not know is an error (exit 1),
+ * never an ignored one. Everything else is graded in band (exit 0): a cohort it cannot read, a tier with too few PRs
+ * (`unknown`) and a 5x claim without a real re-review that carried verdicts are refusing RESULTS, never a clean pass.
+ *   walltime   { action: 'summarize', cohort } -- the statistics of one cohort document
+ *              { action: 'row', pr, tier, round, origin, runId, cwd? | timing, id?, source?, notes?, carry? }
+ *              -- one cohort row from a `timing` answer: `runId` reads the trace as `timing` does, `timing` takes a
+ *              `timing` answer directly (exactly one of the two); `carry` is `{ headSha, verdicts }` from the PR's state report
+ *              { action: 'compare', baseline, current, cwd? } -- two cohort documents. Each counted current row's wall time,
+ *              chains and gate runs are re-derived from the trace its `run_id` names (<cwd>/.ensemble/state/toolchain/), and a
+ *              5x `met` is withheld unless every such row of a required stratum passes; `fiveX.attestation` says what stays attested
+ *
  * The tier, approval and merge-gate subcommands (TRD-026) each take the facts
  * their module grades and answer with that module's result verbatim:
  *   tier       { kinds[{ kind, paths[] }], paths, secondAssessment?, proposedTier?,
@@ -188,7 +214,7 @@
  *              a director who is not the author needs an APPROVED review of
  *              the head; a director who is the author is credited on their
  *              own word (warning `solo-maintainer-self-credit`)
- *   gate       { ledger[], approvals, tier?, description, security{ status, findings?, reason? },
+ *   gate       { ledger[], approvals, tier?, description, security{ status, findings?, reason? }, coverage{ status, gaps?, reason? },
  *                headSha?, policy?, unavailable?[] }
  *              -- the one answer to "may this PR merge?", with every blocker
  *              carrying its code, message and next action. An Important or
@@ -204,8 +230,15 @@
  *              an optional `votes` (a `votes` result) for the per-finding
  *              tally, and asking the gate which findings block.
  *              `evaluateGate`'s own answer is unchanged by it.
+ *              `coverage` (kata k48x) is REQUIRED, like `security`: the review's coverage record (the state report's `coverage`
+ *              for this head, or the `slices` answer's). Absent or `unavailable` is `review-data-unavailable`; an open gap is a
+ *              `review-coverage-incomplete` blocker naming the slice and paths; an operator's decision on a gap (`ledger resolve`,
+ *              the same four-key resolution as for a finding, spliced into `coverage.gaps`) closes it only on this head. The
+ *              decision list carries each open gap in its own `coverage` group (Accept is its only choice).
  *
  *   carry      { action, ... } -- (lib/pr-review-carry.js) settled verification verdicts across heads. One `action` per call.
+ *              A carried verdict is a verification fact about a finding and never a claim that anyone read a path: `coverage`
+ *              carries what a delta round did not read (below).
  *              Its REQUEST parameters (`prId` and `candidates` for plan; `findings` and `candidates` for record; `ledger`,
  *              `changedLocations`, `headSha` and `observations` for reconcile) are required, as `ledger`'s keys are: an absent or
  *              misspelt one is exit 1. Every other fact is graded in band (re-verification, exit 0):
@@ -232,10 +265,15 @@
  *                             joined to their hashed citations and stamped with the binding `plan` checks. Answers
  *                             { ok, verdicts[], skipped[{id, reason}] }; write the verdicts to the state report's `verdicts`.
  *                             A candidate stamped with another head than `headSha` is skipped (`candidate-head-mismatch`).
- *                reconcile  { ledger[], changedLocations[], headSha, observations[] } -- `clearFixedFindings` with EVERY
- *                             observation of this round as `reReported`: a finding no reviewer reported again whose cited
- *                             location the push changed is cleared; one that was observed again, whatever its verdict, is
- *                             not. Answers { ok, ledger[], cleared[] }.
+ *                reconcile  { ledger[], changedLocations[], headSha, observations[] } -- writes NO `cleared` mark. Answers
+ *                             { ok, ledger[], cleared: [] }: the ledger read into the current taxonomy and redacted, otherwise
+ *                             as sent (a mark already on an entry stays). `changedLocations`, `headSha` and `observations` are
+ *                             still required (a call written for the earlier contract keeps working) and are not read. It used to
+ *                             clear a finding from the delta's hunks and an exact `locationOrLink` + `failureMode` match of the
+ *                             observations, at the line numbers the ledger holds, so a defect that was still there was marked
+ *                             cleared (a line shifted across a skipped round, a force-pushed head, a partial fix raised again) and
+ *                             the gate and the bead recorder took it as fixed. The one writer of `cleared` is
+ *                             lib/pr-review-clear-cli.js, which reads git.
  *              `deltaPlan`, `deltaPaths`, `deltaRange`, `highPaths`, heads, `baseSha`, `depth` and every hash are graded in-band and a
  *              missing one means re-verification (exit 0). HONEST LIMITS: it never hashes anything -- `hunkHash`,
  *              `depHashes` and `dependents` are inputs the caller computed (lib/pr-review-carry-hash-cli.js; the `headSha`
@@ -245,6 +283,15 @@
  *              `present`/`filtered` verdicts carry; a High or sensitive path touched by the delta carries nothing; a
  *              `full` range carries nothing; the state report is untracked and writable by whoever can write the
  *              repository, so binding stops a verdict from the wrong PR, base, depth or ledger, not a forged report.
+ *                coverage   { prId, coverage, lastReviewedSha, deltaPlan?, cwd? } -- the coverage record of a review round that
+ *                             reads a delta (kata k48x). `coverage` is this round's own record; the prior round's is read from the
+ *                             PR's state report at `lastReviewedSha` (a payload `priorCoverage` is refused). Answers
+ *                             { ok, carried[], reasons[], coverage, priorState }: a delta round carries EVERY gap of the round it
+ *                             starts from (re-stamped `carriedFrom`; an old decision stays on it and is stale at the new head), so a
+ *                             delta can never turn an incomplete coverage into a complete one; `deltaPlan.mode: 'full'` (the whole
+ *                             range was read) carries none. A prior state that was not read, or one with no readable coverage,
+ *                             answers `unavailable` (never `complete`): what the delta did not read is unknown. Hand the answer's
+ *                             `coverage` to `status` and `gate`.
  *
  * FAIL CLOSED at the boundary. Two kinds of payload value are told apart:
  *   - the review FACTS of `scope`, `remote`, `status`, `policy`, `rules`,
@@ -274,7 +321,7 @@ const {
   scopeViolations,
   recordRound,
   recordOperatorResolution,
-  clearFixedFindings,
+  normalizeLedger,
 } = require('./pr-review-ledger');
 const { evaluateRemoteReview } = require('./pr-review-remote');
 const { deriveStatus } = require('./pr-review-status');
@@ -288,6 +335,7 @@ const { computeReviewTiming, loadReviewTiming } = require('./pr-review-timing');
 const { tallyVotes } = require('./pr-review-votes');
 const { planVerification } = require('./pr-review-verify-assign');
 const { resolveDepth, checkBounds, boundsFor, planSlices, verifyCoverage } = require('./pr-review-depth');
+const { buildCoverage, carryCoverage } = require('./pr-review-coverage');
 const { offerExplainers } = require('./pr-review-explainer-offer');
 const { renderBriefFromFiles } = require('./pr-review-brief-files');
 const { assignTier, effectiveTier, tierRecord } = require('./pr-review-tier');
@@ -297,6 +345,7 @@ const { evaluateApprovals } = require('./pr-review-approvals');
 const { evaluateGate } = require('./pr-review-gate');
 const { buildDispositionChoices } = require('./pr-review-disposition');
 const { computeMetrics, compareCohorts } = require('./pr-review-metrics');
+const { computeWalltimeCohort, compareWalltime, rowFromTiming } = require('./pr-review-walltime');
 const { scoreEval, compareEval, staleCases } = require('./pr-review-eval');
 const { traceCapabilities, compareRuntimes, gradeSecretHygiene } = require('./pr-review-reachability');
 
@@ -472,13 +521,20 @@ function runDescription(payload) {
  * is graded IN BAND by its module: a payload the module cannot read is a
  * blocked, deepest-mode or no-plan RESULT (exit 0), never a clean pass.
  *
- * `votes` is a pass-through. `depth` and `slices` each call exactly two
- * functions of their one module -- resolve then grade, plan then verify --
+ * `votes` is a pass-through but for one key: `settleOnMajority` (kata dx53) is the review runner's option, which calls the tally
+ * itself, and the narrated procedure keeps the strict rule (AC-006-3), so the key is dropped from the payload here, whatever its
+ * value, and the answer is the one the payload without it gives (the caller's object is not changed). `depth` and `slices` each
+ * call exactly two functions of their one module -- resolve then grade, plan then verify --
  * because that is the single question the skill asks; the dispatcher still
  * decides nothing itself, and the only value it combines is `ok`, which it
  * can only make stricter.
  */
 function runVotes(payload) {
+  if (payload !== null && typeof payload === 'object' && !Array.isArray(payload) && Object.prototype.hasOwnProperty.call(payload, 'settleOnMajority')) {
+    const strict = { ...payload };
+    delete strict.settleOnMajority;
+    return tallyVotes(strict);
+  }
   return tallyVotes(payload);
 }
 
@@ -563,6 +619,33 @@ function runSlices(payload) {
     changedPaths: request.changedPaths,
   });
 
+  const changedGiven = Array.isArray(request.changedPaths);
+  const planned = plan.slices.flatMap((slice) => slice.paths);
+  const notChanged = changedGiven ? planned.filter((file) => !request.changedPaths.includes(file)) : [];
+  // A plan is only as complete as the paths it was cut from: with no `changedPaths` to hold it against, a changed file the plan
+  // never held cannot be seen, and a plan holding a path `changedPaths` does not name was cut from another listing. Either way the
+  // record is `unavailable` (never complete) instead of graded against the plan's own paths.
+  const unavailable =
+    coverage.ok !== true
+      ? coverage.reason || 'the coverage could not be computed'
+      : !changedGiven
+        ? 'changedPaths was not given, so the plan cannot be checked against the changed files: a changed file the plan never held would read as covered'
+        : notChanged.length > 0
+          ? `the plan holds paths that changedPaths does not name (${notChanged.slice(0, 5).join(', ')}${notChanged.length > 5 ? ', ...' : ''}), so the two lists were not cut from one listing and the plan cannot be graded against the changed files`
+          : null;
+  // The record `status` and `gate` take: a path nobody read is a named gap there, never a quiet `covered:false` a caller can drop.
+  const record = buildCoverage({
+    changedPaths: changedGiven ? request.changedPaths : plan.slices.flatMap((slice) => slice.paths),
+    slices: plan.slices,
+    unreviewedSlices: coverage.unreviewedSlices,
+    uncovered: coverage.uncovered,
+    underReviewed: coverage.underReviewed,
+    requiredLenses: coverage.requiredLenses,
+    incomplete: coverage.covered !== true,
+    origin: 'slices coverage (reviewedBy)',
+    ...(unavailable === null ? {} : { unavailable }),
+  });
+
   const result = {
     ...plan,
     ok: plan.ok && coverage.ok && coverage.covered,
@@ -573,8 +656,16 @@ function runSlices(payload) {
     reviewedSlices: coverage.reviewedSlices,
     unreviewedSlices: coverage.unreviewedSlices,
     unknownReviewed: coverage.unknownReviewed,
+    coverage: record,
   };
   if (coverage.reason !== undefined) result.coverageReason = coverage.reason;
+  // The verdict and the record must not disagree: a plan the record does not call complete (no `changedPaths`, a plan and a changed
+  // list cut from different listings, or no path at all) is not `covered`.
+  if (coverage.ok === true && coverage.covered === true && record.status !== 'complete') {
+    result.ok = false;
+    result.covered = false;
+    result.coverageReason = record.reason || 'the coverage record lists gaps the verdict did not';
+  }
   return result;
 }
 
@@ -632,7 +723,7 @@ function runMode(payload) {
  *     PR's state report itself, at `lastReviewedSha`: a payload that supplies them is refused, so a verdict can never be
  *     injected from stdin. It answers the prior ledger with the carried findings stamped (`stampLedger`).
  *   - `record` builds the stamped verdict records of a finished round (`recordVerdicts`).
- *   - `reconcile` runs `clearFixedFindings` with every observation of the round as `reReported`.
+ *   - `reconcile` writes no mark: it answers the ledger normalized and `cleared: []`. The clear verb is the only writer.
  * The REQUEST parameters of each action (`prId`, `candidates`, `findings`, `ledger`, ...) are checked here (a missing or
  * misspelt key is an error, exit 1, never read as empty); every fact `planCarry` grades (heads, `baseSha`, `depth`,
  * `deltaPlan`, `deltaPaths`, `deltaRange`, `highPaths`, a hash) is graded in-band and a missing one means re-verification (exit 0).
@@ -645,13 +736,13 @@ function runMode(payload) {
  * not what the answer's `ledger` says either: only `priorState: 'read'` AND a ledger array make it a ledger.
  */
 function readPriorRound(payload) {
-  const unavailable = (priorState) => ({ priorState, verdicts: [], ledger: [] });
+  const unavailable = (priorState) => ({ priorState, verdicts: [], ledger: [], coverage: null });
   const read = readState(statePath(payload.prId, payload.cwd || process.cwd()), payload.lastReviewedSha, { cwd: payload.cwd });
   if (!read.ok) return unavailable(read.reason === 'corrupt' ? 'corrupt' : 'unreadable');
   if (!read.exists) return unavailable('absent');
   if (read.discarded || !isObject(read.state)) return unavailable('discarded');
-  const { verdicts, ledger } = read.state;
-  return { priorState: 'read', verdicts: verdicts === undefined ? [] : verdicts, ledger };
+  const { verdicts, ledger, coverage } = read.state;
+  return { priorState: 'read', verdicts: verdicts === undefined ? [] : verdicts, ledger, coverage: coverage === undefined ? null : coverage };
 }
 
 function carryPlan(payload) {
@@ -680,6 +771,24 @@ function carryPlan(payload) {
   return { ...answer, ledger: stamped.ledger };
 }
 
+/**
+ * `carry coverage`: the coverage record of a delta round, with every gap of the round it starts from carried in (see
+ * `carryCoverage`). The prior record is read from the PR's own state report at `lastReviewedSha`, never from the payload.
+ */
+function carryCoverageAction(payload) {
+  if (payload.priorCoverage !== undefined) throw new Error("carry coverage reads 'priorCoverage' from the PR's state report at lastReviewedSha; it is not a payload key");
+  const prior = readPriorRound(payload);
+  const fullRange = isObject(payload.deltaPlan) && payload.deltaPlan.mode === 'full';
+  const answer = carryCoverage({
+    current: payload.coverage,
+    prior: prior.coverage,
+    priorState: prior.priorState,
+    priorHeadSha: payload.lastReviewedSha,
+    fullRange,
+  });
+  return { ...answer, priorState: prior.priorState };
+}
+
 /** action -> the keys its payload must carry, and the call it delegates to. Looked up by own name only. */
 const CARRY_ACTIONS = Object.freeze({
   plan: {
@@ -691,12 +800,17 @@ const CARRY_ACTIONS = Object.freeze({
     keys: { findings: ARRAY, candidates: ARRAY },
     run: (p) => recordVerdicts(p),
   },
+  coverage: {
+    keys: { prId: TEXT, coverage: OBJECT },
+    optional: { cwd: TEXT },
+    run: carryCoverageAction,
+  },
   reconcile: {
     keys: { ledger: ARRAY, changedLocations: ARRAY, headSha: TEXT, observations: ARRAY },
     run: (p) => {
-      const result = clearFixedFindings({ ledger: p.ledger, changedLocations: p.changedLocations, headSha: p.headSha, reReported: p.observations });
-      if (!result.ok) throw new Error(result.reason);
-      return { ok: true, ledger: result.findings, cleared: result.cleared };
+      const ledger = normalizeLedger(p.ledger);
+      if (!Array.isArray(ledger)) throw new Error(ledger.reason);
+      return { ok: true, ledger, cleared: [] };
     },
   },
 });
@@ -744,6 +858,7 @@ function runGate(payload) {
   const disposition = buildDispositionChoices({
     ledger: request.ledger,
     security: request.security,
+    coverage: request.coverage,
     votes: request.votes,
     policy: request.policy,
     headSha: request.headSha,
@@ -870,6 +985,100 @@ function runTiming(payload) {
   return loadReviewTiming({ runId: payload.runId, projectRoot: payload.cwd || process.cwd() });
 }
 
+/**
+ * `walltime` selects one function of pr-review-walltime.js via `action`, mirroring the `ledger` and `carry` precedent.
+ * The file read of `row` lives in pr-review-timing.js (injectable deps), as for `timing`; this dispatcher only checks
+ * the request. A payload key the action does not know is refused so that a misspelt `carry` or `cwd` can never be read
+ * as an absent one (a row without its carry evidence, a trace read from the wrong directory).
+ */
+function walltimeRow(payload) {
+  if ((payload.runId === undefined) === (payload.timing === undefined)) {
+    throw new Error("walltime action 'row' requires exactly one of the payload keys 'runId' or 'timing'");
+  }
+  if (payload.timing !== undefined && payload.cwd !== undefined) {
+    throw new Error("walltime action 'row' takes 'cwd' only with 'runId'");
+  }
+  const timing = payload.timing !== undefined ? payload.timing : loadReviewTiming({ runId: payload.runId, projectRoot: payload.cwd || process.cwd() });
+  return rowFromTiming({
+    timing,
+    pr: payload.pr,
+    tier: payload.tier,
+    round: payload.round,
+    origin: payload.origin,
+    id: payload.id,
+    source: payload.source,
+    notes: payload.notes,
+    carry: payload.carry,
+  });
+}
+
+/**
+ * Whether one current row's figures are what its trace says: the row's `run_id` names a trace under
+ * <cwd>/.ensemble/state/toolchain/, and its wall time, chains and gate runs equal what `timing` derives from it (the same
+ * derivation `walltime row` uses). Tier, round and origin are not in a trace, so they stay attested.
+ */
+function checkRowAgainstTrace(run, cwd) {
+  if (typeof run.run_id !== 'string' || run.run_id === '') return { ok: false, reason: 'the row names no trace (run_id), so its figures cannot be re-derived' };
+  let rebuilt;
+  try {
+    const timing = loadReviewTiming({ runId: run.run_id, projectRoot: cwd });
+    rebuilt = rowFromTiming({ timing, pr: run.pr, tier: run.tier, round: run.round, origin: run.origin, id: run.id });
+  } catch (error) {
+    return { ok: false, reason: `trace '${run.run_id}' cannot be read: ${error.message}` };
+  }
+  if (!rebuilt.ok) return { ok: false, reason: `trace '${run.run_id}' is not a readable review: ${rebuilt.reason}` };
+  const differs = ['wall_min', 'chains', 'gate_runs', 'review_gate_spans'].filter((key) => (key === 'review_gate_spans' && !Object.prototype.hasOwnProperty.call(run, key) ? false : rebuilt.row[key] !== run[key]));
+  const same = differs.length === 0;
+  return same
+    ? { ok: true }
+    : { ok: false, reason: differs.map((key) => `${key} is ${JSON.stringify(run[key])}, its trace says ${JSON.stringify(rebuilt.row[key])}`).join('; ') };
+}
+
+/** `compare`: the module's grade, plus the trace check of every real current row. */
+function walltimeCompare(payload) {
+  const cwd = payload.cwd || process.cwd();
+  const runs = isObject(payload.current) && Array.isArray(payload.current.runs) ? payload.current.runs : [];
+  const traceChecks = {};
+  for (const run of runs) {
+    if (isObject(run) && typeof run.id === 'string' && run.origin === 'real') traceChecks[run.id] = checkRowAgainstTrace(run, cwd);
+  }
+  return compareWalltime({ baseline: payload.baseline, current: payload.current, traceChecks });
+}
+
+const WALLTIME_ACTIONS = Object.freeze({
+  summarize: {
+    keys: { cohort: OBJECT },
+    run: (p) => computeWalltimeCohort(p.cohort),
+  },
+  row: {
+    keys: { pr: INTEGER, tier: TEXT, round: TEXT, origin: TEXT },
+    optional: { runId: TEXT, cwd: TEXT, timing: OBJECT, id: TEXT, source: TEXT, notes: TEXT, carry: OBJECT },
+    run: walltimeRow,
+  },
+  compare: {
+    keys: { baseline: OBJECT, current: OBJECT },
+    optional: { cwd: TEXT },
+    run: walltimeCompare,
+  },
+});
+
+function runWalltime(payload) {
+  if (!isObject(payload)) throw new Error('walltime payload must be a JSON object');
+  const name = payload.action;
+  const action = typeof name === 'string' && hasOwn(WALLTIME_ACTIONS, name) ? WALLTIME_ACTIONS[name] : undefined;
+  if (action === undefined) {
+    throw new Error(`Unknown walltime action ${shown(name)}. Expected one of: ${Object.keys(WALLTIME_ACTIONS).join(', ')}`);
+  }
+  requireKeys(payload, action.keys, `walltime action '${name}'`);
+  optionalKeys(payload, action.optional || {}, `walltime action '${name}'`);
+  const known = ['action', ...Object.keys(action.keys), ...Object.keys(action.optional || {})];
+  const extra = Object.keys(payload).filter((key) => !known.includes(key));
+  if (extra.length > 0) {
+    throw new Error(`walltime action '${name}' does not accept payload key(s) ${extra.map((key) => `'${key}'`).join(', ')}`);
+  }
+  return action.run(payload);
+}
+
 const HANDLERS = Object.freeze({
   scope: runScope,
   'review-range': runReviewRange,
@@ -901,6 +1110,7 @@ const HANDLERS = Object.freeze({
   reachability: runReachability,
   results: runResults,
   timing: runTiming,
+  walltime: runWalltime,
 });
 
 /**
@@ -919,7 +1129,7 @@ function main(argv) {
   if (handler === undefined) {
     process.stdout.write(
       JSON.stringify({
-        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|carry|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing> < payload.json`,
+        error: `Unknown subcommand ${shown(subcommand)}. Usage: pr-review-cli <scope|review-range|ledger|remote|status|state-read|state-write|policy|rules|paths|description|votes|verify-assign|depth|slices|tier|mode|carry|approvals|gate|explainer-offer|brief|metrics|metrics-compare|eval-score|eval-compare|eval-stale|reachability|results|timing|walltime> < payload.json`,
       }) + '\n'
     );
     return 1;

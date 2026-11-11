@@ -27,7 +27,7 @@ reads git objects at the head under review.
 6. Verify only the `reverify` candidates and the new ones, with the unchanged verification contract.
 7. Run `carry` with `action: "record"` for the findings of the `votes` result.
 8. Write the state report's `verdicts` = the `carried` records of step 4 plus the `verdicts` of step 7.
-9. Run `carry` with `action: "reconcile"` with every observation of the round (the `votes` result's findings, every outcome).
+9. Run `carry` with `action: "reconcile"`. It writes no `cleared` mark: it answers the ledger read into the current taxonomy and `cleared: []`. A finding is cleared only by the clear verb (`lib/pr-review-clear-cli.js`, run after `recordRound` at every head), which reads git.
 
 An unreadable or `ok:false` answer, `prior-state-unavailable`, a failed hash or
 any doubt means: verify everything.
@@ -64,14 +64,14 @@ are read from the state report, never from stdin.
 | `candidates` | request parameter | The hash step's candidates for this head, matched to the findings by `id`. One hashed at another head is skipped (`candidate-head-mismatch`). |
 | `prId`, `baseSha`, `headSha`, `depth`, `expectedVerifiers` | in band | As for `plan`; an unreadable one is answered `ok:false` with the reason. |
 
-`reconcile` (all four keys are request parameters):
+`reconcile` (all four keys are request parameters; the last three are not read, so a call written for the earlier contract keeps working):
 
 | Key | Meaning |
 |---|---|
-| `ledger` | The round's ledger (the `ledger` of the `plan` answer, with this round's findings merged in). |
-| `changedLocations` | The locations the push changed. |
-| `headSha` | The head under review. |
-| `observations` | EVERY observation of the round, passed to `clearFixedFindings` as `reReported`. |
+| `ledger` | The round's ledger (the `ledger` of the `plan` answer, with this round's findings merged in). It comes back read into the current taxonomy. |
+| `changedLocations` | Accepted, not read. |
+| `headSha` | Accepted, not read. |
+| `observations` | Accepted, not read. (It used to be passed to `clearFixedFindings` as `reReported`.) |
 
 ## Record shapes
 
@@ -100,7 +100,7 @@ Answers:
   - `ledger`: the prior ledger with exactly the carried findings stamped (`headSha` = the carried record's head, `carriedFrom`), so `mergeFindings` does not re-open them and `clearFixedFindings` does not clear them. It is an array only when the state report was read (`priorState` `read`) AND holds a ledger array, so an empty array means "the report holds an empty ledger", never "nothing was read". It is `null` in every other case: `priorState` is not `read` (absent, discarded, corrupt, unreadable); the report was read but has no ledger list (a missing, `null` or non-list `ledger` is not an empty one: `ledger-unreadable`); or the stamp was refused (`ok:false`, see `reasons`; the report was read). The answer is the round's existing ledger and an empty one reads as no open findings, so a `null` means `plan` has no ledger to give: nothing carries, every candidate is verified, and an empty ledger is NEVER substituted for it. Use only a ledger you read yourself with `state-read`; with none, the prior round's open findings are unknown to this round (neither carried nor verified again): say so in the report and list them as unverified.
   - `priorState`: `read`, or why nothing was read: `absent`, `discarded`, `corrupt`, `unreadable`. Anything but `read` adds `prior-state-unavailable` to every reason list: nothing carries, and `ledger` is `null`.
 - `record`: `{ ok, verdicts[], skipped[{ id, reason }] }` (or `{ ok:false, verdicts:[], skipped:[], reason }`). A finding that is not settled, has no id, no candidate (or an ambiguous one), no usable hash, cites another file or claim than its ledger entry says, or whose votes do not give its outcome under the round's verifier count is `skipped` and recorded nowhere: the next round verifies it again.
-- `reconcile`: `{ ok, ledger[], cleared[] }`. A finding no reviewer reported again whose cited location the push changed is cleared; one that was observed again, whatever its verdict, is not.
+- `reconcile`: `{ ok, ledger[], cleared: [] }`. It never clears: `cleared` is always empty and no entry gains a mark. It used to clear a finding no reviewer reported again whose cited location the push changed, from the delta's hunks alone at the line numbers the ledger holds, and so marked defects that were still there as fixed (a line shifted across a skipped round, a force-pushed head, a partial fix raised again). The clear verb is the one writer of `cleared`.
 
 A candidate's identity is its file and its claim: the claim as written, with
 runs of whitespace collapsed and nothing else erased, case included. `x < y`
@@ -148,6 +148,28 @@ whole-round gates hold for every candidate: when one holds, nothing carries.
 | `hunk-moved` | The cited lines differ from the verdict's (identical text elsewhere in the file is not it). |
 | `dependency-changed` | A dependency file is among the changed paths, or the dependency set or a hash differs. |
 | `no-current-candidate` | Not a `reverify` reason: the `unmatched` entry of a prior verdict that no candidate re-presents. |
+
+## Coverage is carried too (`carry` `action: 'coverage'`, kata `k48x`)
+
+A settled verdict is carried so it is not re-argued; a coverage gap is carried so it is not forgotten. A delta round reads only
+what changed, so a slice or path the round before did not read is still unread after it. `carry` with `action: 'coverage'` and
+`{ prId, coverage, lastReviewedSha, deltaPlan }` (`coverage`: this round's own record, `slices` with `reviewedBy` answers it) reads
+the state report of `lastReviewedSha` (the same `state-read` rule: a report for another head is discarded) and answers the record
+`gate` and `status` take:
+
+- a delta round carries EVERY gap of that report, stamped `carriedFrom`, beside this round's own gaps (a gap id both rounds hold
+  keeps both: the carried one gets the suffix `@<7 characters of the earlier head>`); the earlier operator decision on a carried gap is stale
+  at the new head, so the gap blocks again until it is decided again or read;
+- a round of the FULL range (`deltaPlan.mode: 'full'`) read every path itself and carries nothing: its own record replaces the
+  earlier one;
+- no earlier report, a report written for another head, one with no `coverage` (every report written before this release) or one this
+  module cannot read answers `unavailable` with the reason and `fullRangeRequired: true`, never `complete`, and `gate` and `status` then
+  refuse as for any unreadable coverage. Only a round of the FULL range clears it: re-run that round once with `deltaPlan.mode: 'full'` (a
+  delta re-review stays unavailable, and so does every delta round after it); its record is then written and the next delta round carries it;
+- the earlier record is read from the report, never from the payload (`priorCoverage` is refused), so a caller cannot trade a gap
+  for a clean sheet.
+
+Nothing here touches verdicts: `carry plan` and `carry record` are unchanged, and a carried verdict never makes a coverage complete.
 
 ## Honest limits
 

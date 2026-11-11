@@ -22,8 +22,11 @@
  *   review.verifier         agent
  *   review.verdict          phase  the CLI computing REVIEW_COMPLETE / REVIEW_PENDING / REVIEW_BLOCKED
  * Any span MAY carry an integer attr `round` (1 = the first review, 2.. = delta re-reviews): the
- * critical path is then computed per round and summed. `trace start --attr k=v` records strings, so
- * a decimal string counts as the integer it spells (`turns`, `tool_calls` and `round`). Agent spans carry `agent` (a name)
+ * critical path is then computed per round and summed. An agent span MAY carry an integer attr `wave` (1.., numbered per
+ * round, within the review agents and, apart, within the verifiers): a round's agents are dispatched in waves of at most
+ * `maxConcurrentAgents`, all the agents of a wave together and a wave only once the one before it was collected, so the
+ * waves run one after another (see the critical path). `trace start --attr k=v` records strings, so
+ * a decimal string counts as the integer it spells (`turns`, `tool_calls`, `round` and `wave`). Agent spans carry `agent` (a name)
  * for the report. `review.gate` is not the `review-gate` span of /ensemble-pr-merge's own trace (skills/pr-merge-trace):
  * that one wraps the merge command's whole review step, a different and broader span this module never reads, so the
  * two can share one trace file without either being taken for the other.
@@ -64,11 +67,39 @@
  * critical path counts the verdict, so orchestrator time leaves it out: no minute is in both, and critical path
  * plus orchestrator-only never exceeds the window.
  * Critical path (per round) = slowest reviewer -> slowest verifier -> verdict, each an interval length cut to the
- * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`), summed over the rounds. It needs a
- * usable orchestrator window. The total is missing when ANY step is missing, when a round has more than one verdict
- * span (which one ends the chain is not known), and when the steps overlap or run out of order (the reviewer must end
- * before the verifier starts, the verifier before the verdict, each round before the next): overlapping steps would
- * count the same minutes twice, so they are never summed.
+ * orchestrator window (a cut is flagged on the step: `clippedMs`, `lowerBound`; an overshoot of one millisecond or less is
+ * the rounding of the stamps, not a cut: `start_ts` is whole milliseconds and `readTrace` rounds each duration to one, so
+ * the verdict, which ends an instant before the root does, can seem to end after it), summed over the rounds. A stage dispatched
+ * in several waves (spans that name different `wave`s) is one step PER WAVE, that wave's slowest span, because the waves ran
+ * one after another: review waves of 40 s and 20 s are 60 s of the chain, never the 40 s of the one slowest reviewer. The
+ * step then carries its `wave`; a stage in one wave, or in spans that name none, is one step as ever, and spans that name
+ * none beside spans that do are one extra wave, with a warning. A recorder that dispatches in waves must name them: spans
+ * that name none cannot be told apart, so agents that ran in several waves under such a recorder are measured as one (a
+ * shorter chain than the real one, with nothing here to say so). It must also dispatch the agents of a wave together: spans
+ * that carry ONE wave number but start further apart than CLOCK_SKEW_TOLERANCE_MS are the spans of more than one wave
+ * under a mis-stamped number, and that step is MISSING and names the wave (one slowest span of them would pass a shorter
+ * chain off as the whole). VERIFY REFILLS (kata 630v): `review-run` may dispatch verifiers into slots a wave freed while the wave
+ * still runs; those spans carry the attrs `refill` (true), `cap` and `running` (the agents of earlier waves it left running), and the
+ * review span carries `max_concurrent_agents`. When no wave number is stamped on spans dispatched apart, the numbering agrees with the
+ * times, every wave that overlaps an earlier one is marked on every span and its facts bear out (`cap` equal to the review span's,
+ * `running` plus its own agents within `cap`, no more earlier spans running at its start than `running`, never more spans at once than
+ * the cap), the verifier stage is ONE step, `rolling: true`, the time at least one verifier ran (the union, so a gap between
+ * dispatches is not counted), with `waves` counting the waves. Otherwise the marks explain nothing: a warning says why and the waves
+ * are read one after another as above. Only the verifier stage rolls. HONEST LIMIT: the steps are reviewers, verifiers and the verdict, as the contract says, so the
+ * security lane (or the classifier, or the second assessor) is never a step. The chain is then a lower bound whenever such an
+ * agent may have lengthened it, and the round says which: `outlasted` lists each one that ended after the slowest reviewer
+ * of its wave (an agent naming no wave, or a wave no reviewer step has, is compared with the last reviewer step), with the
+ * excess `byMs`, or the reason its length is unknown (`unusable`); `uncountedWaves` lists the numbered waves in which no
+ * reviewer ran (the lane alone in a wave, which a small cap makes), which no step counts at all. Either sets `lowerBound`,
+ * so a shorter chain is not passed off as the whole. The critical path
+ * needs a usable orchestrator window. The total is missing when ANY step is missing (a wave whose every span is unusable
+ * is a missing step that names the wave), when a round has more than one verdict span (which one ends the chain is not
+ * known), and when the steps overlap or run out of order (each wave must end before the next starts, the last reviewer wave
+ * before the first verifier wave, the last verifier wave before the verdict, each round before the next): overlapping
+ * steps would count the same minutes twice, so they are never summed. A `review.verdict` span that ends with status `error`
+ * is a verdict that was not recorded (a recorder whose attempt failed, then retried, ends the failed one that way): it is no
+ * verdict, so it is neither the verdict step nor a second verdict, and a round whose every verdict span ended in error has
+ * no verdict (MISSING).
  *
  * `computeReviewTiming` is pure. `loadReviewTiming` reads one trace file through injectable
  * `deps` (as local-ci-runner.js and pr-review-results.js do); `pr-review-cli.js` stays free of
@@ -102,6 +133,8 @@ const isText = (value) => typeof value === 'string' && value.trim() !== '';
 
 /** How far a span's wall-clock length may differ from the recorder's duration before the wall clock is taken to have stepped (run-trace.js allows the same 5 s between its two clocks). */
 const CLOCK_SKEW_TOLERANCE_MS = 5000;
+/** The resolution of the stamps: `start_ts` is whole milliseconds and `readTrace` rounds each `duration_ms` to one, so a span's end, placed from them, is a millisecond off at most, either way. */
+const WALL_CLOCK_RESOLUTION_MS = 1;
 const CLOCK_ANOMALY_REASON = 'the recorder flagged a clock anomaly: its wall-clock and monotonic readings disagree over this span';
 /** The latest time a Date can hold: a span that would end after it has no usable length. */
 const MAX_TIME_MS = 8.64e15;
@@ -231,6 +264,15 @@ function roundOf(span) {
   return round !== null && round >= 1 ? round : null;
 }
 
+/** The wave an agent span was dispatched in (attr `wave`, 1..), or null when it names none. */
+function waveOf(span) {
+  const wave = isObject(span.attrs) ? asCount(span.attrs.wave) : null;
+  return wave !== null && wave >= 1 ? wave : null;
+}
+
+/** Orders numbers ascending and the unnumbered (null) last. */
+const nullLast = (a, b) => (a === null ? 1 : b === null ? -1 : a - b);
+
 /** `interval` cut to `window` ({start, end}); null when nothing of it lies inside (a zero-length span inside the window stays one). */
 function clipTo(interval, window) {
   if (window === null) return interval;
@@ -243,8 +285,9 @@ function clipTo(interval, window) {
 /**
  * Slowest usable span of `spans` as a step figure, with the interval it occupies (cut to `window` when one is given);
  * a missing step when none was recorded or none is usable. A span that is unusable (unfinished, inconsistent) makes the
- * step a lower bound; so does a cut (`clippedMs`: how much of the winning span lay outside the window). A span wholly
- * outside the window is left out: it cannot change a figure measured inside it.
+ * step a lower bound; so does a cut (`clippedMs`: how much of the winning span lay outside the window; up to
+ * WALL_CLOCK_RESOLUTION_MS it is rounding and not a cut). A span wholly outside the window is left out: it cannot change a
+ * figure measured inside it.
  */
 function slowestStep(stage, spans, window = null) {
   if (spans.length === 0) return { step: { stage, ...missing(`no ${stage} span recorded`) }, interval: null };
@@ -259,7 +302,10 @@ function slowestStep(stage, spans, window = null) {
     const interval = clipTo(found, window);
     if (interval === null) continue;
     const ms = interval.end - interval.start;
-    if (best === null || ms > best.ms) best = { ms, span, interval, cutMs: found.end - found.start - ms };
+    if (best === null || ms > best.ms) {
+      const cutMs = found.end - found.start - ms;
+      best = { ms, span, interval, cutMs: cutMs <= WALL_CLOCK_RESOLUTION_MS ? 0 : cutMs };
+    }
   }
   if (best === null) {
     const reason = `every ${stage} span is unusable (unfinished, inconsistent or outside the window)`;
@@ -272,6 +318,192 @@ function slowestStep(stage, spans, window = null) {
     ...(best.cutMs > 0 ? { clippedMs: best.cutMs } : {}),
   };
   return { step: { stage, ...known(best.ms, extra) }, interval: best.interval };
+}
+
+/** A step's name in a report: its stage, and its wave when its stage was dispatched in several. */
+function stepLabel(step) {
+  if (step.wave === undefined) return step.stage;
+  return step.wave === null ? `${step.stage} (unnumbered wave)` : `${step.stage} wave ${step.wave}`;
+}
+
+/** How far apart the first and the last start of `spans` lie (0 when fewer than two have a readable `start_ts`). */
+function startSpread(spans) {
+  const starts = spans.map((s) => parseMs(s.start_ts)).filter(Number.isFinite);
+  return starts.length < 2 ? 0 : Math.max(...starts) - Math.min(...starts);
+}
+
+/** A verifier span of a refill wave (`review-run` dispatched it while agents of an earlier wave were still running). */
+const isRefill = (span) => isObject(span.attrs) && (span.attrs.refill === true || span.attrs.refill === 'true');
+
+/**
+ * The verifier stage of a round that was dispatched in overlapping waves (kata 630v): a refill wave starts while the wave before
+ * it is still running, so the waves do not run one after another and the stage is ONE step: the time at least one verifier was
+ * running (the UNION of their intervals, so an idle gap between two dispatches is not counted as verification, as it is not in the
+ * per-wave reading), with every wave's spans counted. Its interval, for the chain's order check, is the envelope from the first
+ * start to the last end. Nothing is summed per wave, which would count the overlap twice. An unusable span makes the step a lower
+ * bound, as it does elsewhere; none usable is a missing step.
+ */
+function rollingStep(stage, spans, window) {
+  const intervals = [];
+  let unusable = 0;
+  let cut = false;
+  for (const span of spans) {
+    const found = intervalOf(span);
+    if (!found.ok) {
+      unusable += 1;
+      continue;
+    }
+    const interval = clipTo(found, window);
+    if (interval === null) continue;
+    if (found.end - found.start - (interval.end - interval.start) > WALL_CLOCK_RESOLUTION_MS) cut = true;
+    intervals.push(interval);
+  }
+  if (intervals.length === 0) {
+    return { label: stage, wave: null, step: { stage, ...missing(`every ${stage} span is unusable (unfinished, inconsistent or outside the window)`) }, interval: null };
+  }
+  const start = Math.min(...intervals.map((i) => i.start));
+  const end = Math.max(...intervals.map((i) => i.end));
+  const waves = new Set(spans.map(waveOf)).size;
+  const extra = { rolling: true, waves, ...(unusable > 0 ? { unusable } : {}), ...(unusable > 0 || cut ? { lowerBound: true } : {}) };
+  return { label: stage, wave: null, step: { stage, ...known(unionLength(intervals, start, end), extra) }, interval: { start, end } };
+}
+
+/**
+ * Why the verifier waves of a round are NOT the refill the runner makes, or null when the rolling reading is sound (kata 630v,
+ * review rounds 1 and 2). The same guards as the per-wave reading come first, because the rolling reading must not be a way
+ * round them: a wave number stamped on spans dispatched apart (more than the clock tolerance) is not one wave, and the numbering
+ * must agree with the times (a wave never starts before a lower-numbered one). Then every marked wave must carry the facts the
+ * runner records on a refill (`refill`, `cap`, `running`: the agents of earlier waves it left running) on EVERY span, with the
+ * same `cap` as the review span's `max_concurrent_agents` (the reader cannot trust a cap the marks declare themselves), `running`
+ * plus its own agents within `cap`, and no more earlier-wave spans still running at its start than `running` says. A wave that
+ * starts before an earlier one ended must be marked, whatever else it carries; one marked span among unmarked overlapping waves
+ * therefore explains nothing. Past that, at no moment may more verifier spans run than the cap. A span that ended `expired` is
+ * left out of the counts: the dispatcher stops an agent at its deadline, and the span only ends when its wave is collected.
+ */
+function refillOverlapProblem(spans, rootCap) {
+  const waves = new Map();
+  for (const span of spans) {
+    const wave = waveOf(span);
+    if (wave === null) return 'some verifier spans name no wave';
+    waves.set(wave, [...(waves.get(wave) || []), span]);
+  }
+  const usable = (list) => list.map((span) => ({ span, found: intervalOf(span) })).filter((entry) => entry.found.ok);
+  const ordered = [...waves.keys()].sort((a, b) => a - b).map((wave) => ({ wave, entries: usable(waves.get(wave)), all: waves.get(wave) }));
+  const live = (entry) => entry.span.status !== 'expired';
+  for (const w of ordered) {
+    const spread = startSpread(w.all);
+    if (spread > CLOCK_SKEW_TOLERANCE_MS) return `verifier wave ${w.wave}: its spans start ${fmtMs(spread)} apart, more than the ${fmtMs(CLOCK_SKEW_TOLERANCE_MS)} within which the agents of one wave are dispatched, so the wave number is stamped on spans of more than one wave`;
+  }
+  let before = null;
+  for (const w of ordered) {
+    if (w.entries.length === 0) continue;
+    const first = Math.min(...w.entries.map((e) => e.found.start));
+    if (before !== null && first < before.start) return `verifier wave ${w.wave} starts before verifier wave ${before.wave}: the wave numbers disagree with the times`;
+    before = { wave: w.wave, start: first };
+  }
+  if (rootCap === null) return 'the review span records no max_concurrent_agents to check the refill marks against';
+  for (let i = 0; i < ordered.length; i += 1) {
+    const own = ordered[i];
+    const marked = own.all.filter(isRefill).length;
+    const earlier = ordered.slice(0, i).flatMap((w) => w.entries);
+    const start = own.entries.length === 0 ? null : Math.min(...own.entries.map((e) => e.found.start));
+    const overlaps = i > 0 && start !== null && earlier.length > 0 && start < Math.max(...earlier.map((e) => e.found.end));
+    const label = `verifier wave ${own.wave}`;
+    if (marked < own.all.length && (overlaps || marked > 0)) {
+      return overlaps ? `${label} overlaps an earlier wave and not every one of its spans is marked as a refill` : `${label} is marked as a refill on some of its spans only`;
+    }
+    if (marked === 0) continue;
+    const casts = own.all.map((s) => ({ cap: asCount(s.attrs.cap), running: asCount(s.attrs.running) }));
+    const { cap, running } = casts[0];
+    if (cap === null || cap < 1 || running === null || casts.some((c) => c.cap !== cap || c.running !== running)) return `${label} is a refill without a readable, single cap and running count`;
+    if (running + own.all.length > cap) return `${label} left ${running} agents running and dispatched ${own.all.length}: more than its cap of ${cap}`;
+    if (cap !== rootCap) return `${label} declares a cap of ${cap} but the review span records ${rootCap}`;
+    if (start !== null) {
+      const active = earlier.filter((e) => live(e) && e.found.start <= start && e.found.end > start).length;
+      if (active > running) return `${label} left ${running} agents running but ${active} earlier verifier spans were still running when it started`;
+    }
+  }
+  const events = ordered.flatMap((w) => w.entries).filter(live).flatMap((e) => [[e.found.start, 1], [e.found.end, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let now = 0;
+  for (const [, delta] of events) {
+    now += delta;
+    if (now > rootCap) return `${now} verifier spans ran at once, more than the cap of ${rootCap}`;
+  }
+  return null;
+}
+
+/**
+ * The steps one stage contributes to a round's chain, each `{label, wave, step, interval}`. A stage dispatched in several
+ * waves is one step per wave (that wave's slowest span), in wave order, because the waves ran one after another; a stage in
+ * one wave, or in spans that name none, is one step as ever. Spans that name no wave beside spans that do are one extra
+ * wave, last, with a warning. The agents of a wave are dispatched together, so spans that carry one wave number but start
+ * further apart than the clock tolerance are not one wave: the number was stamped on spans of several, one slowest span of
+ * them would pass a shorter chain off as the whole, and the step is MISSING and names the wave. Spans that name no wave
+ * are not checked (a narrated dispatch staggers its agents). `rootCap` is the review span's `max_concurrent_agents` (null when it
+ * records none): the verifier stage is read as rolling only when its refill marks are sound against it (refillOverlapProblem).
+ */
+function stagePicks(stage, spans, window, warnings, roundLabel, rootCap = null) {
+  if (stage === 'verifier' && spans.some(isRefill)) {
+    const problem = refillOverlapProblem(spans, rootCap);
+    if (problem === null) return [rollingStep(stage, spans, window)];
+    warnings.push(`round ${roundLabel}: the verifier refill marks do not explain the overlap (${problem}); the waves are read as one after another`);
+  }
+  const waves = [...new Set(spans.map(waveOf))].sort(nullLast);
+  if (waves.length > 1 && waves.includes(null)) warnings.push(`round ${roundLabel}: some ${stage} spans carry a wave and some do not; the unnumbered ones are one extra wave`);
+  if (waves.length === 0) return [{ label: stage, wave: null, ...slowestStep(stage, spans, window) }];
+  return waves.map((wave) => {
+    const own = spans.filter((s) => waveOf(s) === wave);
+    const several = waves.length > 1;
+    const spread = wave === null ? 0 : startSpread(own);
+    if (spread > CLOCK_SKEW_TOLERANCE_MS) {
+      const reason = `its spans start ${fmtMs(spread)} apart, more than the ${fmtMs(CLOCK_SKEW_TOLERANCE_MS)} within which the agents of one wave are dispatched, so the wave number is stamped on spans of more than one wave`;
+      const step = { stage, wave, ...missing(reason) };
+      return { label: stepLabel(step), wave, step, interval: null };
+    }
+    const picked = slowestStep(stage, own, window);
+    const step = several ? { ...picked.step, wave } : picked.step;
+    return { label: several ? stepLabel(step) : stage, wave, step, interval: picked.interval };
+  });
+}
+
+/** The role of a dispatched-agent span (`review.security-lane` -> `security-lane`). */
+const roleOf = (span) => AGENT_ROLES.find((role) => STAGES[role] === span.name);
+
+/**
+ * The agents of a round that are no step of its chain (the security lane, the classifier, the second assessor) and that the
+ * chain may therefore understate, from the round's reviewer steps (`picks`, every one with an interval):
+ *   uncountedWaves  numbered waves in which no reviewer ran, so no step counts them (a cap of 2 on two reviewers and the lane
+ *                   leaves the lane alone in wave 2);
+ *   outlasted       agents that ended after the slowest reviewer of their wave, `{stage, name, wave?, byMs}`: the next step
+ *                   waited for them, and no step counts the excess. An agent that names no wave, or whose wave has no
+ *                   reviewer step, is compared with the end of the last reviewer step; one whose length is unknown is
+ *                   listed with its `unusable` reason, since it may have outlasted them.
+ * The chain stays the contract's (slowest reviewer, slowest verifier, verdict); this says when it is a lower bound.
+ */
+function unsteppedAgents(spans, round, picks, window) {
+  const lastEnd = Math.max(...picks.map((p) => p.interval.end));
+  const waves = new Set();
+  const outlasted = [];
+  for (const span of spans) {
+    const role = roleOf(span);
+    if (role === undefined || role === 'reviewer' || role === 'verifier' || roundOf(span) !== round) continue;
+    const wave = waveOf(span);
+    const own = picks.find((p) => p.wave === wave);
+    if (own === undefined && wave !== null) {
+      waves.add(wave);
+      continue;
+    }
+    const who = { stage: role, name: agentLabel(span), ...(wave === null ? {} : { wave }) };
+    const found = intervalOf(span);
+    if (!found.ok) {
+      outlasted.push({ ...who, unusable: found.reason });
+      continue;
+    }
+    const inside = clipTo(found, window);
+    const reference = own === undefined ? lastEnd : own.interval.end;
+    if (inside !== null && inside.end > reference) outlasted.push({ ...who, byMs: inside.end - reference });
+  }
+  return { uncountedWaves: [...waves].sort((a, b) => a - b), outlasted };
 }
 
 const CHAIN = Object.freeze(['reviewer', 'verifier', 'verdict']);
@@ -292,7 +524,7 @@ function overlapReason([previous, next]) {
 /** Why a round has no total: each missing step with its own reason, and what a missing verifier usually means. */
 function gapReason(gaps) {
   return gaps
-    .map((s) => `${s.stage}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none)' : ''}`)
+    .map((s) => `${stepLabel(s)}: ${s.reason}${s.stage === 'verifier' && s.reason.startsWith('no ') ? ' (a Quick review dispatches none); nor does a round where no candidate needed verification (none raised, or every one kept a carried verdict)' : ''}`)
     .join('; ');
 }
 
@@ -306,6 +538,10 @@ function gapReason(gaps) {
  */
 function criticalPath(spans, warnings, { window, windowReason, timeline }) {
   const byStage = Object.fromEntries(CHAIN.map((stage) => [stage, spans.filter((s) => s.name === STAGES[stage])]));
+  // the concurrency cap the runner recorded on the review span (prepare/collect), against which refill marks are checked
+  const rootSpan = spans.find((s) => s.name === STAGES.root);
+  const rootCapValue = rootSpan !== undefined && isObject(rootSpan.attrs) ? asCount(rootSpan.attrs.max_concurrent_agents) : null;
+  const rootCap = rootCapValue !== null && rootCapValue >= 1 ? rootCapValue : null;
   const all = CHAIN.flatMap((stage) => byStage[stage]);
   if (all.length === 0) {
     return { ...missing('no reviewer, verifier or verdict span recorded'), rounds: [] };
@@ -314,18 +550,30 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
   if (numbered > 0 && numbered < all.length) {
     warnings.push('some reviewer/verifier/verdict spans carry a round and some do not; the unnumbered ones are one extra group');
   }
-  const keys = [...new Set(all.map(roundOf))].sort((a, b) => (a === null ? 1 : b === null ? -1 : a - b));
+  const keys = [...new Set(all.map(roundOf))].sort(nullLast);
   const labelOf = (round) => (round === null ? '(unnumbered)' : round);
   const chains = [];
   // Cutting a step to the window presumes timestamps that agree with the recorder; on a stepped timeline the steps are only measured.
   const cutTo = timeline.ok ? window : null;
   const rounds = keys.map((round) => {
-    const picks = CHAIN.map((stage) => slowestStep(stage, byStage[stage].filter((s) => roundOf(s) === round), cutTo));
+    const inRound = (stage) => byStage[stage].filter((s) => roundOf(s) === round);
+    // A verdict span that ended in error is a verdict that was not recorded (a collect retried after a failed write): no verdict.
+    const verdictSpans = inRound('verdict');
+    const produced = verdictSpans.filter((s) => s.status !== 'error');
+    const verdictPick = produced.length === 0 && verdictSpans.length > 0
+      ? { step: { stage: 'verdict', ...missing('every verdict span ended in error: no verdict was recorded') }, interval: null }
+      : slowestStep('verdict', produced, cutTo);
+    // reviewer waves, then verifier waves, then the verdict: the order the steps must run in
+    const reviewerPicks = stagePicks('reviewer', inRound('reviewer'), cutTo, warnings, labelOf(round));
+    const picks = [
+      ...reviewerPicks,
+      ...stagePicks('verifier', inRound('verifier'), cutTo, warnings, labelOf(round), rootCap),
+      { label: 'verdict', wave: null, ...verdictPick },
+    ];
     const steps = picks.map((p) => p.step);
     const gaps = steps.filter((s) => s.missing);
     if (gaps.length > 0) return { round, steps, ...missing(gapReason(gaps)) };
-    const verdicts = byStage.verdict
-      .filter((s) => roundOf(s) === round)
+    const verdicts = produced
       .map(intervalOf)
       .filter((found) => found.ok && clipTo(found, cutTo) !== null).length;
     if (verdicts > 1) {
@@ -333,12 +581,14 @@ function criticalPath(spans, warnings, { window, windowReason, timeline }) {
     }
     if (window === null) return { round, steps, ...missing(windowReason) };
     if (!timeline.ok) return { round, steps, ...missing(timeline.reason) };
-    const chain = picks.map((p, i) => ({ label: CHAIN[i], interval: p.interval }));
+    const chain = picks.map((p) => ({ label: p.label, interval: p.interval }));
     const overlap = firstOverlap(chain);
     if (overlap) return { round, steps, ...missing(overlapReason(overlap)) };
     chains.push(chain.map((step) => ({ ...step, label: `round ${labelOf(round)} ${step.label}` })));
-    const lowerBound = steps.some((s) => s.lowerBound);
-    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), lowerBound ? { lowerBound: true } : {}) };
+    const { uncountedWaves, outlasted } = unsteppedAgents(spans, round, reviewerPicks, cutTo);
+    const lowerBound = uncountedWaves.length > 0 || outlasted.length > 0 || steps.some((s) => s.lowerBound);
+    const bounds = { ...(lowerBound ? { lowerBound: true } : {}), ...(uncountedWaves.length > 0 ? { uncountedWaves } : {}), ...(outlasted.length > 0 ? { outlasted } : {}) };
+    return { round, steps, ...known(steps.reduce((n, s) => n + s.ms, 0), bounds) };
   });
   const gaps = rounds.filter((r) => r.missing);
   if (gaps.length > 0) {
@@ -563,10 +813,17 @@ function formatReviewTiming(timing) {
   out.push(`  critical path:               ${fmtFigure(timing.criticalPath)}`);
   for (const round of timing.criticalPath.rounds) {
     const steps = round.steps
-      .map((s) => `${s.stage} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}${s.clippedMs ? ` [cut to the window by ${fmtMs(s.clippedMs)}]` : ''}`}`)
+      .map((s) => `${stepLabel(s)} ${s.missing ? 'MISSING' : `${fmtMs(s.ms)}${s.name ? ` (${s.name})` : ''}${s.lowerBound ? ' [lower bound]' : ''}${s.clippedMs ? ` [cut to the window by ${fmtMs(s.clippedMs)}]` : ''}`}`)
       .join(' -> ');
     const why = round.missing && round.steps.every((s) => !s.missing) ? `  [MISSING: ${round.reason}]` : '';
-    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}`);
+    const unstepped = [
+      ...(Array.isArray(round.uncountedWaves) ? [`no reviewer in review wave ${round.uncountedWaves.join(', ')}, so no step counts it`] : []),
+      ...(Array.isArray(round.outlasted)
+        ? round.outlasted.map((o) => (o.unusable ? `${o.name} has no usable length (${o.unusable}), so it may have outlasted the reviewers, which no step counts` : `${o.name} ran ${fmtMs(o.byMs)} past the slowest reviewer${o.wave === undefined ? '' : ` of its wave ${o.wave}`}, which no step counts`))
+        : []),
+    ];
+    const lowerBound = unstepped.length > 0 ? `  [lower bound: ${unstepped.join('; ')}]` : '';
+    out.push(`    round ${round.round === null ? '(unnumbered)' : round.round}: ${steps}${why}${lowerBound}`);
   }
   out.push(`  dispatched agents: ${timing.agents.count} (${timing.agents.unusable.length} unusable)`);
   if (timing.agents.lingerMs > 0) out.push(`  idle linger after the agents' last messages, not counted: ${fmtMs(timing.agents.lingerMs)}`);

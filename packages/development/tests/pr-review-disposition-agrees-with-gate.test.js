@@ -71,6 +71,7 @@ function gateInput(extra = {}) {
     tier: { ok: true, tier: 'medium', effectiveTier: 'medium', humansRequired: 1, refusals: [], reasons: [], warnings: [] },
     description: { ok: true, missing: [], present: ['testing', 'risk', 'rollback'], empty: [], ready: true, warnings: [] },
     security: { status: 'clean', findings: [] },
+    coverage: { status: 'complete', gaps: [] },
     ...extra,
   };
 }
@@ -79,6 +80,7 @@ function listFor(input) {
   return buildDispositionChoices({
     ledger: input.ledger,
     security: input.security,
+    coverage: input.coverage,
     votes: input.votes,
     policy: input.policy,
     headSha: HEAD,
@@ -281,5 +283,43 @@ describe('through the real CLI process, `gate` returns a verdict and a list that
     expect(byMaintainer.mergeable).toBe(true);
     expect(byMaintainer.mergeConfirmation.undecidedBlocking).toEqual([]);
     expect(byMaintainer.mergeConfirmation.acceptedBlocking.map((entry) => entry.id)).toEqual(['F-1']);
+  });
+});
+
+describe('a finding the verifier brief refused is named as not verified in the list `gate` builds from the recorded state (kata 0g9n)', () => {
+  // The MODE=gate payload of Step 10 is the ledger as the state report recorded it and carries no `votes` (Step 3b does not run
+  // there). The review runner writes each finding's verification record into that ledger, so the list reads it from there.
+  const REFUSAL = { kind: 'leak', input: 'claim', reason: 'the verifier brief refuses its input: \'claim\' reads as the orchestrator ("orchestrator")' };
+  const unbriefable = (overrides = {}) => finding({
+    id: 'f1',
+    verification: { outcome: 'unverified', reason: 'unbriefable', authorLabel: 'unverified', presented: true, tally: null, assigned: [], incompleteVerifiers: [], ignoredVotes: [], unbriefable: REFUSAL },
+    ...overrides,
+  });
+  const verified = (overrides = {}) => finding({
+    id: 'f2',
+    verification: { outcome: 'present', reason: 'verifier-majority', authorLabel: 'verified', presented: true, tally: { real: 3, notReal: 0, abstain: 0, expected: 3 }, assigned: ['v1', 'v2', 'v3'], incompleteVerifiers: [], ignoredVotes: [] },
+    ...overrides,
+  });
+  const runGate = (payload) => {
+    const run = spawnSync('node', [CLI, 'gate'], { input: JSON.stringify(payload), encoding: 'utf8' });
+    expect(run.status).toBe(0);
+    return JSON.parse(run.stdout);
+  };
+
+  test('with no votes supplied the entry says unverified and why, and its votes are none, never a count; a verified finding carries no verification', () => {
+    const out = runGate(gateInput({ ledger: [unbriefable(), verified()] }));
+    expect(out.mergeable).toBe(false);
+    expect(out.findings.open).toEqual(expect.arrayContaining(['f1', 'f2']));
+    expect(out.dispositionChoices.find((c) => c.id === 'f1')).toMatchObject({
+      group: 'blocking',
+      votes: null,
+      verification: { outcome: 'unverified', reason: 'unbriefable', unbriefable: REFUSAL },
+    });
+    expect(out.dispositionChoices.find((c) => c.id === 'f2')).not.toHaveProperty('verification');
+  });
+
+  test('the in-process list says the same as the one the CLI returns', () => {
+    const list = listFor(gateInput({ ledger: [unbriefable()] }));
+    expect(list.dispositionChoices.find((c) => c.id === 'f1')).toMatchObject({ votes: null, verification: { outcome: 'unverified', reason: 'unbriefable', unbriefable: REFUSAL } });
   });
 });
