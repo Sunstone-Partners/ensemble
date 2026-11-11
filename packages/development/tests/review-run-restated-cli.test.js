@@ -444,4 +444,25 @@ describe('a restatement of an open finding is that finding, not a new candidate 
     expect(entry.restatedBy).toHaveLength(1);
     expect(done.out.ledger).toHaveLength(4);
   });
+
+  test('a restatement in a round of ONE finding is merged too: with two findings in play ln(N/df) weighed every shared word 0 and called it "different-description, similarity 0"', () => {
+    const first = settledRound('o1', { 'reviewer-s1-a': [raised(C.LOOP)] });
+    expect(first.done.ledger).toHaveLength(1);
+    const loop = first.done.ledger[0];
+    const head2 = push(fx.head1, UNRELATED, 'o-fix');
+    answerReview(deltaPrepare('o2', head2), { findings: { 'reviewer-s1-a': [restating(C.LOOP.at)] } });
+    let answer = coll('o2');
+    // the only finding is carried and its restatement is the only candidate: there may be nothing left to verify
+    if (answer.out.status === 'DISPATCH') {
+      answerVotes(answer.out);
+      answer = coll('o2');
+    }
+    expect(answer.out).toMatchObject({ ok: true, status: 'DONE', carry: { appliedRange: 'delta', carried: 1, restatements: { count: 1, kept: [] } } });
+    expect(answer.out.carry.restatements.merged).toEqual([expect.objectContaining({ of: loop.id, carried: true, source: 'reviewer-s1-a' })]);
+    expect(answer.out.carry.restatements.merged[0].similarity).toBeGreaterThanOrEqual(STEP);
+    // one open finding, not two for one defect
+    expect(answer.out.ledger).toHaveLength(1);
+    expect(answer.out.ledger[0]).toMatchObject({ id: loop.id, carriedFrom: fx.head1, headSha: head2 });
+    expect(answer.out.ledger[0].restatedBy).toHaveLength(1);
+  });
 });

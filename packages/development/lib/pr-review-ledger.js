@@ -374,7 +374,8 @@ function resemblanceOf(wordsA, wordsB, weightOf) {
  * The measure `dedupeFindings` joins two reviewers' write-ups of one defect by, as a function of any two findings, for the
  * callers that must ask it of findings that are not in one call (a finding of an earlier round and one of this round):
  * `resemblanceOver(corpus)` weighs each word by ln(N / df), N the distinct findings of `corpus` (exact duplicates are one) and
- * df how many of them use the word, exactly as `dedupeFindings` weighs the findings of its call, and answers
+ * df how many of them use the word, exactly as `dedupeFindings` weighs the findings of its call (with fewer than three findings in `corpus`
+ * every word weighs 1: ln(N / df) would be 0 for every shared word of two), and answers
  * `(a, b) -> { comparable, why?, similarity, sizeRatio, words:[n, n] }`. `a` and `b` belong in `corpus`.
  *
  * It compares the DESCRIPTIONS (failure mode and evidence) and what two findings must agree on besides them: it knows nothing
@@ -396,11 +397,18 @@ function resemblanceOver(corpus) {
   }
   const documentFrequency = new Map();
   for (const words of documents.values()) for (const word of words) documentFrequency.set(word, (documentFrequency.get(word) || 0) + 1);
+  // Fewer than three findings in play: ln(N / df) is 0 for every word two of them share (N = 2: df = 2), so every pair would score 0
+  // whatever the two say. With no corpus to weigh the words by, they weigh the same (the plain overlap of the two descriptions' distinct
+  // words over the smaller one's). kata tmf5: `dedupeFindings` weighs its own findings by its own loop, unchanged, and so still scores
+  // a call of exactly two findings 0; that is how it was.
+  const uniform = documents.size < 3;
   // a word of a finding that is not in the corpus counts as one only that finding uses
-  const weightOf = (word) => Math.log(Math.max(documents.size, 1) / (documentFrequency.get(word) || 1));
+  const weightOf = uniform ? () => 1 : (word) => Math.log(Math.max(documents.size, 1) / (documentFrequency.get(word) || 1));
   const not = (why, words = [0, 0]) => ({ comparable: false, why, similarity: 0, sizeRatio: 0, words });
   return (a, b) => {
     if (!isObject(a) || !isObject(b)) return not('unreadable');
+    // fewer than two distinct findings: there is nothing to compare a finding with, and no weight means anything
+    if (documents.size < 2) return not('corpus-too-small');
     const wordsA = descriptionWords(a);
     const wordsB = descriptionWords(b);
     const words = [wordsA.size, wordsB.size];

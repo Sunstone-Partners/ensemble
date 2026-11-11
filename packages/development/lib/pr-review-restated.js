@@ -22,13 +22,20 @@
  * distinct defect on the same lines must never be merged (that hides a finding). The confirmation is `resemblanceOver` of
  * pr-review-ledger.js, the measure `dedupeFindings` already joins two reviewers' write-ups of one defect by (the weight of the words
  * two descriptions share, over the smaller description's weight, words weighed by how few findings use them, over the findings in
- * play: the prior ledger and this round's candidates), with a STRICTER bar, RESTATED_MIN_SIMILARITY, than the in-round 0.26. Measured
- * on 45 pairs of findings that cite overlapping lines in single-citation ledgers of 12 real review runs (the measurement runs and the
- * review of PR 229): the pairs one defect written up twice scored 0.32 to 0.51 (the two measured restatements 0.51 and 0.42), and the
- * highest pair of DISTINCT defects scored 0.29 (RT-4 and RT-7 of PR 229: a missing test and an off-by-one test title, both on
- * toolchain-adapters.test.js:500). 0.35 lies between them, 0.06 above the highest distinct pair and 0.07 below the weaker measured
- * restatement. The in-round bar (0.26) is below that distinct pair: in a round it is the same-source rule that keeps such a pair
- * apart, and across rounds source names repeat (a fresh `reviewer-s1-a` is another agent), so the rule cannot protect here.
+ * play: the prior ledger and this round's candidates), with a STRICTER bar, RESTATED_MIN_SIMILARITY, than the in-round 0.26.
+ * THE BAR IS FITTED, NOT VALIDATED. It was chosen from 45 pairs of findings that cite overlapping lines in 7 ledgers of this repository's
+ * own review runs (21 state files were scanned). The pairs are committed in tests/fixtures/pr-review-restated-fit-pairs.json with every
+ * entry of each ledger, so the fit can be re-derived, and tests/pr-review-restated-fit.test.js re-scores them; each pair is scored over its
+ * OWN ledger. By the reading of whoever fitted the bar, 8 of the 45 are one defect written up twice, 35 are distinct defects and 2 are
+ * unclear. Over their own ledgers the pairs of one defect score 0.51, 0.47, 0.46, 0.45 and 0.42 (the two measured restatements of run
+ * m2-pr293-re are 0.51 and 0.42), which the bar merges, and 0.34 and 0.32, which it does NOT (one more the measure refuses to compare, for
+ * its size ratio): the bar costs recall. The highest of the 35 distinct pairs scores 0.29 (RT-4 and RT-7 of PR 229: a missing test and an
+ * off-by-one test title, both on toolchain-adapters.test.js:500). THE MARGIN DEPENDS ON THE CORPUS: the runner weighs the words over the
+ * prior ledger and the round's candidates, not over a pair's own ledger, and the same pair scores differently there (PR 291 f3 and f5, a
+ * distinct pair, scores 0.22 over its own ledger and about 0.33 over a union of 98 entries, two hundredths under the bar). No held-out
+ * set of restatements exists; the first live delta round is the validation. The in-round bar (0.26) is below the highest distinct pair:
+ * in a round it is the same-source rule that keeps such a pair apart, and across rounds source names repeat (a fresh `reviewer-s1-a` is
+ * another agent), so the rule cannot protect here.
  * The confirmation also keeps every in-round condition (at least SAME_DEFECT_MIN_WORDS words each, the shorter description at least a
  * third of the longer one's weight, the same class, security relevance and Pre-existing status, nothing that needs a person) and adds:
  *   - the lines must OVERLAP (the in-round rule also takes lines two apart);
@@ -40,14 +47,17 @@
  * Alternatives rejected: (1) one extra verifier asked "is this the same defect" (unanimous): it needs a dispatch round BEFORE the
  * verify round (wall time, the figure this work exists to cut) and K agents for unanimity, and cannot make the verify round smaller
  * unless it runs first; (2) a normalized hash of the cited code: two findings on overlapping lines cite the same code by
- * construction, so it confirms nothing that the location did not, which is the failure to guard against; (3) location alone: the
- * ledgers above hold nine distinct defects on one line of one file.
- * HONEST LIMITS. The measure is lexical and corpus-relative (more findings in play weigh a shared word more), the bar rests on 45
- * pairs, and a false merge keeps the merged defect from its own verification this round. What bounds the harm: the restating claim
+ * construction, so it confirms nothing that the location did not, which is the failure to guard against; (3) location alone: the PR 229
+ * ledger holds nine distinct defects on one line of one file.
+ * HONEST LIMITS. The measure is lexical and corpus-relative (more findings in play weigh a shared word more; with fewer than three findings
+ * in play every word weighs the same, the more permissive reading), the bar rests on the fit pairs above, and a false merge keeps the
+ * merged defect from its own verification this round. What bounds the harm: the restating claim
  * and its evidence stay in the entry (`restatedBy`, shown in the answer, the state report, the bead and the gate); the entry takes
  * the more severe of the two severities, so a restatement can never lower what blocks; the entry stays an open finding with its own
  * verdict (carried or fresh); and a fix that touches the cited lines ends the merge's reach, since an entry whose lines a push
  * touched is never matched and the defect, raised again, is a candidate of its own.
+ * An entry takes ONE restatement a round, so when two reviewers restate one entry in one round the better candidate merges and the other
+ * stays a candidate of its own: the ledger then holds that defect twice (more findings, never fewer).
  *
  * Pure: no shell, no file read, no network. The caller hands in the findings, the corpus and a function that reads a citation.
  */
@@ -65,6 +75,7 @@ const KEPT_REASONS = Object.freeze({
   DIFFERENT_DESCRIPTION: 'different-description',
   DIFFERENT_KIND: 'different-kind',
   UNSETTLED: 'unsettled',
+  CORPUS_TOO_SMALL: 'corpus-too-small',
   AMBIGUOUS: 'ambiguous',
   ENTRY_TAKEN: 'entry-already-restated',
 });
@@ -136,7 +147,7 @@ function matchRestatements({ candidates, priors, corpus, locate }) {
         confirmed.get(c).push(entry);
         return;
       }
-      const why = look.comparable ? KEPT_REASONS.DIFFERENT_DESCRIPTION : look.why === 'kind' ? KEPT_REASONS.DIFFERENT_KIND : look.why === 'unsettled' ? KEPT_REASONS.UNSETTLED : KEPT_REASONS.DIFFERENT_DESCRIPTION;
+      const why = look.comparable ? KEPT_REASONS.DIFFERENT_DESCRIPTION : look.why === 'kind' ? KEPT_REASONS.DIFFERENT_KIND : look.why === 'unsettled' ? KEPT_REASONS.UNSETTLED : look.why === 'corpus-too-small' ? KEPT_REASONS.CORPUS_TOO_SMALL : KEPT_REASONS.DIFFERENT_DESCRIPTION;
       const best = nearest.get(c);
       if (best === undefined || entry.similarity > best.similarity) nearest.set(c, { ...entry, reason: why });
     });

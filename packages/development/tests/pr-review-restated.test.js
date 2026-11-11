@@ -5,11 +5,12 @@
  * (packages/development/lib/pr-review-restated.js and the delta steps that use it) and what the other modules do with `restatedBy`
  * (the verifier exclusion, the gate blocker, the bead). The whole path is proven through the real CLI in review-run-restated-cli.test.js.
  *
- * THE BAR IS FITTED, NOT VALIDATED. RESTATED_MIN_SIMILARITY (0.35) was chosen from 45 pairs of findings in 12 real ledgers of this
- * repository's own reviews, among them the two measured restatements of run m2-pr293-re; no held-out set of restatements exists yet.
- * The table below pins how the shipped measure scores the fixture claims (tests/helpers/pr-review-restated-claims.js) and what the matcher
- * does with each, so any change to the bar or to the scoring breaks here, visibly, and has to be argued. The first live use is the
- * validation: read `carry.restatements.merged` against `.kept` in the next delta run, and any merged pair two people would call
+ * THE BAR IS FITTED, NOT VALIDATED. RESTATED_MIN_SIMILARITY (0.35) was chosen from 45 pairs of findings in 7 ledgers of this repository's own
+ * review runs, among them the two measured restatements of run m2-pr293-re; no held-out set of restatements exists yet. Those pairs are
+ * committed (tests/fixtures/pr-review-restated-fit-pairs.json) and re-scored by tests/pr-review-restated-fit.test.js, which is where
+ * measured data is pinned. THIS file pins how the shipped measure scores HAND-WRITTEN fixture claims (tests/helpers/pr-review-restated-claims.js)
+ * and what the matcher does with each, so any change to the bar or to the scoring breaks here, visibly, and has to be argued. The first live
+ * use is the validation: read `carry.restatements.merged` against `.kept` in the next delta run, and any merged pair two people would call
  * distinct defects is a miss.
  */
 
@@ -18,6 +19,7 @@ const { checkPrior, restatedPrior, restatable, idSeed, composeDeltaLedger } = re
 const { raisersOf } = require('../lib/pr-review-votes');
 const { evaluateGate, BLOCKER_CODES } = require('../lib/pr-review-gate');
 const { planBeads, beadKeys } = require('../lib/pr-review-beads');
+const { resemblanceOver } = require('../lib/pr-review-ledger');
 const { CLAIMS: C, raised, entryOf } = require('./helpers/pr-review-restated-claims');
 
 const HEAD = 'a'.repeat(40);
@@ -79,6 +81,41 @@ describe('the bar and what it separates (FITTED on one set of pairs, not validat
     expect(out.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.ENTRY_TAKEN, against: ['f1'] })]);
     expect(out.kept[0].candidate.id).toBe('f5');
   });
+
+  test('with only two findings in play (a round of one finding and its restatement) the words weigh the same: the restatement merges where ln(N/df) scored every pair 0', () => {
+    // the pairs that merge among five findings (0.54, 0.46, 0.84, 0.44) score the plain overlap of the two descriptions here
+    for (const [was, again, score] of [['LOOP', 'LOOP_AGAIN', 0.64], ['CACHE', 'CACHE_AGAIN', 0.57], ['RETRY', 'RETRY_AGAIN', 0.9], ['LOCK', 'LOCK_AGAIN', 0.55]]) {
+      const out = match([prior(was, 'f1')], [cand(again, 'f2')]);
+      expect(out.kept).toEqual([]);
+      expect(out.merged.map((m) => [m.candidate.id, m.entry.id])).toEqual([['f2', 'f1']]);
+      expect(near(out.merged[0].similarity, score)).toBe(true);
+    }
+    // a distinct defect on the same line is still kept apart (0.18), and the reason is a real one, not a similarity of 0
+    const other = match([prior('LOCK', 'f1')], [cand('LOCK_OTHER', 'f2')]);
+    expect(other.merged).toEqual([]);
+    expect(other.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.DIFFERENT_DESCRIPTION, against: ['f1'] })]);
+    expect(near(other.kept[0].similarity, 0.18)).toBe(true);
+    // the plain overlap is the more permissive measure: the abstract paraphrase that stays apart among five findings (0.24) merges here (0.38)
+    const paraphrase = match([prior('CACHE', 'f1')], [cand('CACHE_ABSTRACT', 'f2')]);
+    expect(paraphrase.merged.map((m) => m.entry.id)).toEqual(['f1']);
+    expect(near(paraphrase.merged[0].similarity, 0.38)).toBe(true);
+  });
+
+  test('three findings keep the corpus weights (0.37 for the pair that scores 0.64 by plain overlap): the fallback is for fewer than three only', () => {
+    const findings = [prior('LOOP', 'f1'), prior('CACHE', 'f2'), cand('LOOP_AGAIN', 'f3')];
+    expect(near(resemblanceOver(findings)(findings[2], findings[0]).similarity, 0.37)).toBe(true);
+    expect(near(resemblanceOver(findings.slice(0, 1).concat(findings.slice(2)))(findings[2], findings[0]).similarity, 0.64)).toBe(true);
+  });
+
+  test('a corpus with fewer than two distinct findings cannot measure anything and says so: never a similarity of 0 under another reason', () => {
+    const only = prior('LOOP', 'f1');
+    expect(resemblanceOver([only])(cand('LOOP_AGAIN', 'f2'), only)).toMatchObject({ comparable: false, why: 'corpus-too-small', similarity: 0 });
+    expect(resemblanceOver([])(only, only).why).toBe('corpus-too-small');
+    expect(resemblanceOver(null)(only, only).why).toBe('corpus-too-small');
+    const out = matchRestatements({ candidates: [cand('LOOP_AGAIN', 'f2')], priors: asPriors([only]), corpus: [only], locate });
+    expect(out.merged).toEqual([]);
+    expect(out.kept).toEqual([expect.objectContaining({ reason: KEPT_REASONS.CORPUS_TOO_SMALL, against: ['f1'] })]);
+  });
 });
 
 describe('what is never compared or never merged (fail closed)', () => {
@@ -120,6 +157,17 @@ describe('what is never compared or never merged (fail closed)', () => {
       expect(matchRestatements(input)).toEqual({ merged: [], kept: [] });
     }
     expect(matchRestatements({ candidates: [null, 3], priors: [{ entry: null, locationOrLink: 'med/a02.js:5' }, null], corpus: [], locate })).toEqual({ merged: [], kept: [] });
+  });
+
+  test('the lines must OVERLAP: a candidate wholly above or below the finding, or only adjacent to it, is never compared; one that shares a boundary line is', () => {
+    const at = (priorAt, candidateAt) => match([prior('LOOP', 'f1', { locationOrLink: priorAt }), prior('CACHE', 'f2'), prior('RETRY', 'f3'), prior('LOCK', 'f4')], [cand('LOOP_AGAIN', 'f5', { locationOrLink: candidateAt })]);
+    const none = { merged: [], kept: [] };
+    // a finding at line 5: a candidate above it, right above it, right below it, below it, or a range that ends right above or starts right below it
+    for (const candidateAt of ['med/a02.js:2', 'med/a02.js:4', 'med/a02.js:6', 'med/a02.js:9', 'med/a02.js:1-4', 'med/a02.js:6-9']) expect([candidateAt, at('med/a02.js:5', candidateAt)]).toEqual([candidateAt, none]);
+    // a finding at 5-8: the candidate's last line is the finding's first line, the candidate's first line is the finding's last line, and a range around it: each shares a line
+    for (const candidateAt of ['med/a02.js:3-5', 'med/a02.js:8-10', 'med/a02.js:5', 'med/a02.js:8', 'med/a02.js:1-20']) expect([candidateAt, at('med/a02.js:5-8', candidateAt).merged.map((m) => m.entry.id)]).toEqual([candidateAt, ['f1']]);
+    // and not one that stops a line short of it or starts a line after it
+    for (const candidateAt of ['med/a02.js:2-4', 'med/a02.js:9-12', 'med/a02.js:1', 'med/a02.js:9']) expect([candidateAt, at('med/a02.js:5-8', candidateAt)]).toEqual([candidateAt, none]);
   });
 });
 
@@ -224,7 +272,9 @@ describe('the delta steps: which prior findings a candidate may restate', () => 
 
   test('a restatement leaves the candidates and its finding comes back as a candidate: the finding\'s own id, claim and line, no old verification, restatedBy naming the restater', () => {
     const fresh = [cand('LOOP_AGAIN', 'f5'), cand('PARSE', 'f6')];
-    const { out } = through(ledger(), fresh, derive());
+    const entries = ledger();
+    const before = JSON.stringify(entries);
+    const { out } = through(entries, fresh, derive());
     expect(out.fresh.map((c) => c.id)).toEqual(['f6']);
     expect(out.merged).toEqual([{ id: 'f5', of: 'f1', source: 'reviewer-s1-b', locationOrLink: 'med/a02.js:5', severity: 'important', similarity: expect.any(Number) }]);
     expect(out.kept).toEqual([]);
@@ -234,7 +284,8 @@ describe('the delta steps: which prior findings a candidate may restate', () => 
     for (const gone of ['verification', 'locationAsOf', 'cleared', 'headSha', 'carriedFrom']) expect(back).not.toHaveProperty(gone);
     expect(back.restatedBy).toEqual([expect.objectContaining({ id: 'f5', source: 'reviewer-s1-b', headSha: HEAD, failureMode: C.LOOP_AGAIN.said })]);
     // the prior ledger's entry is untouched: the step is pure
-    expect(out.candidates[0]).not.toBe(ledger()[0]);
+    expect(JSON.stringify(entries)).toBe(before);
+    expect(out.candidates[0]).not.toBe(entries[0]);
   });
 
   test('only a finding the push left alone is matched: cleared, moved, re-reported or unplaceable ones are not, and the candidate stays a candidate', () => {

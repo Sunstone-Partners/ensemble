@@ -1,0 +1,1851 @@
+{
+ "about": "The pairs the restatement bar (RESTATED_MIN_SIMILARITY, lib/pr-review-restated.js) was FITTED on: every pair of findings that cite overlapping lines of one file (single-citation grammar path:line or path:a-b) in the review ledgers of this repository's own runs (the speedup measurement runs, the review of PR 229, the runs of PR 207). It is NOT held-out data: the bar was chosen from these pairs.",
+ "measure": "resemblanceOver of lib/pr-review-ledger.js (the dedupe measure) over the corpus named per pair. The corpus is every entry of the pair's OWN ledger (`ledgers[pair.ledger]`); the runner's own corpus is the prior ledger plus the round's candidates, so the same pair scores differently there (a distinct pair of PR 291, f3 and f5, scores 0.22 over its own ledger and about 0.33 over a union of 98 entries).",
+ "calls": "same = the two findings are one defect in other words (the reading of whoever fitted the bar; the two measured restatements of run m2-pr293-re and the PR 292 pair were confirmed by the reviewer of PR 299); distinct = another defect; unclear = related, counted in neither group.",
+ "bar": 0.35,
+ "ledgers": {
+  "pr229/pr-Sunstone-Partners_ensemble_229.json": [
+   {
+    "id": "RC-1",
+    "source": "RevCorrect229",
+    "severity": "Important",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "In a layout whose only skills root is the installed full bundle (dereferenced packages/full/skills with the git/ and infrastructure/ groups) the new descent makes the shipped host/tracker adapters (github, azure-devops, azure-boards, ...) discoverable. That changes detectAdapter results for the host and tracker categories compared with the code before the change: a repo whose origin is GitLab now makes detectAdapter('host') throw AMBIGUOUS_PROVIDER where it previously returned no detection; an Azure DevOps origin now selects azure-devops/azure-boards by detection where previously both were null and the defaults (github, beads) applied. The same outcomes already occur in the monorepo layout at the base commit. The diff neither documents nor tests this default-on behaviour change.",
+    "evidence": "The descent makes packages/full/skills/{git,infrastructure} visible to a consumer whose only skills root is the full bundle, and that changes default-on detection. Probe (private copies; detect.js on base vs head; .git/config origin varied): GitLab origin: base host=null, so the github default applies silently; head detectAdapter('host') throws AMBIGUOUS_PROVIDER ('remote origin ... matches no installed adapter's signal'). Azure origin: base host and tracker both null (github and beads defaults); head host=azure-devops(detection) and tracker=azure-boards(detection), so a repo's tracker silently moves off beads. GitHub origin: base null, head host=github(detection). The base monorepo already produces exactly the head outcomes (GitLab throws AMBIGUOUS_PROVIDER; Azure selects azure-devops and azure-boards), so the change is consistent with the I2 rule, but it is a default-on behaviour change for full-bundle installs that the diff neither documents nor tests. Kind: defect (behaviour change). Security: false. Disposition: adjudicate; decide before merge whether to accept and document it or scope the fix.",
+    "security": false
+   },
+   {
+    "id": "RC-2",
+    "source": "RevCorrect229",
+    "severity": "Pre-existing",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "Two shipped manifests (adapter-workflow-plain-git with categories [workflow] and adapter-worktree-plain-git with categories [worktree]) both declare `adapter: plain-git`. loadAdapter('plain-git') returns the first one in discovery order (workflow) for every category, so with the default config (plain-git selected for worktree) `toolchain-cli run worktree.list --json` fails with NOT_ALLOWED on both the base and the head. This predates the diff; the diff makes the same resolution reachable in full-only layouts, where the base reported NOT_INSTALLED.",
+    "evidence": "Two shipped manifests declare adapter: plain-git (adapter-workflow-plain-git with categories [workflow]; adapter-worktree-plain-git with categories [worktree]). loadAdapter('plain-git') returns the first candidate in discovery order, the workflow manifest, for every category, and toolchain.default.yaml:9 selects plain-git for worktree. Reproduced through the real CLI with the default config: `node packages/development/lib/toolchain-cli.js run worktree.list --json` returns NOT_ALLOWED ('capability worktree.list is not declared by adapter plain-git') on both base and head, so worktree capabilities are unusable by default. It fails closed rather than running the wrong adapter (runner.js lookupCapability, lines 900-927). This diff does not introduce it; it makes the same resolution reachable in full-only layouts, where base reported NOT_INSTALLED. Kind: defect. Security: false. Disposition: deferred; file an issue, since keying resolution by id versus category needs a design decision.",
+    "security": false
+   },
+   {
+    "id": "RC-3",
+    "source": "RevCorrect229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:452",
+    "failureMode": "The new descent decides that a directory is itself an adapter by readManifest(dir) returning an object with a string `adapter`, not by the presence of adapter.yaml. A directory whose adapter.yaml is malformed (invalid YAML, no `adapter` key or a non-string one) and which has no SKILL.md is therefore treated as a group and its children are discovered, contradicting the module doc and code comment that say a directory carrying a manifest is the adapter and is never descended into.",
+    "evidence": "The module doc (adapters.js:26-29) and the code comment (456-466) say a directory that carries a manifest is the adapter and is not descended into, but the guard at line 452 requires a string adapter id. A directory whose adapter.yaml is malformed (no adapter key, adapter: 42, invalid YAML, or adapter.yaml is itself a directory) is therefore treated as a group and its children are discovered. Probe: adapter-broken-parent/adapter.yaml (categories only) plus vendored/adapter.yaml (adapter: nested-under-broken) yields nested-under-broken as installed; the same nesting under a valid parent yields only the parent (control). Impact is limited: all 52 shipped manifests parse with a string id, so shipped behaviour is unchanged (the same code is in the pi and codex copies). Severity words are closed; this is a behaviour divergence outside default configuration, so it is Nit. Kind: defect. Security: false. Disposition: fix (test adapter.yaml presence, or correct the doc).",
+    "security": false
+   },
+   {
+    "id": "RC-4",
+    "source": "RevCorrect229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "Nested adapters are placed in discovery order at their group's sorted position, so within one skills root a nested child can win a same-id tie against a flat sibling, whereas the module doc states same-origin duplicates resolve by ascending directory name. Example: packages/a/skills/a-grp/zz-child and packages/a/skills/m-flat both declare `adapter: beads`; loadAdapter('beads') returns a-grp/zz-child while the documented rule picks m-flat.",
+    "evidence": "The module doc (adapters.js:108) says that within one skills root, same-id ties break by ascending directory-name sort. Nested candidates are inserted where their group sorts, so a nested child beats a flat sibling. Probe: packages/a/skills/a-grp/zz-child and packages/a/skills/m-flat both declare adapter: beads; discovery order is zz-child then m-flat, and loadAdapter('beads') returns a-grp/zz-child, where the documented rule picks m-flat. No shipped same-root duplicates exist (shipped duplicates are cross-root and keep root order), so no shipped resolution changes. Kind: defect (documentation and behaviour mismatch). Security: false. Disposition: adjudicate the rule (sort by candidate leaf name, or document group order), then update line 108.",
+    "security": false
+   },
+   {
+    "id": "RC-5",
+    "source": "RevCorrect229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "Runtime discovery is now one level deeper than the static checkers/generators that enumerate only skills/adapter-* (scripts/lib/default-only-check.js, scripts/lib/instruction-sequence.js, scripts/generate-codex/index.js, scripts/generate-opencode/index.js), so a real (non-symlink) adapter placed inside a group directory would be discovered at runtime but not seen by default-only-check or the codex copy. Latent: shipped content is unaffected.",
+    "evidence": "Runtime discovery is now one level deeper than the static gates and generators. scripts/lib/default-only-check.js:114-115 (the one-adapter-per-restricted-category invariant), scripts/lib/instruction-sequence.js:280-283, scripts/generate-codex/index.js:310 (flat glob; excludes pi and full) and scripts/generate-opencode/index.js:167-168 (hash-cache source list) all enumerate only skills/adapter-*. Shipped content is unaffected: the only nested layout is packages/full's symlinks, which these checkers exclude or reach through their flat real sources. Latent: a real, non-symlink adapter placed in a group of a package would be discovered at runtime but invisible to default-only and to the codex copy, so a duplicate restricted-category adapter could pass the gate. Kind: cleanup. Security: false. Disposition: adjudicate whether groups are a full-bundle-only convention (and say so in the doc) or extend the checkers.",
+    "security": false
+   },
+   {
+    "id": "RT-2",
+    "source": "RevTests229",
+    "severity": "Important",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:537",
+    "failureMode": "The shipped-bundle test's loadAdapter('plain-git') origin/realpath assertions (lines 537-539) pass on the pre-change code: in the repo the library-relative roots add every sibling packages/*/skills, so plain-git resolves through packages/git/skills with or without the descent, and realpath on both sides erases the packages/full/skills/git symlink. Only the discovery assertion filtered to shippedSkills (line 546) guards the descent. realpath also hides that 10 of 16 in-repo adapter ids now report a different `dir`, which no test pins.",
+    "evidence": "RevTests229-2 (Important; disposition fix; kind defect; security false). Lines 537-539 (loadAdapter plain-git plus realpath equality) pass on the pre-change code. In-repo, libraryRelativeSkillsRoots (adapters.js:338) adds every sibling packages/PKG/skills, so plain-git resolves through the flat packages/git/skills root with or without the descent, and fs.realpathSync on both sides erases the packages/full/skills/git symlink the test claims to exercise. Observed: the new file on the pre-change copy fails only at line 546, so 537-539 pass; with the names block (lines 541-547) removed, the test is green under M1 (descent deleted). The string comparison expect(result.dir).toBe(groupedWorkflow) is green on head and red on the pre-change code (Received .../packages/git/skills/adapter-workflow-plain-git). Only line 546 (discovery filtered to shippedSkills) guards the descent here, and it is red under M1 and M11. The realpath also hides an observable change: 10 of 16 in-repo adapter ids now report a different dir (for example plain-git: packages/git/skills before, packages/full/skills/git after; same realpath), and no test pins it. The premise guard at line 535 is live (red when the symlink is removed).",
+    "security": false
+   },
+   {
+    "id": "RC-7",
+    "source": "RevCorrect229",
+    "severity": "Nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:583",
+    "failureMode": "The test 'a group directory that declares its own adapter.yaml is that adapter, and its children are not also scanned' never exercises the `continue` after a manifest-bearing directory, because the writeAdapterDir helper always writes a SKILL.md and the SKILL.md skip therefore also prevents descent. Mutation: deleting that `continue` (adapters.js:454) leaves all six new tests green.",
+    "evidence": "writeAdapterDir always writes SKILL.md (test helper lines 92-97), so the 'children are not also scanned' test (583-599) never exercises the continue at adapters.js:454 for an adapter directory without SKILL.md. Mutation check on a private copy: deleting that continue leaves all six new tests green (toolchain-adapters.test.js -t 'adapters grouped one level': 6 passed), while deleting the SKILL.md skip (adapters.js:467-469) is caught (1 failed). No shipped impact: the 52 real manifests contain no nested adapter.yaml (set-diff probe). Kind: defect (test gap). Security: false. Disposition: fix (add a fixture adapter directory with adapter.yaml and no SKILL.md that contains a nested adapter.yaml, and assert only the parent is discovered).",
+    "security": false
+   },
+   {
+    "id": "RC-8",
+    "source": "RevCorrect229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:601",
+    "failureMode": "Docs/JSDoc were not updated for one-level group discovery: docs/guides/adapter-authoring.md:27 still defines the installed tier as skills/<dir>/; the module doc (adapters.js lines 17-27) omits the SKILL.md exclusion the code applies; the discoverAdapters JSDoc still says a directory without a valid adapter.yaml 'is silently skipped'; CONTRIBUTING.md asks PRs for documentation and CHANGELOG updates and neither is in the diff.",
+    "evidence": "docs/guides/adapter-authoring.md:27 still defines the installed tier as each package's skills/<dir>/, so authors are not told that skills/<group>/<dir>/ is searched. The module doc (adapters.js:17-27) omits the SKILL.md exclusion the code applies (467-469). The discoverAdapters JSDoc (adapters.js:415) still says a directory without a valid adapter.yaml 'is silently skipped', which is no longer true for groups. The NOT_INSTALLED text keeps listing <root>/<name> as searched locations (pre-existing wording) and adds the group form in a parenthetical (601-602; verified to render). CONTRIBUTING.md:380-381 asks for 'Documentation updated' and 'CHANGELOG.md updated' on PRs; neither file is in the diff. Kind: cleanup. Security: false. Disposition: fix.",
+    "security": false
+   },
+   {
+    "id": "RT-1",
+    "source": "RevTests229",
+    "severity": "Important",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:588",
+    "failureMode": "Removing the `continue` after a manifest-bearing installed directory (adapters.js:454) survives the entire test file (every test stays green): the test about a group directory that declares its own adapter.yaml stays green because its fixture writes SKILL.md, so the SKILL.md skip masks the missing `continue`; it goes red only when both guards are removed. The comment at lines 588-589 claims a guard the tests do not exercise for an adapter without SKILL.md.",
+    "evidence": "RevTests229-1 (Important; disposition fix; kind defect; security false). Removing the continue after a manifest-bearing installed directory (adapters.js:454) survives the whole file (mutant M3: 37/37, no new test red). The test about a group directory that declares its own adapter.yaml and whose children are not also scanned (lines 583-600) stays green because its fixture writes SKILL.md, so the SKILL.md skip (adapters.js:467-469) masks the missing continue. The test goes red only when both guards are removed (M3b) and stays green under M4. Its comment at 588-589 (descending into it would invent one) claims a guard that does not exist for an adapter without SKILL.md, which readSkillMd explicitly supports. Impact is latent: the in-repo listing digest is unchanged under M3. Candidate C1 (manifest-bearing directory WITHOUT SKILL.md holding a manifest-bearing child, expecting beads) is green on head and red under M3.",
+    "security": false
+   },
+   {
+    "id": "RT-3",
+    "source": "RevTests229",
+    "severity": "Important",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "No new test guards the descent for any group other than one named `git`: restricting the nested scan to a directory literally named `git` (mutant of adapters.js:470) leaves the whole test file green, although the rule is documented generically and the shipped bundle also groups core, e2e-testing and infrastructure adapters (8 adapters in non-git groups); under that mutant the in-repo discovery listing drops from 51 to 43 entries.",
+    "evidence": "RevTests229-3 (Important; disposition fix; kind defect; security false). Mutant M5 restricts the nested scan to a group named git (adapters.js:470). The file stays 37/37 and no new test is red, because all six new tests use only the git group. The rule is stated generically in the module doc (adapters.js:18-30: a subdirectory that carries no adapter.yaml is treated as a GROUP). The shipped bundle also groups core (adapter-package-runner-npm), e2e-testing (adapter-e2e-quality-playwright) and infrastructure (six adapters): under M5 the in-repo listing drops from 51 to 43 entries. In-repo those 8 are duplicates of flat adapters (unique real dirs stay at 34), so the repo cannot show the loss; in an installed layout without those package siblings they would be unreachable [INFERENCE from the code and the mutant, not run]. Candidate C3 (group named vcs) is green on head and red under M5.",
+    "security": false
+   },
+   {
+    "id": "RT-4",
+    "source": "RevTests229",
+    "severity": "Nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:500",
+    "failureMode": "No test pins that repo-local roots (.ensemble/adapters) stay one level deep: a mutant that also descends into the repo-local root leaves the test file green.",
+    "evidence": "RevTests229-4 (Nit; disposition deferred; kind defect; security false). Mutant M10 also descends into the repo-local root (.ensemble/adapters/GROUP/DIR) and no new test goes red (37/37). The module doc (adapters.js:9) documents repo-local as one level, projectRoot/.ensemble/adapters/DIR/, and nothing in the diff pins the descent to the installed tier. Candidate C4 (a nested directory under .ensemble/adapters/group expected not to be discovered) is green on head and red under M10. No comment claims this guard, hence Nit.",
+    "security": false
+   },
+   {
+    "id": "RT-5",
+    "source": "RevTests229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:473",
+    "failureMode": "The `typeof nestedManifest.adapter === 'string'` check on nested manifests is untested: a mutant that accepts a nested manifest with no adapter id leaves the test file green; downstream resolve-guard.js would then add `undefined` to shippedAdapterNames.",
+    "evidence": "RevTests229-5 (Nit; disposition deferred; kind defect; security false). The typeof check on nested manifests (adapters.js:473) is untested: mutant M7 accepts a nested manifest with no adapter id and the file stays 37/37. Candidate C2 (nested adapter.yaml holding only a version, expecting an empty list) is green on head and red under M7. Impact is latent [INFERENCE, not run]: discovery feeds resolve-guard.js:76-84, which does names.add(entry.name), so a nameless nested entry would place undefined into shippedAdapterNames for any category that manifest declares. The top-level equivalent is equally untested (RevTests229-10).",
+    "security": false
+   },
+   {
+    "id": "RT-6",
+    "source": "RevTests229",
+    "severity": "Nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:442",
+    "failureMode": "The describe-block header comment (lines 442-447) says the adapter id is deliberately not 'plain-git' because assertions on it pass by resolving the real adapter whether or not the nested scan works, but the same block still uses plain-git in the symlink test (about line 496, filtered by withinProjectRoot) and in the unfiltered loadAdapter at line 537 (the vacuity the comment warns about).",
+    "evidence": "RevTests229-6 (Nit; disposition deferred; kind defect; security false). The block header (lines 442-447) says the id is deliberately not plain-git because such assertions pass by resolving the REAL adapter whether the nested scan works or not. The block still uses plain-git at line 496 (symlink test, filtered by withinProjectRoot, so not vacuous) and in the unfiltered loadAdapter at line 537 (vacuous; see RevTests229-2). The comment's reasoning is correct and identifies the vacuity the shipped test then reintroduces; either the comment or the assertion must change.",
+    "security": false
+   },
+   {
+    "id": "RT-7",
+    "source": "RevTests229",
+    "severity": "Nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:500",
+    "failureMode": "The test title 'the descent is exactly one level: an adapter two levels under a skills root is NOT discovered' is off by one: its fixture packages/full/skills/git/deeper/adapter-too-deep is three path components below the skills root (two below the group).",
+    "evidence": "RevTests229-7 (Nit; disposition deferred; kind defect; security false). Line 500 says an adapter two levels under a skills root, but the fixture (lines 503-505) is packages/full/skills/git/deeper/adapter-too-deep: three path components below the skills root, two below the group. The assertion itself is right (mutant M2, which descends two levels below the group, turns it red); only the title is off by one.",
+    "security": false
+   },
+   {
+    "id": "RT-9",
+    "source": "RevTests229",
+    "severity": "Nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:483",
+    "failureMode": "The new symlink-based test (line 483) creates a symlink with no win32 guard (the same pattern as a pre-existing test at line 420), and the premise guard at line 535 fails with a bare 'Expected true, Received false' instead of the explanation its comment says it gives.",
+    "evidence": "RevTests229-9 (Nit; disposition deferred; kind diagnostic; security false). Line 483 creates a symlink with no win32 guard, the same pattern as the pre-existing test at line 420. The premise guard at line 535 fails with a bare Expected true and Received false message and no explanation, although its comment says it should say so; it is red when the bundle symlink is absent (verified). All 20 runs-on entries in .github/workflows are ubuntu-latest, so there is no current gating impact, but validate.yml shows the repo cares about Windows clones.",
+    "security": false
+   },
+   {
+    "id": "RT-10",
+    "source": "RevTests229",
+    "severity": "Pre-existing",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:452",
+    "failureMode": "The top-level 'manifest lacks a string adapter id' check (adapters.js:452) is untested: a mutant removing it leaves the whole test file green. This predates the diff; the nested branch copies the same pattern.",
+    "evidence": "RevTests229-10 (Pre-existing; disposition deferred; kind diagnostic; security false). The top-level manifest-lacks-a-string-adapter-id check (adapters.js:452) is untested: mutant M12 removes it and the whole file stays 37/37. This predates the diff; the nested branch copies the same unguarded pattern (RevTests229-5).",
+    "security": false
+   },
+   {
+    "id": "RI-2",
+    "source": "RevInstall229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:601",
+    "failureMode": "The NOT_INSTALLED hint says installed roots take <root>/<group>/<dir>/adapter.yaml 'one level in', but a group carrying SKILL.md is not descended and group/dir is two levels below the root; the parenthetical also reads as if repo-local and user roots accepted grouped paths, which they do not (they throw NOT_INSTALLED).",
+    "evidence": "[Nit | fix | diagnostic] The hint says installed roots take root/group/dir/adapter.yaml one level in. A group carrying SKILL.md is not descended (467-469, tested), and group/dir is two levels below the root. The parenthetical binds to installed roots, but repo-local and user grouped paths (probed) throw NOT_INSTALLED, so a reader may over-apply it. Reword the depth rule and the SKILL.md exclusion.",
+    "security": false
+   },
+   {
+    "id": "RI-3",
+    "source": "RevInstall229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:19",
+    "failureMode": "The module doc says any subdirectory without adapter.yaml is a GROUP, omitting that SKILL.md-bearing directories are skipped; it also says a directory carrying a manifest is never descended, which is false for an unparseable or id-less adapter.yaml.",
+    "evidence": "[Nit | fix | cleanup] The module doc says any subdirectory without adapter.yaml is a GROUP, but SKILL.md-bearing directories are skipped (467-469; comment at 459-460). It also says a directory carrying a manifest is never descended, which is false for an unparseable or id-less adapter.yaml (see 467-475). State both rules as implemented.",
+    "security": false
+   },
+   {
+    "id": "RI-4",
+    "source": "RevInstall229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:21",
+    "failureMode": "The new comments (module doc lines 21-23, code comment ~457) and the shipped-bundle test cover only the git group, but packages/full/skills also mirrors core, e2e-testing and infrastructure groups: in a Claude-layout probe adapter ids go from 4 to 16, adding 12 shipped ids (act, aws, azure-boards, azure-devops, docker-kubectl, github, git-town, jira, npm, plain-git, playwright, terraform). The wider reach is neither documented nor asserted over the shipped id set.",
+    "evidence": "[Nit | fix | cleanup] Comments at 21-23 and 457 and the shipped test cover only git, but packages/full/skills also mirrors core, e2e-testing and infrastructure. Claude-layout probe: adapter ids go from 4 (beads, coderabbit, default, reviewdog) to 16, adding 12 shipped ids (act, aws, azure-boards, azure-devops, docker-kubectl, github, git-town, jira, npm, plain-git, playwright, terraform). Document the mirror case and assert over the shipped id set.",
+    "security": false
+   },
+   {
+    "id": "RI-5",
+    "source": "RevInstall229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:467",
+    "failureMode": "A directory whose adapter.yaml fails to parse is read as having no manifest (readManifest returns null), so with no SKILL.md it is descended: an unparseable broken/adapter.yaml plus a valid broken/nested/adapter.yaml makes `nested-under-broken` an installed adapter, although the doc says manifest-bearing directories are never descended. Needs a malformed manifest; default config is unaffected.",
+    "evidence": "[Nit | adjudicate | defect] A directory whose adapter.yaml fails to parse reads as no manifest (readManifest returns null), so with no SKILL.md it is descended (467-475). Probe: an unparseable broken/adapter.yaml plus a valid broken/nested/adapter.yaml makes nested-under-broken an installed adapter, although the doc (26-28) says manifest-bearing directories are never descended. Needs a malformed manifest, so default config is unaffected. Check existence instead of parse, or fix the doc.",
+    "security": false
+   },
+   {
+    "id": "RI-6",
+    "source": "RevInstall229",
+    "severity": "Important",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "<projectRoot>/packages/*/skills is repository content and its adapters are discovered with origin 'installed', exempt from the repo-local trust check (UNTRUSTED_REPO_ADAPTER). The descent extends that exemption one level deeper: a non-interactive probe of packages/evil/skills/grp/adapter-evil resolves as installed with no error, while .ensemble/adapters/... fails with UNTRUSTED_REPO_ADAPTER. The depth-one form already resolved before this diff; the diff extends it to depth two with no test or doc.",
+    "evidence": "[Important | adjudicate | security] projectRoot/packages/*/skills is repository content and is exempt from the repo-local trust check. The descent now accepts an adapter one level deeper: a non-interactive probe of packages/evil/skills/grp/adapter-evil resolves as installed with no error, while .ensemble/adapters/... fails with UNTRUSTED_REPO_ADAPTER. The depth-one form already resolved before this diff, so the bypass predates it; the diff extends it to depth two with no test or doc. Maintainers must decide before merge whether project-relative installed roots are trusted (TRD I5 says untrusted by default).",
+    "security": true
+   },
+   {
+    "id": "RI-7",
+    "source": "RevInstall229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:19",
+    "failureMode": "docs/guides/adapter-authoring.md:27 and lines 11-15 describe only the flat skills/<dir>/ shape, while the diff makes skills/<group>/<dir>/ searchable; CHANGELOG.md's Unreleased section is empty although CONTRIBUTING.md:380-381 requires documentation and CHANGELOG updates in PRs.",
+    "evidence": "[Nit | fix | cleanup] docs/guides/adapter-authoring.md:27 says the installed tier is skills/dir/ where the shipped adapters live, and lines 11-15 show only the flat shape. The diff makes skills/group/dir/ searchable and the full bundle ships git that way. CHANGELOG.md's Unreleased section (line 8) is empty, while CONTRIBUTING.md:380-381 requires documentation and CHANGELOG updates under PR Requirements. Update step 3 and add an entry.",
+    "security": false
+   },
+   {
+    "id": "RI-8",
+    "source": "RevInstall229",
+    "severity": "Nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "In the monorepo layout discoverAdapters entries go from 38 to 51 with the same 16 names (the 13 new entries duplicate package-root adapters via packages/full/skills/<group>), and loadAdapter('plain-git') now returns a packages/full/skills/git/... dir instead of packages/git/skills/... (same realpath); the code comment 'finds the SAME 51 adapters' counts duplicates without saying so.",
+    "evidence": "[Nit | fix | diagnostic] Monorepo entries go from 38 to 51 with the same 16 names, and loadAdapter('plain-git') now returns packages/full/skills/git/... instead of packages/git/skills/... (same realpath). Consumers collapse by name (detect.js:616, resolve-guard.js:76, first match), and root realpath de-duplication drops no adapter. The comment at 466 'finds the SAME 51 adapters' counts entries with duplicates; say so, or de-duplicate.",
+    "security": false
+   },
+   {
+    "id": "RI-9",
+    "source": "RevInstall229",
+    "severity": "Pre-existing",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:470",
+    "failureMode": "adapter-workflow-plain-git and adapter-worktree-plain-git both declare `adapter: plain-git`. The collision predates the diff, but the full bundle could not reach either before; now loadAdapter('plain-git') silently takes the sorted-first (workflow) one.",
+    "evidence": "[Pre-existing | fix | defect] adapter-workflow-plain-git and adapter-worktree-plain-git both declare adapter: plain-git (line 1 of each). The collision predates the diff, but the full bundle could not reach either before; now loadAdapter('plain-git') silently takes the sorted-first (workflow). Not blocking; make the id unique or document it.",
+    "security": false
+   },
+   {
+    "id": "S-1",
+    "source": "gate-security-lane",
+    "severity": "Pre-existing",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:474",
+    "failureMode": "Adapters under project-relative 'installed' roots (<projectRoot>/packages/*/skills, projectRoot = process.cwd()) are labelled origin 'installed' and bypass the non-interactive trustedRepoAdapters gate, which applies only to origin 'repo-local'. In a cloned untrusted repo a planted packages/x/skills/<dir>/adapter.yaml (possible at the base) or, with this diff, packages/x/skills/<group>/<dir>/adapter.yaml is returned by loadAdapter ahead of the shipped adapter when it declares a shipped default id, or auto-selected by detection; runCapability then execs argv permitted by the manifest's own binaries/allowlist. The diff does not create the exposure but adds a second hard-coded copy of the unguarded labelling at depth 2.",
+    "evidence": "Read-only static trace; nothing executed. (1) Who controls the directories: adapters.js:384-388 installedSkillsRoots = projectPackagesSkillsRoots(projectRoot) (:275-278, readdir of <projectRoot>/packages, symlinks followed) FIRST, then libraryRelativeSkillsRoots(), then ctx.installedRoots (no CLI flag or env wires it: grep of lib/ for installedRoots assignments found none; toolchain-cli.js:983-986 says so). toolchain-cli.js:990 main() default ctx = {projectRoot: process.cwd(), detect: detectAdapter}. Library-relative roots derive from __dirname via the fixed LIBRARY_LOCATION_TAILS allow-list and are installer-controlled; project-relative roots are controlled by whoever authored the checkout. (2) What the new code reads: adapters.js:456-476 - for each skills-root child with no parseable string-id adapter.yaml and no SKILL.md (existsSync :467; a cost heuristic, not a control: a hostile group dir simply omits SKILL.md), listSubdirs(child) then readManifest(grandchild) and push {name: manifest.adapter, origin:'installed', dir} at :474; one level only, no recursion. (3) Symlinks: isDirEntry (:154-166) statSync-follows symlinked dirs; listSubdirs (:178-189), existsSync, readdirSync and readFileSync (:203) all follow links with no lstat/realpath containment, so a group dir can point anywhere; reach is limited to listing child dirs and reading <child>/adapter.yaml plus existsSync of SKILL.md - nothing is written, no listing is surfaced (errors are swallowed), and anything reachable that way an attacker could equally plant inside the repo, so no capability beyond the root cause here. (4) What happens to the result: adapters.js:535-560 gates only repoLocalMatch (trustedRepoAdapters), :579-587 returns the installed match ungated, and the first match in discovery order wins (project-relative before shipped); detect.js:616-632 loads every discovered name and auto-selects the single candidate whose manifest.detect signals match repo-controlled files; resolve-guard.js:76-86 counts discovered ids as shipped; runner.js:1189-1244 runCapability -> execFile(argv[0], ..., {shell:false}) after denyRuntimeAllowlist (:558-577), which checks argv[0] against the MANIFEST'S OWN binaries/allowlist (binaries:[sh] + allowlist sub '-c' passes matchesSubcommandWords); runner.js:687-691 buildChildEnv admits parent env names listed in manifest env[]; validate.js validateAdapterDir/validateAllowlist run only from `toolchain-cli validate` (grep of lib/ non-test code) and readManifest (:200-215) only yaml.load()s (js-yaml ^4.1.0, packages/development/package.json:26, safe default schema); toolchain-cli.js:455 and :692 pass the allowlist to the confirm display only for origin 'repo-local'; confirm.js:350-355 auto-confirms non-interactive runs. (5) Pre-existing: snapshot-base adapters.js:375-377, :443, :547-553 have the identical depth-1 behaviour. The maintainers' tests record the tier as exempt (scripts/tests/toolchain-confirm.test.js:51; scripts/tests/toolchain-detect.test.js:98-100: 'never subjects to the repo-local ... trust check') and the TRD threat row for a cloned repo shipping an adapter (docs/TRD/TRD-2026-8d825f54-tool-abstraction-layer.md:121) lists only .ensemble/adapters as mitigated. (6) Checked, no finding: directory names come from readdir (no separator or '..' injection); discoverAdapters spawns nothing and has no network/SQL/shell/crypto; YAML parse is safe and wrapped in try/catch; all fs errors are swallowed; descent is bounded to one level (no recursion or cycles); packages/pi/vendor/lib/toolchain/adapters.js and packages/codex/.codex/skills/vendor/lib/toolchain/adapters.js are byte-identical to the development copy (same blob 37f90f7 in the diff index lines); the new tests only create and remove mkdtemp directories.",
+    "security": true
+   },
+   {
+    "id": "O-1",
+    "source": "orchestrator",
+    "severity": "Nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:435",
+    "failureMode": "The PR description is not current for head 5351850 (the SKILL.md-directory exclusion commit): it says 'five cases' for the new describe block (the block has six tests), it omits the SKILL.md-directory exclusion from Solution, Changes and Risk, it reports '36 passed' for the test file while the head file has 37 tests, and its measured adapters-discovered table (7 -> 20) predates that commit.",
+    "evidence": "Head test file: 33 test( calls vs 27 at base (+6 in the new describe block, diff lines 208, 231, 260, 281, 316, 343); PR body (pr-body.txt) says: 'five cases in a new describe block', 'With the fix: 36 passed, exit 0', Solution describes only the no-adapter.yaml rule, Risk bounds only by depth limit. The SKILL.md exclusion is only in commit 5351850.",
+    "security": false
+   }
+  ],
+  "prs-measure2/pr-293.json": [
+   {
+    "id": "f1",
+    "source": "reviewer-s1-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:787",
+    "failureMode": "findDeSymlinkedMirrors() only walks the agents, commands, hooks, lib and skills subtrees of packages/full, so the new top-level packages/full/toolchain mirror (five symlinks added here: builtin, categories, schemas, tool-inventory.yaml, toolchain.default.yaml) is never inspected; on a checkout without symlink support its stand-in files are missing from the count and sample in the 'packages/full/ mirror(s) are path text' warning that this function exists to produce.",
+    "evidence": "Read scripts/validate-all.js:769-791 (head): the walk list is for (const sub of ['agents', 'commands', 'hooks', 'lib', 'skills']) with no 'toolchain'. Read packages/full/toolchain in the snapshot: all five entries are symlinks created by this diff (slice-1.diff) and none sits under a walked root. Read validate-all.js:1093-1115: the caller only prints a warning ('a warning rather than an error'), and every workflow under .github/workflows runs on ubuntu-latest, so the effect is limited to advisory output on a checkout without symlinks (the warning still fires there from the lib and skills stand-ins; only the toolchain entries are left out of it). No snippet run."
+   },
+   {
+    "id": "f2",
+    "source": "reviewer-s1-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:803",
+    "failureMode": "validateStepKeys, validateCapabilityIds and validateCapabilityInvocationDrift skip only the pi, codex and opencode package directories and read every top-level .yaml in each packages/<pkg>/commands; the symlink this change adds at packages/full/commands/configure-team.yaml is now listed for the full package, so the same source command file is loaded, checked and counted a second time (and a violation in it would be reported under both packages/development and packages/full), although each loop's doc comment says it covers source packages only; scripts/lint-model-ids.js has the same effect for packages/full/agents/documentation-specialist.yaml and packages/full/commands/configure-team.yaml.",
+    "evidence": "Read scripts/validate-all.js:799-887 (head): each of the three loops runs if (pkg === 'pi' || pkg === 'codex' || pkg === 'opencode') continue; and then fs.readdirSync(dir).filter(f => f.endsWith('.yaml')) over packages/<pkg>/commands, incrementing checked per file; their doc comments say 'Source packages only: pi/codex/opencode are generated output'. Listed packages/full/commands in the snapshot: assessment, core, development, e2e-testing, git and product are directory symlinks (a .yaml filter returns nothing for them) and configure-team.yaml is the file symlink this diff adds, so it is now returned for full. Read scripts/lint-model-ids.js:23-44: it lists every package's agents/*.yaml and commands/**/*.yaml with no mirror skip, so it also rescans the two new symlinks. The Codex, OpenCode and Pi generators got the mirror skip in this PR (scripts/lib/mirror-packages.js); these consumers did not. The effect is a duplicated count and duplicated messages, not a failure. No snippet run."
+   },
+   {
+    "id": "f3",
+    "source": "reviewer-s1-b",
+    "severity": "pre-existing",
+    "locationOrLink": "scripts/lib/file-discovery.js:218",
+    "failureMode": "getOutputPath treats an output_path as contained in the YAML's directory when the resolved path merely starts with the directory string (resolvedOutput.startsWith(dir), where dir has no trailing path separator), so an output_path such as ../commands-evil/x.md, which resolves to a sibling directory sharing the name prefix, passes the check and generate-markdown then writes the generated Markdown outside the intended directory.",
+    "evidence": "Read scripts/lib/file-discovery.js:211-230: getOutputPath sets dir = path.dirname(yamlPath) and resolvedOutput = path.resolve(dir, metadata.output_path); the comment above the check says 'Security check: ensure output is within repo', and the only rejection is !resolvedOutput.startsWith(dir) at line 218. Ran one throwaway snippet that extracted the function text from the snapshot file and called it with yamlPath /repo/packages/development/commands/x.yaml: output_path '../commands-evil/x.md' printed /repo/packages/development/commands-evil/x.md (accepted, outside the commands directory); '../agents/x.md' printed /repo/packages/development/commands/x.md (rejected, falls back to the default); 'ensemble/x.md' printed /repo/packages/development/commands/ensemble/x.md. Reach: packages/development/commands/configure-team.yaml (mirrored by this PR's new packages/full/commands/configure-team.yaml link) sets metadata.output_path: ensemble/configure-team.md, and scripts/generate-markdown.js processYamlFile (lines 216-259) passes metadata to getOutputPath and then calls writeFileAtomic on the result. These lines are untouched by this PR (scripts/lib/file-discovery.js appears in none of its three slice diffs). Impact is small: only sibling directories that share the prefix are reachable and the YAML is repository-controlled. A separator-aware containment test (path.relative, or startsWith(dir + path.sep)) closes it.",
+    "uncertain": false
+   },
+   {
+    "id": "f4",
+    "source": "reviewer-s2-a",
+    "severity": "pre-existing",
+    "locationOrLink": "scripts/generate-opencode/index.js:340-357",
+    "failureMode": "In runPipeline of scripts/generate-opencode/index.js, when the stored hash for the command sources equals the freshly computed one (a second run without --force and without source edits), the CommandTranslator step takes its cached branch and never calls translator.executeSync, so cmdResult keeps the empty configBlock it was initialised with; the manifest step then rewrites opencode.json with an empty command object built from cmdResult.configBlock, dropping every command registration. The cached branch also never assigns newCache._cmdHash (and the skills step never assigns newCache._skillHash when cached), so saveHashCache writes a cache without those keys and the next run translates again: consecutive incremental runs alternate between a complete opencode.json and one with no commands.",
+    "evidence": "Read scripts/generate-opencode/index.js in the snapshot: runPipeline lines 244-470 and the cache helpers at lines 70-108. Line 326 initialises cmdResult with an empty configBlock; lines 340-347 skip translator.executeSync when oldCache._cmdHash equals cmdHash and the run is not a dry run; line 357 sets newCache._cmdHash only in the else branch; line 427 builds the manifest command entry from cmdResult.configBlock (cmdResult is assigned only at lines 326 and 356); lines 74-91 show loadHashCache and saveHashCache read and write the whole cache object, so a key not copied into newCache is lost. Lines 260-278 have the same shape for _skillHash. These lines are outside the PR's hunks in this file (new-side lines 23-29, 42-51 and 188-203), so the behaviour predates the change. I did not run the generator; the claim rests on tracing the code.",
+    "uncertain": false
+   },
+   {
+    "id": "f6",
+    "source": "reviewer-s2-b",
+    "severity": "nit",
+    "locationOrLink": "scripts/lib/mirror-packages.js:21",
+    "failureMode": "The list of mirror packages exists in four separate hand-kept copies (the MIRROR_PACKAGES Set in scripts/lib/mirror-packages.js, the MIRROR_PACKAGES record in packages/pi/src/self-contained-packages.ts, the EXCLUDED_PACKAGES record in packages/pi/src/transformers/skill-copier.ts and the ADAPTER_SOURCE_EXCLUDED_PACKAGES Set in packages/opencode/lib/skill-copier.js) although the comments in mirror-packages.js and generate-opencode/index.js say this file holds the one copy, and no test compares them, so naming a further mirror package in one list leaves the other generators reading it as a source while every test in the change stays green.",
+    "evidence": "Read scripts/lib/mirror-packages.js whole: its header says one identity for every JS generator rather than a copy each, because drifting copies kept the gap open, and line 21 is `const MIRROR_PACKAGES = new Set(['pi', 'full']);`. The diff of scripts/generate-opencode/index.js adds the comment that mirror-packages.js 'now holds the one copy of this set'. Searching the snapshot found packages/opencode/lib/skill-copier.js:26 `const ADAPTER_SOURCE_EXCLUDED_PACKAGES = new Set(['pi', 'full']);` (the SkillCopier that index.js names in its own comment as running the adapter collision check) and packages/pi/src/transformers/skill-copier.ts:165-168 `const EXCLUDED_PACKAGES: Record<string, true> = { pi: true, full: true, ...SELF_CONTAINED_PI_PACKAGES }`, which does not spread the new MIRROR_PACKAGES that generator.ts imports from the sibling self-contained-packages.ts. The change's tests pin each list on its own: packages/pi/tests/mirror-packages.test.ts (precondition case: the TS record contains full and pi) and scripts/tests/generator-mirror-package-exclusion.test.js ('both mirror packages are named': the JS Set has full and pi). A scan of every JS/TS file in the snapshot found no file that loads both the TS list and the JS list, and none that touches the two skill-copier lists. All four hold exactly pi and full today, so this is drift risk, not a wrong output now."
+   },
+   {
+    "id": "f7",
+    "source": "reviewer-s3-a",
+    "severity": "important",
+    "locationOrLink": "scripts/validate-all.js:284",
+    "failureMode": "dirnamePaths counts the reported line on the comment-stripped text, and stripComments deletes multi-line block comments together with their newlines, so validateBundleDataPaths prints a smaller, wrong line number for any call that sits below a JSDoc block (all 10 real call sites in packages/full/lib are misreported; for example the call at lib/toolchain/runner.js line 585 is reported as line 184).",
+    "evidence": "Ran a snippet that loads scripts/validate-all.js from the snapshot and compares dirnamePaths(source).line with the line of each real call (same regex run on the raw source). It printed 'literal call sites: 10 | with wrong reported line: 10', e.g. lib/toolchain/runner.js reported 184 (a doc-comment line), actual 585; lib/toolchain/builtin/work-graph-links-fallback.js reported 12, actual 89; lib/toolchain/config.js reported 12 and 13, actual 22 and 23; lib/index.js reported 8 and 52, actual 13 and 61. A second snippet on an in-memory fixture (5-line JSDoc, then the call on line 6) printed 'lib/block.js:2 reads lib/gone.yaml'. Cause: stripComments (validate-all.js:186-188) replaces /* */ blocks with '' (newlines lost) and line is counted from that text at validate-all.js:284. The unit tests that assert line numbers (scripts/tests/validate-bundle-data-paths.test.js:39-49 and 63-70) use no comment or only a one-line /* */, so they cannot see it. The doc comment at validate-all.js:262-272 and the test title at line 39 promise 'the line it starts on'."
+   },
+   {
+    "id": "f8",
+    "source": "reviewer-s3-a",
+    "severity": "important",
+    "locationOrLink": "scripts/validate-all.js:354",
+    "failureMode": "validateBundleDataPaths rejects a path that resolves to the bundle root itself (for example path.resolve(__dirname, '..') in a file directly under lib/ or hooks/): target equals fullDir, the guard target.startsWith(fullDir + path.sep) is false, and the check reports it as resolving outside the bundle, so npm run validate fails a correct bundle with a misleading message.",
+    "evidence": "Ran the real validateBundleDataPaths (loaded from the snapshot, fs stubbed in memory after loading, nothing written) on a bundle whose lib/root.js is `const ROOT = path.resolve(__dirname, \"..\");`. It returned 'lib/root.js:1 builds path.join(__dirname, ..), which resolves outside the bundle - the install copies only the bundle, so that path exists on no installed plugin'. boundary is fullDir + path.sep (line 331) and target is path.join(path.dirname(file), ...segments) (line 350), so for '..' from lib/ target === fullDir and startsWith(boundary) is false at line 354. No file in today's bundle has this shape (the real run over 10 call sites returned []), and no test covers it: the only escape test (scripts/tests/validate-bundle-data-paths.test.js:155-172) climbs to a sibling package. The sibling bundleRequireResolves is not affected in the same way for data paths; this one has no equality case."
+   },
+   {
+    "id": "f9",
+    "source": "reviewer-s3-a",
+    "severity": "important",
+    "locationOrLink": "scripts/tests/validate-bundle-data-paths.test.js:213-216",
+    "failureMode": "The bundleCodeFiles test symlinks only the root directory it walks (linked -> real) and the nested directory is a real one, so a walker that used entry.isDirectory() instead of fs.statSync(entryPath).isDirectory() would still return ['a.js', 'b.js']; the test cannot fail for the symlinked-directory behaviour its own comment says it guards.",
+    "evidence": "Settled by reading, not run (a fixture needs writes). validate-bundle-data-paths.test.js:213 creates `linked` -> `real` and line 215 passes `linked` as the argument, so fs.readdirSync(linked, {withFileTypes:true}) follows the root link at the OS level; every entry the walk then meets (a.js, nested, c.test.js, node_modules, tests) is an ordinary file or directory and reports isDirectory() true, including nested/ that holds b.js. The comment at line 212 says the point is that 'a dirent for one reports itself as a link rather than a directory', but no entry inside the walked tree is a link to a directory. Other tests that build symlinks near this code (scripts/tests/validate-bundle-bare-requires.test.js:104-106, validate-full-bundle-requires.test.js:129-131) only sweep the real bundle and assert [], and a sweep that scans fewer files still returns [], so nothing in the suite fails if bundleCodeFiles stops following linked directories (validate-all.js:247-251)."
+   },
+   {
+    "id": "f11",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:557-582",
+    "failureMode": "validateFullBundleRequires still contains its own copy of the directory walk that this change extracted into bundleCodeFiles, so the skip list (node_modules, __tests__, tests) and the extension filter now live in two places and the two bundle checks can disagree about which files are in the bundle.",
+    "evidence": "Read: bundleCodeFiles (validate-all.js:233-259) is used by validateBundleBareRequires (line 444) and validateBundleDataPaths (line 338), while validateFullBundleRequires builds `files` with an identical inline walk at lines 557-582 (same three skipped names, same BUNDLE_CODE_EXTENSIONS and .test filter, same statSync)."
+   },
+   {
+    "id": "f12",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:277-278",
+    "failureMode": "Counts in comments contradict each other and the code: validateBundleDataPaths' doc says 8.1.0 shipped 'three of them broken' and lists five, the test header says 'eight of them unreachable', and the dirnamePaths comment says 'four of the six call sites' are one-liners while the real bundle has 10 literal __dirname call sites.",
+    "evidence": "Read validate-all.js:297-303 ('three of them broken' followed by five bullets), scripts/tests/validate-bundle-data-paths.test.js:7 ('eight of them unreachable') and validate-all.js:277-278. The real run printed '  ✓ 10 __dirname-relative data path(s) in lib/ and hooks/ resolve inside the bundle'; the grep of __dirname in packages/development/lib shows 7 one-line and 3 multi-line literal calls."
+   },
+   {
+    "id": "f13",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:361",
+    "failureMode": "validateBundleDataPaths increments checked before testing existence, so when a path is missing it prints '✗ N __dirname-relative data path(s) ... resolve inside the bundle' with N counting the missing paths too, the misleading-denominator shape validateFullBundleRequires avoids by printing resolved/total.",
+    "evidence": "Ran the real function on an in-memory bundle whose only in-bundle path (lib/block.js reading lib/gone.yaml) is absent; it printed '  ✗ 1 __dirname-relative data path(s) in lib/ and hooks/ resolve inside the bundle' although 0 resolve. checked++ is at validate-all.js:361, before the existsSync at line 362; compare validate-all.js:605-612, whose comment names this exact shape."
+   },
+   {
+    "id": "f16",
+    "source": "reviewer-s3-b",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:297",
+    "failureMode": "The doc comment on validateBundleDataPaths says 8.1.0 shipped 'three of them broken' and lists five targets, and the comment in dirnamePaths says 'four of the six call sites in the bundle today are one-liners', but the bundle has ten literal path.join/path.resolve(__dirname, ...) calls (seven on one line, three over several lines) and the header of scripts/tests/validate-bundle-data-paths.test.js says eight were unreachable.",
+    "evidence": "Read scripts/validate-all.js:277-278 and 296-303 and the test header. Ran dirnamePaths and bundleCodeFiles from the snapshot over packages/full/lib and packages/full/hooks: 10 literal calls, 7 on one line and 3 spread over several lines. Ten calls minus the two that were already satisfied before the new mirrors (lib/index.js reading ../skills and lib/review-precheck-cli.js reading local-ci-cli.js) is eight, the test header's number; the doc list omits the second call in lib/toolchain/config.js, lib/toolchain/validate.js and lib/toolchain/builtin/work-graph-links-fallback.js."
+   },
+   {
+    "id": "f17",
+    "source": "reviewer-s3-b",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:345",
+    "failureMode": "The not-checked tally counts only path.join/path.resolve calls whose first argument is the literal __dirname, so a __dirname-relative data path built another way is neither checked nor counted (lib/pr-review-brief-files.js:37-38 resolves the pr-review-cycle templates directory from a libDir = __dirname default parameter), yet the doc comments say every __dirname-relative path is checked and that the printed count makes the gap visible, and the run prints nothing about it.",
+    "evidence": "Searched packages/development/lib for __dirname: pr-review-brief-files.js:37-38 (defaultTemplateDirs(libDir = __dirname) returning path.resolve(libDir, '..', SKILL_TEMPLATES)) and review-prepare-runtime.js:133-135 (const dir = __dirname, then path.join(dir, 'facts.json')) match neither the pattern at validate-all.js:279 nor the tally at line 345. Ran validateBundleDataPaths on the snapshot: it printed '10 __dirname-relative data path(s) in lib/ and hooks/ resolve inside the bundle' and no 'not checked' line, so the tally was 0. The templates directory exists in the bundle (packages/full/skills/pr-review-cycle/templates), so nothing is broken today; the validator would not notice if it went missing.",
+    "uncertain": false
+   },
+   {
+    "id": "f19",
+    "source": "reviewer-s1-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/tests/validate-bundle-data-paths.test.js:217",
+    "failureMode": "The fixture in the bundleCodeFiles test links a directory (nested-link) but never a file, so the expectation of a.js, b.js, b.js is also met by a walk that recurses into entries whose dirent isDirectory() or isSymbolicLink() with no stat at all (so the new comment's claim that only a walk that stats through the link finds b.js via nested-link overstates what the test pins), and that walk silently drops every symlinked .js file because readdirSync on a link to a file throws ENOTDIR and the walk's catch returns, yet symlinked files are what packages/full/lib (100 of its 116 code files) and packages/full/hooks (permitter.js, the only code file there) consist of, so validateBundleDataPaths and validateBundleBareRequires could stop scanning them while every test in this file stays green.",
+    "evidence": "Read the whole test file, validate-all.js:233-259 (bundleCodeFiles: readdirSync withFileTypes, then statSync on each entry, a failed readdirSync returns silently) and its callers at :337-345 (validateBundleDataPaths, lib/ and hooks/) and :444-450 (validateBundleBareRequires). Traced the fixture by hand: the new expectation ['a.js','b.js','b.js'] is correct for the production walk, and it fails a walk that asks only dirent.isDirectory() (nested-link is then skipped), so the nested link does what the comment says against that walk. But a walk that recurses on dirent.isDirectory() or dirent.isSymbolicLink() yields a.js, nested/b.js, nested-link/b.js and passes too; the fixture has no symlinked file. Ran one throwaway read-only node snippet against the snapshot's real packages/full (production bundleCodeFiles source extracted from validate-all.js versus that dirent-or-isSymbolicLink walk). It printed: lib: production 116 files, 100 of them file symlinks, other walk 16, dropped 100 (it still sees lib/toolchain/config.js through the one directory symlink, but not lib/index.js, which the production walk returns); hooks: production 1 file (permitter.js, a symlink), other walk 0. find over the snapshot agrees: packages/full/lib holds 100 symlinked .js files and 1 symlinked directory (lib/toolchain), hooks/ holds 1 symlinked .js and no regular .js. The real-bundle tests (validateBundleDataPaths() and validateBundleBareRequires() toEqual []) cannot fail when files are dropped, the fixture-bundle tests write regular files only, and among the test files that call these validators (validate-bundle-data-paths, validate-bundle-bare-requires, validate-full-bundle-requires) only this one calls symlinkSync, for directories only. I did not execute the fixture or any test (snippets had to be read-only and write nothing), so the alternative walk passing the fixture is by tracing, not by execution. Suggested fix: link a file in the fixture (for example real/a-link.js to real/a.js) and expect a.js twice. Not blocking: the production walk is correct today; this is a gap in what the guard pins.",
+    "uncertain": false
+   },
+   {
+    "id": "f20",
+    "source": "reviewer-s1-b",
+    "severity": "important",
+    "locationOrLink": "scripts/validate-all.js:284",
+    "failureMode": "dirnamePaths takes each call's line number from the text returned by stripComments, and stripComments deletes block comments together with the newlines inside them. In any file with a multi-line block comment before the path.join or path.resolve call, the reported line is therefore smaller than the call's real line, and validateBundleDataPaths prints that number as file:line in every failure message it builds, so the reader is sent to unrelated code.",
+    "evidence": "I ran the unmodified source of stripComments and dirnamePaths, cut out of scripts/validate-all.js at the reviewed head. Input: a 4-line /** */ header, a filler line, then path.join(__dirname, '..', 'data', 'thing.yaml') on line 6; it returned line 3. I then ran dirnamePaths over every file under packages/full/lib and packages/full/hooks and compared with the real line (newlines counted in the original text before the call). Every file with a literal call is wrong, reported vs real: packages/full/lib/toolchain/runner.js 184 vs 585; lib/toolchain/validate.js 13 vs 90; lib/toolchain/builtin/work-graph-links-fallback.js 12 vs 89; lib/review-precheck-cli.js 56 vs 97; lib/toolchain/config.js 12 and 13 vs 22 and 23; lib/index.js 8 and 52 vs 13 and 61; lib/team-defaults.js 29 vs 33; lib/toolchain/contracts.js 9 vs 16. The doc comment above stripComments (scripts/validate-all.js:169-185) says comments are blanked out, but the replace at line 187 removes them, newlines included. The unit tests cannot see it: scripts/tests/validate-bundle-data-paths.test.js:39-49 ('reports the line it starts on') and :63-70 use sources whose only block comment sits on one line, so nothing removed contains a newline. Keeping the newlines when stripping (for example replacing each block comment with its own newlines) or counting lines on the original source fixes it."
+   },
+   {
+    "id": "f21",
+    "source": "reviewer-s1-b",
+    "severity": "important",
+    "locationOrLink": "scripts/validate-all.js:274",
+    "failureMode": "dirnamePaths, and the skipped-call counter at scripts/validate-all.js:345 in validateBundleDataPaths, both scan the output of stripComments, which treats a // or /* inside a string literal as the start of a comment. A real path.join(__dirname, ...) call that follows such a string is removed from the scan: it is neither checked nor counted as skipped, so a data file missing from the bundle behind that call passes the gate with nothing printed.",
+    "evidence": "I ran the unmodified source of stripComments and dirnamePaths from scripts/validate-all.js. (1) Input const u = 'http://x'; const p = path.join(__dirname, '..', 'data', 'thing.yaml'); on one line returned an empty list. (2) Input of three lines, const g = 'src/*.js'; then the same path.join call, then /* later */ returned an empty list, because the /* inside the glob string opens a 'comment' that runs to the later */. The counter at line 345 also reads stripComments output, so these calls are not reported as skipped either, which contradicts the sentence 'The count of skipped calls is printed so the gap is visible' in the dirnamePaths doc comment (above line 273). The doc comment on stripComments (169-185) accepts this crudeness because it 'cannot produce a false positive' for bare specifiers; for this check the missed call is the harmful direction. Latent today: in every file under packages/full/lib and packages/full/hooks the number of path.join/resolve(__dirname occurrences is the same before and after stripping, so no current call is hidden.",
+    "uncertain": false
+   },
+   {
+    "id": "f5",
+    "source": "reviewer-s2-a",
+    "severity": "nit",
+    "locationOrLink": "packages/pi/src/self-contained-packages.ts:51",
+    "failureMode": "MIRROR_PACKAGES is introduced as the list of mirror package directories, but the same pair is still spelled out separately in the Pi skill discovery (EXCLUDED_PACKAGES in packages/pi/src/transformers/skill-copier.ts) and in the OpenCode SkillCopier (ADAPTER_SOURCE_EXCLUDED_PACKAGES in packages/opencode/lib/skill-copier.js), and the TypeScript record is a second copy of the Set in scripts/lib/mirror-packages.js with no check that ties the two together; a mirror package added to one list is still read as a source by the code that uses another, which is the drift the new comments say this change removes.",
+    "evidence": "packages/pi/src/transformers/skill-copier.ts lines 165-169 define EXCLUDED_PACKAGES with its own pi: true and full: true entries (spread with SELF_CONTAINED_PI_PACKAGES) instead of reading MIRROR_PACKAGES; packages/opencode/lib/skill-copier.js line 26 has new Set(['pi', 'full']); scripts/lib/mirror-packages.js line 21 and packages/pi/src/self-contained-packages.ts line 51 are two independent literals. The membership assertions I found pin each list to contain pi and full (packages/pi/tests/mirror-packages.test.ts lines 102-103; scripts/tests/generator-mirror-package-exclusion.test.js, as listed by a search) and none compares the TypeScript record with the JavaScript Set. Behaviour today is correct because every list holds the same two names; the comment in scripts/lib/mirror-packages.js (one identity rather than a copy each) overstates what the change did.",
+    "uncertain": false
+   },
+   {
+    "id": "f10",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "scripts/validate-all.js:274",
+    "failureMode": "dirnamePaths runs stripComments first, which treats a '/*' inside a string or regex literal as a block-comment opener up to the next '*/', so a path.join(__dirname, ...) call after such a literal is dropped without being checked or counted as skipped and a missing data file passes.",
+    "evidence": "Ran the real validateBundleDataPaths on an in-memory bundle with lib/glob.js = `const g = \"lib/*.js\";` newline `const p = path.join(__dirname, \"gone3.yaml\");` newline `/** doc */` (gone3.yaml absent): the result listed no problem for lib/glob.js, while the same call in lib/block.js was reported. The doc on stripComments (validate-all.js:179-182) accepts the crude stripping because it 'cannot produce a false positive, which is the only failure mode that matters', which holds for bareSpecifiers but not for a check whose job is to report absent files. Latent: in the real bundle the raw-source regex count and dirnamePaths count matched in every lib/ and hooks/ file (no 'COUNT DIFF' printed), so no real call is swallowed today."
+   },
+   {
+    "id": "f18",
+    "source": "reviewer-s3-b",
+    "severity": "nit",
+    "locationOrLink": "scripts/tests/generator-mirror-package-exclusion.test.js:87",
+    "failureMode": "The header of the new mirror-exclusion test names the Codex agent count (25 instead of 24) among the regressions it guards, but the Codex case only calls generateCommandSkills; the agent filter in generateAgents (scripts/generate-codex/index.js:511-512) reads the module-level PACKAGES_DIR and takes no packagesDir, so removing that filter leaves every test in this file passing and only the generated-output drift job would notice.",
+    "evidence": "Read the test file (header lines 13-15 name the 25-versus-24 agent count; the Codex describe at lines 87-107 calls generateCommandSkills only) and scripts/generate-codex/index.js:510-513 (generateAgents({ dryRun, verbose }) globs PACKAGES_DIR). Searched every test file under scripts/tests (apart from this one), evals and packages/codex for generateAgents or a child process that runs generate-codex: no matches. The OpenCode agent and command filters and the Pi generator have their own tests (this file lines 110-132; packages/pi/tests/mirror-packages.test.ts), so the Codex agent filter has no test that fails without it.",
+    "uncertain": false
+   }
+  ],
+  "prs-measure2/pr-207.json": [
+   {
+    "id": "f1",
+    "source": "reviewer-s1-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/commands/author-playwright-tests.yaml:151",
+    "failureMode": "Execution Setup step 4 tells the session to carry the detector's result forward as framework \"nunit\" when detectE2eFrameworkInDir returns null, and the landing step then passes that explicit value as specDetails.framework. spec-writer's own fallback (infer the framework from the existing spec file when framework is omitted) therefore never runs from this command. For an xUnit project whose test-framework package the detector cannot see (it reads only .csproj PackageReference Include=\"...\" entries, so a package supplied through Directory.Build.props is invisible), the proposal request carries framework 'nunit', and appending the landed test to an existing xUnit spec file throws 'framework mismatch' instead of appending a [Fact] method.",
+    "evidence": "Read commands/author-playwright-tests.yaml line 151 (carry the result forward as framework (\"nunit\" when it returns null)) and line 226 (writeOrAppendSpecFile ... with specDetails.framework); lib/spec-writer.js appendTestMethod lines 418-424 (a requested framework that differs from the inferred one throws; framework = requested || inferred || 'nunit') and the comment at line 92 saying nunit is the shape the module has always emitted; lib/e2e-framework.js line 12 (PACKAGE_RE needs Include=\"...\") and line 41 (only *.csproj files are read). Ran a throwaway node snippet against the snapshot: detectE2eFramework on a csproj with no test-framework PackageReference printed null; appendTestMethod(existing xUnit file, {framework:'nunit', testName:'N'}) printed \"THROWS: framework mismatch: the existing file uses xunit but framework 'nunit' was requested.\"; the same call with framework omitted appended a [Fact] method (printed true). Not a regression: nunit has always been the default and the changelog says it stays the default when the framework cannot be told. The gap is that the command rules out the inference spec-writer already has (omit framework, or ask the QA engineer, when detection returns null).",
+    "uncertain": false
+   },
+   {
+    "id": "f2",
+    "source": "reviewer-s1-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/agents/playwright-tester.yaml:61",
+    "failureMode": "The detector maps Microsoft.Playwright.Xunit to 'xunit', but the agent text says framework 'xunit' means there is no PageTest Page, and spec-writer can only scaffold a new xUnit class that has a [Collection] name and a fixture type injected through its constructor. A project built on Microsoft.Playwright.Xunit's PageTest base class (tests inherit Page and carry no collection fixture) is therefore told something untrue about its own tests, and a new spec file for it cannot be produced because there is no sibling [Collection] or fixture type to copy. The changelog limits support to core Microsoft.Playwright with a [Collection] fixture, but neither detection nor the agent text separates the two shapes.",
+    "evidence": "Read lib/e2e-framework.js line 25 (name === 'microsoft.playwright.xunit' sets xunit) and tests/e2e-framework.test.js line 30 (Microsoft.Playwright.Xunit counts as xunit); agents/playwright-tester.yaml line 61 (framework 'xunit' means no PageTest Page: build the context and page as the project's sibling tests do); lib/spec-writer.js scaffoldXunitFile lines 217-223 (collection and fixtureType required, no base-class option); root CHANGELOG.md line 15 and packages/e2e-testing/CHANGELOG.md line 21 (supported shape: core Microsoft.Playwright with a [Collection] fixture). Ran a throwaway node snippet against the snapshot: detectE2eFramework on a csproj referencing Microsoft.Playwright.Xunit printed 'xunit'; scaffoldNewSpecFile({framework:'xunit', className:'T', testName:'N', testBody:...}) without collection printed \"THROWS: collection must be the project's xUnit collection name (got: undefined) -- copy it from a sibling spec class.\" That Microsoft.Playwright.Xunit tests inherit PageTest and carry no [Collection] fixture comes from my knowledge of that package, not from this repository [INFERENCE]. Appending to an existing file in such a project still works.",
+    "uncertain": false
+   },
+   {
+    "id": "f3",
+    "source": "reviewer-s2-a",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:213-223",
+    "failureMode": "detectE2eFramework returns 'xunit' for any project that references Microsoft.Playwright.Xunit (e2e-framework.js line 25, asserted at e2e-framework.test.js line 30), but the xunit path of scaffoldNewSpecFile (scaffoldXunitFile) can only emit a class with no base class and a constructor-injected custom [Collection] fixture, and it throws unless collection and fixtureType are supplied. Projects built on the Microsoft.Playwright.Xunit package derive their tests from its PageTest base class and use the inherited Page, so they typically have no collection or fixture to copy from a sibling spec, and a test body written against Page does not compile in the scaffolded class. The CHANGELOG limits xUnit support to core Microsoft.Playwright with a [Collection] fixture, yet the detector does not stop other xUnit projects at detection, so they fail (or get non-compiling code) only at the landing step.",
+    "evidence": "Read spec-writer.js:188 and 193 (the xunit branch skips assertBaseClass and never uses baseClass), 213-251 (scaffoldXunitFile: no base class, constructor-injected fixture, throws without collection and fixtureType; its comment says xUnit has no base class to inherit a page from), e2e-framework.js:25 (an exact name microsoft.playwright.xunit sets xunit), e2e-framework.test.js:30 (asserts Microsoft.Playwright.Xunit counts as xunit), agents/playwright-tester.yaml:61 and author-playwright-tests-framework.test.js:53 (the author is told framework xunit means no PageTest Page), and the root CHANGELOG entry (support limited to core Microsoft.Playwright with a [Collection] fixture). Microsoft's Playwright .NET test-runner docs (playwright.dev/dotnet/docs/test-runners) show xUnit tests written as public class UnitTest1 : PageTest with [Fact] calling Page.GotoAsync, from the Microsoft.Playwright.Xunit package (and Microsoft.Playwright.Xunit.v3 for xUnit v3). I ran a throwaway node -e script against the snapshot lib: detectE2eFramework on a csproj with Microsoft.NET.Test.Sdk and Microsoft.Playwright.Xunit printed xunit; scaffoldNewSpecFile with framework xunit and no collection printed \"collection must be the project's xUnit collection name (got: undefined) -- copy it from a sibling spec class.\"; with collection and fixtureType supplied, the generated lines were \"public class A\" and 'await Page.GotoAsync(\"/\");', i.e. a class with no base class whose body uses Page.",
+    "uncertain": false
+   },
+   {
+    "id": "f4",
+    "source": "reviewer-s2-a",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:419-424",
+    "failureMode": "When detectE2eFrameworkInDir returns null (for example the test packages come from a Directory.Build.props it never reads, or both frameworks are referenced), Execution Setup step 4 of author-playwright-tests.yaml makes the command carry 'nunit', and the landing step passes it as an explicit specDetails.framework; appendTestMethod then treats that fallback as a request, so for an existing xUnit spec file requested ('nunit') differs from inferred ('xunit') and it throws 'framework mismatch' instead of letting inferFramework pick the file's own framework.",
+    "evidence": "spec-writer.js:419-424: requested is set whenever specDetails.framework is not undefined, and the throw fires on requested && inferred && requested !== inferred. commands/author-playwright-tests.yaml:151 says to carry the detection result forward as framework (\"nunit\" when it returns null), and :226 has the landing step pass specDetails.framework to writeOrAppendSpecFile and describes the refusal to append the wrong framework. detectE2eFrameworkInDir reads only *.csproj files (e2e-framework.js:41), so test packages supplied anywhere else give null. I ran a throwaway node -e script against the snapshot lib: detectE2eFramework on one xunit csproj plus one NUnit csproj printed null; for a scaffolded xUnit class, writeOrAppendSpec(file, framework nunit, testName T2) printed \"framework mismatch: the existing file uses xunit but framework 'nunit' was requested.\"; the same call with framework omitted (and a testBody) emitted the [Fact]/[Trait] method. spec-writer-xunit.test.js covers only an explicit request (test \"asking for NUnit on an xUnit file is refused, and the reverse\"); no test covers the null-to-nunit default reaching an existing xUnit file. Omitting framework when detection returns null would let the file decide on appends while NUnit stays the default for new files."
+   },
+   {
+    "id": "f16",
+    "source": "reviewer-range",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:24-25",
+    "failureMode": "detectE2eFramework decides by package-name prefix (name.startsWith('nunit') / name.startsWith('xunit')), so packages that are not the test framework count as a framework signal. An xUnit E2E project that also references NunitXml.TestLogger (or an NUnit project that references XunitXml.TestLogger) is classified as using both frameworks and gets null, which the command turns into NUnit output: the output this change is meant to stop for xUnit projects.",
+    "evidence": "Read e2e-framework.js:22-28. Ran a throwaway node snippet against the snapshot: detectE2eFramework of a csproj with PackageReference Include=\"xunit\" plus Include=\"NunitXml.TestLogger\" printed null, and NUnit plus XunitXml.TestLogger also printed null. e2e-framework.test.js covers only xunit, NUnit and Playwright package names, not logger or analyzer packages, so no test exercises a non-framework package with a framework-looking prefix."
+   },
+   {
+    "id": "f6",
+    "source": "reviewer-s2-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:168-183",
+    "failureMode": "The doc comments were not updated for the new options: scaffoldNewSpecFile's block still says it emits one [TestFixture] class, lists baseClass without saying it is NUnit-only, says an omitted testBody defaults to the TestConfiguration placeholder (xunit throws instead) and does not mention framework, collection, fixtureType or usings; renderTestMethodBlock's param type omits framework, and appendTestMethod's block names only acId, testName, testBody and testCategory and does not say it now throws on a framework mismatch.",
+    "evidence": "spec-writer.js:168-183 (scaffoldNewSpecFile doc: one [TestFixture] class, baseClass listed, testBody \"defaults to a TestConfiguration.*-based placeholder if omitted\" although renderTestMethodBlock throws for xunit without a body at line 145, no framework/collection/fixtureType/usings params); 126-136 (renderTestMethodBlock param type lacks framework); 401-410 (appendTestMethod doc lists acId, testName, testBody, testCategory, and its throws list omits the mismatch error thrown at line 422). The new options are described only in the file header (lines 35-39) and the scaffoldXunitFile comment."
+   },
+   {
+    "id": "f7",
+    "source": "reviewer-s2-b",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:217-229",
+    "failureMode": "scaffoldXunitFile in spec-writer.js writes only the three base using lines (System.Threading.Tasks, Microsoft.Playwright, Xunit) plus whatever usings array the caller passes, and renderTestMethodBlock requires a testBody for xunit; but the landing step of commands/author-playwright-tests.yaml says a new xunit file needs only collection and fixtureType copied from a sibling spec class, and neither that command file nor agents/playwright-tester.yaml mentions usings or testBody at all. So on the command path nothing tells the caller to pass the namespaces the authored body takes from the sibling tests (for example FluentAssertions, which the sibling class in spec-writer-xunit.test.js uses), and a newly landed xUnit file can lack them and fail to compile in the consuming project. The usings option is reachable only by reading the library source, and no test pins that the command names it.",
+    "evidence": "Read spec-writer.js 217-251: baseUsings is ['System.Threading.Tasks','Microsoft.Playwright','Xunit'] and extra usings come only from specDetails.usings; renderTestMethodBlock (137-166) throws 'testBody is required for xunit' when no body is given. Grepped commands/author-playwright-tests.yaml and agents/playwright-tester.yaml for 'usings|testBody|fixtureType': the only hit is command line 226 ('A new xunit file also needs {collection, fixtureType} copied from a sibling spec class'); 'usings' and 'testBody' occur in neither file. The only test touching usings is spec-writer-xunit.test.js 'extra usings are added once, after the standard ones' (library level); that file's existing-class fixture itself has 'using FluentAssertions;' and a '.Should()' body. author-playwright-tests-framework.test.js:42-47 ('names what a new xUnit file needs') pins collection and fixtureType only. I did not establish that a particular authored body needs an extra using, so a person should decide.",
+    "uncertain": false
+   },
+   {
+    "id": "f8",
+    "source": "reviewer-s2-b",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/tests/author-playwright-tests-evidence.test.js:68",
+    "failureMode": "The check in author-playwright-tests-evidence.test.js that every module the command names under E2E_LIB exists in the package collects names with a pattern that allows only lowercase letters and hyphens, so a module whose name contains a digit is never collected. e2e-framework, which this change adds and the command now names, is skipped by that check, and so will be any later module with a digit in its name; the change compensates with a one-off existence test for this one module in author-playwright-tests-framework.test.js instead of widening the pattern.",
+    "evidence": "Ran a short node snippet against the snapshot: the test's own pattern (E2E_LIB prefix, name made of [a-z-] only, .js) applied to commands/author-playwright-tests.yaml printed 22 captured modules (pr-state, prd-ac-parser, ... ac-gap-task-filer) and 'has e2e-framework: false'; the same pattern with digits allowed ([a-z0-9-]) finds e2e-framework as the only name the first pattern misses. Read author-playwright-tests-framework.test.js:57-62, which re-checks that file separately, and author-playwright-tests-evidence.test.js:66-71, whose assertion loop never sees the name."
+   },
+   {
+    "id": "f9",
+    "source": "reviewer-s3-a",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:109-110",
+    "failureMode": "inferFramework (the check behind appendTestMethod's refusal to mix frameworks) only matches an attribute written alone in its brackets, so a comma-combined list such as [Fact, Trait(\"Category\", \"E2E\")] or [Theory, InlineData(1)] is not recognised, and a spec file that gets Xunit from implicit usings has no 'using Xunit;' line either; inferFramework then returns null, appendTestMethod skips the 'framework mismatch' error and appends a NUnit [Test] method with the default Page.GotoAsync body into the xUnit class, even though the landing step tells the author the writer 'refuses to append the wrong framework to an existing file'. The command passes framework 'nunit' whenever detectE2eFrameworkInDir returns null, which is exactly the case where a wrong framework reaches the append.",
+    "evidence": "Read lib/spec-writer.js lines 109-110: both attribute patterns need the attribute name followed directly by ']' or '('. Ran one throwaway Bun snippet against the snapshot's lib/spec-writer.js (no files written). It printed inferFramework=null for '[Fact, Trait(\"Category\", \"E2E\")]\\npublic async Task A() {}', for '[Theory, InlineData(1)]\\npublic void A(int x) {}' and for the NUnit form '[Test, Category(\"E2E\")]\\npublic void A() {}'; the same two regexes on the unmasked text also gave xunit=false, nunit=false, so masking is not the cause. It then called appendTestMethod on 'namespace N;\\n\\n[Collection(\"C\")]\\npublic class SmokeTests\\n{\\n    [Fact, Trait(\"Category\", \"E2E\")]\\n    public async Task A()\\n    {\\n    }\\n}\\n' with { framework: 'nunit', testName: 'B' }: it did not throw and returned the class with '    [Test]\\n    [TestCategory(\"E2E\")]\\n    public async Task B()\\n    {\\n        await Page.GotoAsync(TestConfiguration.QaBaseUrl);\\n    }' appended inside the xUnit class. The inferFramework tests (spec-writer-xunit.test.js lines 233-259) have no comma-combined row, so no test covers this. Severity is a judgement call: the file must also lack 'using Xunit;' and the wrong framework must be requested (the command does request 'nunit' when detection is null). [INFERENCE] current dotnet test templates add the test namespace through a csproj Using item, so spec files often carry no using line and rely on attribute matching alone.",
+    "uncertain": false
+   },
+   {
+    "id": "f10",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/tests/spec-writer-xunit.test.js:250",
+    "failureMode": "The inferFramework table row 'only in a string' (input var s = \"using Xunit;\";) returns null whether or not string literals are masked, because the using-line pattern only matches at the start of a line and the text holds no attribute; so the row cannot fail if inferFramework stops masking string contents, and no row in the suite would notice a regression in string masking.",
+    "evidence": "Ran the same throwaway Bun snippet: for that row's input the module's two inferFramework regexes applied to the raw, unmasked text printed xunit=false, nunit=false, so the null does not come from masking. For the neighbouring 'only in a comment' row the same raw check printed xunit=true (the [Fact] inside the block comment), so that row does exercise masking. A discriminating string input, 'var s = \"[Fact]\";', printed xunit=true on the raw text while inferFramework returned null, so the code masks strings correctly but no row would catch it if it stopped."
+   },
+   {
+    "id": "f11",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "packages/pi/agents/playwright-tester.md:60",
+    "failureMode": "scaffoldXunitFile always declares the injected fixture as a field named _fixture and adds only the three standard usings unless the caller passes usings, but the playwright-tester line and the Phase 3 and landing steps only tell the author to build the context and page 'the way the project's sibling tests do' and to copy collection and fixtureType from a sibling; a proposed body copied from a sibling that names its fixture differently (for example fixture or _fx) or relies on a namespace the sibling imports compiles there but not in a newly scaffolded class, and the command's only run of the test (Phase 4 step 2) happens before the landing step writes the body into that fixed shape.",
+    "evidence": "Read lib/spec-writer.js scaffoldXunitFile (lines 240-245: 'private readonly ${fixtureType} _fixture;' and the constructor assigning _fixture) and the added text in this slice: playwright-tester.md line 60, the Phase 3 step 1 request line and the Phase 4 step 3 landing line of the pi prompt and skill name only framework, collection and fixtureType; the field name _fixture and the usings option are not mentioned in them. Every xUnit body in spec-writer-xunit.test.js (lines 18-23) uses _fixture, so a different field name is untested. Phase 4 step 2 (run) precedes step 3 (land) in the command. Read only, not run.",
+    "uncertain": false
+   },
+   {
+    "id": "f12",
+    "source": "reviewer-s3-b",
+    "severity": "important",
+    "locationOrLink": "packages/pi/prompts/ensemble-author-playwright-tests.md:181",
+    "failureMode": "The 'Land the Confirmed, Passed Test' step says a new xunit file needs only {collection, fixtureType} and that writeOrAppendSpecFile refuses without them, but spec-writer's renderTestMethodBlock also throws 'testBody is required for xunit' on every xunit call (new file and append) and nothing in the command says the confirmed test's statements go into specDetails.testBody, so an agent following the step as written passes no testBody and the landing call throws after the QA engineer has confirmed the proposal and the run has passed.",
+    "evidence": "Read the step text at prompt line 181 (identical at the pi skill line 190 and commands/author-playwright-tests.yaml line 226, and regenerated into the codex skill and the e2e-testing command md): it names specDetails.framework and {collection, fixtureType} as the extra xunit inputs and says the writer 'refuses without them'. A grep of the pi prompt for testBody finds no occurrence anywhere; proposedTest appears in the prompt only at lines 139, 152-153 and 167 (proposal response, recordDecision, Run request), never in the landing step, so no step maps the confirmed proposedTest to specDetails.testBody. In spec-writer.js, renderTestMethodBlock throws 'testBody is required for xunit' whenever framework is xunit and testBody is blank, and scaffoldNewSpecFile calls it before scaffoldXunitFile checks collection and fixtureType, so it is the first refusal for a new file and the only one for an append; spec-writer-xunit.test.js lines 139-140 and 217-218 pin it. The NUnit path never needed testBody (it falls back to DEFAULT_TEST_BODY), so the command text has no precedent for supplying it, and the optional usings input that the tests exercise is not mentioned either. RAN a throwaway node snippet against the snapshot's lib/spec-writer.js: writeOrAppendSpec(null, {framework: 'xunit', className, namespace, collection, fixtureType, acId, testName}) (exactly the inputs the step lists, no testBody) printed 'THROWS: testBody is required for xunit: the fixture a test builds its page from is project-specific, so there is no safe default body.'; writeOrAppendSpec on an existing xunit file with only framework, acId and testName printed the same message. author-playwright-tests-framework.test.js lines 44-47 pin the collection/fixtureType wording but nothing pins testBody, so no test catches the gap. Suggested fix: name testBody (the confirmed proposedTest's statements, which is what the scaffold wraps in a method) in the YAML step, add an assertion beside lines 44-47, then regenerate the four mirrors."
+   },
+   {
+    "id": "f13",
+    "source": "reviewer-s3-b",
+    "severity": "important",
+    "locationOrLink": "packages/pi/agents/playwright-tester.md:60",
+    "failureMode": "detectE2eFramework returns 'xunit' for a project that references Microsoft.Playwright.Xunit (e2e-framework.test.js line 30 pins it), yet the playwright-tester text says framework 'xunit' means there is no PageTest Page and the xunit scaffold refuses a new file unless a [Collection] name and fixture type are copied from a sibling spec class, so a project on that package's own xUnit PageTest base class, whose sibling tests have a Page and no collection fixture, gets wrong authoring guidance and cannot have a new spec file landed.",
+    "evidence": "Read: e2e-framework.js maps name === 'microsoft.playwright.xunit' to xunit on purpose (name.startsWith('xunit') does not match it), and e2e-framework.test.js line 30 lists 'Microsoft.Playwright.Xunit' among the names that count as xunit. The root CHANGELOG entry scopes support to 'xUnit projects that build their own page per test (core Microsoft.Playwright with a [Collection] fixture)', but nothing in detection, this agent text (line 60: \"framework 'xunit' means no PageTest Page\") or the command's landing step separates that style from PageTest-style xUnit. [INFERENCE] That the Microsoft.Playwright.Xunit package ships its own xUnit PageTest base class (Page property, no collection fixture) is knowledge from outside this repository; a grep for Playwright.Xunit across packages/e2e-testing, packages/development/skills and docs finds only that one test line, so nothing in the snapshot confirms or refutes it. Not run. This needs a maintainer decision on whether PageTest-style xUnit is in scope: if not, detection should not return 'xunit' for that package or the text should say what xunit covers; if it is, the scaffold needs a no-fixture shape.",
+    "uncertain": false
+   },
+   {
+    "id": "f15",
+    "source": "reviewer-range",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/commands/author-playwright-tests.yaml:151",
+    "failureMode": "When detectE2eFrameworkInDir returns null (no framework package found, or both NUnit and xUnit signals), step 4 of Execution Setup tells the caller to carry the string 'nunit' forward as framework, and the landing step then always passes specDetails.framework to writeOrAppendSpecFile. spec-writer treats any supplied framework as an explicit request: appendTestMethod throws 'framework mismatch' for an existing xUnit spec file instead of inferring xUnit from it, and a new file is scaffolded as NUnit. So the file inference that the changelog and the spec-writer header advertise ('infers its framework') is unreachable from the command, because the field is always a string; and the lib contract in delegation-contract.js (ProposalRequest.framework: 'Omit when unknown') says to leave the field out, not to send 'nunit'.",
+    "evidence": "Read author-playwright-tests.yaml:151 ('carry the result forward as framework (\"nunit\" when it returns null)') and :226 (landing passes specDetails.framework); delegation-contract.js:50-52 ('Omit when unknown (NUnit)'); spec-writer.js:418-424 (requested is set whenever framework !== undefined and a differing inferred value throws; the inferred value only decides when framework is omitted). Ran a throwaway node snippet against the snapshot: scaffolded an xunit file, then appendTestMethod(file, {framework: 'nunit', testName: 'T2'}) printed \"framework mismatch: the existing file uses xunit but framework 'nunit' was requested.\"; the same call with framework omitted (and a testBody) produced a [Fact] method (printed true). spec-writer-xunit.test.js:951-955 asserts the same throw, so the suite documents the refusal but nothing exercises the command's null-to-'nunit' substitution."
+   },
+   {
+    "id": "f17",
+    "source": "reviewer-range",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:25",
+    "failureMode": "detectE2eFramework maps the package Microsoft.Playwright.Xunit to 'xunit', but everything the xunit path produces assumes the project has no Playwright base class: spec-writer's xunit scaffold emits a plain [Collection] class with a constructor-injected fixture and throws without collection and fixtureType, and the authoring agent is told 'framework xunit means no PageTest Page'. A project that uses Microsoft.Playwright.Xunit writes its tests against Playwright's xUnit base classes (Page provided, no collection fixture to copy), so detection sends it into a path that cannot scaffold a new file for it without invented collection and fixture values, and that gives the agent the opposite of the project's shape.",
+    "evidence": "e2e-framework.js:25 and e2e-framework.test.js:30 (asserts 'Microsoft.Playwright.Xunit' counts as xunit); spec-writer.js:212-216 and 217-229 (xUnit has no base class; collection and fixtureType are required, else it throws); playwright-tester.yaml:61; delegation-contract.js:50-52; the root CHANGELOG scopes support to 'core Microsoft.Playwright with a [Collection] fixture'. External fact, not checkable in the repo: Playwright's documentation says it provides base classes for MSTest, NUnit, xUnit and xUnit v3 (https://playwright.dev/dotnet/docs/test-runners); [INFERENCE] that Microsoft.Playwright.Xunit is the package that carries the xUnit ones. A person should confirm the package contents.",
+    "uncertain": false
+   },
+   {
+    "id": "f18",
+    "source": "reviewer-range",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:240-245",
+    "failureMode": "scaffoldXunitFile hard-codes the injected field as _fixture (constructor parameter fixture) and a fixed base using list, but the authoring agent is only told to build the context and page 'as the project's sibling tests do', and the landing step names only {collection, fixtureType} as inputs to copy from a sibling (usings is an optional input documented only inside spec-writer). A confirmed test body that uses the sibling's own field name, or a namespace outside the fixed usings, is wrapped into a new class where that identifier does not exist. The landing step then only tags and logs; nothing builds or reruns the written file, and the Run request carries no framework or fixture information, so the mismatch reaches the consuming E2E project as a compile error after the run reported a pass.",
+    "evidence": "spec-writer.js:240-245 (private readonly {fixtureType} _fixture; constructor parameter fixture) and :228-229 (fixed baseUsings); playwright-tester.yaml:61 (agent instruction); author-playwright-tests.yaml:226-228 (landing = writeOrAppendSpecFile, tagTestMethod, logAction: no build or rerun, no testBody, usings or field-name instruction); delegation-contract.js RunRequest typedef 78-101 (no framework or fixture fields). The unit-test body is itself written against _fixture (spec-writer-xunit.test.js:759-762), so the tests cannot show a naming mismatch. Whether real sibling tests name the field differently is not something the repo shows; that is why this is marked uncertain.",
+    "uncertain": false
+   },
+   {
+    "id": "f19",
+    "source": "reviewer-range",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/ado-test-case-sync.js:13-16",
+    "failureMode": "The header comment says the consuming E2E project is 'C# NUnit, [TestCategory(\"E2E\")], AuthenticatedPageTest/PageTest', but spec-writer now also writes xUnit ([Fact], [Trait], [Collection]) and the command detects which one a project uses, so the comment misstates what the module targets.",
+    "evidence": "Read ado-test-case-sync.js:12-16 (lines this change did not touch) against the new spec-writer.js header (lines 35-39) and e2e-framework.js. Behaviour is unaffected: there is still no C# test.step() under xUnit; only the NUnit attribution is stale."
+   }
+  ],
+  "prs-measure2/pr-292.json": [
+   {
+    "id": "f1",
+    "source": "reviewer-s1-a",
+    "severity": "important",
+    "locationOrLink": "packages/development/commands/beads-build-wave.yaml:118",
+    "failureMode": "Step 3b cuts every track at its first ID outside LABEL_IDS and drops all IDs after it, on the stated ground that a later in-label bead may depend on the dropped one. With the default beads adapter that ground cannot occur: work-graph.plan and work-graph.ready return bv's plan.tracks[0].items, which the adapter documents as only actionable (unblocked) beads, so no listed bead is blocked by another listed bead (in the captured bv output scripts/tests/fixtures/toolchain/adapter-tracker-beads-samples/bv-robot-plan.sample.json no track item unblocks another item of its own track, and the items follow priority and id, not dependencies). A labelled wave never dispatches out-of-label beads, so they keep their place in the list on every wave of the run, and every ready in-label bead listed behind the first out-of-label bead is dropped each time. When the first listed bead is out-of-label, the whole track is emptied, Step 7 reports terminal_state blocked, and beads-build.yaml halts with EXECUTION BLOCKED while ready in-label beads remain open; otherwise only the leading in-label prefix is dispatched. A labelled wave in a repo that also has other actionable work (the case this change is meant to fix) therefore still refuses to run whenever an out-of-label bead sorts first.",
+    "evidence": "Read packages/development/skills/adapter-tracker-beads/adapter.yaml lines 238-248 and 276-297: both work-graph capabilities map root $.plan.tracks[0].items, and the comment says tracks hold only actionable (unblocked) items, blocked work never appears. The same limit is listed in that directory's SKILL.md lines 100-107. Ran a throwaway node script over the captured real bv output (bv-robot-plan.sample.json under scripts/tests/fixtures/toolchain/adapter-tracker-beads-samples/); it printed 16 tracks, total_actionable 20, intraTrackUnblocksEdges 0 for every track, and track-A (the one the adapter returns) as [br-eamh, br-fvnq, br-iggd], all priority 2, in id order, with the highest-impact item br-iggd last. So list order is not dependency order and a prefix cut has no dependency to protect. packages/development/tests/beads-build-label-scoping.test.js:17-30 describes the field plan (#127) as one connected-graph track with 5 of 8 beads out-of-label: a prefix cut keeps an in-label bead only if it precedes every out-of-label one. Blocked path: beads-build-wave.yaml:133 (Step 7) and beads-build.yaml:197 (HALT EXECUTION BLOCKED). The premise can hold for a dependency-ordered source (builtin links fallback, packages/development/lib/toolchain/builtin/work-graph-links-fallback.js:311-321), so the rule should depend on the source, for example drop only out-of-label IDs when every listed item is already unblocked."
+   },
+   {
+    "id": "f2",
+    "source": "reviewer-s1-a",
+    "severity": "important",
+    "locationOrLink": "packages/development/commands/beads-build-wave.yaml:117",
+    "failureMode": "Step 3 takes the wave's tracks from the data.items of work-graph.plan (or work-graph.ready), and Step 3b treats them as the repo-wide plan and filters them by label, but the beads adapter exposes only bv's first track: both capabilities in packages/development/skills/adapter-tracker-beads/adapter.yaml use root $.plan.tracks[0].items, so in-label beads sitting in any other track are never seen. If the first track holds no in-label bead, Step 3b's 'No survivor -> Step 7' sends the wave to the empty-plan edge, which reports terminal_state blocked because open scoped beads exist, and beads-build.yaml stops with 'EXECUTION BLOCKED - manual intervention required' although in-label beads are ready in tracks that were never returned. The wording this replaced stopped with an error naming the label scope; the new path reports a graph that is not blocked as blocked, and Step 3b's claim that the plan is repo-wide is false for the shipped adapter.",
+    "evidence": "Read adapter.yaml:276-297 in packages/development/skills/adapter-tracker-beads (root $.plan.tracks[0].items for work-graph.ready and work-graph.plan) with its comment at 238-248, and SKILL.md:100-107 in the same directory, which lists it as a known limit: 'surface only bv's first execution track ... not every actionable item across every track'. Ran a throwaway node script over scripts/tests/fixtures/toolchain/adapter-tracker-beads-samples/bv-robot-plan.sample.json (captured bv --robot-plan output): it printed 16 tracks, total_actionable 20, and tracks[0] (track-A) carries only 3 of the 20 (br-eamh, br-fvnq, br-iggd); the other 17 sit in 15 tracks the adapter does not return. packages/development/tests/beads-build-label-scoping.test.js:143-149 names a false blocked escalated as EXECUTION BLOCKED as the failure to avoid, but guards only the order of the MAX_PARALLEL cut, not the one-track limit. Step 7 is beads-build-wave.yaml:133; the halt is beads-build.yaml:197. Options: have the adapter return every track (bv's usage_hints give the flattening filter) or make the labelled empty-plan case report something other than blocked.",
+    "uncertain": false
+   },
+   {
+    "id": "f3",
+    "source": "reviewer-s1-b",
+    "severity": "nit",
+    "locationOrLink": "package-lock.json:9378",
+    "failureMode": "The packages/pi workspace entry in package-lock.json still records version 1.6.19, while packages/pi/package.json, packages/pi/.claude-plugin/plugin.json and both marketplace.json files were moved to 1.6.20, so the lockfile no longer matches the manifest it is generated from.",
+    "evidence": "I ran a read-only script over the snapshot that compared every workspace entry of package-lock.json (31 entries outside node_modules) with that workspace's package.json version. It printed: lock drift [[\"packages/pi\",\"1.6.19\",\"1.6.20\"]] and lock packages/pi \"1.6.19\"; the other 30 entries match. package-lock.json:9376-9378 reads \"packages/pi\": { \"name\": \"@sunstone-partners/ensemble-pi\", \"version\": \"1.6.19\". packages/pi/package.json:3, packages/pi/.claude-plugin/plugin.json:3, marketplace.json:474 and .claude-plugin/marketplace.json:474 (the bump in this slice) read 1.6.20. The repo bump procedure (skill ensemble-package-version-bump) names those four files and no lockfile, and a search of scripts/, packages/development/tests, .github, REVIEW.md and CLAUDE.md finds package-lock.json only in scripts/pr-size.js and its test, so no existing check flags it. CI and local-ci install with npm ci --legacy-peer-deps; I did not run npm and do not claim it fails. The effect is a lockfile that the next npm install rewrites, hence nit."
+   },
+   {
+    "id": "f4",
+    "source": "reviewer-s1-b",
+    "severity": "pre-existing",
+    "locationOrLink": "packages/development/commands/beads-build-wave.yaml:127",
+    "failureMode": "The context_contract action puts values returned by trd-cli bead-context (the missing entries joined by semicolons, references.trd, references.trdTask, references.prd) inside the double-quoted text argument of a node toolchain-cli run tracker.comment shell command and never tells the executor to escape or neutralize them; the PRD name in a missing entry comes from the TRD (trd-cli.js builds the \"PRD ... is UNRESOLVED\" entry from prdRel), so a double quote, dollar-parenthesis or backtick in a TRD or bead reference stays active in the shell and can run commands on the machine that executes the wave.",
+    "evidence": "Read beads-build-wave.yaml:127 in full: the blocked branch runs node \"$TOOLCHAIN_CLI\" run tracker.comment ... --arg text=\"blocked:missing-references <missing joined by '; '>\" and the ok branch uses --arg text=\"context-read: trd=<references.trd> task=<references.trdTask> prd=<references.prd> reqs=<ids>\"; neither that line nor the lifecycle_contract at line 126 mentions quoting or escaping these values. packages/development/lib/trd-cli.js:486-487 pushes \"PRD ${prdRel} is UNRESOLVED (the TRD names a PRD that could not be found)\" into missing, and trd-cli.js:482 sets references.prd from the same prdRel. I ran nothing and did not trace where prdRel is read from, so exploitability depends on how the executing agent quotes the command; that is why it is marked uncertain. The line lies outside both diff hunks of this change (YAML lines 67-73 and 113-121), so the PR did not introduce it; the same text is carried into ensemble/beads-build-wave.md and the codex SKILL.md generated from this YAML (I checked by script that every YAML action string appears verbatim in both).",
+    "uncertain": false
+   },
+   {
+    "id": "f5",
+    "source": "reviewer-s2-a",
+    "severity": "important",
+    "locationOrLink": "packages/pi/prompts/_hidden/ensemble-beads-build-wave.md:84",
+    "failureMode": "Step 3b of the wave command cuts every track at its first bead that is not in LABEL_IDS and drops all later beads, on the stated ground that a later in-label bead may depend on the dropped one. For the beads adapter that ground does not hold: work-graph.plan and work-graph.ready return only bv's first track (plan.tracks[0].items), and the adapter documents that every item in a track is already unblocked, so an in-label bead listed after an out-of-label one is ready and cannot be waiting on it. When the first entry of that track is out-of-label, the cut empties the whole plan, Step 3b routes to Step 7, Step 7 reports terminal_state blocked, and beads-build.yaml Step 4 halts with EXECUTION BLOCKED although in-label beads are ready. A labeled wave in a repo whose top-ranked actionable bead is outside the label is therefore still not dispatched (the #127 symptom), now surfaced as a false blocked state.",
+    "evidence": "Read only; I ran no snippet for this claim and could not run bv here. (1) packages/pi/prompts/_hidden/ensemble-beads-build-wave.md:84 (Step 3b): 'truncate every track (an ordered list) at its first ID not in LABEL_IDS: drop that ID and every ID after it, never the out-of-label ID alone, because a later in-label bead may depend on it ... No survivor -> Step 7'; line 83 (Step 3) treats the plan's data.items as the tracks. The same text is in beads-build-wave.yaml:118. (2) packages/development/skills/adapter-tracker-beads/adapter.yaml:238-244 documents (confirmed live, bv v0.25.2) that plan tracks contain 'only actionable (unblocked) items ... blocked work never appears in tracks' and that work-graph.plan/ready surface only plan.tracks[0].items (bv's highest-impact track); packages/development/skills/adapter-tracker-beads/SKILL.md:100-107 repeats the single-track limit. An item listed after another in such a track is therefore unblocked, so dropping it protects no dependency order, and per-id filtering of the in-label items would be safe on this adapter. Truncation is only justified where the plan is dependency-ordered and may list blocked items (work-graph-links-fallback with dependencyAware true: packages/development/lib/toolchain/builtin/work-graph-links-fallback.js:66-76). (3) The pi prompt Step 7 action defines blocked as 'open scoped beads exist but the scheduler returned no actionable tracks', and packages/development/commands/beads-build.yaml (Execute phase, Step 4) halts on terminal_state blocked with 'EXECUTION BLOCKED - manual intervention required'. The test header (beads-build-label-scoping.test.js:29-30) accepts 'a plan with nothing left in-label ... Step 7 already reports as blocked; it is not a HALT', yet the caller does halt, and its 'filters first and truncates second' comment names the false-blocked hazard only for the MAX_PARALLEL order. No test exercises a plan whose first entry is out-of-label; the new tests only match prose in the YAML. Exposure depends on how a run reads data.items for the beads adapter (one ordered track versus one track per item), which the prompt does not pin down, and on bv's real track contents, hence uncertain.",
+    "uncertain": false
+   },
+   {
+    "id": "f6",
+    "source": "reviewer-s2-b",
+    "severity": "important",
+    "locationOrLink": "packages/pi/prompts/_hidden/ensemble-beads-build-wave.md:84",
+    "failureMode": "Step 3b of the wave command truncates every plan track at its first ID not in LABEL_IDS and drops the rest of that track, on the premise that a later in-label bead may depend on the dropped out-of-label one. Tracks from work-graph.plan list only actionable beads, so a later item is never waiting on an earlier item of the same plan: ready in-label beads that merely sit behind an out-of-label track-mate are discarded, a labeled wave can finish with zero surviving tracks, Step 7 then reports terminal_state blocked, and beads-build.yaml halts with EXECUTION BLOCKED while in-label work is ready - the false blocked that the test header says the filter-before-cut order exists to avoid.",
+    "evidence": "Read scripts/tests/fixtures/toolchain/adapter-tracker-beads-samples/bv-robot-plan.sample.json (a live capture of the shipped adapter's plan source): 16 tracks, 20 items, plan.total_actionable 20 and total_blocked 56, so every listed item is actionable and blocked beads are not listed; item statuses are only open and in_progress. Ran one throwaway node snippet over that fixture: it printed 'plan tracks 16 items 20 statuses [\"open\",\"in_progress\"] unblocks-edges-between-plan-items 0'; applying the Step 3b truncate-at-first rule with hypothetical LABEL_IDS {br-fvnq, br-iggd} (two actionable members of track-A = [br-eamh, br-fvnq, br-iggd], where br-eamh unblocks nothing) printed 'survivors []'. The justification in the test (header lines 17-30 and the comment at lines 102-106, 'A out-of-label, B in-label, B depends on A') describes a plan shape the captured plan does not contain, and no test applies the rule to a plan fixture; the one plan source that is not dependency-aware is the builtin work-graph links fallback (dependencyAware false). The header also quotes a bv track reason 'All issues in connected graph' that appears nowhere in the repo (grep over packages, scripts and docs found no match); the captured reasons are 'Independent work stream' and 'Single actionable item'. Not settled from the snapshot: whether a label-scoped bv plan (the #127 report mentions label_scope, which the fixture lacks) lists blocked beads inside tracks, which would make the premise hold; hence uncertain. The same rule is at packages/development/commands/beads-build-wave.yaml:118, the source of this generated line. The caller's blocked handling is at packages/development/commands/beads-build.yaml:197.",
+    "uncertain": false
+   },
+   {
+    "id": "f7",
+    "source": "reviewer-s2-b",
+    "severity": "nit",
+    "locationOrLink": "packages/development/tests/beads-build-label-scoping.test.js:95-166",
+    "failureMode": "The behaviour change is covered only by 19 new toMatch/not.toMatch assertions that check sentences exist in commands/beads-build-wave.yaml (five of them not.toMatch guards on removed or never-shipped wording), which the repository's prompt-testing policy says not to write; nothing runs the truncate-at-first filter or the filter-before-cut order on a plan, and the policy's inventory row for this file (18 assertions) is stale.",
+    "evidence": "docs/guides/prompt-testing.md:5 says 'Do not pin prompt wording' and :23 says '.not.toContain guards on removed phrases count as wording pins'; :53 lists beads-build-label-scoping.test.js at 18 assertions, while counting toMatch/not.toMatch calls by reading the file gives 20 before this change and 37 after. The not.toMatch guards at lines 122 ('bv returned beads outside label') and 111 ('DROP every ID not in LABEL_IDS from every track') name wording that is in neither the removed nor the added lines of the diff, so they cannot fail on a plausible regression. Lines 113-115 slice the YAML from Step 3b to the end of the file and count 'truncate to MAX_PARALLEL' there, and line 155 pins the YAML escaping (Step 3b''s with a doubled apostrophe) rather than the text, so a valid re-quoting of the scalar breaks it while the generated md reads Step 3b's. REVIEW.md ('a fix carries a test that fails without the change') is met by these pins, so this is graded nit; the behavioural gap is the substance of f1.",
+    "uncertain": false
+   }
+  ],
+  "prs-measure2/pr-291.json": [
+   {
+    "id": "f3",
+    "source": "reviewer-s1-b",
+    "severity": "important",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:583-606",
+    "failureMode": "The test 'a group directory that declares its own adapter.yaml is that adapter, and its children are not also scanned' creates the outer adapter directory with writeAdapterDir, which also writes a SKILL.md there, and discoverAdapters skips any directory that carries SKILL.md before it scans children, so the nested 'vendored' adapter stays undiscovered even if the continue after a successful manifest read (adapters.js line 454) is removed; the assertion therefore never exercises the manifest-based rule it is named for, leaving the documented guarantee that a directory with a manifest is not also descended into unproven for an adapter directory that has no SKILL.md, a layout loadAdapter tolerates (it reports skillMd ok:false instead of failing).",
+    "evidence": "Read scripts/tests/toolchain-adapters.test.js:92-97 (writeAdapterDir writes both adapter.yaml and SKILL.md into the directory it is given), 583-601 (the test calls it for the outer adapter-tracker-beads directory and for its vendored child) and packages/development/lib/toolchain/adapters.js:450-469 (after a manifest with a string adapter id is read the loop continues; otherwise a directory carrying SKILL.md is skipped before its children are scanned). With SKILL.md present in the outer directory the second guard already stops the descent, so deleting the continue at adapters.js:454 still yields ['beads'] and the test stays green. The other new tests either have no manifest at the group level (group directories) or use a SKILL.md-only skill directory, so none of them reaches the manifest guard either. Suggested fix: write only adapter.yaml (no SKILL.md) in the outer directory of this fixture so that only the manifest guard can stop the descent. Reasoned from the code; not run, since mutation experiments are not allowed."
+   },
+   {
+    "id": "f2",
+    "source": "reviewer-s1-a",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:602",
+    "failureMode": "The NOT_INSTALLED hint says the adapter may sit at `<root>/<group>/<dir>/adapter.yaml` one level in, for every location it lists, but only the installed-tier loop in discoverAdapters descends into group directories: the repo-local and user loops still read only their immediate children, and in the installed tier a group directory that carries its own SKILL.md is skipped (adapters.js lines 467-469). A user who follows the hint and puts an adapter under a group in the repo-local or user adapters directory, or under a group that has its own SKILL.md, gets NOT_INSTALLED again. The module header's installed-tier paragraph (lines 18-28) has the same gap: it says any subdirectory without an adapter.yaml is a group, and the SKILL.md exception appears only in an inline comment.",
+    "evidence": "Read adapters.js lines 18-28 (header text added by this change), 430-446 (repo-local and user loops: listSubdirs, readManifest, push, no nested scan), 456-476 (installed loop with the group descent and the SKILL.md skip) and 597-606 (the hint). Wording-only: the code behaves as the inline comment at lines 456-466 describes; the hint and header describe a wider rule than the code applies. The same lines appear in the codex and pi vendored copies, which are byte-identical to this file."
+   },
+   {
+    "id": "f4",
+    "source": "reviewer-s1-b",
+    "severity": "pre-existing",
+    "locationOrLink": "packages/development/lib/toolchain/adapters.js:579-587",
+    "failureMode": "loadAdapter applies the trustedRepoAdapters check only when the match has origin repo-local and returns an installed-origin match with no trust test, while discoverAdapters gives origin installed to every adapter found under the project's own packages/*/skills roots (built from projectRoot and scanned before the library-relative roots), so a cloned repository can ship an adapter in its own packages tree that resolves in a non-interactive run without the user-level trust entry the same adapter would need under .ensemble/adapters; this change extends that project-controlled, trust-exempt surface by one more directory level (children of group directories, with symlinked group directories followed to any target), although the library-relative roots alone would cover the full-bundle layout the change describes.",
+    "evidence": "Read packages/development/lib/toolchain/adapters.js:275-278 (projectPackagesSkillsRoots builds <projectRoot>/packages/<pkg>/skills), 385-389 (those roots come first in installedSkillsRoots), 448-476 (every hit gets origin installed; the new code adds the second level and listSubdirs follows directory symlinks), 527-560 (trust check only on byOrigin('repo-local')) and 579-587 (installed match returned directly). docs/TRD/TRD-2026-8d825f54-tool-abstraction-layer.md:43 (I5) and docs/guides/adapter-authoring.md:29 say a cloned repository's adapters are untrusted and need trustedRepoAdapters in non-interactive runs; the runner.js header says runCapability passes the manifest's argv templates and binaries to execFile. The new test scripts/tests/toolchain-adapters.test.js:448-469 itself resolves a planted nested adapter under <projectRoot>/packages/full/skills/git with interactive:false, no trust list, origin installed. The depth-one gap predates this change (hence pre-existing); the added level is this change's. I ran one read-only snippet that required the snapshot's adapters.js and called discoverAdapters with a nonexistent projectRoot: it printed 'total 51 flat 38 nested 13', all 13 nested entries under packages/full/skills (core:1, e2e-testing:1, git:5, infrastructure:6), and no id whose first match differs by realpath from a children-only scan and no new id, so in this monorepo the descent adds only symlink-alias duplicates. Whether a clone's own packages tree is meant to be trusted is a design question I cannot settle from the code.",
+    "uncertain": false
+   },
+   {
+    "id": "f5",
+    "source": "reviewer-s1-b",
+    "severity": "nit",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:592",
+    "failureMode": "In the test 'a group directory that declares its own adapter.yaml is that adapter, and its children are not also scanned', line 592 asserts that fs.existsSync(groupDir/SKILL.md) is false immediately after line 591 calls fs.rmSync on that same path without the force option. fs.rmSync throws ENOENT when the file is missing and otherwise deletes it, so the assertion cannot fail and guards nothing that line 591 does not already guarantee.",
+    "evidence": "Read the delta (lines 588-592 added) and the surrounding test at lines 583-606, plus writeAdapterDir (lines 92-97), which writes SKILL.md, and discoverAdapters in packages/development/lib/toolchain/adapters.js (lines 448-478). Line 591 removes SKILL.md with a plain fs.rmSync (no force), line 592 then asserts it is gone. The removal itself is correct and does make the test discriminate: with SKILL.md absent only the continue at adapters.js line 454 stops the descent into groupDir/vendored, because the SKILL.md guard at line 467 no longer applies. Only the extra existsSync assertion is redundant. Not run; it is a nit."
+   },
+   {
+    "id": "f6",
+    "source": "reviewer-s1-b",
+    "severity": "pre-existing",
+    "locationOrLink": "scripts/tests/toolchain-adapters.test.js:745",
+    "failureMode": "The library-relative-layout tests call loadAdapterFromCopy and mutated.loadAdapter with an empty env object (lines 745, 760, 773, 794, 811, 826, 839, 861 and 866). With no XDG_CONFIG_HOME, getEnsembleConfigRoot in packages/development/lib/toolchain/config-path.js falls back to os.homedir() (~/.config/ensemble when ~/.config exists, else ~/.ensemble), and discoverAdapters scans that real user adapters directory before the installed tier. On a machine whose real user adapters directory holds an adapter declaring beads, line 746 sees origin user instead of installed and the NOT_INSTALLED expectations at lines 773 and 839 do not throw, so these tests depend on the home directory of whoever runs them (the test at lines 281-326 pins HOME for exactly this reason).",
+    "evidence": "Read toolchain-adapters.test.js lines 730-875 and grepped for the empty-env calls (nine call sites, none pinning HOME or XDG_CONFIG_HOME). Read config-path.js lines 28-55: with no XDG_CONFIG_HOME the root comes from os.homedir(). Read adapters.js userAdaptersRoot (line 253) and the user-tier scan (lines 439-446), which runs before the installed tier, and the user-wins-over-installed test at lines 131-147. The fixtures under scripts/tests/fixtures/toolchain and the repository's jest setup (no setupFiles in package.json, no jest config file) do not pin HOME either. These lines predate this change and are outside the delta hunk (585-595). Not run."
+   }
+  ],
+  "code-review-improvements/pr-trd-2026-70e784f2-code-review-process-phase-2-6.json": [
+   {
+    "id": "F01",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-ledger.js:176",
+    "failureMode": "pre-existing severity short-circuits before uncertain/thread flags",
+    "evidence": "Read isActionable and Step 4; base commit had no pre-existing tier."
+   },
+   {
+    "id": "F02",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/lib/pr-review-eval.js:172-187",
+    "failureMode": "eval-score run path never passes CODEOWNERS so unconfirmed cases earn credit",
+    "evidence": "scoreEval gates confirmation on input.codeowners !== undefined; documented run payload omitted it. Test fails without the skill change/ CODEOWNERS."
+   },
+   {
+    "id": "F03",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-metrics.js:243-250",
+    "failureMode": "case-sensitive APPROVED",
+    "evidence": "Inspected computeMetrics; consumer is the metrics report only."
+   },
+   {
+    "id": "F04",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-reachability.js:411-436",
+    "failureMode": "secrets grade ok with no samples",
+    "evidence": "Read gradeSecretHygiene and tests."
+   },
+   {
+    "id": "F05",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/pi/agents/code-reviewer.md:4",
+    "failureMode": "Pi mirror drops Grep",
+    "evidence": "agent-transformer.ts:17,50; agent-transformer.test.ts:155."
+   },
+   {
+    "id": "F06",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/skills/pr-review-cycle/SKILL.md:603",
+    "failureMode": "state-read call omits treeSha",
+    "evidence": "Read SKILL.md 590-611 and runStateRead."
+   },
+   {
+    "id": "F07",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/skills/pr-review-cycle/SKILL.md:749-762",
+    "failureMode": "gate ledger not re-bound to head",
+    "evidence": "Read readState (sameHead||sameTree) and Step 10e."
+   },
+   {
+    "id": "F08",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/lib/pr-review-ledger.js:176-186",
+    "failureMode": "non-boolean cleared fails open at gate",
+    "evidence": "node probe against isActionable/validateLedger."
+   },
+   {
+    "id": "F09",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/tests/pr-review-ledger.test.js:420,464",
+    "failureMode": "no test for non-boolean flags",
+    "evidence": "Read the tests."
+   },
+   {
+    "id": "F10",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-ledger.js:248-328",
+    "failureMode": "dedupe/merge skip normalize/redact",
+    "evidence": "cli.js:567 redact on all output; gate/partition use normalizeSeverity."
+   },
+   {
+    "id": "F11",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-cli.js:254-263",
+    "failureMode": "no CLI-level hostile targetPath test",
+    "evidence": "resolveWithinStateDir enforces root; added test pr-review-cli.test.js."
+   },
+   {
+    "id": "F12",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "REVIEW.md:77",
+    "failureMode": "policy sourceSha cannot equal the base commit",
+    "evidence": "probe: cli policy with base de1284e returns policy-not-from-base (strict)."
+   },
+   {
+    "id": "F13",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/lib/pr-review-approvals.js:215",
+    "failureMode": "Directed by from body fills a reviewer slot unverified",
+    "evidence": "approvals.js directedBy handling vs TRD-024 AC."
+   },
+   {
+    "id": "F14",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/lib/pr-review-depth.js:87-125",
+    "failureMode": "requested depth can lower below tier default",
+    "evidence": "TRD lines 406; resolveDepth."
+   },
+   {
+    "id": "F15",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/codex/.codex/agents/code-reviewer.toml:4",
+    "failureMode": "Codex read-only reviewer is workspace-write",
+    "evidence": "generator hard-coded workspace-write at index.js:404."
+   },
+   {
+    "id": "F16",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-approvals.js:108-116",
+    "failureMode": "tree vouching rests on caller-supplied treeSha",
+    "evidence": "bindingReason returns stale-commit without a tree."
+   },
+   {
+    "id": "F17",
+    "source": "Gate26Real-reviewers",
+    "severity": "important",
+    "locationOrLink": "packages/development/lib/pr-review-gate.js:295-312",
+    "failureMode": "gate passes with no head binding",
+    "evidence": "Probed code: carried check skipped when approvals.headSha absent."
+   },
+   {
+    "id": "F18",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-cli.js:60-70",
+    "failureMode": "eval-score header omits codeowners",
+    "evidence": "Same fix as F02."
+   },
+   {
+    "id": "F19",
+    "source": "Gate26Real-reviewers",
+    "severity": "nit",
+    "locationOrLink": "packages/development/lib/pr-review-tier.js:191-206",
+    "failureMode": "second assessment evidencePaths unvalidated",
+    "evidence": "Read tier.js 191-210."
+   }
+  ],
+  "prs-measure/pr-207.json": [
+   {
+    "id": "f1",
+    "source": "reviewer-s1-b",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/commands/author-playwright-tests.yaml:151",
+    "failureMode": "The new Phase 2 step 4 action tells the agent to carry the detected framework forward as 'nunit' whenever detectE2eFrameworkInDir returns null (no PackageReference names a framework, or both NUnit and xUnit references are found), and the Phase 4 action then passes that always-present value as specDetails.framework to writeOrAppendSpecFile. appendTestMethod in spec-writer.js only infers the framework from the existing spec file when specDetails.framework is undefined; when it is defined it compares it with the inferred one and throws 'framework mismatch' on a difference. So in a project where detection could not tell (for example the xunit reference comes from a Directory.Build.props, or the searched directory holds both an NUnit and an xUnit project), appending an AC's test to an existing xUnit spec class fails with that error, although omitting framework would let the module use the existing file's own framework. The instruction also runs against the framework field note in delegation-contract.js ('Omit when unknown') and against the CHANGELOG claim that appending to an existing file infers its framework.",
+    "evidence": "Read the yaml line 151 (the same text is in the generated command md line 119, the codex SKILL.md line 123 and the pi prompt and skill), the Phase 3 action that puts framework in the proposal request and the Phase 4 action that says to call writeOrAppendSpecFile with specDetails.framework; spec-writer.js appendTestMethod lines 418-424 (requested is undefined only when framework is undefined; throws when requested && inferred && requested !== inferred); delegation-contract.js lines 50-52 ('Omit when unknown (NUnit)'). Ran a throwaway node script against the snapshot lib: detectE2eFramework on a csproj with no xunit PackageReference printed null, and on one xunit csproj plus one NUnit csproj printed null; writeOrAppendSpec on an existing xUnit class with framework 'nunit' threw \"framework mismatch: the existing file uses xunit but framework 'nunit' was requested.\"; the same call with framework omitted appended a [Fact] method (output had the [Fact]/[Trait] attributes and no [Test]). NUnit as the default for a new file is by design and unchanged by omitting; the reach is limited to projects where detection returns null and an existing xUnit file is appended to. The fix is one clause (omit framework when detectE2eFrameworkInDir returns null); author-playwright-tests-framework.test.js pins the current wording and the generated copies must be regenerated.",
+    "uncertain": false
+   },
+   {
+    "id": "f2",
+    "source": "reviewer-s1-b",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:155",
+    "failureMode": "renderTestMethodBlock interpolates the optional testCategory value, trimmed but otherwise unchecked, into the double-quoted string of the new xUnit attribute line [Trait(\"Category\", \"...\")]; a value that contains a double quote followed by )] closes the attribute early and the remainder is written into the generated C# spec file as code. The same change validates every other caller-supplied value it writes into a new xUnit file (collection against COLLECTION_NAME_RE, fixtureType and usings against DOTTED_IDENTIFIER_RE, className and testName as identifiers), so testCategory is the one interpolation into that file left unchecked; namespace is likewise written after 'namespace ' unchecked by the code the xUnit path shares with the NUnit path.",
+    "evidence": "Read spec-writer.js lines 137-166 (category is testCategory.trim() or 'E2E', used in the attributes ternary on lines 153-156) and lines 217-251 (scaffoldXunitFile validates collection, fixtureType and usings before writing). The documented command flow never sets testCategory, and testBody is raw C# by design, so this is an input-validation consistency gap rather than a path that adds capability beyond testBody. Not run."
+   },
+   {
+    "id": "f3",
+    "source": "reviewer-s2-a",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:24-25",
+    "failureMode": "detectE2eFramework decides the nunit/xunit flags by a prefix match on the lower-cased PackageReference Include value (startsWith('nunit') and startsWith('xunit')), so a package that is only a result-format logger or helper, such as NunitXml.TestLogger in an xUnit project, sets the other framework's flag too; the function then returns null as 'both frameworks', and the command falls back to NUnit for a project that actually uses xUnit, which is the wrong-shape output this change exists to prevent.",
+    "evidence": "Ran one throwaway node snippet against the snapshot's lib/e2e-framework.js. detectE2eFramework over PackageReference Include values Microsoft.NET.Test.Sdk, xunit, xunit.runner.visualstudio, Microsoft.Playwright, NunitXml.TestLogger printed null (not 'xunit'); the same list with JunitXml.TestLogger in place of NunitXml.TestLogger printed 'xunit'; NUnit, Microsoft.Playwright.NUnit, XunitXml.TestLogger printed null. NunitXml.TestLogger (spekt/nunit.testlogger) is a VSTest logger that only writes NUnit-format XML and can be added to a project on any VSTest framework. Line 151 of commands/author-playwright-tests.yaml turns a null result into 'nunit'. The same null outcome follows for two further shapes: PACKAGE_RE (line 12) only matches a double-quoted Include (the snippet printed null for Include='xunit'), and detectE2eFrameworkInDir (line 41) only collects *.csproj files, so test packages declared in Directory.Build.props are never seen (read, not run). tests/e2e-framework.test.js only exercises plain framework package names, so none of these shapes is covered."
+   },
+   {
+    "id": "f4",
+    "source": "reviewer-s2-a",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:240-244",
+    "failureMode": "scaffoldXunitFile always declares the injected fixture as a private field named _fixture (constructor parameter fixture), but the test body placed in a new xUnit class is authored by the playwright-tester agent, which is only told to build its page the way the project's sibling tests do, and the landing step only says to copy collection and fixtureType from a sibling spec; no field name is passed in or documented, so a body written against a sibling's differently named fixture member lands in a class that does not compile, and the command text has no step that compiles or runs the scaffolded class before it is written.",
+    "evidence": "Read spec-writer.js:240-244 (hard-coded _fixture and fixture) against agents/playwright-tester.yaml line 61 (build the context and page as the project's sibling tests do) and commands/author-playwright-tests.yaml line 226 (a new xunit file also needs {collection, fixtureType} copied from a sibling spec class): neither names _fixture or offers a field-name input. The only place the body and the class agree is the test data in tests/spec-writer-xunit.test.js (BODY uses _fixture.CreateBrowserContext() and _fixture.BaseAddress). agents/playwright-tester.yaml line 83 says the confirmed test runs verbatim and lands unchanged; [INFERENCE] the wrapper class that spec-writer generates is therefore not compiled by that run. Related, shown by a throwaway snippet: collection is always emitted as a string literal, and COLLECTION_NAME_RE accepts dots, so a copied constant expression such as PlaywrightCollection.Name printed [Collection(\"PlaywrightCollection.Name\")], a collection name with no CollectionDefinition. Not settled by building a real xUnit project; whether sibling suites use another member name is project-specific, so a person should decide.",
+    "uncertain": false
+   },
+   {
+    "id": "f5",
+    "source": "reviewer-s2-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:109-110",
+    "failureMode": "inferFramework recognises an attribute only when its name is immediately followed by ] or ( (the Fact/Theory and Test/TestFixture regexes) and a framework otherwise only from a literal using line, so an existing xUnit class written with a combined attribute list such as [Fact, Trait(...)] whose Xunit namespace comes from a csproj Using or global using infers null; appendTestMethod then skips its mismatch check and, when the framework was not requested or was defaulted to nunit, appends a [Test] method into the xUnit class.",
+    "evidence": "Ran a throwaway node snippet against the snapshot's lib/spec-writer.js: for an xUnit class whose only attribute line is [Fact, Trait(...)] and which has no using Xunit line, inferFramework printed null, and appendTestMethod with no framework appended a [Test] line after the existing [Fact, Trait(...)] line. With framework 'nunit' requested the same null inference skips the refusal (read: line 245 of appendTestMethod only throws when requested and inferred are both set and differ). tests/spec-writer-xunit.test.js tests inferFramework only with a lone [Fact], [Theory] or [Test] attribute or a literal using line, so this shape is not covered. Impact is limited because the command normally passes a detected framework; it matters when detection is null and the command defaults to 'nunit'."
+   },
+   {
+    "id": "f6",
+    "source": "reviewer-s2-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:168-183",
+    "failureMode": "The doc comments on scaffoldNewSpecFile, renderTestMethodBlock and appendTestMethod were not updated for the xUnit path: scaffoldNewSpecFile still documents baseClass as always required and lists no framework, collection, fixtureType or usings option, and appendTestMethod still says it appends a [Test] method and lists only acId, testName, testBody and testCategory, so a caller reading the function docs cannot learn the new options, which appear only in the file header and in the code.",
+    "evidence": "Read spec-writer.js:168-183 (scaffoldNewSpecFile docblock: baseClass typed as 'AuthenticatedPageTest'|'PageTest', throws line names className/baseClass/testName, no framework/collection/fixtureType/usings), 126-136 (renderTestMethodBlock param type has no framework) and 401-410 (appendTestMethod: 'Append a new [Test] method', specDetails 'see renderTestMethodBlock (acId, testName, testBody, testCategory)'). The new options are documented only in the header comment at lines 35-39."
+   },
+   {
+    "id": "f7",
+    "source": "reviewer-s2-b",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/e2e-framework.js:12-28",
+    "failureMode": "detectE2eFramework returns null for an xunit project whose csproj the matcher misreads, and the command then forces framework 'nunit': PACKAGE_RE (line 12) accepts only a double-quoted Include attribute, and the startsWith('nunit') test (line 24) also counts NUnit-prefixed helper packages such as NunitXml.TestLogger, so xunit plus such a logger is judged ambiguous (line 28). The command's Execution Setup step 'Ensure the Screenshot Helper' carries the result forward as \"nunit\" when it returns null, and that explicit value outranks the file's own inferred framework in appendTestMethod (spec-writer.js:419-424): an existing xUnit file is refused with 'framework mismatch' after the QA engineer approved the proposal and the test has run, and a new file is scaffolded as NUnit (using NUnit.Framework, a PageTest base class) into a project that has no NUnit reference. No test feeds the detector a single-quoted Include or an NUnit-prefixed helper package next to xunit, and none covers a null detection meeting an existing xUnit file; author-playwright-tests-framework.test.js:25 pins the null-to-nunit fallback string as the contract.",
+    "evidence": "Ran against the snapshot (probe.js load of lib/e2e-framework.js): detectE2eFramework on <PackageReference Include='xunit' Version='2.9.3' /> (single-quoted, valid MSBuild XML) printed null; on Include=\"xunit\" plus Include=\"NunitXml.TestLogger\" printed null; on a csproj with only Microsoft.Playwright printed null (the documented 'neither' case). Read: commands/author-playwright-tests.yaml:151 ('carry the result forward as framework (\"nunit\" when it returns null)'); spec-writer.js:419-424 (requested = resolveFramework(...) is checked against inferFramework(existingContent) and a difference throws); e2e-framework.test.js (only double-quoted Include and exact NUnit / xunit-family names). The fallback is a documented choice (package CHANGELOG: 'stays the default when the framework cannot be told'); the open question is whether an unknown detection should be turned into an explicit request that overrides what an existing file shows, rather than left undefined so inferFramework runs, or put to the QA engineer.",
+    "uncertain": false
+   },
+   {
+    "id": "f8",
+    "source": "reviewer-s2-b",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/tests/author-playwright-tests-evidence.test.js:68",
+    "failureMode": "The shared check that every $E2E_LIB module the command names exists in the package extracts names with the pattern /\\$E2E_LIB\\/([a-z-]+)\\.js/g. Its character class has no digit, so it cannot match $E2E_LIB/e2e-framework.js (the match stops at the '2' and is not followed by '.js'), and the module this change adds is never seen by it. The change patches around that with a one-off toContain plus existsSync assertion in author-playwright-tests-framework.test.js instead of widening the class to [a-z0-9-], so any later module whose name contains a digit is again invisible to the shared guard.",
+    "evidence": "Read author-playwright-tests-evidence.test.js:66-71 (the regex and the existsSync loop) and author-playwright-tests-framework.test.js:354-359 (the added one-off check). By the regex semantics: after '$E2E_LIB/' the group takes 'e', the next character '2' is outside [a-z-] and is not '.', so there is no match and 'e2e-framework' never enters the modules set. Not run."
+   },
+   {
+    "id": "f9",
+    "source": "reviewer-s3-a",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/tests/spec-writer-xunit.test.js:250",
+    "failureMode": "In the inferFramework table test, the case 'only in a string' (the source var s = \"using Xunit;\";) still returns null when string literals are not masked, because the using-regex in inferFramework is anchored to a line start and cannot match text that follows var s = ; no case in the suite places the attribute form inside a string (for example \"[Fact]\"), so the documented behaviour that string literals are ignored is not exercised by any test and a regression in the masking step would go unnoticed.",
+    "evidence": "Ran one throwaway node snippet against the snapshot copy of packages/e2e-testing/lib/spec-writer.js (inferFramework, and separately the same two xunit regexes applied to the unmasked text). It printed: var s = \"using Xunit;\"; -> inferFramework (masked): null | same regexes on UNMASKED text: null, so the test case passes with or without masking. For contrast var s = \"[Fact]\"; printed masked null | UNMASKED xunit, and /* [Fact] */ printed masked null | UNMASKED xunit, so the block-comment case at line 249 does discriminate but no string case does. Code read: spec-writer.js:109 uses /^[ \\t]*(?:global\\s+)?using\\s+Xunit\\s*;/m (line-anchored) and spec-writer.js:102-105 documents 'comments and string literals ignored'. Suggested fix: use a string such as var s = \"[Fact]\"; as the null case."
+   },
+   {
+    "id": "f10",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/tests/spec-writer-xunit.test.js:200",
+    "failureMode": "The second assertion of the test 'infers xunit from the file' (expect(appendTestMethod(EXISTING, details)).toContain('[Fact]')) is already true for the unmodified fixture, because EXISTING contains a [Fact] on Homepage_Renders; it would pass even if the appended method were written with [Test], so it does not check the inference named in the test title.",
+    "evidence": "Read the test file: EXISTING (lines 154-183) contains the line '    [Fact]' before Homepage_Renders (line 173), so toContain('[Fact]') holds before any append. The attribute written for the new method is checked only by the earlier test at lines 186-189 (toContain of '[Fact]\\n    [Trait(\"Category\", \"E2E\")]\\n    public async Task Dashboard_Renders()' and not.toContain('[Test]')), so the behaviour is covered there and this line is redundant rather than a coverage gap."
+   },
+   {
+    "id": "f11",
+    "source": "reviewer-s3-a",
+    "severity": "nit",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:240-244",
+    "failureMode": "scaffoldXunitFile emits fixed text for the injected fixture: a field named _fixture and a constructor parameter named fixture; only collection, fixtureType and usings are parameters. The text that produces the method body (Phase 3 step 2 and the playwright-tester Proposal-stage paragraph) only says to build the context and page as the project's sibling tests do, and the landing step (Phase 4 step 3) only says to copy {collection, fixtureType} from a sibling class. When the project's sibling tests reach the fixture under another member name (or through a primary-constructor parameter), the authored body refers to a member the generated class does not declare, so the newly landed file does not compile, and no later step of the command builds it.",
+    "evidence": "Read spec-writer.js:217-250 (scaffoldXunitFile): line 240 'private readonly ${fixtureType} _fixture;', line 242 'public ${className}(${fixtureType} fixture)' and line 244 '_fixture = fixture;' are fixed text. Read packages/pi/prompts/ensemble-author-playwright-tests.md:137 and :181 and packages/pi/agents/playwright-tester.md:60: none names the _fixture member. The test file's BODY (spec-writer-xunit.test.js:24-29) uses _fixture.CreateBrowserContext() and _fixture.BaseAddress, so the contract exists only implicitly in the example. Not run: this is an inference about projects whose sibling tests name the field differently, and Phases 5-7 of the prompt (read in full) contain no build or test step.",
+    "uncertain": false
+   },
+   {
+    "id": "f12",
+    "source": "reviewer-s3-b",
+    "severity": "important",
+    "locationOrLink": "packages/pi/package.json:3",
+    "failureMode": "This change edits three generated pi files (packages/pi/prompts/ensemble-author-playwright-tests.md, packages/pi/skills/ensemble-author-playwright-tests/SKILL.md, packages/pi/agents/playwright-tester.md) but leaves the ensemble-pi version at 1.6.17 in packages/pi/package.json line 3, packages/pi/.claude-plugin/plugin.json line 3, marketplace.json line 474 and .claude-plugin/marketplace.json line 474. The postgenerate:pi step (scripts/bump-pi-version-if-changed.js) rewrites those four files to 1.6.18 whenever content under packages/pi/prompts, agents or skills differs from the merge base and the version was not bumped by hand, so regenerating at this commit changes tracked files: the committed generated output does not match what the generator produces, the generated-drift step (Check generated markdown is up to date) fails, and an install that refetches only when the declared version string changes keeps serving the old prompt, skill and agent text.",
+    "evidence": "Read the recorded dry-run of the local CI gate for this head (.ensemble/pr-review/precheck-pr-207-48c862c416af218bc1fa32305493fb8855602b31.dry.gate.log): step generated-drift fails on Node 22 and on Node 24, and its output says \"Bumped packages/pi version 1.6.17 -> 1.6.18 (content changed since origin/main, version was not manually updated)\" followed by \"Generated output differs from committed files: M .claude-plugin/marketplace.json, M marketplace.json, M packages/pi/.claude-plugin/plugin.json, M packages/pi/package.json\". Read scripts/bump-pi-version-if-changed.js lines 4-48: CONTENT_PATHS are packages/pi/prompts, packages/pi/agents, packages/pi/skills, packages/pi/AGENTS.md, and both marketplace.json copies must carry the same version as plugin.json. In the snapshot those four files still say 1.6.17 (packages/pi/package.json:3, packages/pi/.claude-plugin/plugin.json:3, marketplace.json:474, .claude-plugin/marketplace.json:474), and none of them is in the manifest changedPaths list, while the three pi content files above are. I did not run the generator myself; this is read from that recorded run and the script."
+   },
+   {
+    "id": "f13",
+    "source": "reviewer-s3-b",
+    "severity": "nit",
+    "locationOrLink": "packages/pi/prompts/ensemble-author-playwright-tests.md:181",
+    "failureMode": "The Land the Confirmed, Passed Test step says a new xunit file also needs collection and fixtureType and names nothing else, but spec-writer.js renderTestMethodBlock throws testBody is required for xunit for every xunit method, whether it scaffolds a new file or appends to an existing xunit file, because an xunit test has no default body (the NUnit path falls back to a placeholder body). A caller that follows this step for an xunit append, or for a new file with only collection and fixtureType, is refused, and the step never says the confirmed test source is what goes into specDetails.testBody. The same sentence is copied into the command source and four generated copies.",
+    "evidence": "packages/e2e-testing/lib/spec-writer.js lines 144-149 throw when framework is xunit and testBody is empty; its header (lines 35-39) lists testBody as required for a new xUnit file; packages/e2e-testing/tests/spec-writer-xunit.test.js asserts that an xUnit append without a body is refused (an xUnit append still needs the authored body). The Land step text at the cited line (also in commands/author-playwright-tests.yaml, commands/ensemble/author-playwright-tests.md, pi SKILL.md and the codex SKILL.md) mentions only collection and fixtureType; author-playwright-tests-framework.test.js lines 42-48 pins that exact sentence, so the text and that test have to change together."
+   },
+   {
+    "id": "f16",
+    "source": "reviewer-range",
+    "severity": "important",
+    "locationOrLink": "packages/e2e-testing/lib/spec-writer.js:240-244",
+    "failureMode": "scaffoldXunitFile always names the injected fixture field _fixture (constructor parameter fixture) and imports only System.Threading.Tasks, Microsoft.Playwright and Xunit unless a usings list is passed, but the authoring agent is only told to build the context and page as the project's sibling tests do and the landing step names only collection and fixtureType to copy, so a body that refers to the fixture under another name, or needs another namespace, is confirmed and run before landing yet is written into a generated class that lacks that member, and the committed spec file does not compile.",
+    "evidence": "Grep of packages (excluding tests) for _fixture matches only spec-writer.js lines 240 and 244 (private readonly <fixtureType> _fixture; public Class(<fixtureType> fixture); _fixture = fixture). The agent's xUnit instruction (agents/playwright-tester.yaml line 61, mirrored in the md, toml and pi files: framework 'xunit' means no PageTest Page, build the context and page as the project's sibling tests do) and the Land step (commands/author-playwright-tests.yaml line 226: a new xunit file also needs {collection, fixtureType} copied from a sibling spec class) never mention the field name or the usings option, which exists only in spec-writer.js and its tests. The Land step runs only once runResult.passed is true (line 217), the run executes the proposal before spec-writer regenerates the class, and a grep of the command for dotnet, compile and build finds no later step that builds or runs the landed file, so a name mismatch surfaces only when someone builds the PR. NUnit does not have this gap because the PageTest base class supplies Page. The root CHANGELOG states that xUnit projects with a [Collection] fixture are supported, which holds only when the project's field happens to be named _fixture. Direction: tell the authoring agent to refer to the fixture as _fixture (and list usings in the Land step), or let specDetails carry the sibling's field and parameter names."
+   }
+  ]
+ },
+ "pairs": [
+  {
+   "ledger": "prs-measure2/pr-293.json",
+   "ids": [
+    "f7",
+    "f20"
+   ],
+   "citations": [
+    "scripts/validate-all.js:284",
+    "scripts/validate-all.js:284"
+   ],
+   "sources": [
+    "reviewer-s3-a",
+    "reviewer-s1-b"
+   ],
+   "score": 0.511,
+   "comparable": true,
+   "sizeRatio": 0.775,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "prs-measure2/pr-207.json",
+   "ids": [
+    "f1",
+    "f15"
+   ],
+   "citations": [
+    "packages/e2e-testing/commands/author-playwright-tests.yaml:151",
+    "packages/e2e-testing/commands/author-playwright-tests.yaml:151"
+   ],
+   "sources": [
+    "reviewer-s1-a",
+    "reviewer-range"
+   ],
+   "score": 0.471,
+   "comparable": true,
+   "sizeRatio": 0.959,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "prs-measure/pr-207.json",
+   "ids": [
+    "f11",
+    "f16"
+   ],
+   "citations": [
+    "packages/e2e-testing/lib/spec-writer.js:240-244",
+    "packages/e2e-testing/lib/spec-writer.js:240-244"
+   ],
+   "sources": [
+    "reviewer-s3-a",
+    "reviewer-range"
+   ],
+   "score": 0.463,
+   "comparable": true,
+   "sizeRatio": 0.666,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "prs-measure/pr-207.json",
+   "ids": [
+    "f4",
+    "f11"
+   ],
+   "citations": [
+    "packages/e2e-testing/lib/spec-writer.js:240-244",
+    "packages/e2e-testing/lib/spec-writer.js:240-244"
+   ],
+   "sources": [
+    "reviewer-s2-a",
+    "reviewer-s3-a"
+   ],
+   "score": 0.449,
+   "comparable": true,
+   "sizeRatio": 0.738,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "prs-measure2/pr-293.json",
+   "ids": [
+    "f21",
+    "f10"
+   ],
+   "citations": [
+    "scripts/validate-all.js:274",
+    "scripts/validate-all.js:274"
+   ],
+   "sources": [
+    "reviewer-s1-b",
+    "reviewer-s3-a"
+   ],
+   "score": 0.424,
+   "comparable": true,
+   "sizeRatio": 0.785,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "prs-measure/pr-207.json",
+   "ids": [
+    "f4",
+    "f16"
+   ],
+   "citations": [
+    "packages/e2e-testing/lib/spec-writer.js:240-244",
+    "packages/e2e-testing/lib/spec-writer.js:240-244"
+   ],
+   "sources": [
+    "reviewer-s2-a",
+    "reviewer-range"
+   ],
+   "score": 0.34,
+   "comparable": true,
+   "sizeRatio": 0.902,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "prs-measure2/pr-292.json",
+   "ids": [
+    "f5",
+    "f6"
+   ],
+   "citations": [
+    "packages/pi/prompts/_hidden/ensemble-beads-build-wave.md:84",
+    "packages/pi/prompts/_hidden/ensemble-beads-build-wave.md:84"
+   ],
+   "sources": [
+    "reviewer-s2-a",
+    "reviewer-s2-b"
+   ],
+   "score": 0.316,
+   "comparable": true,
+   "sizeRatio": 0.899,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RT-4",
+    "RT-7"
+   ],
+   "citations": [
+    "scripts/tests/toolchain-adapters.test.js:500",
+    "scripts/tests/toolchain-adapters.test.js:500"
+   ],
+   "sources": [
+    "RevTests229",
+    "RevTests229"
+   ],
+   "score": 0.289,
+   "comparable": true,
+   "sizeRatio": 0.94,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "prs-measure/pr-207.json",
+   "ids": [
+    "f3",
+    "f7"
+   ],
+   "citations": [
+    "packages/e2e-testing/lib/e2e-framework.js:24-25",
+    "packages/e2e-testing/lib/e2e-framework.js:12-28"
+   ],
+   "sources": [
+    "reviewer-s2-a",
+    "reviewer-s2-b"
+   ],
+   "score": 0.285,
+   "comparable": true,
+   "sizeRatio": 0.696,
+   "call": "unclear",
+   "basis": "read: related, not clearly one defect; counted in neither group"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RI-8"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0.241,
+   "comparable": true,
+   "sizeRatio": 0.405,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "prs-measure2/pr-291.json",
+   "ids": [
+    "f3",
+    "f5"
+   ],
+   "citations": [
+    "scripts/tests/toolchain-adapters.test.js:583-606",
+    "scripts/tests/toolchain-adapters.test.js:592"
+   ],
+   "sources": [
+    "reviewer-s1-b",
+    "reviewer-s1-b"
+   ],
+   "score": 0.221,
+   "comparable": true,
+   "sizeRatio": 0.784,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RT-3",
+    "RI-8"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevTests229",
+    "RevInstall229"
+   ],
+   "score": 0.207,
+   "comparable": true,
+   "sizeRatio": 0.516,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-8",
+    "RI-2"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:601",
+    "packages/development/lib/toolchain/adapters.js:601"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0.2,
+   "comparable": true,
+   "sizeRatio": 0.547,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-4",
+    "RT-3"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevTests229"
+   ],
+   "score": 0.174,
+   "comparable": true,
+   "sizeRatio": 0.85,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RC-4"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevCorrect229"
+   ],
+   "score": 0.159,
+   "comparable": true,
+   "sizeRatio": 0.667,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "prs-measure2/pr-207.json",
+   "ids": [
+    "f11",
+    "f13"
+   ],
+   "citations": [
+    "packages/pi/agents/playwright-tester.md:60",
+    "packages/pi/agents/playwright-tester.md:60"
+   ],
+   "sources": [
+    "reviewer-s3-a",
+    "reviewer-s3-b"
+   ],
+   "score": 0.158,
+   "comparable": true,
+   "sizeRatio": 0.92,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-4",
+    "RI-8"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0.152,
+   "comparable": true,
+   "sizeRatio": 0.607,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "prs-measure2/pr-207.json",
+   "ids": [
+    "f3",
+    "f7"
+   ],
+   "citations": [
+    "packages/e2e-testing/lib/spec-writer.js:213-223",
+    "packages/e2e-testing/lib/spec-writer.js:217-229"
+   ],
+   "sources": [
+    "reviewer-s2-a",
+    "reviewer-s2-b"
+   ],
+   "score": 0.149,
+   "comparable": true,
+   "sizeRatio": 0.933,
+   "call": "unclear",
+   "basis": "read: related, not clearly one defect; counted in neither group"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-4",
+    "RC-5"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevCorrect229"
+   ],
+   "score": 0.142,
+   "comparable": true,
+   "sizeRatio": 0.773,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RT-3"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevTests229"
+   ],
+   "score": 0.134,
+   "comparable": true,
+   "sizeRatio": 0.785,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-5",
+    "RT-3"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevTests229"
+   ],
+   "score": 0.126,
+   "comparable": true,
+   "sizeRatio": 0.91,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-5",
+    "RI-8"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0.112,
+   "comparable": true,
+   "sizeRatio": 0.469,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RI-3",
+    "RI-7"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:19",
+    "packages/development/lib/toolchain/adapters.js:19"
+   ],
+   "sources": [
+    "RevInstall229",
+    "RevInstall229"
+   ],
+   "score": 0.092,
+   "comparable": true,
+   "sizeRatio": 0.679,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "code-review-improvements/pr-trd-2026-70e784f2-code-review-process-phase-2-6.json",
+   "ids": [
+    "F01",
+    "F08"
+   ],
+   "citations": [
+    "packages/development/lib/pr-review-ledger.js:176",
+    "packages/development/lib/pr-review-ledger.js:176-186"
+   ],
+   "sources": [
+    "Gate26Real-reviewers",
+    "Gate26Real-reviewers"
+   ],
+   "score": 0.082,
+   "comparable": true,
+   "sizeRatio": 0.796,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RC-5"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevCorrect229"
+   ],
+   "score": 0.08,
+   "comparable": true,
+   "sizeRatio": 0.863,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "prs-measure2/pr-207.json",
+   "ids": [
+    "f16",
+    "f17"
+   ],
+   "citations": [
+    "packages/e2e-testing/lib/e2e-framework.js:24-25",
+    "packages/e2e-testing/lib/e2e-framework.js:25"
+   ],
+   "sources": [
+    "reviewer-range",
+    "reviewer-range"
+   ],
+   "score": 0.074,
+   "comparable": true,
+   "sizeRatio": 0.523,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RC-2"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevCorrect229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RI-6"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-1",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-2",
+    "RC-4"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevCorrect229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-2",
+    "RC-5"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevCorrect229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-2",
+    "RT-3"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevTests229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-2",
+    "RI-6"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-2",
+    "RI-8"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-2",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "size-ratio",
+   "sizeRatio": 0.303,
+   "call": "same",
+   "basis": "read: the same defect in other words"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-3",
+    "RT-10"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:452",
+    "packages/development/lib/toolchain/adapters.js:452"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevTests229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-4",
+    "RI-6"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-4",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-5",
+    "RI-6"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RC-5",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevCorrect229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RT-3",
+    "RI-6"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevTests229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RT-3",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevTests229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "read: another defect"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RI-6",
+    "RI-8"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevInstall229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RI-6",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevInstall229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  },
+  {
+   "ledger": "pr229/pr-Sunstone-Partners_ensemble_229.json",
+   "ids": [
+    "RI-8",
+    "RI-9"
+   ],
+   "citations": [
+    "packages/development/lib/toolchain/adapters.js:470",
+    "packages/development/lib/toolchain/adapters.js:470"
+   ],
+   "sources": [
+    "RevInstall229",
+    "RevInstall229"
+   ],
+   "score": 0,
+   "comparable": false,
+   "why": "kind",
+   "sizeRatio": 0,
+   "call": "distinct",
+   "basis": "same source: the in-round rule keeps one source's findings apart (and read: another defect)"
+  }
+ ]
+}
