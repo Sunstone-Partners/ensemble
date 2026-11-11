@@ -157,7 +157,7 @@ describe('TRD-039-TEST mutation proof: the forbidden-invocation sweep can actual
   });
 });
 
-describe('TRD-039-TEST Scenario: Merge safety rules unchanged', () => {
+describe('TRD-039-TEST Scenario: Merge safety rules unchanged except that verified hosted jobs may stand in for the local status (REQ-019)', () => {
   // The pre-TRD-039 rule ("NEVER merge while any required check is failing/pending ...") was
   // superseded on dev by the local-ci-gate rule (merge on the verified local gate verdict for
   // the exact head; reviews read from the host). After the rebase onto dev the safety

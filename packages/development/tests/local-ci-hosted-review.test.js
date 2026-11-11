@@ -72,14 +72,14 @@ describe('1. an unexpected shape is a refusal, never an accept with nothing veri
   ])('every pull_request run has an id that is %s: refused, and no job listing is asked for', (_n, id) => {
     const entries = H.honest(HEAD).map((e) => H.withRun(e, { id }));
     const { r, ghApi } = verify(entries);
-    refused(r, 'no pull_request run of', 'exists for', HEAD);
+    refused(r, 'pull_request run of', VALIDATE, 'malformed id', 'rather than ignoring it');
     expect(r.jobs).toBeUndefined();
     expect(ghApi.calls).toHaveLength(1); // the runs listing only
   });
 
   it('one required workflow whose only pull_request run has a bad id is refused although the others are honest', () => {
     const entries = H.swap(H.honest(HEAD), TEST, (e) => H.withRun(e, { id: '102' }));
-    refused(verify(entries).r, `no pull_request run of ${TEST}`);
+    refused(verify(entries).r, `pull_request run of ${TEST}`, 'malformed id ("102")');
   });
 
   it.each([
@@ -108,7 +108,7 @@ describe('1. an unexpected shape is a refusal, never an accept with nothing veri
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, mergeReady: false, hostedRefused: true });
     expect(JSON.parse(r.stdout).source).toBeUndefined();
-    expect(JSON.parse(r.stdout).reason).toContain('no pull_request run of');
+    expect(JSON.parse(r.stdout).reason).toContain('malformed id');
   });
 });
 
@@ -215,19 +215,20 @@ describe('3. a failure the local gate recorded on this head vetoes hosted accept
   const failedStatus = () => ({ context: CONTEXT, state: 'failure', sha: HEAD, description: 'ci-local failed: x / y / z @ e4c4130' });
   const mergePayload = (statuses) => ({ ...gatePayload(fx), statuses });
 
-  it.each(['failure', 'error'])('merge: a %s status on this head and GREEN hosted CI is refused, naming the status and forceLocal', (state) => {
-    const { deps, ghApi } = makeDeps(fx);
+  // (Replaced: this used to pin a veto decided from the caller's payload; the veto is now read from GitHub, so the failure is on GitHub too.)
+  it.each(['failure', 'error'])('merge: a %s status on this head (on GitHub) and GREEN hosted CI is refused, naming the status and forceLocal', (state) => {
+    const { deps, ghApi } = makeDeps(fx, { statuses: [{ context: CONTEXT, state, description: 'x' }] });
     const r = cli.runMerge(mergePayload([{ ...failedStatus(), state }]), deps);
     expect(r).toMatchObject({ ok: false, mergeReady: false, hostedRefused: true, localFailure: true, headSha: HEAD });
     expect(r.source).toBeUndefined();
     expect(r.reason).toContain(`status on ${HEAD} is ${state}`);
-    expect(r.reason).toContain(`${CONTEXT} is ${state} on ${HEAD}`);
+    expect(r.reason).toContain(`the local gate recorded ${state} for ${CONTEXT} on ${HEAD}`);
     expect(r.reason).toContain('re-run the gate with forceLocal:true');
     expect(ghApi.calls.length).toBeGreaterThan(0); // hosted CI was verified green, and still not accepted
   });
 
   it('merge: the same refusal through the real CLI process', () => {
-    const gh = H.fakeGhActionsDir({ pr: prAnswer(), entries: H.honest(HEAD), head: HEAD });
+    const gh = H.fakeGhActionsDir({ pr: prAnswer(), entries: H.honest(HEAD), head: HEAD, statuses: [{ context: CONTEXT, state: 'failure', description: 'x' }] });
     const r = runCli('merge', mergePayload([failedStatus()]), gh);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, mergeReady: false, localFailure: true, hostedRefused: true });

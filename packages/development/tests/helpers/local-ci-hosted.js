@@ -142,6 +142,30 @@ function actionsApi(entries, { repo = REPO, runsTotal, jobsTotal = {}, answer, s
 }
 
 /**
+ * A STATEFUL GitHub for the commit-status endpoints: `postStatus` records what the gate posts and the statuses lookup
+ * returns it, NEWEST FIRST like GitHub, ahead of `initial` (also newest first). `answer` plugs into actionsApi's
+ * `answer` option (the Actions lookups stay the fixture's); `posts` is every request `postStatus` accepted.
+ * `published:false` makes postStatus report that gh could not post (and store nothing).
+ */
+function statefulStatuses({ initial = [] } = {}) {
+  const store = [...initial];
+  const posts = [];
+  const fake = {
+    store,
+    posts,
+    published: true,
+    answer: (apiPath, proceed) => (/\/commits\/[0-9a-fA-F]+\/statuses\?/.test(apiPath) ? { ok: true, json: store.slice() } : proceed()),
+    postStatus: async (req) => {
+      if (!fake.published) return { published: false, reason: 'gh could not post the status' };
+      posts.push(req);
+      store.unshift({ context: req.context, state: req.state, description: req.description, sha: req.sha });
+      return { published: true, repo: req.repo, sha: req.sha, state: req.state, context: req.context, id: 99 };
+    },
+  };
+  return fake;
+}
+
+/**
  * The real `git` dependency, memoised per (args, cwd). A fixture repo never changes once built, so one real git call per
  * question is exact; a test file that asks the same questions hundreds of times is not dominated by process spawns.
  */
@@ -230,6 +254,7 @@ module.exports = {
   withJob,
   withoutJob,
   actionsApi,
+  statefulStatuses,
   memoGit,
   fakeGhActionsDir,
   ghInvocations,

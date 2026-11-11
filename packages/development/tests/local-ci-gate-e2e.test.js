@@ -238,14 +238,26 @@ describe('gate flow', () => {
   it.each([
     ['unfetchable head', { kind: 'unfetchable-head', message: 'cannot fetch' }],
     ['unprovidable Node', { kind: 'node-version', message: 'required Node 22 cannot be provided' }],
-    ['runner error', { kind: 'runner-error', message: 'boom' }],
-  ])('runner failure (%s) never becomes success and posts nothing', async (_n, failure) => {
+    ['secrets', { kind: 'secrets', message: 'secrets file unreadable' }],
+  ])('transient runner failure (%s) never becomes success and posts nothing', async (_n, failure) => {
     const repo = repoWith();
     const runGate = jest.fn(() => ({ ok: false, sha: repo.sha, error: failure.message, failures: [{ ...failure, step: null, node: null, sha: repo.sha }], unmirrored: [], nodes: [] }));
     const { deps, post } = makeDeps({ runGate, prInfo: prInfoFor(repo) });
     const r = await cli.runGateFlow(gatePayload(repo), deps);
     expect(r).toMatchObject({ ok: false, mergeReady: false, posted: false });
     expect(post.calls).toHaveLength(0);
+  });
+
+  // Replaces the old 'runner error posts nothing' case: a runner-error is HEAD-BOUND (D1), so it is published as a failure
+  // status, which is what lets it veto green hosted CI; it still never becomes success.
+  it('a runner error never becomes success; it posts exactly one failure status', async () => {
+    const repo = repoWith();
+    const runGate = jest.fn(() => ({ ok: false, sha: repo.sha, error: 'boom', failures: [{ kind: 'runner-error', message: 'boom', step: null, node: null, sha: repo.sha }], unmirrored: [], nodes: [] }));
+    const { deps, post } = makeDeps({ runGate, prInfo: prInfoFor(repo) });
+    const r = await cli.runGateFlow(gatePayload(repo), deps);
+    expect(r).toMatchObject({ ok: false, mergeReady: false, posted: true });
+    expect(post.statuses().map((p) => p.body.state)).toEqual(['failure']);
+    expect(post.statuses()[0].body.description).toBe(`ci-local refused (runner-error): clean clone @ ${repo.sha.slice(0, 8)}`);
   });
 
   it('a runner claiming ok with zero nodes or failures present is not success', async () => {

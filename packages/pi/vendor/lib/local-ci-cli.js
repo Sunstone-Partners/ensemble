@@ -486,14 +486,19 @@ function runMerge(payload, deps) {
   const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet, pr, baseRefName: baseBranchOf(baseRef) }, deps);
   if (hosted.ok) {
     // Negative local evidence outranks green hosted jobs: a failure the gate recorded on THIS head is never overridden.
-    const failed = ours.find((s) => (s.state === 'failure' || s.state === 'error') && isText(s.sha) && s.sha.toLowerCase() === headSha.toLowerCase());
-    if (failed) {
-      return {
-        ...localRefusal,
-        reason: `${localRefusal.reason}; hosted CI is green on this head but is not accepted over a recorded local failure (${cfg.approvalSet.statusContext} is ${failed.state} on ${headSha}): re-run the gate with forceLocal:true`,
-        hostedRefused: true,
-        localFailure: true,
-      };
+    // The veto is read from GitHub (the same rule `gate` uses), never decided from the caller's `statuses`.
+    const vetoed = (reason, recorded) => ({
+      ...localRefusal,
+      reason: `${localRefusal.reason}; hosted CI is green on this head but is not accepted: ${reason}; re-run the gate with forceLocal:true`,
+      hostedRefused: true,
+      ...(recorded ? { localFailure: true } : {}),
+    });
+    const veto = recordedLocalFailure(deps, { repo, headSha, statusContext: cfg.approvalSet.statusContext });
+    if (veto) return vetoed(veto.reason, veto.recorded);
+    // A failure in the payload that names no usable commit cannot be attributed to another commit, so it counts against this head.
+    const unattributable = ours.find((s) => (s.state === 'failure' || s.state === 'error') && !(typeof s.sha === 'string' && SHA_RE.test(s.sha)));
+    if (unattributable) {
+      return vetoed(`a ${unattributable.state} status in ${cfg.approvalSet.statusContext} carries no usable commit SHA, so it cannot be attributed to another commit`, true);
     }
     // The head may have moved while GitHub was being asked: re-read the pull request and refuse if it did.
     const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
@@ -507,20 +512,32 @@ function runMerge(payload, deps) {
 const baseBranchOf = (baseRef) => fullRemoteRef(baseRef).slice('refs/remotes/origin/'.length);
 
 /**
- * Has the gate itself recorded a failure on this exact head? GitHub lists a commit's statuses newest first, and the latest
- * one in the configured context decides: `failure` or `error` vetoes hosted acceptance. A list that cannot be read vetoes
- * too (fail closed). Returns the reason text, or null when nothing is in the way.
+ * Has the gate itself recorded a failure on this exact head? ONE rule for `merge` and `gate`, read from GitHub (never
+ * from a payload) and only asked once hosted CI verified green. GitHub lists a commit's statuses NEWEST FIRST, so the
+ * first entry in the configured context (compared case-insensitively) is the latest and decides: `success` or
+ * `pending` is no veto (a later success supersedes an older failure; a pending status is no evidence either way);
+ * `failure`, `error` or any other or non-text state vetoes (fail closed). A list that cannot be read, no lookup at all,
+ * and a FULL page (100) with no entry in the context (it may lie on a later page) veto too.
+ * Returns null when nothing is in the way, else `{reason, recorded}`: `recorded` is true when a failing or unexpected
+ * state of the gate is on record (as opposed to a list that could not be read or judged).
  */
 function recordedLocalFailure(deps, { repo, headSha, statusContext }) {
-  if (typeof deps.ghApi !== 'function') return 'no GitHub lookup is available to read the commit statuses';
-  const got = deps.ghApi(`repos/${repo}/commits/${headSha}/statuses?per_page=100`);
-  if (!got || got.ok !== true || !Array.isArray(got.json)) return `cannot read the commit statuses of ${headSha}: ${(got && got.error) || 'no answer'}`;
+  const unread = (reason) => ({ reason, recorded: false });
+  if (typeof deps.ghApi !== 'function') return unread('no GitHub lookup is available to read the commit statuses');
+  const got = deps.ghApi(`repos/${repo}/commits/${headSha}/statuses?per_page=${STATUS_PAGE}`);
+  if (!got || got.ok !== true || !Array.isArray(got.json)) return unread(`cannot read the commit statuses of ${headSha}: ${(got && got.error) || 'no answer'}`);
   const want = statusContext.toLowerCase();
   const latest = got.json.find((s) => isObject(s) && typeof s.context === 'string' && s.context.toLowerCase() === want);
-  if (latest && (latest.state === 'failure' || latest.state === 'error')) {
-    return `the local gate recorded ${latest.state} for ${statusContext} on ${headSha}, and green hosted jobs do not override it (the local run decides)`;
+  if (!latest) {
+    return got.json.length >= STATUS_PAGE
+      ? unread(`the first ${STATUS_PAGE} commit statuses of ${headSha} hold none in ${statusContext}, and more may follow; refusing rather than guessing`)
+      : null;
   }
-  return null;
+  if (latest.state === 'success' || latest.state === 'pending') return null;
+  return {
+    reason: `the local gate recorded ${typeof latest.state === 'string' ? latest.state : 'a status with no usable state'} for ${statusContext} on ${headSha}, and green hosted jobs do not override it (the local run decides)`,
+    recorded: true,
+  };
 }
 
 /* ------------------------------------------------------------------------ gate */
@@ -560,7 +577,19 @@ function describeFailures(result, equivalents) {
   return out;
 }
 
-const REPORTABLE_KINDS = new Set(['unsupported-step', 'step-failed']);
+// Refusals that say nothing about the head: the environment was not fit to evaluate it, so nothing is published and
+// hosted CI may still stand in. Every other kind (and any future one) is head-bound: the head WAS evaluated, or the
+// evaluation was not trustworthy, so it is published as a failure status, which vetoes hosted acceptance (recordedLocalFailure).
+const TRANSIENT_KINDS = new Set(['invalid-input', 'prerequisite', 'secrets', 'cleanup', 'unfetchable-head', 'node-version']);
+const STATUS_PAGE = 100;
+
+/** The failure status text: today's wording for a failed or unsupported step, a "refused (<kind>)" wording for the rest. */
+function failureDescription(f, headSha) {
+  const sha8 = headSha.slice(0, 8);
+  if (f.kind === 'step-failed' || f.kind === 'unsupported-step') return clip(`ci-local failed: ${f.workflow} / ${f.job} / ${f.step} @ ${sha8}`);
+  const where = [f.job, f.step].filter((p) => p !== null && p !== undefined).join(' / ') || 'clean clone';
+  return clip(`ci-local refused (${f.kind}): ${where} @ ${sha8}`);
+}
 
 function clip(text) {
   return text.length > MAX_DESCRIPTION ? `${text.slice(0, MAX_DESCRIPTION - 1)}\u2026` : text;
@@ -598,9 +627,9 @@ async function runGateFlow(payload, deps) {
     const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet, pr, baseRefName: baseBranchOf(baseRef) }, deps);
     if (hosted.ok) {
       // Green hosted jobs do not override a failure the local gate recorded on this head: the local run decides then.
-      const failure = recordedLocalFailure(deps, { repo, headSha, statusContext: cfg.approvalSet.statusContext });
-      if (failure) {
-        report.hostedRefused = `hosted CI not accepted: ${failure}`;
+      const veto = recordedLocalFailure(deps, { repo, headSha, statusContext: cfg.approvalSet.statusContext });
+      if (veto) {
+        report.hostedRefused = `hosted CI not accepted: ${veto.reason}`;
       } else {
         // The head may have moved while GitHub was being asked: re-read the pull request, as the first check did.
         const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
@@ -639,10 +668,9 @@ async function runGateFlow(payload, deps) {
   if (!passed) {
     report.failures = describeFailures(result, cfg.approvalSet.equivalents);
     report.error = result.error || 'local CI did not pass';
-    const reportable = report.failures.filter((f) => REPORTABLE_KINDS.has(f.kind));
-    if (!dryRun && reportable.length > 0) {
-      const f = reportable[0];
-      const published = await post('failure', clip(`ci-local failed: ${f.workflow} / ${f.job} / ${f.step} @ ${headSha.slice(0, 8)}`));
+    const headBound = report.failures.filter((f) => !TRANSIENT_KINDS.has(f.kind));
+    if (!dryRun && headBound.length > 0) {
+      const published = await post('failure', failureDescription(headBound[0], headSha));
       report.posted = published.published === true;
       report.post = published;
     }

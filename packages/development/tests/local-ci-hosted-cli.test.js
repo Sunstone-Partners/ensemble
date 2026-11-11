@@ -64,7 +64,7 @@ describe('merge: a verified local status wins; otherwise hosted CI verified on t
   it('(a) no local status but hosted CI green on the head: merge-ready, source hosted, with the verified jobs', () => {
     const { deps, ghApi } = makeDeps(fx);
     expect(cli.runMerge(mergePayload(fx), deps)).toEqual({ ok: true, mergeReady: true, headSha: HEAD, source: 'hosted', hostedJobs: H.VERIFIED, hostedCiWaitRequired: false });
-    expect(ghApi.calls).toHaveLength(4);
+    expect(ghApi.calls).toHaveLength(5); // runs, three job listings, then the commit statuses (the veto is read from GitHub)
   });
 
   it('(a) through main: exit 0 and the verdict on stdout', async () => {
@@ -454,10 +454,11 @@ describe('through a real process, with a gh that answers the PR and the Actions 
     ['api', `repos/${REPO}/actions/runs/102/jobs?filter=latest&per_page=100`],
     ['api', `repos/${REPO}/actions/runs/103/jobs?filter=latest&per_page=100`],
   ];
-  // identity, the Actions lookups, then the PR read again after them (the head may have moved meanwhile)
-  const EXPECTED_MERGE = [PR_VIEW, ...ACTIONS, PR_VIEW];
-  // `gate` also reads the head's commit statuses once hosted CI verified, to see whether the local gate recorded a failure
-  const EXPECTED_GATE = [PR_VIEW, ...ACTIONS, ['api', `repos/${REPO}/commits/${HEAD}/statuses?per_page=100`], PR_VIEW];
+  // identity, the Actions lookups, the head's commit statuses (did the local gate record a failure?), then the PR read again
+  // after them (the head may have moved meanwhile): the same order for `merge` and `gate`
+  const STATUSES = ['api', `repos/${REPO}/commits/${HEAD}/statuses?per_page=100`];
+  const EXPECTED_MERGE = [PR_VIEW, ...ACTIONS, STATUSES, PR_VIEW];
+  const EXPECTED_GATE = EXPECTED_MERGE;
 
   it('merge: hosted CI green -> exit 0, source hosted; gh was asked for the PR and exactly the runs and jobs, as separate argv elements', () => {
     const dir = H.fakeGhActionsDir({ pr: prAnswer, entries: H.honest(HEAD), head: HEAD });

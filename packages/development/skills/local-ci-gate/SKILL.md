@@ -80,7 +80,7 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
    - `dryRun` and `mergeReady:true`: report readiness, state that nothing was
      posted.
    - `source:"hosted"`, `mergeReady:true`: report hosted CI passed on this head;
-     nothing run or posted. `hostedRefused`: the CLI ran locally instead. A `failure`/`error` status on the head vetoes hosted (`merge` refuses; `gate` runs locally); fork PRs and workflows using repo-local actions are never accepted hosted.
+     nothing run or posted. `hostedRefused`: the CLI ran locally instead. The latest `failure`/`error` status on the head vetoes hosted (`merge` refuses; `gate` runs locally); fork PRs and workflows using repo-local actions are never accepted hosted.
    - `posted:true`, `mergeReady:true`: report the record; the PR is mergeable.
 3. Never retry with a different SHA, never post by hand, never edit the config
    to make a step pass. Never pass `config`, `path`, `runner` or any key other
