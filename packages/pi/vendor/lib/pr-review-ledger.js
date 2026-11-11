@@ -332,6 +332,8 @@ const SAME_DEFECT_MIN_SIMILARITY = 0.26;
 const SAME_DEFECT_MIN_SIZE_RATIO = 0.33;
 /** Fewer distinct words than this is too little text to call two findings one defect. */
 const SAME_DEFECT_MIN_WORDS = 8;
+/** `resemblanceOver` weighs words over the findings in play and needs at least this many distinct ones (see there). */
+const RESEMBLANCE_MIN_CORPUS = 3;
 const ADJACENT_LINES = 2;
 
 /** Words that say nothing about WHICH defect a finding describes (three letters or more; shorter words are dropped anyway). */
@@ -417,16 +419,20 @@ function resemblanceOf(wordsA, wordsB, weightOf) {
  * The measure `dedupeFindings` joins two reviewers' write-ups of one defect by, as a function of any two findings, for the
  * callers that must ask it of findings that are not in one call (a finding of an earlier round and one of this round):
  * `resemblanceOver(corpus)` weighs each word by ln(N / df), N the distinct findings of `corpus` (exact duplicates are one) and
- * df how many of them use the word, exactly as `dedupeFindings` weighs the findings of its call (with fewer than three findings in `corpus`
- * every word weighs 1: ln(N / df) would be 0 for every shared word of two), and answers
- * `(a, b) -> { comparable, why?, similarity, sizeRatio, words:[n, n] }`. `a` and `b` belong in `corpus`.
+ * df how many of them use the word, exactly as `dedupeFindings` weighs the findings of its call, and answers
+ * `(a, b) -> { comparable, why?, similarity, sizeRatio, words:[n, n] }`. `a` and `b` belong in `corpus`. With fewer than
+ * RESEMBLANCE_MIN_CORPUS (3) distinct findings in `corpus` there is nothing to weigh the words by (N = 2: every word two findings
+ * share has df = N, so ln(N / df) is 0 and every pair would score 0), and a plain overlap in its place is a different and
+ * more permissive measure that the bar fitted for the weights does not fit (kata tmf5, review of PR 299: it merged 4 of the 35
+ * distinct fit pairs that the corpus weights never reach), so it answers `comparable: false, why: 'corpus-too-small'`.
  *
  * It compares the DESCRIPTIONS (failure mode and evidence) and what two findings must agree on besides them: it knows nothing
  * of their lines or their sources, which are the caller's to ask. `comparable` is false, with `why`, when the two are of
  * another kind (class, security relevance, Pre-existing status: `kind`), when either needs a person (an open thread or an
  * uncertain flag: `unsettled`), when either has fewer than SAME_DEFECT_MIN_WORDS distinct words (`too-few-words`), when the
  * shorter description weighs under SAME_DEFECT_MIN_SIZE_RATIO of the longer one (`size-ratio`) or when it cannot tell (`unreadable`);
- * `similarity` is then 0. `dedupeFindings` asks `similarity >= SAME_DEFECT_MIN_SIMILARITY` of a comparable pair.
+ * `similarity` is then 0. `dedupeFindings` asks `similarity >= SAME_DEFECT_MIN_SIMILARITY` of a comparable pair (it weighs by its
+ * own loop, which this refusal does not touch: it still scores a call of exactly two findings 0, as it always did).
  */
 function resemblanceOver(corpus) {
   const documents = new Map();
@@ -440,18 +446,13 @@ function resemblanceOver(corpus) {
   }
   const documentFrequency = new Map();
   for (const words of documents.values()) for (const word of words) documentFrequency.set(word, (documentFrequency.get(word) || 0) + 1);
-  // Fewer than three findings in play: ln(N / df) is 0 for every word two of them share (N = 2: df = 2), so every pair would score 0
-  // whatever the two say. With no corpus to weigh the words by, they weigh the same (the plain overlap of the two descriptions' distinct
-  // words over the smaller one's). kata tmf5: `dedupeFindings` weighs its own findings by its own loop, unchanged, and so still scores
-  // a call of exactly two findings 0; that is how it was.
-  const uniform = documents.size < 3;
   // a word of a finding that is not in the corpus counts as one only that finding uses
-  const weightOf = uniform ? () => 1 : (word) => Math.log(Math.max(documents.size, 1) / (documentFrequency.get(word) || 1));
+  const weightOf = (word) => Math.log(Math.max(documents.size, 1) / (documentFrequency.get(word) || 1));
   const not = (why, words = [0, 0]) => ({ comparable: false, why, similarity: 0, sizeRatio: 0, words });
   return (a, b) => {
     if (!isObject(a) || !isObject(b)) return not('unreadable');
-    // fewer than two distinct findings: there is nothing to compare a finding with, and no weight means anything
-    if (documents.size < 2) return not('corpus-too-small');
+    // fewer than three distinct findings in play: no weight means anything, and a measure with no weights is not the one the bar was fitted for
+    if (documents.size < RESEMBLANCE_MIN_CORPUS) return not('corpus-too-small');
     const wordsA = descriptionWords(a);
     const wordsB = descriptionWords(b);
     const words = [wordsA.size, wordsB.size];
@@ -1382,6 +1383,7 @@ module.exports = {
   SAME_DEFECT_MIN_SIMILARITY,
   SAME_DEFECT_MIN_SIZE_RATIO,
   SAME_DEFECT_MIN_WORDS,
+  RESEMBLANCE_MIN_CORPUS,
   SEVERITIES,
   LEGACY_SEVERITY_MAP,
 };
