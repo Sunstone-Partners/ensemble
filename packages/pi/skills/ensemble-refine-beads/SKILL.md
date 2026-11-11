@@ -61,7 +61,7 @@ Resolve exactly one subtree scope or explicit project scope
 
 Confirm tracker writes for this session, then flush pending tracker state before analysis reads it
 
-- Before this command's first tracker write: run node "$TOOLCHAIN_CLI" confirm-status tracker.update --run-id "$RUN_ID" --json [add --non-interactive when --foreman is present] and parse as CONFIRM_STATUS. If CONFIRM_STATUS.data.required is true and CONFIRM_STATUS.data.confirmed is false: when --foreman is not present ask via AskUserQuestion "Allow the tracker adapter to write (sync/comment/update/dep changes) for this session? [yes/no]"; on yes run node "$TOOLCHAIN_CLI" confirm-record tracker.update --run-id "$RUN_ID" --json. Under --foreman, never prompt (non-interactive already passed; the CLI auto-confirms and logs).
+- Before this command's first tracker write: run node "$TOOLCHAIN_CLI" confirm-status tracker.update --run-id "$RUN_ID" --json [add --non-interactive when --foreman is present] and parse as CONFIRM_STATUS. If CONFIRM_STATUS.data.required is true and CONFIRM_STATUS.data.confirmed is false: when --foreman is not present ask via ask "Allow the tracker adapter to write (sync/comment/update/dep changes) for this session? [yes/no]"; on yes run node "$TOOLCHAIN_CLI" confirm-record tracker.update --run-id "$RUN_ID" --json. Under --foreman, never prompt (non-interactive already passed; the CLI auto-confirms and logs).
 - Run: node "$TOOLCHAIN_CLI" run tracker.sync --run-id "$RUN_ID" --json [add --non-interactive when --foreman is present] (optional; {ok:false} -> skip silently, continue).
 
 #### Step 2.2: Optional Graph Health Analysis

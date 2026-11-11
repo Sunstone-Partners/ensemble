@@ -13,7 +13,7 @@ Produce the fix plan (approach, files to modify, test strategy, edge cases), con
 
 #### Step 2.3: User Interview (Conditional)
 
-Only when the description is ambiguous (under 20 words, vague terms such as "doesn't work", or several interpretations) or --interactive is set. Ask clarifying questions ONE AT A TIME (max 5) with AskUserQuestion and fold the answers into the approach. Never when --foreman is set: proceed on best-effort assumptions.
+Only when the description is ambiguous (under 20 words, vague terms such as "doesn't work", or several interpretations) or --interactive is set. Ask clarifying questions ONE AT A TIME (max 5) with ask and fold the answers into the approach. Never when --foreman is set: proceed on best-effort assumptions.
 
 #### Step 2.4: Record Stage Checkpoint
 

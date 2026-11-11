@@ -52,7 +52,7 @@ Get explicit approval before removing anything
 - State that every target is uninstalled and then reinstalled at the scope it is already installed at
 - Warn that a failed reinstall leaves that plugin uninstalled until its install command is re-run by hand
 - When the target set includes plugins outside the `ensemble-` family, call that out explicitly so the wider blast radius is a conscious choice
-- Ask for approval once using AskUserQuestion, and stop without changes if the user declines
+- Ask for approval once using ask, and stop without changes if the user declines
 
 ### Phase 3: Marketplace Refresh
 
