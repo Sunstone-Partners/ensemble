@@ -90,7 +90,7 @@ function validationList(body, key) {
   if (start === -1) throw new Error(`no ${key} in ## Validation`);
   const items = [];
   for (const line of section.slice(start).split('\n').slice(1)) {
-    const match = /^  - (.+)$/.exec(line);
+    const match = /^ {2}- (.+)$/.exec(line);
     if (!match) break;
     items.push(match[1]);
   }
