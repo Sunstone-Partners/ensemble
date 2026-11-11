@@ -22,6 +22,11 @@
  * to nothing (URLs, user-project files like `package.json`, dangling names) are ignored and
  * never fail generation.
  *
+ * A skill split into a references/ directory (phase files, say) ships whole by the same rule,
+ * provided its SKILL.md names each file by its path from the skill root (`references/phase-1-x.md`):
+ * in a table cell, a list or prose alike, since the token is found wherever it stands. A file that
+ * nothing names is left out.
+ *
  * Discovery pattern: packages/*\/skills\/<name>\/SKILL.md. A skill is a directory named after
  * the skill (the Agent Skills layout), whether the package ships one skill or many.
  *
@@ -37,8 +42,9 @@
  * Every copied markdown file starts with the generated marker (../generated-marker.ts), on its
  * first line or right after the frontmatter: it is how a later generator run recognises a stale
  * copy of a removed or renamed skill as its own output and prunes it (see generator.ts, which
- * only inspects markdown directly inside a skill directory). Non-markdown files (scripts, data)
- * are copied byte for byte, with their file mode.
+ * inspects the markdown directly inside a skill directory and everything below its references/
+ * directory: a references/ file that the skill stops naming goes with the rest). Non-markdown
+ * files (scripts, data) are copied byte for byte, with their file mode, and carry no marker.
  *
  * SKILL.md files are normalized for Pi compatibility:
  *   - `name` is always overridden with the output skill directory name
