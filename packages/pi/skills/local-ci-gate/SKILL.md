@@ -3,7 +3,7 @@ name: local-ci-gate
 description: >-
   Run or check the local CI gate for a PR head. Runs ci:local in a clean clone
   at the exact head SHA via the runner, posts a commit status with the
-  maintainer's own gh login, and decides merge-readiness; verified hosted CI
+  maintainer's own gh login, and decides merge-readiness; verified hosted
   results for that head may stand in. Use before merging a PR in a repo with
   .ensemble/local-ci.yaml; not for hosted-CI debugging.
 ---
@@ -12,12 +12,10 @@ description: >-
 # Local CI Gate
 
 Order the steps of the local CI gate for one PR head and report the outcome.
-This skill only sequences, calls `local-ci-cli.js` and reports. It never runs
-CI, never checks out or edits the working tree and never grades results: the
-runner (`local-ci-runner.js`, driven by the CLI) owns the clean clone, the CI
-run and its cleanup, and the CLI computes every verdict. Editable approval set
-and trusted command list: `.ensemble/local-ci.yaml` as committed at the PR's base
-branch ref (never the working tree).
+This skill only sequences, calls `local-ci-cli.js` and reports: the runner owns
+the clean clone and the CI run, and the CLI computes every verdict. The approval
+set and trusted command list come from `.ensemble/local-ci.yaml` at the PR's
+base branch ref, never the working tree.
 
 ---
 
@@ -57,8 +55,8 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
 2. `merge` with `{headSha, statuses, repoRoot, baseRef, repo, pr}` (add `reviews` when known).
    `pr` is the PR number. `baseRef` is the PR's base branch, fetched fresh first (for example
    `git fetch origin $BASE_BRANCH`, then `origin/$BASE_BRANCH`); required.
-3. `mergeReady:true`: report ready to merge, quoting the record (for
-   `source:"hosted"`, the `hostedJobs`). `mergeReady:false`: report the CLI
+3. `mergeReady:true`: report ready to merge, quoting the record or `hostedJobs`.
+   `mergeReady:false`: report the CLI
    `reason` verbatim and refuse. Typical reasons: no local status (name the
    missing run and tell the user to run `gate` for `HEAD_SHA`); head moved
    (run `gate` again for the new head); status not success; blocking review;
@@ -69,10 +67,14 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
 1. `gate` with `{repoRoot, headSha, baseRef, repo, pr, dryRun}` (`baseRef` as for
    `merge`: the freshly fetched `origin/<baseRefName>`; `pr` is the PR number); `forceLocal:true`
    only when the user asks for a local run. The CLI orders: prerequisites
-   (Node, git), config, run, record, post.
+   (Node, git), config, hosted CI if accepted, lock, run, record, post.
+
+   The run step (and `run`) holds a per-user lock: a second gate waits and reports `queued_ms`. Never start a gate during a
+   reviewer swarm. Policy knobs: `RUNBOOK.md`.
 2. Read the result and report, in this order of precedence:
    - `prerequisite` set: say which prerequisite is missing and that nothing was
      run or posted. Do not fall back to merging.
+   - `stage:"lock"`: not run (`errorCode`, `lockHolder.pid`); report it, never loop-retry or delete the lock file.
    - `cannotAttest:true`: say the gate cannot attest (the status could not be
      posted with the maintainer's `gh` login: not logged in, or the post failed),
      that nothing was published and the merge is refused.
@@ -116,9 +118,8 @@ The caller does not decide which branch is the PR's base. `gate` and `merge`
 require `repo` (`owner/name`) and `pr` (number) and ask GitHub (`gh pr view`)
 BEFORE any config is read; they refuse unless `baseRef` is exactly
 `origin/<the PR's base branch>`, the PR is OPEN, and `headSha` is its current head.
-Otherwise a contributor could push a branch carrying a weaker config and name it
-as the base. A failed lookup is a refusal. `run` and `config` never post or
-authorise a merge.
+A failed lookup is a refusal. `run` and `config` never post or authorise a
+merge.
 
 `steps` lists the exact commands, in order. The runner runs each in the clean
 clone, once per required Node version, under `bash -e -o pipefail` (as GitHub
@@ -160,25 +161,23 @@ whole command list; `merge` requires it and refuses a different one.
 `config` validates the base-ref file (`{repoRoot, baseRef}`) or a `{source}` text,
 `record` builds/parses/verifies the status
 description, `run` (`{repoRoot, headSha, baseRef}` only) runs the runner without posting, `post` posts one status,
-`review` classifies reviews (bots never block), `sweep` lists unrecorded
-findings and CI failures, `timing` checks the enablement note. Use only when a
-command asks; same fail-closed rules.
+`review` classifies reviews (bots never block), `sweep` records unrecorded
+findings and CI failures as beads (`SWEEP.md`), `timing` checks the enablement note. Use only
+when a command asks; same fail-closed rules.
 
 ---
 
 ## Rollout, rollback and the pre-PR step
 
-Enabling or rolling back the required check, owner approvals, the optional
-pre-PR gate step and hosted reuse are in `RUNBOOK.md` beside this file.
-Enablement is refused until its preconditions hold; never change branch
-protection from this skill.
+Enabling, rolling back, owner approvals, the optional pre-PR gate step and hosted
+reuse are in `RUNBOOK.md` beside this file. Enablement is refused until its
+preconditions hold; never change branch protection from this skill.
 
 ---
 
 ## Rules
 
-- Success exists only as a CLI-verified local status or hosted result on the exact head.
+- Success exists only as a status the CLI posted, or hosted results the CLI itself verified from GitHub Actions (base-ref `hosted_reuse`), on the exact head; never supply hosted results.
 - Report CLI output as given; do not soften, reinterpret or truncate SHAs.
 - No token or secret is ever printed; the CLI redacts. `gh` holds its own login;
   never read or pass tokens.
-- Hosted results count only when the CLI verified them from GitHub Actions for that exact head (base-ref `hosted_reuse`); never supply them.
