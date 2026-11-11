@@ -493,8 +493,16 @@ export async function copySkills(
       // that point at ensemble:<cmd> would otherwise reference names that do not
       // resolve in Pi. Source stays authored in the Claude-canonical colon form.
       // The generated marker goes on last, so it never feeds description extraction above.
+      // A command's own skill (a directory named ensemble-*, the command-skill convention) is
+      // the prompt the command's prompt used to carry, and that prompt had AskUserQuestion
+      // mapped to Pi/OMP's native question tool, `ask` (command-transformer.ts). A skill the
+      // command's prompt now points at gets the same mapping, or the agent is told to call a
+      // tool Pi does not have. Other skills keep their text.
+      const commandRewritten = normalizedContent.replace(/ensemble:([a-z0-9-]+)/g, 'ensemble-$1');
       content = withGeneratedMarker(
-        normalizedContent.replace(/ensemble:([a-z0-9-]+)/g, 'ensemble-$1'),
+        entry.skillDirName.startsWith('ensemble-')
+          ? commandRewritten.replace(/AskUserQuestion/g, 'ask')
+          : commandRewritten,
         entry.sourceLabel
       );
       toWrite = content;

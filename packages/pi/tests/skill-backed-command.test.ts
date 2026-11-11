@@ -504,6 +504,22 @@ describe('Pi generator: skill-backed commands', () => {
       expect(exists('skills/ensemble-plain/SKILL.md')).toBe(true);
     });
 
+    it('maps AskUserQuestion to ask in a command skill and its references, as its prompt did, and leaves any other skill as written', async () => {
+      source('commands/split.yaml', manifestYaml('split', SPLIT));
+      source(`skills/${SPLIT}/SKILL.md`, `${splitSkillMd(ROWS)}\nAsk with AskUserQuestion.\n`);
+      source(`skills/${SPLIT}/${REFS[0]}`, '# Phase 1\n\nCall AskUserQuestion with a choice.\n');
+      source(`skills/${SPLIT}/${REFS[1]}`, REF_TWO);
+      source('skills/other-skill/SKILL.md', `${skillMd('other-skill')}\nUse AskUserQuestion here.\n`);
+      addPlain('plain');
+      await gen();
+
+      expect(read(`skills/${SPLIT}/SKILL.md`)).toContain('Ask with ask.');
+      expect(read(`skills/${SPLIT}/SKILL.md`)).not.toContain('AskUserQuestion');
+      expect(read(`skills/${SPLIT}/${REFS[0]}`)).toContain('Call ask with a choice.');
+      expect(read(`skills/${SPLIT}/${REFS[0]}`)).not.toContain('AskUserQuestion');
+      expect(read('skills/other-skill/SKILL.md')).toContain('Use AskUserQuestion here.');
+    });
+
     it('proves the references for pruning the way it proves the SKILL.md of their skill', async () => {
       addSplitSkill();
       addPlain('plain');
