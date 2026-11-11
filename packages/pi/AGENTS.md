@@ -80,7 +80,7 @@ Ensemble is a monorepo of plugin packages under `packages/`. Runtime packages (p
 
 ### quality
 
-- `code-reviewer` - Definition-of-Done review gate with severity-classified findings and merge-blocking rules
+- `code-reviewer` - Read-only Definition-of-Done review gate with severity-classified, ledger-shaped findings and merge-blocking rules
 - `deep-debugger` - Reproduces bugs with a failing test first, then drives a TDD fix through specialist agents and quality gates
 - `test-runner` - Unit and integration test execution with intelligent failure triage and debugging
 

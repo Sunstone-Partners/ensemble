@@ -1,0 +1,22 @@
+# Stack recipe for flake-reproduction. Copy to recipes/<stack>.yaml (or move these fields into the
+# repository's stack profile) and fill in every field with a command you ran. Write "not verified"
+# for anything you did not run. Keep stack names, paths and tool flags in this file only: the rules
+# in SKILL.md apply to every stack. Plain text only (no backticks): this file is data, not prose.
+stack: ""
+verified_in: ""            # repository, directory and date the commands were run
+ci_command: ""             # the test command as CI runs it: all flags, partitioning, warning flags
+handle:
+  printed_where: ""        # log line or file where the runner prints the replay handle
+  set_with: ""             # option that sets it (seed, order file, shard)
+partition:
+  select_with: ""          # option or variable that selects one partition or shard
+  membership: ""           # how membership is decided and what changes it
+  replay_command: ""       # full command to replay one partition with the logged handle
+deterministic_order: ""    # option and command that fix the order for a polluter then victim pair
+concurrency_option: ""     # option that sets the worker or concurrency count
+private_database: ""       # how a private database or schema per run is named
+bounded_pool: ""           # how the connection pool and worker count are bounded
+warnings_as_errors_tests: ""   # switch that makes warnings in TEST files errors
+hygiene_guards: []         # suite-end guards: name, the message printed, how to fix
+capture_example: ""        # capture-loop.sh invocation for this stack
+worked_case: ""            # failing test, handle, observed cause, deterministic reproduction

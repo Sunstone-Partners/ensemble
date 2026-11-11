@@ -33,6 +33,10 @@ test framework from its config files (Jest, pytest, RSpec, xUnit, ExUnit), then 
 that fails for the reported reason, using the matching framework skill (jest, pytest, rspec,
 xunit, exunit) when available. Run it via test-runner and confirm it fails consistently.
 If it cannot be reproduced after 3 attempts, stop and escalate with what was tried.
+Only for an intermittent, partition-dependent or order-dependent failure (a flaky test):
+load the flake-reproduction skill and follow its capture and run-count rules instead of the
+3-attempt limit. Every other failure keeps the 3-attempt limit above. Never add a retry,
+quarantine, skip, wider timeout or weaker assertion to make a test pass.
 
 - **Root Cause**: Delegate analysis to tech-lead-orchestrator with the bug report, failing test, stack trace,
 and affected files. If the reported confidence is below 0.7, escalate to the user instead of

@@ -1,6 +1,6 @@
 {
   "name": "ensemble-opencode",
-  "version": "5.3.1",
+  "version": "5.4.1",
   "description": "OpenCode runtime support - translates ensemble artifacts to OpenCode-compatible formats",
   "author": {
     "name": "Sunstone Partners",
@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "opencode",
     "ensemble",

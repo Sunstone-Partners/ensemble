@@ -4,6 +4,24 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+// Deliver stdin from a real file descriptor (not spawnSync's `input` socket):
+// on Node 24 the socket stdin intermittently never reaches EOF, leaving the
+// hook blocked in fs.readFileSync(0). The timeout turns any residual hang into
+// a fast, clearly-labelled failure.
+function spawnHook(script, payload, opts) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'guards-in-')), 'stdin.json');
+  fs.writeFileSync(file, payload);
+  const fd = fs.openSync(file, 'r');
+  try {
+    const r = spawnSync('node', [script], { ...opts, encoding: 'utf8', stdio: [fd, 'pipe', 'pipe'], timeout: 30000 });
+    if (r.error) throw new Error(`hook ${path.basename(script)} failed to complete: ${r.error.message}`);
+    return r;
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+}
+
 const PRE = path.join(__dirname, '..', 'hooks', 'pre-bash.js');
 const STOP = path.join(__dirname, '..', 'hooks', 'stop-gate.js');
 let proj;
@@ -20,10 +38,8 @@ function run(script, input, env = {}) {
   const clean = { ...process.env };
   delete clean.ENSEMBLE_GUARDS;
   delete clean.CLAUDE_PROJECT_DIR;
-  return spawnSync('node', [script], {
-    input: typeof input === 'string' ? input : JSON.stringify(input),
+  return spawnHook(script, typeof input === 'string' ? input : JSON.stringify(input), {
     env: { ...clean, ...env },
-    encoding: 'utf8',
     cwd: proj,
   });
 }
@@ -243,10 +259,9 @@ describe('config resolution from payload cwd', () => {
     const clean = { ...process.env };
     delete clean.ENSEMBLE_GUARDS;
     delete clean.CLAUDE_PROJECT_DIR;
-    const hook = (cwd, env = {}) => spawnSync('node', [PRE], {
-      input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: 'git commit -m x' } }),
-      env: { ...clean, ...env }, encoding: 'utf8', cwd: '/',
-    });
+    const hook = (cwd, env = {}) => spawnHook(PRE,
+      JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: 'git commit -m x' } }),
+      { env: { ...clean, ...env }, cwd: '/' });
     expect(hook(proj).status).toBe(2);
     expect(hook(sub).status).toBe(2); // repo root found from a subdirectory
     const other = fs.mkdtempSync(path.join(os.tmpdir(), 'guards-o-'));

@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-xunit",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "description": "xUnit testing framework integration for .NET",
   "main": "lib/index.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "ensemble"
   ],
   "author": "Sunstone Partners",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Sunstone-Partners/ensemble.git",

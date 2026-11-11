@@ -3,7 +3,18 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
+const yaml = require('js-yaml');
 const analyzer = require('../lib/complexity-analyzer');
+const { readCommandProse } = require('../../../scripts/lib/skill-backed-command');
+
+// analyze-complexity is a skill-backed command: the YAML is a manifest (metadata + skill) and the
+// prompt lives in its skill, so the contract is pinned against the manifest plus the skill prose.
+function readCommand() {
+  const commandPath = path.join(__dirname, '../commands/analyze-complexity.yaml');
+  const raw = fs.readFileSync(commandPath, 'utf8');
+  return readCommandProse(commandPath, yaml.load(raw), raw);
+}
 
 describe('complexity-analyzer input contract', () => {
   test('uses interactive arguments outside Foreman mode', () => {
@@ -125,6 +136,38 @@ describe('complexity-analyzer overrides, disable controls, and fallback', () => 
   });
 });
 
+describe('complexity-analyzer adaptive_planning config detection', () => {
+  test.each([
+    ['nested enabled false', 'adaptive_planning:\n  enabled: false\n', true],
+    ['CRLF line endings', 'adaptive_planning:\r\n  enabled: false\r\n', true],
+    ['trailing spaces after the key', 'adaptive_planning:  \n  enabled: false\n', true],
+    ['other settings before enabled', 'adaptive_planning:\n  mode: strict\n  # why\n  enabled: false\n', true],
+    ['blank line before enabled', 'adaptive_planning:\n\n  enabled: false\n', true],
+    ['settings around the block', 'name: demo\nadaptive_planning:\n  enabled: false\nother: 1\n', true],
+    ['enabled true', 'adaptive_planning:\n  enabled: true\n', false],
+    ['enabled falsey', 'adaptive_planning:\n  enabled: falsey\n', false],
+    ['enabled false outside the block', 'adaptive_planning:\n  mode: strict\nenabled: false\n', false],
+    ['no adaptive_planning key', 'other:\n  enabled: false\n', false],
+  ])('%s', (_name, text, expected) => {
+    expect(analyzer.isAdaptivePlanningDisabled(text)).toBe(expected);
+  });
+
+  // The pattern that reads this block once backtracked exponentially on whitespace-only lines
+  // under the key (CodeQL js/redos). A hard deadline makes a regression throw instead of
+  // hanging the suite, the same way toolchain/detect.js bounds its own pattern evaluation.
+  function detectWithin(deadlineMs, text) {
+    const context = vm.createContext({ detect: analyzer.isAdaptivePlanningDisabled, text, result: undefined });
+    new vm.Script('result = detect(text);').runInContext(context, { timeout: deadlineMs });
+    return context.result;
+  }
+
+  test('a long run of whitespace-only lines under the key is matched in linear time', () => {
+    const blankLines = `adaptive_planning:\n${' \n'.repeat(100000)}`;
+    expect(detectWithin(3000, blankLines)).toBe(false);
+    expect(detectWithin(3000, `${blankLines}  enabled: false\n`)).toBe(true);
+  });
+});
+
 describe('complexity-analyzer audit and artifacts', () => {
   test('redacts secrets in rationale/audit text while preserving original description', () => {
     const secret = 'token=supersecretvalue12345';
@@ -139,20 +182,18 @@ describe('complexity-analyzer audit and artifacts', () => {
     expect(analyzer.sidecarPath('/tmp/run/phase-4.md')).toBe('/tmp/run/phase-4.classification.json');
   });
 
-  test('command YAML declares generated artifact and Foreman contracts', () => {
-    const commandPath = path.join(__dirname, '../commands/analyze-complexity.yaml');
-    const command = fs.readFileSync(commandPath, 'utf8');
+  test('command manifest and skill declare generated artifact and Foreman contracts', () => {
+    const command = readCommand();
     expect(command).toContain('name: ensemble:analyze-complexity');
     expect(command).toContain('output_path: ensemble/analyze-complexity.md');
     for (const name of ['description', 'route', 'no-adaptive-planning', 'foreman']) {
-      expect(command).toContain(`name: ${name}`);
+      expect(command).toContain(`**\`${name}\`**`);
     }
     expect(command).toContain('FOREMAN_ARTIFACT_PATH');
   });
 
-  test('command YAML resolves the analyzer rather than hardcoding a monorepo path', () => {
-    const commandPath = path.join(__dirname, '../commands/analyze-complexity.yaml');
-    const command = fs.readFileSync(commandPath, 'utf8');
+  test('command skill resolves the analyzer rather than hardcoding a monorepo path', () => {
+    const command = readCommand();
     // A bare packages/development/lib/... path only exists in the monorepo, so Phase 1
     // step 1 could not run from a consuming project with only the plugin installed.
     expect(command).not.toContain('node packages/development/lib/');

@@ -443,7 +443,7 @@ How it differs from Pi:
 - **Failures are shown** as a Claude Code system message listing each handler that did not succeed; a hooks file that is invalid or untrusted says so once per command.
 - **Fail open.** Any internal error or malformed event input exits 0 and changes nothing.
 
-The bundle `bundle/lifecycle.cjs` is committed, because a plugin is installed without a build. After changing the `agent-core` lifecycle-hooks code or the Pi gate, run `npm run build` in `packages/lifecycle-claude` (needs bun); its test fails when the committed bundle is stale.
+The bundle `bundle/lifecycle.cjs` is committed, because a plugin is installed without a build. After changing the `agent-core` lifecycle-hooks code or the Pi gate, run `npm run build` in `packages/lifecycle-claude` (needs bun). The build records its bun version in `bundle/BUN_VERSION`; the test fails when the committed bundle is stale, but compares a fresh build only under that exact bun version (bun's output differs between versions) and skips under any other or none.
 
 ---
 

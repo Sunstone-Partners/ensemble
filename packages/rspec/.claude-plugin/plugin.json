@@ -1,6 +1,6 @@
 {
   "name": "ensemble-rspec",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "description": "RSpec testing framework integration",
   "author": {
     "name": "Sunstone Partners",
@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "rspec",
     "testing",

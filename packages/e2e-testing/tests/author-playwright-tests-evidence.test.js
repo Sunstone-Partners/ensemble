@@ -10,11 +10,55 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
+const { resolveSkillFile, listSkillReferences, readSkillProse } = require('../../../scripts/lib/skill-backed-command');
+
 const PKG = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(PKG, ...p), 'utf8');
-const doc = yaml.load(read('commands', 'author-playwright-tests.yaml'));
 
-const phase = (name) => doc.workflow.phases.find((p) => p.name === name);
+// author-playwright-tests is skill-backed: its YAML is a manifest and its prompt is its skill.
+// The skill's references/phase-N-*.md files hold the workflow as `### Phase N: <name>` headings,
+// `#### Step N.M: <title>` headings, a description and `- <action>` bullets; read them back into
+// the phases/steps/actions shape this contract asserts on.
+const yamlPath = path.join(PKG, 'commands', 'author-playwright-tests.yaml');
+const manifest = yaml.load(fs.readFileSync(yamlPath, 'utf8'));
+const skillFile = resolveSkillFile(yamlPath, manifest.skill);
+
+function parsePhases(files) {
+  const parsed = [];
+  let current = null;
+  let currentStep = null;
+  let inActions = false;
+  for (const file of files) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      let match = /^### Phase (\d+): (.+)$/.exec(line);
+      if (match) {
+        current = { name: match[2], steps: [] };
+        parsed.push(current);
+        currentStep = null;
+        continue;
+      }
+      match = /^#### Step \d+\.(\d+): (.+)$/.exec(line);
+      if (match && current) {
+        currentStep = { order: Number(match[1]), title: match[2], actions: [] };
+        current.steps.push(currentStep);
+        inActions = false;
+        continue;
+      }
+      if (!currentStep || line.trim() === '') continue;
+      if (line.startsWith('- ')) {
+        currentStep.actions.push(line.slice(2));
+        inActions = true;
+      } else if (inActions) {
+        currentStep.actions[currentStep.actions.length - 1] += `\n${line}`;
+      }
+    }
+  }
+  return parsed;
+}
+
+const phases = parsePhases(listSkillReferences(skillFile));
+
+const phase = (name) => phases.find((p) => p.name === name);
 const step = (phaseName, title) => phase(phaseName).steps.find((s) => s.title === title);
 const actions = (phaseName, title) => step(phaseName, title).actions.map(String).join('\n');
 const stepIndex = (phaseName, title) => phase(phaseName).steps.findIndex((s) => s.title === title);
@@ -35,12 +79,12 @@ describe('the helper is in place before the first Run', () => {
   });
 
   test('the phase that runs tests comes after the phase that sets this up', () => {
-    const names = doc.workflow.phases.map((p) => p.name);
+    const names = phases.map((p) => p.name);
     expect(names.indexOf('Execution Setup')).toBeLessThan(names.indexOf('Decision and Local Landing'));
   });
 
   test('step numbering stays sequential from 1 in every phase', () => {
-    for (const p of doc.workflow.phases) {
+    for (const p of phases) {
       expect(p.steps.map((s) => s.order)).toEqual(p.steps.map((_, i) => i + 1));
     }
   });
@@ -64,7 +108,7 @@ describe('every proposal and every run carries the screenshot requirement', () =
   });
 
   test('every $E2E_LIB module the command names exists in the package', () => {
-    const text = read('commands', 'author-playwright-tests.yaml');
+    const text = readSkillProse(skillFile);
     const modules = new Set([...text.matchAll(/\$E2E_LIB\/([a-z-]+)\.js/g)].map((m) => m[1]));
     expect(modules.has('evidence-capture')).toBe(true);
     for (const m of modules) expect(fs.existsSync(path.join(PKG, 'lib', `${m}.js`))).toBe(true);

@@ -421,6 +421,21 @@ function resolveOverride(route) {
   return { ok: true, route: normalized, override: { applied: true, source: 'flag', value: normalized } };
 }
 
+/**
+ * Whether the text of an Ensemble config file sets `adaptive_planning.enabled: false`: an
+ * `adaptive_planning:` line, any lines that start with whitespace, then `enabled: false`.
+ *
+ * Matching is linear: `\s+`, `[^\S\n]*` and `[^\n]*` are each followed by a character they
+ * cannot match, so a line splits only one way and the lazy loop tries each line boundary once.
+ * The earlier form, `\s*(?:\n|\r\n)(?:\s+[^\n]*\n)*?\s+`, let `\s+` (newline included) and
+ * `[^\n]*` consume the same blanks, so a run of whitespace-only lines backtracked exponentially
+ * (CodeQL js/redos). `\S` now pins where a line's text begins and `[^\S\n]*\n` ends the key line
+ * at its first newline (`\r\n` too); the accepted texts are the same.
+ */
+function isAdaptivePlanningDisabled(text) {
+  return /adaptive_planning:[^\S\n]*\n(?:\s+\S[^\n]*\n)*?\s+enabled:\s*false\b/.test(text);
+}
+
 function loadAdaptivePlanningEnabled(opts = {}, cwd = process.cwd()) {
   if (opts.noAdaptivePlanning) return { enabled: false, source: '--no-adaptive-planning' };
   const candidates = [
@@ -433,7 +448,7 @@ function loadAdaptivePlanningEnabled(opts = {}, cwd = process.cwd()) {
     if (!fs.existsSync(file)) continue;
     try {
       const text = fs.readFileSync(file, 'utf8');
-      if (/adaptive_planning:\s*(?:\n|\r\n)(?:\s+[^\n]*\n)*?\s+enabled:\s*false\b/.test(text)) {
+      if (isAdaptivePlanningDisabled(text)) {
         return { enabled: false, source: path.relative(cwd, file) };
       }
     } catch (error) {
@@ -645,6 +660,7 @@ module.exports = {
   routePlan,
   confidenceFor,
   resolveOverride,
+  isAdaptivePlanningDisabled,
   loadAdaptivePlanningEnabled,
   analyze,
   sidecarPath,

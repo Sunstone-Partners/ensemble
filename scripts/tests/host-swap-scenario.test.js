@@ -96,14 +96,26 @@ const NODE_ONLY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'host-swap-node-only
 fs.symlinkSync(process.execPath, path.join(NODE_ONLY_DIR, 'node'));
 
 /**
- * `PATH` containing ONLY the fixture bin dir, `NODE_ONLY_DIR` (see above) and `/usr/bin:/bin` --
+ * Hosted CI (ubuntu-latest) ships a real `gh` in `/usr/bin`, so putting `/usr/bin:/bin` on the
+ * restricted `PATH` would defeat the "no gh on PATH" requirement there (it only held on machines
+ * whose `/usr/bin` lacks `gh`). Instead, expose ONLY the system tools the capability calls need
+ * (`git`, `ps`, `sh`, `which`) through a private directory of symlinks.
+ */
+const SYSTEM_TOOLS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'host-swap-system-tools-'));
+for (const tool of ['git', 'ps', 'sh', 'which']) {
+  const real = ['/usr/bin', '/bin'].map((d) => path.join(d, tool)).find((p) => fs.existsSync(p));
+  if (real) fs.symlinkSync(real, path.join(SYSTEM_TOOLS_DIR, tool));
+}
+
+/**
+ * `PATH` containing ONLY the fixture bin dir, `NODE_ONLY_DIR` and `SYSTEM_TOOLS_DIR` (see above) --
  * NEVER the real inherited `process.env.PATH`. `/usr/bin`/`/bin` are confirmed (live, same
  * research pass) to hold neither `gh` nor `az` on this machine, and do hold the real `git`
  * (`/usr/bin/git`) and `ps` (`/bin/ps`, used internally by `runner.js`'s timeout containment)
  * every capability call below needs.
  */
 function buildPath(binDir) {
-  return [binDir, NODE_ONLY_DIR, '/usr/bin', '/bin'].join(path.delimiter);
+  return [binDir, NODE_ONLY_DIR, SYSTEM_TOOLS_DIR].join(path.delimiter);
 }
 
 function runNode(cliPath, args, cwd, env) {

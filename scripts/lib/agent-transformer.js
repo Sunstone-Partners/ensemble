@@ -131,6 +131,44 @@ function transformAgentToMarkdown(agentData, sourceYamlPath) {
     }
   }
 
+  // 5b. Output Contract (agents that must report in a fixed shape, e.g. the
+  // read-only code reviewer's ledger findings). Rendered only when present,
+  // so no other agent's markdown changes.
+  if (agentData.outputContract) {
+    const contract = agentData.outputContract;
+    parts.push('## Output Contract');
+    parts.push('');
+
+    if (Array.isArray(contract.findingFields) && contract.findingFields.length > 0) {
+      parts.push('### Finding Fields');
+      parts.push('');
+      for (const field of contract.findingFields) {
+        const guide = contract.fieldGuide && contract.fieldGuide[field];
+        parts.push(`- \`${field}\`${guide ? `: ${guide}` : ''}`);
+      }
+      parts.push('');
+    }
+
+    if (Array.isArray(contract.severities) && contract.severities.length > 0) {
+      parts.push(`**Severities:** ${contract.severities.map((word) => `\`${word}\``).join(', ')}`);
+      parts.push('');
+    }
+
+    if (contract.summaryRule) {
+      parts.push('### Summary');
+      parts.push('');
+      parts.push(String(contract.summaryRule).trim());
+      parts.push('');
+    }
+
+    if (contract.secretHandling) {
+      parts.push('### Secrets');
+      parts.push('');
+      parts.push(String(contract.secretHandling).trim());
+      parts.push('');
+    }
+  }
+
   // 6. Integration Protocols
   if (agentData.integrationProtocols) {
     parts.push('## Integration Protocols');

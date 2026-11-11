@@ -11,6 +11,7 @@ const {
   sweepStaleClones,
   findUnmirroredSteps,
   requiredNodeVersions,
+  worstCaseMs,
   RUNS_DIR,
 } = require('../lib/local-ci-runner');
 
@@ -288,6 +289,46 @@ status_context: ensemble/local-ci
     expect(r.ok).toBe(false);
     expect(r.failures[0].kind).toBe('node-version');
     expect(deps.calls).toHaveLength(0);
+  });
+});
+
+describe('local-ci-runner: worstCaseMs (what a waiter for the gate lock sizes its patience from)', () => {
+  const COMMAND_LIMIT_MS = 10 * 60 * 1000;
+
+  /** What the runner really allows: the limit it hands to deps.run for every command it starts (an absent limit is the default). */
+  function limitsGivenByRunner(extra) {
+    const base = fakeDeps();
+    const limits = [];
+    const deps = {
+      ...base,
+      run: (cmd, opts) => {
+        limits.push(opts.timeoutMs === undefined ? COMMAND_LIMIT_MS : opts.timeoutMs);
+        return base.run(cmd, opts);
+      },
+    };
+    expect(gate(extra, deps).ok).toBe(true);
+    return limits;
+  }
+
+  test('equals the sum of the limits the runner gives the commands it starts: per Node version, the node check plus every step', () => {
+    const limits = limitsGivenByRunner({});
+    expect(limits).toHaveLength(2 * (1 + CI_STEPS.length)); // two Node versions, one node check and three steps each
+    expect(worstCaseMs(approvalSet)).toBe(limits.reduce((a, b) => a + b, 0));
+    expect(worstCaseMs(approvalSet)).toBe(80 * 60 * 1000);
+  });
+
+  test('follows a per-step limit, while the node check keeps the default limit', () => {
+    const limits = limitsGivenByRunner({ stepTimeoutMs: 60 * 1000 });
+    expect(worstCaseMs(approvalSet, { stepTimeoutMs: 60 * 1000 })).toBe(limits.reduce((a, b) => a + b, 0));
+    expect(worstCaseMs(approvalSet, { stepTimeoutMs: 60 * 1000 })).toBe(2 * (COMMAND_LIMIT_MS + 3 * 60 * 1000));
+  });
+
+  test('counts each required Node version once and tolerates an approval set with nothing to run', () => {
+    const dup = { checks: [{ matrix: { 'node-version': 22 } }, { matrix: { 'node-version': 22 } }], steps: [{ name: 'a', cmd: 'x' }] };
+    expect(worstCaseMs(dup)).toBe(1 * (COMMAND_LIMIT_MS + 1 * COMMAND_LIMIT_MS));
+    expect(worstCaseMs({ checks: [], steps: [] })).toBe(0);
+    expect(worstCaseMs({})).toBe(0);
+    expect(worstCaseMs(undefined)).toBe(0);
   });
 });
 
@@ -730,5 +771,44 @@ describe('local-ci-runner: secrets', () => {
     expect(r.ok).toBe(false);
     expect(r.failures[0].kind).toBe('secrets');
     expect(JSON.stringify(r)).not.toContain(SECRET);
+  });
+});
+
+describe('local-ci-runner: a hung step fails the gate instead of blocking it', () => {
+  const { defaultDeps } = require('../lib/local-ci-runner');
+  // The `npm test` step really runs `cmd` through the real process runner; every other step is an instant scripted pass.
+  const realEnvGate = (cmd, extra) => {
+    const deps = fakeDeps();
+    const real = defaultDeps().run;
+    deps.run = (c, o) => {
+      if (c === 'node --version') return fakeDeps().run(c, o);
+      return c === 'npm test' ? real(cmd, { ...o, env: { PATH: process.env.PATH } }) : { status: 0, stdout: '', stderr: '' };
+    };
+    return gate({ ...extra }, deps);
+  };
+
+  test('a step that outlives stepTimeoutMs is a FAILED step with the exact timeout message', () => {
+    const started = Date.now();
+    const r = realEnvGate('sleep 30', { stepTimeoutMs: 1000 });
+    expect(Date.now() - started).toBeLessThan(20000);
+    expect(r.ok).toBe(false);
+    const f = r.failures.find((x) => x.kind === 'step-failed' && x.step === 'test');
+    expect(f).toBeDefined();
+    expect(f.message).toContain('step test timed out after 1s (hung?)');
+    expect(r.nodes[0].steps.find((s) => s.name === 'test').status).toBe('FAIL');
+  });
+
+  test('a fast step still passes under the same timeout', () => {
+    const r = realEnvGate('true', { stepTimeoutMs: 1000 });
+    expect(r.failures).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  test('the process group is killed, so a backgrounded child does not survive the timeout', () => {
+    const marker = path.join(tmp, 'child-survived.txt');
+    const r = realEnvGate(`(sleep 3; echo alive > ${marker}) & sleep 30`, { stepTimeoutMs: 1000 });
+    expect(r.ok).toBe(false);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000);
+    expect(fs.existsSync(marker)).toBe(false);
   });
 });
