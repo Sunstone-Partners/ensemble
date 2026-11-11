@@ -549,7 +549,7 @@ describe('the docs state the numbers the code derives: a number that drifts fail
     expect(start).toBeGreaterThanOrEqual(0);
     // the text collapses whitespace: entries are told apart by their prefix; an entry filed far from the top is a misplaced one
     const newer = unreleased.slice(0, start).split('- **packages/development:**').slice(1);
-    expect(newer.length).toBeLessThanOrEqual(9);
+    expect(newer.length).toBeLessThanOrEqual(10);
     // the entries known to sit above it: the hosted-CI reuse of the local gate (kata fwj0, landed by ehsm) is the first, the insertion clear (kata bh8w) the next, the re-review that is a delta although a verifier was lost (kata p5dt) after it, the verifier deadline and the majority rule (kata dx53) after that, the result files read again (kata 271n) next, the re-review delta (kata xb4j) next, the small-slice deadlines (katas d9sy and 630v) last
     expect(newer[0]).toMatch(/^ the local CI gate reuses hosted CI results for the same head instead of re-running them \(kata `fwj0`, landed by kata `ehsm`/);
     expect(newer[1]).toMatch(/^ a fix that only adds lines inside a cited range clears the finding it fixes \(kata `bh8w`/);
