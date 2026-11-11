@@ -158,6 +158,36 @@ function isUnsettled(flag) {
 }
 
 /**
+ * Whether a finding was written as Critical, the top legacy severity: as written, or as read into the current taxonomy.
+ *
+ * `normalizeFinding` turns Critical into `important` and keeps the written word as `originalSeverity`, so `severity` alone
+ * cannot tell a Critical from an Important finding once a ledger has been read. Every rule the word carries asks THIS and
+ * nothing else compares a severity with it: the stopping rule never defers a Critical (`isActionable`), a verifier vote never
+ * closes one (`pr-review-votes.js`), the operator's list decides one as it decides a security finding
+ * (`pr-review-disposition.js`) and it outranks a Major (`severityRank`). Letter case and surrounding space are ignored. A
+ * word that is not text is not Critical.
+ *
+ * @param {*} finding
+ * @returns {boolean}
+ */
+function isCritical(finding) {
+  if (!isObject(finding)) return false;
+  return [finding.severity, finding.originalSeverity].some((word) => isText(word) && word.trim().toLowerCase() === 'critical');
+}
+
+/**
+ * The stopping rule's deferral as a triager writes it: `blocking: false` (exactly), disposition `deferred`, a text reason.
+ * This is the CLAIM. Whether it counts is another question, and never yes for a Critical (`isActionable`) or at the merge
+ * gate (`applyProvenance`).
+ *
+ * @param {*} finding
+ * @returns {boolean}
+ */
+function claimsStoppingRuleDeferral(finding) {
+  return isObject(finding) && finding.blocking === false && finding.disposition === 'deferred' && isText(finding.reason);
+}
+
+/**
  * Whether a finding still blocks.
  *
  * Pre-existing never blocks (AC-007-1): it names a problem the PR did not
@@ -175,7 +205,9 @@ function isUnsettled(flag) {
  *
  * Stopping rule: an Important finding (the canonical word, or the legacy
  * `major`) with `blocking: false` (exactly), deferred with a text reason, does
- * not block. The legacy `critical` is never deferrable this way.
+ * not block. The legacy `critical` is never deferrable this way, whether it is
+ * written as `critical` or was read into the taxonomy since (`isCritical`):
+ * reading a ledger never changes whether a finding blocks.
  */
 function isActionable(finding) {
   if (!isObject(finding)) return true;
@@ -187,12 +219,7 @@ function isActionable(finding) {
   if (isObject(finding.resolution) && isText(finding.resolution.reason)) return false;
   if (severity === 'important') {
     // Stopping rule: only an Important/Major the triager marked `blocking: false` may be deferred, with a text reason. Critical never.
-    const deferredNonBlockingMajor =
-      finding.severity.toLowerCase() !== 'critical' &&
-      finding.blocking === false &&
-      finding.disposition === 'deferred' &&
-      isText(finding.reason);
-    return !deferredNonBlockingMajor;
+    return isCritical(finding) || !claimsStoppingRuleDeferral(finding);
   }
   if (severity === 'nit') {
     const deferredWithReason = finding.disposition === 'deferred' && isText(finding.reason);
@@ -209,7 +236,9 @@ function dedupeKey(finding) {
  * The order duplicates collapse in. The canonical words rank Important above
  * Nit above Pre-existing; the legacy words keep the finer order they were
  * written with (critical above major, minor above nitpick), so a ledger
- * recorded before the taxonomy change collapses exactly as it did before.
+ * recorded before the taxonomy change collapses exactly as it did before. A
+ * Critical keeps its place when the ledger has been read into the taxonomy
+ * (`isCritical`); Minor and Nitpick, both Nit once read, do not need to.
  */
 const SEVERITY_RANK = { critical: 4, important: 3, major: 3, minor: 2, nit: 1, nitpick: 1, 'pre-existing': 0 };
 // isActionable treats a missing or unrecognised severity as actionable, so it ranks with Important, not below Nit.
@@ -217,9 +246,8 @@ const UNRECOGNISED_SEVERITY_RANK = SEVERITY_RANK.important;
 
 function severityRank(finding) {
   const severity = String((finding && finding.severity) || '').toLowerCase();
-  return Object.prototype.hasOwnProperty.call(SEVERITY_RANK, severity)
-    ? SEVERITY_RANK[severity]
-    : UNRECOGNISED_SEVERITY_RANK;
+  const rank = Object.prototype.hasOwnProperty.call(SEVERITY_RANK, severity) ? SEVERITY_RANK[severity] : UNRECOGNISED_SEVERITY_RANK;
+  return isCritical(finding) ? Math.max(rank, SEVERITY_RANK.critical) : rank;
 }
 
 /** The head a finding was recorded on, or undefined when it carries none (absent, null or blank). */
@@ -599,7 +627,8 @@ function anchorOf(finding) {
  * The canonical severity replaces the written word and the written word is
  * kept as `originalSeverity`, so a Critical/Major/Minor/Nitpick ledger reads
  * as Important/Nit with nothing lost and nothing rewritten in silence
- * (AC-007-4). An unrecognised word is KEPT as written and flagged
+ * (AC-007-4). `isCritical` reads the kept word: a Critical stays Critical.
+ * An unrecognised word is KEPT as written and flagged
  * `severityRecognised: false`: it must stay visible and it stays actionable.
  * Credential-shaped text is redacted with the review-state redaction before
  * the finding is recorded anywhere (AC-024-2).
@@ -1129,6 +1158,9 @@ function recordRound(input) {
         first.severity = normalized.severity;
         first.severityRecognised = normalized.severityRecognised;
         first.preExisting = normalized.preExisting;
+        // A Critical report reads as Important, the word the record already has: keep the word it was written with, or the
+        // record would stay deferrable (`isActionable`) and the Critical would be lost with the report.
+        if (isCritical(normalized) && !isCritical(first)) first.originalSeverity = normalized.originalSeverity;
         first.escalatedInRound = round;
         first.escalatedFrom = from;
         if (!escalated.includes(first)) escalated.push(first);
@@ -1193,6 +1225,8 @@ module.exports = {
   validateLedger,
   auditTaxonomy,
   isActionable,
+  isCritical,
+  claimsStoppingRuleDeferral,
   dedupeFindings,
   mergeFindings,
   scopeViolations,

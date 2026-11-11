@@ -168,12 +168,17 @@ function flagged(value) {
   return true;
 }
 
-/** Whether a finding is in the security lane: a person adjudicates it, never a vote alone. */
+/**
+ * Whether a finding is in the security lane: a person adjudicates it, never a vote alone. A Critical is, whether it is written as
+ * such or was read into the current taxonomy since (`normalizeFinding` turns the word into `important` and keeps it as
+ * `originalSeverity`: a Critical must not lose the person-decides rule because a ledger was read). The reading is
+ * `isCritical` in pr-review-ledger.js; this module imports nothing, so it mirrors it, and a test pins that the two agree.
+ */
 function isSecurityLane(finding) {
   if (flagged(finding.security)) return true;
   if (isText(finding.lane) && finding.lane.trim().toLowerCase() === 'security') return true;
   if (flagged(finding.critical)) return true;
-  return isText(finding.severity) && finding.severity.trim().toLowerCase() === 'critical';
+  return [finding.severity, finding.originalSeverity].some((word) => isText(word) && word.trim().toLowerCase() === 'critical');
 }
 
 /** Whether a finding needs no answer: style, diagnostic or cleanup. The security lane is never one. */
