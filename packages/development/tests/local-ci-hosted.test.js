@@ -321,8 +321,7 @@ describe('job names come from the base ref\'s workflow and config, never from a 
     broken: '.github/workflows/broken.yml',
     noJobs: '.github/workflows/no-jobs.yml',
   };
-  const names = hostedRepo({
-    files: {
+  const TEXTS = {
       [FILES.literal]: wf({ lint: job({ name: 'Lint Code' }) }),
       [FILES.expression]: wf({ build: job({ name: 'Build ${{ matrix.os }}', strategy: { matrix: { os: ['ubuntu-latest'] } } }) }),
       [FILES.matrixNamed]: wf({ unit: job({ name: 'Unit', strategy: { matrix: { 'node-version': [22] } } }) }),
@@ -331,8 +330,10 @@ describe('job names come from the base ref\'s workflow and config, never from a 
       [FILES.shifted]: wf({ test: job({ strategy: { matrix: { 'node-version': [20, 22] } } }) }),
       [FILES.broken]: 'jobs: [\n',
       [FILES.noJobs]: yaml.dump({ name: 'wf', on: 'push' }),
-    },
-  });
+  };
+  const names = hostedRepo({ files: TEXTS });
+  // the steps[] of a hosted job come from ITS workflow's definition
+  const run = (id, file, jobNames, head, o = {}) => hostedRun(id, file, jobNames, head, { workflow: TEXTS[file], ...o });
   const approvalFor = (file, id, matrix) =>
     approvalSetOf({
       workflows: [{ file, jobs: [{ id, ...(matrix ? { matrix } : {}) }] }],
@@ -345,38 +346,38 @@ describe('job names come from the base ref\'s workflow and config, never from a 
 
   it('a plain literal custom name is the name hosted CI must report (and the job id then is not)', () => {
     const set = approvalFor(FILES.literal, 'lint');
-    expect(check([hostedRun(301, FILES.literal, ['Lint Code'], HEAD2)], set).r.ok).toBe(true);
-    refused(check([hostedRun(301, FILES.literal, ['lint'], HEAD2)], set).r, 'required job "Lint Code" is missing');
+    expect(check([run(301, FILES.literal, ['Lint Code'], HEAD2)], set).r.ok).toBe(true);
+    refused(check([run(301, FILES.literal, ['lint'], HEAD2)], set).r, 'required job "Lint Code" is missing');
   });
 
   it('a custom name with an expression cannot be derived: refused before GitHub is asked', () => {
-    const { r, ghApi } = check([hostedRun(301, FILES.expression, ['Build ubuntu-latest'], HEAD2)], approvalFor(FILES.expression, 'build', { os: ['ubuntu-latest'] }));
+    const { r, ghApi } = check([run(301, FILES.expression, ['Build ubuntu-latest'], HEAD2)], approvalFor(FILES.expression, 'build', { os: ['ubuntu-latest'] }));
     refused(r, `cannot derive the hosted job name of "build" in ${FILES.expression}`);
     expect(ghApi.calls).toEqual([]);
   });
 
   it('a custom name together with a matrix cannot be derived either', () => {
-    const { r, ghApi } = check([hostedRun(301, FILES.matrixNamed, ['Unit'], HEAD2)], approvalFor(FILES.matrixNamed, 'unit', { 'node-version': [22] }));
+    const { r, ghApi } = check([run(301, FILES.matrixNamed, ['Unit'], HEAD2)], approvalFor(FILES.matrixNamed, 'unit', { 'node-version': [22] }));
     refused(r, `cannot derive the hosted job name of "unit" in ${FILES.matrixNamed}`);
     expect(ghApi.calls).toEqual([]);
   });
 
   it('a job id the base workflow does not define is refused, even if hosted CI reports a job of that name', () => {
-    const { r, ghApi } = check([hostedRun(301, FILES.buildOnly, ['lint'], HEAD2)], approvalFor(FILES.buildOnly, 'lint'));
+    const { r, ghApi } = check([run(301, FILES.buildOnly, ['lint'], HEAD2)], approvalFor(FILES.buildOnly, 'lint'));
     refused(r, `job "lint" is not defined in ${FILES.buildOnly} at the base ref`);
     expect(ghApi.calls).toEqual([]);
   });
 
   it('the matrix values give the name, in the config\'s key order: build (ubuntu-latest, 22)', () => {
     const set = approvalFor(FILES.multi, 'build', { os: ['ubuntu-latest'], node: [22] });
-    expect(check([hostedRun(301, FILES.multi, ['build (ubuntu-latest, 22)'], HEAD2)], set).r.ok).toBe(true);
-    refused(check([hostedRun(301, FILES.multi, ['build'], HEAD2)], set).r, 'required job "build (ubuntu-latest, 22)" is missing');
+    expect(check([run(301, FILES.multi, ['build (ubuntu-latest, 22)'], HEAD2)], set).r.ok).toBe(true);
+    refused(check([run(301, FILES.multi, ['build'], HEAD2)], set).r, 'required job "build (ubuntu-latest, 22)" is missing');
   });
 
   it('a config matrix that differs from the base workflow\'s names jobs hosted CI never ran: test (24) is missing', () => {
     // the base workflow runs Node 20 and 22; the config (and so the required names) say 22 and 24
     const hostedJobs = ['test (20)', 'test (22)'];
-    const r = check([hostedRun(301, FILES.shifted, hostedJobs, HEAD2)], approvalSetOf({
+    const r = check([run(301, FILES.shifted, hostedJobs, HEAD2)], approvalSetOf({
       workflows: [{ file: FILES.shifted, jobs: [{ id: 'test', matrix: { 'node-version': [22, 24] } }] }],
       steps: [{ name: 's', cmd: 'true' }],
       status_context: 'x/local-ci',

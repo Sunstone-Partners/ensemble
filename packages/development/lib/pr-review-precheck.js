@@ -278,7 +278,7 @@ function gateLine(gate) {
       return `Local CI gate: already started${e.startedAt ? ` at ${e.startedAt}` : ''}; not started again.${e.alive === false ? ' That process is no longer running and has posted no status: read its log before relying on it.' : ''}`;
     }
     case 'status-present':
-      return `Local CI gate: \`${gate.statusContext}\` is already posted on this head (${gate.state}); not started.`;
+      return `Local CI gate: \`${gate.statusContext}\` is already posted on this head (${gate.state}); not started.${gate.state === 'pending' ? ' A pending status that no run is working on (a dead gate leaves one) needs a gate run with `forceLocal:true`.' : ''}`;
     case 'start-failed':
       return `Local CI gate: could NOT be started (${gate.reason}).${gate.mayBeRunning ? ' A gate process may still be running, so the start stays recorded and no second one is started.' : ''}`;
     default:

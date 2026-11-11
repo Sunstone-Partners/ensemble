@@ -355,7 +355,7 @@ describe('secrets and environment', () => {
         }
       );
       expect(report.ok).toBe(false);
-      expect(poster.statuses().map((p) => p.body.state)).toEqual(['failure']);
+      expect(poster.statuses().map((p) => p.body.state)).toEqual(['pending', 'failure']);
       expect(JSON.stringify(report)).not.toContain(SECRET);
       expect(JSON.stringify(poster.calls)).not.toContain(SECRET);
       expect(JSON.stringify(report)).toContain('[REDACTED]');

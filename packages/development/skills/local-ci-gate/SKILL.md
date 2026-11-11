@@ -34,7 +34,7 @@ and say the CLI could not be found; never merge on that basis.
 
 Every call is `node "$LOCAL_CI_CLI" <subcommand>` with one JSON payload on
 stdin and one JSON object on stdout. Exit 1, or `ok:false`, or `{error}` is a
-refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
+refusal. Payloads over 1 MiB or malformed JSON are rejected, no effect.
 
 ---
 
@@ -65,7 +65,7 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
 
    The run step (and `run`) holds a per-user lock: a second gate waits and reports `queued_ms`. Never start a gate during a
    reviewer swarm. Policy knobs: `RUNBOOK.md`.
-2. Read the result and report, in this order of precedence:
+2. Report the result, in this order of precedence:
    - `prerequisite` set: say which prerequisite is missing and that nothing was
      run or posted. Do not fall back to merging.
    - `stage:"lock"`: not run (`errorCode`, `lockHolder.pid`); report it, never loop-retry or delete the lock file.
@@ -80,11 +80,11 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected with no effect.
    - `dryRun` and `mergeReady:true`: report readiness, state that nothing was
      posted.
    - `source:"hosted"`, `mergeReady:true`: report hosted CI passed on this head;
-     nothing run or posted. `hostedRefused`: the CLI ran locally instead. The latest `failure`/`error` status on the head vetoes hosted (`merge` refuses; `gate` runs locally); fork PRs and workflows using repo-local actions are never accepted hosted.
+     nothing run or posted. `hostedRefused`: the CLI ran locally instead. A latest status that is not a verified success (`pending`, `failure`, `error`, unverified) vetoes hosted (`merge` refuses; `gate` runs locally, posting `pending` first, and will not run if it cannot); fork PRs and workflows using repo-local actions are never accepted hosted.
    - `posted:true`, `mergeReady:true`: report the record; the PR is mergeable.
 3. Never retry with a different SHA, never post by hand, never edit the config
-   to make a step pass. Never pass `config`, `path`, `runner` or any key other
-   than those: unknown keys are rejected. A step the runner cannot mirror is a gap to report to
+   to make a step pass. Never pass `config`, `path`, `runner` or other keys:
+   unknown keys are rejected. A step the runner cannot mirror is a gap to report to
    the user, who may record it in `.ensemble/local-ci.yaml` `excluded_steps`.
 
 ---
@@ -127,7 +127,7 @@ The run is voided if, afterwards, any tracked file differs from the head's tree
 clone, the index, HEAD or the clone's git config changed. After EVERY step it is
 also voided if the step left an untracked file outside the base config's
 `output_paths` (default `node_modules`, `coverage`, `.cache`, `dist`; plain
-repo-relative paths, no globs): a step can plant one for a later command to read as permission to pass, and the head's `.gitignore` cannot
+repo-relative paths, no globs): a step can plant one a later command reads as permission to pass; `.gitignore` cannot
 hide it. A build that writes elsewhere lists that path.
 
 Steps get a minimal environment (PATH, CI, LANG, TERM, TMPDIR and a few more).
@@ -160,8 +160,8 @@ when a command asks; same fail-closed rules.
 
 ## Rollout, rollback and the pre-PR step
 
-Enabling, rolling back, owner approvals, the optional pre-PR gate step and hosted
-reuse are in `RUNBOOK.md`. Enablement is refused until its
+Enabling, rolling back, owner approvals, the pre-PR step and hosted
+reuse: `RUNBOOK.md`. Enablement is refused until
 preconditions hold; never change branch protection from this skill.
 
 ---

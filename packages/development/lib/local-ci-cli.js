@@ -332,7 +332,7 @@ async function underGateLock(deps, cfg, options, work) {
     };
   }
   try {
-    return { value: work(), queuedMs: lock.queuedMs };
+    return { value: await work(), queuedMs: lock.queuedMs };
   } finally {
     lock.release();
   }
@@ -473,7 +473,14 @@ function runMerge(payload, deps) {
         continue;
       }
       const v = verifyRecord({ description: s.description, statusCommitSha: s.sha, headSha, workflowSet, runnerBlobSha: cfg.configBlobSha });
-      if (v.ok) return { ok: true, mergeReady: true, headSha, context: cfg.approvalSet.statusContext, record: v.fields, hostedCiWaitRequired: false };
+      if (v.ok) {
+        // A verified success in the payload is not enough: GitHub's newest status in this context decides. A newer failure,
+        // pending or unverifiable success beats it (round 4, S1). GitHub listing nothing in the context leaves the payload
+        // trusted, as before; a list that cannot be read refuses.
+        const verdict = localRunVerdict(deps, { repo, headSha, cfg });
+        if (verdict.kind === 'veto') return refuse(`${verdict.reason}; re-run the gate with forceLocal:true`, { localFailure: verdict.recorded });
+        return { ok: true, mergeReady: true, headSha, context: cfg.approvalSet.statusContext, record: v.fields, hostedCiWaitRequired: false };
+      }
       problems.push(v.headMismatch || v.setMismatch || v.runnerMismatch || v.error || 'record did not verify');
     }
     const moved = ours.find((s) => s.state === 'success' && isText(s.sha) && s.sha.toLowerCase() !== headSha.toLowerCase());
@@ -485,20 +492,30 @@ function runMerge(payload, deps) {
 
   const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet, pr, baseRefName: baseBranchOf(baseRef) }, deps);
   if (hosted.ok) {
-    // Negative local evidence outranks green hosted jobs: a failure the gate recorded on THIS head is never overridden.
-    // The veto is read from GitHub (the same rule `gate` uses), never decided from the caller's `statuses`.
+    // Negative local evidence outranks green hosted jobs: what the gate recorded on THIS head is never overridden.
     const vetoed = (reason, recorded) => ({
       ...localRefusal,
       reason: `${localRefusal.reason}; hosted CI is green on this head but is not accepted: ${reason}; re-run the gate with forceLocal:true`,
       hostedRefused: true,
       ...(recorded ? { localFailure: true } : {}),
     });
-    const veto = recordedLocalFailure(deps, { repo, headSha, statusContext: cfg.approvalSet.statusContext });
-    if (veto) return vetoed(veto.reason, veto.recorded);
-    // A failure in the payload that names no usable commit cannot be attributed to another commit, so it counts against this head.
-    const unattributable = ours.find((s) => (s.state === 'failure' || s.state === 'error') && !(typeof s.sha === 'string' && SHA_RE.test(s.sha)));
-    if (unattributable) {
-      return vetoed(`a ${unattributable.state} status in ${cfg.approvalSet.statusContext} carries no usable commit SHA, so it cannot be attributed to another commit`, true);
+    // ONE statuses read per merge. The veto is read from GitHub (the same rule `gate` uses), never decided from the payload.
+    const verdict = localRunVerdict(deps, { repo, headSha, cfg });
+    if (verdict.kind === 'veto') return vetoed(verdict.reason, verdict.recorded);
+    // (G) The caller's own payload is evidence too. A status in our context that is not a success (failure, error, pending,
+    // any other or non-text state) is adverse. With no usable commit SHA it cannot be attributed to another commit, so it
+    // counts against this head whatever GitHub says. On this head with GitHub silent (`none`) it also vetoes: fail closed
+    // relative to the caller's evidence. A verified success on GitHub is NEWER than anything the caller can have sent, and
+    // a status on ANOTHER full commit never vetoes.
+    for (const s of ours) {
+      if (s.state === 'success') continue;
+      const named = typeof s.state === 'string' && s.state !== '' ? s.state : 'unusable-state';
+      if (!(typeof s.sha === 'string' && SHA_RE.test(s.sha))) {
+        return vetoed(`a ${named} status in ${cfg.approvalSet.statusContext} carries no usable commit SHA, so it cannot be attributed to another commit`, true);
+      }
+      if (s.sha.toLowerCase() === headSha.toLowerCase() && verdict.kind === 'none') {
+        return vetoed(`the caller's own ${named} status in ${cfg.approvalSet.statusContext} is on this head and GitHub lists none to supersede it`, true);
+      }
     }
     // The head may have moved while GitHub was being asked: re-read the pull request and refuse if it did.
     const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
@@ -512,32 +529,70 @@ function runMerge(payload, deps) {
 const baseBranchOf = (baseRef) => fullRemoteRef(baseRef).slice('refs/remotes/origin/'.length);
 
 /**
- * Has the gate itself recorded a failure on this exact head? ONE rule for `merge` and `gate`, read from GitHub (never
- * from a payload) and only asked once hosted CI verified green. GitHub lists a commit's statuses NEWEST FIRST, so the
- * first entry in the configured context (compared case-insensitively) is the latest and decides: `success` or
- * `pending` is no veto (a later success supersedes an older failure; a pending status is no evidence either way);
- * `failure`, `error` or any other or non-text state vetoes (fail closed). A list that cannot be read, no lookup at all,
- * and a FULL page (100) with no entry in the context (it may lie on a later page) veto too.
- * Returns null when nothing is in the way, else `{reason, recorded}`: `recorded` is true when a failing or unexpected
- * state of the gate is on record (as opposed to a list that could not be read or judged).
+ * What does GitHub say the LOCAL gate did on this exact head? ONE function for `merge` (both routes) and `gate`, read from
+ * GitHub (never from a payload): GitHub lists a commit's statuses NEWEST FIRST, so the first entry in the configured
+ * context (compared case-insensitively) is the latest and decides. FAIL CLOSED: anything this cannot read, shape-check or
+ * order is a veto, and the only thing that clears an older pending or failure is a LATER success whose record verifies
+ * (verifyRecord, bound to the head, the workflow set and the trusted config blob). A bare or unverifiable success never
+ * clears: anyone with write access can post one, and the gate's own success carries a record.
+ *
+ * Returns `{kind:'none'}` (a readable, shorter-than-a-page list with nothing in the context: nothing local ever ran),
+ * `{kind:'verified', status}` (the latest is a success that verifies) or `{kind:'veto', reason, recorded}`; `recorded` is
+ * true when something other than a verified success is on record in the context, false for a list that could not be
+ * read or trusted. Reasons carry no advice text: `merge` adds it.
  */
-function recordedLocalFailure(deps, { repo, headSha, statusContext }) {
-  const unread = (reason) => ({ reason, recorded: false });
-  if (typeof deps.ghApi !== 'function') return unread('no GitHub lookup is available to read the commit statuses');
-  const got = deps.ghApi(`repos/${repo}/commits/${headSha}/statuses?per_page=${STATUS_PAGE}`);
-  if (!got || got.ok !== true || !Array.isArray(got.json)) return unread(`cannot read the commit statuses of ${headSha}: ${(got && got.error) || 'no answer'}`);
-  const want = statusContext.toLowerCase();
-  const latest = got.json.find((s) => isObject(s) && typeof s.context === 'string' && s.context.toLowerCase() === want);
-  if (!latest) {
-    return got.json.length >= STATUS_PAGE
-      ? unread(`the first ${STATUS_PAGE} commit statuses of ${headSha} hold none in ${statusContext}, and more may follow; refusing rather than guessing`)
-      : null;
+function localRunVerdict(deps, { repo, headSha, cfg }) {
+  const context = cfg.approvalSet.statusContext;
+  const veto = (reason, recorded) => ({ kind: 'veto', reason, recorded });
+  const unread = (why) => veto(`cannot read the commit statuses of ${headSha}: ${why}`, false);
+  // 1. No lookup, a failed or missing answer, or something that is not a list.
+  if (typeof deps.ghApi !== 'function') return unread('no GitHub lookup is available');
+  let got;
+  try {
+    got = deps.ghApi(`repos/${repo}/commits/${headSha}/statuses?per_page=${STATUS_PAGE}`);
+  } catch (err) {
+    return unread(err && err.message ? err.message : String(err));
   }
-  if (latest.state === 'success' || latest.state === 'pending') return null;
-  return {
-    reason: `the local gate recorded ${typeof latest.state === 'string' ? latest.state : 'a status with no usable state'} for ${statusContext} on ${headSha}, and green hosted jobs do not override it (the local run decides)`,
-    recorded: true,
-  };
+  if (!got || got.ok !== true) return unread((got && got.error) || 'no answer');
+  if (!Array.isArray(got.json)) return unread('the answer is not a list');
+  const list = got.json;
+  // 2. Every entry must have the shape GitHub documents.
+  if (list.some((s) => !isObject(s) || typeof s.context !== 'string')) {
+    return veto(`the commit statuses of ${headSha} are not in the shape GitHub documents (an entry has no text context); refusing rather than guessing`, false);
+  }
+  // 3. Contexts are case-insensitive. The first entry in ours is the latest, but only if the list really is newest first.
+  const want = context.toLowerCase();
+  const mine = list.filter((s) => s.context.toLowerCase() === want);
+  // 4. Nothing in our context: a FULL page may hide it on a later page, a shorter one means nothing local ever ran.
+  if (mine.length === 0) {
+    return list.length >= STATUS_PAGE
+      ? veto(`the first ${STATUS_PAGE} commit statuses of ${headSha} hold none in ${context}, and more may follow; refusing rather than guessing`, false)
+      : { kind: 'none' };
+  }
+  const latest = mine[0];
+  if (mine.every((s) => Number.isInteger(s.id)) && mine.some((s) => s.id > latest.id)) {
+    return veto(`the commit statuses of ${headSha} are not listed newest first (an older ${context} entry has a larger id), so the latest cannot be told`, false);
+  }
+  // 5. A success clears only if its record verifies.
+  if (latest.state === 'success') {
+    const v = verifyRecord({
+      description: latest.description,
+      statusCommitSha: headSha,
+      headSha,
+      workflowSet: cfg.approvalSet.workflows.map((w) => w.file),
+      runnerBlobSha: cfg.configBlobSha,
+    });
+    if (v.ok) return { kind: 'verified', status: latest };
+    const why = v.headMismatch || v.setMismatch || v.runnerMismatch || v.error || 'record did not verify';
+    return veto(`the latest ${context} status on ${headSha} is a success whose record does not verify (${why}), so it cannot clear anything`, true);
+  }
+  // 6. A pending status is a local run that is still going, or died.
+  if (latest.state === 'pending') {
+    return veto(`a local gate run on this head did not finish (the latest ${context} status is pending: it is still running, or it died)`, true);
+  }
+  // 7. failure, error, any other or non-text state.
+  const state = typeof latest.state === 'string' && latest.state !== '' ? latest.state : 'a status with no usable state';
+  return veto(`the local gate recorded ${state} for ${context} on ${headSha}, and green hosted jobs do not override it (the local run decides)`, true);
 }
 
 /* ------------------------------------------------------------------------ gate */
@@ -577,11 +632,18 @@ function describeFailures(result, equivalents) {
   return out;
 }
 
-// Refusals that say nothing about the head: the environment was not fit to evaluate it, so nothing is published and
-// hosted CI may still stand in. Every other kind (and any future one) is head-bound: the head WAS evaluated, or the
-// evaluation was not trustworthy, so it is published as a failure status, which vetoes hosted acceptance (recordedLocalFailure).
+// Refusals that say nothing about the head: the environment was not fit to evaluate it. Nothing is published for them and
+// the write-ahead `pending` stays (availability, not safety: it vetoes hosted acceptance until a forced run passes).
+// Every other kind (and any future one) is head-bound: the head WAS evaluated, or the evaluation was not trustworthy, so it
+// is published as a failure status, which vetoes hosted acceptance (localRunVerdict).
 const TRANSIENT_KINDS = new Set(['invalid-input', 'prerequisite', 'secrets', 'cleanup', 'unfetchable-head', 'node-version']);
 const STATUS_PAGE = 100;
+
+/** What a runner that THREW (or returned nothing) is turned into: a failing, head-bound result with no nodes. */
+function runnerFailed(headSha, why) {
+  const message = `local CI runner threw: ${why}`;
+  return { ok: false, sha: headSha, error: message, failures: [{ kind: 'runner-error', step: null, node: null, sha: headSha, message }], unmirrored: [], nodes: [] };
+}
 
 /** The failure status text: today's wording for a failed or unsupported step, a "refused (<kind>)" wording for the rest. */
 function failureDescription(f, headSha) {
@@ -626,10 +688,11 @@ async function runGateFlow(payload, deps) {
   if (payload.forceLocal !== true) {
     const hosted = verifyHosted({ repo, headSha, baseSha: cfg.baseSha, repoRoot, approvalSet: cfg.approvalSet, pr, baseRefName: baseBranchOf(baseRef) }, deps);
     if (hosted.ok) {
-      // Green hosted jobs do not override a failure the local gate recorded on this head: the local run decides then.
-      const veto = recordedLocalFailure(deps, { repo, headSha, statusContext: cfg.approvalSet.statusContext });
-      if (veto) {
-        report.hostedRefused = `hosted CI not accepted: ${veto.reason}`;
+      // Green hosted jobs do not override what the local gate recorded on this head (a pending or failed run, or a success
+      // that does not verify): the local run decides then.
+      const verdict = localRunVerdict(deps, { repo, headSha, cfg });
+      if (verdict.kind === 'veto') {
+        report.hostedRefused = `hosted CI not accepted: ${verdict.reason}`;
       } else {
         // The head may have moved while GitHub was being asked: re-read the pull request, as the first check did.
         const reread = verifyPullRequest(deps, { repo, pr, baseRef, headSha });
@@ -641,15 +704,45 @@ async function runGateFlow(payload, deps) {
     }
   }
 
+  // Every post of the gate goes through here: a `postStatus` that throws (or is missing) is a post that did not publish.
+  const post = async (state, description) => {
+    if (typeof deps.postStatus !== 'function') return { published: false, reason: 'no postStatus is available' };
+    try {
+      const answer = await deps.postStatus({ repo: payload.repo, sha: headSha, state, context: cfg.approvalSet.statusContext, description });
+      return isObject(answer) ? answer : { published: false, reason: 'postStatus returned no result' };
+    } catch (err) {
+      return { published: false, reason: `postStatus threw: ${err && err.message ? err.message : String(err)}` };
+    }
+  };
+
   // 3. Run in a clean clone at the exact head (the runner owns checkout and cleanup), one run per user home at a time:
-  // wait for the lock (recording how long), run, and always release it, whether the run returns or throws. Nothing
-  // else holds the lock: posting the status below happens after release. Config and PR checks above stay outside it so
-  // an invalid request never queues behind a long run.
+  // wait for the lock (recording how long), run, and always release it, whether the run returns or throws. Config and PR
+  // checks above stay outside it so an invalid request never queues behind a long run.
+  //
+  // WRITE-AHEAD: once the lock is HELD and before the runner starts, a non-dry gate posts `pending` on the exact head. A
+  // crash, a SIGKILL, a timeout, a failed final post or a transient failure therefore leaves the LATEST status pending,
+  // which vetoes hosted acceptance (localRunVerdict). A gate that cannot record that it is starting does not start: a run
+  // it cannot record is a run that could fail unseen. The pending post is inside the lock, so a refused lock posts nothing.
   const options = runnerOptions(repoRoot, headSha, cfg);
-  const held = await underGateLock(deps, cfg, options, () => deps.runGate(options, deps.runnerDeps));
+  const held = await underGateLock(deps, cfg, options, async () => {
+    if (!dryRun) {
+      report.pending = await post('pending', `ci-local running @ ${headSha.slice(0, 8)}`);
+      if (report.pending.published !== true) return { notStarted: report.pending };
+    }
+    // A runner that THROWS must not leave the pending as the only record: it becomes a failing, head-bound result below.
+    try {
+      const ran = deps.runGate(options, deps.runnerDeps);
+      return { result: isObject(ran) ? ran : runnerFailed(headSha, 'the runner returned no result') };
+    } catch (err) {
+      return { result: runnerFailed(headSha, err && err.message ? err.message : String(err)) };
+    }
+  });
   if (held.refusal) return stop('lock', held.refusal.error, held.refusal.fields);
   report.queued_ms = held.queuedMs;
-  const result = held.value;
+  if (held.value.notStarted) {
+    return stop('pending', `cannot record that a local run is starting: ${held.value.notStarted.reason || 'the pending status was not published'}; refusing to run a local gate it cannot record`);
+  }
+  const result = held.value.result;
   report.stage = 'run';
   report.nodes = (result.nodes || []).map((n) => ({ node: n.node, ok: n.ok }));
 
@@ -661,18 +754,26 @@ async function runGateFlow(payload, deps) {
     result.nodes.length > 0 &&
     result.nodes.every((n) => n.ok === true);
 
-  const post = (state, description) =>
-    deps.postStatus({ repo: payload.repo, sha: headSha, state, context: cfg.approvalSet.statusContext, description });
-
-  // 4. Anything but a clean pass is a refusal; at most a FAILURE status is published.
+  // 4. Anything but a clean pass is a refusal. A head-bound refusal publishes ONE failure (the first); a TRANSIENT-only
+  // one (the head was never evaluated) publishes nothing and the pending stays: that is availability, not safety, and it
+  // keeps vetoing hosted acceptance until a later `forceLocal:true` run passes and posts a verified success.
   if (!passed) {
     report.failures = describeFailures(result, cfg.approvalSet.equivalents);
     report.error = result.error || 'local CI did not pass';
-    const headBound = report.failures.filter((f) => !TRANSIENT_KINDS.has(f.kind));
-    if (!dryRun && headBound.length > 0) {
-      const published = await post('failure', failureDescription(headBound[0], headSha));
-      report.posted = published.published === true;
-      report.post = published;
+    if (!dryRun) {
+      const headBound = report.failures.filter((f) => !TRANSIENT_KINDS.has(f.kind));
+      if (headBound.length > 0) {
+        const published = await post('failure', failureDescription(headBound[0], headSha));
+        report.posted = published.published === true;
+        report.post = published;
+        if (!report.posted) {
+          report.pendingRemains = true;
+          report.error = `${report.error}; the failure status could not be published (${published.reason || 'not published'}), so the pending status remains and keeps vetoing hosted acceptance`;
+        }
+      } else {
+        report.pendingRemains = true;
+        report.error = `${report.error}; nothing was published about this head, so the pending status remains and keeps vetoing hosted acceptance until a gate run with forceLocal:true passes`;
+      }
     }
     return report;
   }
@@ -686,7 +787,10 @@ async function runGateFlow(payload, deps) {
     workflowSet: cfg.approvalSet.workflows.map((w) => w.file),
     log: JSON.stringify({ sha: headSha, nodes: result.nodes }),
   });
-  if (!record.ok) return stop('attest', `cannot build record: ${record.error}`);
+  if (!record.ok) {
+    // The pending stays: no record was written, so the run is not attested and hosted acceptance stays vetoed.
+    return stop('attest', `cannot build record: ${record.error}; the pending status remains`, { pendingRemains: true });
+  }
 
   const published = await post('success', record.description);
   report.post = published;
@@ -696,7 +800,8 @@ async function runGateFlow(payload, deps) {
   report.mergeReady = report.posted;
   if (!report.posted) {
     report.cannotAttest = true;
-    report.error = `${CANNOT_ATTEST}: could not publish with gh: ${published.reason || 'status was not published'}; merge refused`;
+    report.pendingRemains = true;
+    report.error = `${CANNOT_ATTEST}: could not publish with gh: ${published.reason || 'status was not published'}; merge refused; the pending status remains and keeps vetoing hosted acceptance`;
   }
   return report;
 }
@@ -764,6 +869,7 @@ module.exports = {
   runRollout,
   runMerge,
   runGateFlow,
+  localRunVerdict,
   HANDLERS,
   MAX_STDIN_BYTES,
   defaultDeps,

@@ -114,7 +114,7 @@ describe('gate: the hosted check is made BEFORE the lock, so accepting hosted CI
     expect(s.order[s.order.length - 1]).toBe('run');
     expect(s.acquireGateLock).toHaveBeenCalledWith({ worstCaseHoldMs: expect.any(Number) });
     expect(s.seen.lockFileDuringRun).toBe(true);
-    expect(s.post.statuses()).toHaveLength(1);
+    expect(s.post.statuses().map((p) => p.body.state)).toEqual(['pending', 'success']); // the pending is written ahead, inside the lock
     expect(fs.existsSync(lockPathOf(s.lockDir))).toBe(false); // released
   });
 

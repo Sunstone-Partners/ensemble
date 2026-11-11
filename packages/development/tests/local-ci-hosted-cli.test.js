@@ -144,13 +144,13 @@ describe('merge: a verified local status wins; otherwise hosted CI verified on t
     expect(ghApi.calls).toEqual([]);
   });
 
-  it('(d) a verified local status still passes WITHOUT asking GitHub Actions, even when hosted CI is red', () => {
+  it('(d) a verified local status still passes WITHOUT asking GitHub Actions, even when hosted CI is red (only the head\'s statuses are read)', () => {
     const { deps, ghApi } = makeDeps(fx, { entries: redTest(HEAD) });
     const r = cli.runMerge(mergePayload(fx, { statuses: [localStatus()] }), deps);
     expect(r).toMatchObject({ ok: true, mergeReady: true, headSha: HEAD, context: CONTEXT, hostedCiWaitRequired: false });
     expect(r.source).toBeUndefined();
     expect(r.hostedJobs).toBeUndefined();
-    expect(ghApi.calls).toEqual([]);
+    expect(ghApi.calls).toEqual([`repos/${REPO}/commits/${HEAD}/statuses?per_page=100`]);
   });
 
   it('a blocking human review refuses even though hosted CI is green, before anything is looked up', () => {
@@ -218,7 +218,7 @@ describe('(e) a base config WITHOUT hosted_reuse behaves exactly as before and n
     expect(r.source).toBeUndefined();
     expect(r.ranLocally).toBeUndefined();
     expect(runGate).toHaveBeenCalledTimes(1);
-    expect(post.statuses()).toHaveLength(1);
+    expect(post.statuses().map((s) => s.body.state)).toEqual(['pending', 'success']);
     expect(ghApi.calls).toEqual([]);
   });
 
@@ -303,8 +303,8 @@ describe('gate: hosted CI that is not accepted falls back to the local run, exac
     expect(r.hostedRefused).toContain(cause);
     expect(r.source).toBeUndefined();
     expect(r.ranLocally).toBeUndefined();
-    expect(post.statuses()).toHaveLength(1);
-    expect(post.statuses()[0]).toMatchObject({ sha: HEAD, repo: REPO, body: { state: 'success', context: CONTEXT } });
+    expect(post.statuses().map((s) => s.body.state)).toEqual(['pending', 'success']);
+    expect(post.statuses()[1]).toMatchObject({ sha: HEAD, repo: REPO, body: { state: 'success', context: CONTEXT } });
   });
 
   it('(g) the runner gets exactly the options a forced local run gets, and only the documented ones', async () => {
@@ -324,19 +324,20 @@ describe('gate: hosted CI that is not accepted falls back to the local run, exac
     const r = await cli.runGateFlow(gatePayload(fx), deps);
     expect(r).toMatchObject({ ok: false, mergeReady: false, stage: 'run', posted: true });
     expect(r.hostedRefused).toContain('concluded failure');
-    expect(post.statuses().map((s) => s.body.state)).toEqual(['failure']);
+    expect(post.statuses().map((s) => s.body.state)).toEqual(['pending', 'failure']);
   });
 
   it('(g) the status that run posts is an ordinary local status: merge accepts it without asking GitHub Actions', async () => {
     const gated = makeDeps(fx, { entries: redTest(HEAD) });
     await cli.runGateFlow(gatePayload(fx), gated.deps);
-    const posted = gated.post.statuses()[0];
+    const posted = gated.post.statuses().find((p) => p.body.state === 'success');
+    expect(gated.post.statuses().map((p) => p.body.state)).toEqual(['pending', 'success']);
     const merging = makeDeps(fx, { entries: redTest(HEAD) });
     const status = { context: posted.body.context, state: posted.body.state, description: posted.body.description, sha: posted.sha };
     const r = cli.runMerge(mergePayload(fx, { statuses: [status] }), merging.deps);
     expect(r).toMatchObject({ ok: true, mergeReady: true, context: CONTEXT });
     expect(r.source).toBeUndefined();
-    expect(merging.ghApi.calls).toEqual([]);
+    expect(merging.ghApi.calls).toEqual([`repos/${REPO}/commits/${HEAD}/statuses?per_page=100`]); // only the veto read, no Actions lookup
   });
 
   it('(g) a PR that rewrote validate.yml is not helped by green hosted CI: the clone run decides', async () => {
@@ -358,7 +359,7 @@ describe('gate: forceLocal', () => {
     expect(r).toMatchObject({ ok: true, mergeReady: true, posted: true, stage: 'attest' });
     expect(r.hostedRefused).toBeUndefined();
     expect(r.source).toBeUndefined();
-    expect(post.statuses()).toHaveLength(1);
+    expect(post.statuses().map((p) => p.body.state)).toEqual(['pending', 'success']);
   });
 
   it('(h) forceLocal:false is the default: hosted CI is consulted and accepted', async () => {

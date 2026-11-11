@@ -265,9 +265,9 @@ describe("this repository's own .ensemble/local-ci.yaml", () => {
     const fx = makeBaseRepo({ config: configText, files });
     const git = memoGit();
     const entries = () => [
-      hostedRun(101, VALIDATE, ['validate'], fx.headSha),
-      hostedRun(102, TEST, ['test (22)', 'test (24)'], fx.headSha),
-      hostedRun(103, DRIFT, ['drift'], fx.headSha),
+      hostedRun(101, VALIDATE, ['validate'], fx.headSha, { workflow: files[VALIDATE] }),
+      hostedRun(102, TEST, ['test (22)', 'test (24)'], fx.headSha, { workflow: files[TEST] }),
+      hostedRun(103, DRIFT, ['drift'], fx.headSha, { workflow: files[DRIFT] }),
     ];
     const verify = (list) => verifyHosted({ repo: REPO, headSha: fx.headSha, baseSha: fx.baseSha, repoRoot: fx.dir, approvalSet: real.approvalSet, pr: require('./helpers/local-ci-base-repo').PR, baseRefName: require('./helpers/local-ci-base-repo').BASE_BRANCH }, { git, ghApi: actionsApi(list) });
 

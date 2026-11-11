@@ -22,6 +22,7 @@ const lock = require('../lib/local-ci-lock');
 const { verifyHosted, repoLocalUse } = require('../lib/local-ci-hosted');
 const { cleanupBaseRepos, prInfoFor, fakePostStatus, BASE_BRANCH } = require('./helpers/local-ci-base-repo');
 const H = require('./helpers/local-ci-hosted');
+const W = require('./helpers/local-ci-wal');
 
 const { REPO, PR, CONTEXT, VALIDATE, TEST } = H;
 const GIT = H.memoGit();
@@ -246,9 +247,13 @@ describe('3. a failure the local gate recorded on this head vetoes hosted accept
     expect(r).toMatchObject({ ok: true, mergeReady: true, source: 'hosted' });
   });
 
-  it('merge: a pending status does not veto', () => {
-    const { deps } = makeDeps(fx);
-    expect(cli.runMerge(mergePayload([{ ...failedStatus(), state: 'pending' }]), deps)).toMatchObject({ ok: true, source: 'hosted' });
+  // Replaced: this pinned "a pending status does not veto" (round 3). A pending latest status is a local run that did not
+  // finish (it is running, or it died): it vetoes (round 5, write-ahead).
+  it('merge: a pending status (the latest on GitHub) vetoes: a local run that did not finish', () => {
+    const { deps } = makeDeps(fx, { statuses: [{ context: CONTEXT, state: 'pending', description: 'ci-local running' }] });
+    const r = cli.runMerge(mergePayload([]), deps);
+    expect(r).toMatchObject({ ok: false, mergeReady: false, hostedRefused: true, localFailure: true });
+    expect(r.reason).toContain('did not finish');
   });
 
   it('merge: with RED hosted CI the refusal still carries both reasons (the veto changes nothing there)', () => {
@@ -269,17 +274,28 @@ describe('3. a failure the local gate recorded on this head vetoes hosted accept
     expect(r.ranLocally).toBeUndefined();
     expect(r.hostedRefused).toContain(`the local gate recorded failure for ${CONTEXT} on ${HEAD}`);
     expect(r.hostedRefused).toMatch(/^hosted CI not accepted: /);
-    expect(post.statuses()).toHaveLength(1); // the local run's fresh status
+    expect(post.statuses().map((p) => p.body.state)).toEqual(['pending', 'success']); // the write-ahead pending, then the local run's fresh status
     expect(ghApi.calls.some((p) => p.includes(`/commits/${HEAD}/statuses`))).toBe(true);
     expect(deps.prInfo.calls).toHaveLength(1); // no hosted acceptance, so no second read
   });
 
-  it('gate: the NEWEST status in the context decides: success after an old failure does not veto', async () => {
-    const statuses = [{ context: CONTEXT, state: 'success', description: 'ok' }, { context: CONTEXT, state: 'failure', description: 'old' }];
-    const { deps, runGate } = makeDeps(fx, { statuses });
+  // Replaced: this used to pin "success after an old failure does not veto" for ANY success. A success clears an older
+  // failure only when its record VERIFIES (round 5): the gate's own success carries one, a bare success does not.
+  it('gate: a VERIFIED success after an old failure supersedes it: hosted CI is accepted', async () => {
+    const statuses = [{ context: CONTEXT, state: 'success', description: W.verifiedDescription(fx) }, { context: CONTEXT, state: 'failure', description: 'old' }];
+    const { deps, runGate } = makeDeps(fx, { statuses: W.asGithub(statuses) });
     const r = await cli.runGateFlow(gatePayload(fx), deps);
     expect(r).toMatchObject({ ok: true, stage: 'hosted', source: 'hosted' });
     expect(runGate).not.toHaveBeenCalled();
+  });
+
+  it('gate: a bare (unverified) success after an old failure does NOT clear it: the local run decides', async () => {
+    const statuses = [{ context: CONTEXT, state: 'success', description: 'ok' }, { context: CONTEXT, state: 'failure', description: 'old' }];
+    const { deps, runGate } = makeDeps(fx, { statuses: W.asGithub(statuses) });
+    const r = await cli.runGateFlow(gatePayload(fx), deps);
+    expect(runGate).toHaveBeenCalledTimes(1);
+    expect(r.source).toBeUndefined();
+    expect(r.hostedRefused).toContain('a success whose record does not verify');
   });
 
   it('gate: another context\'s failure does not veto', async () => {
@@ -349,13 +365,13 @@ describe('4. a required job that uses a repo-local action or reusable workflow i
 
   it('positive control: external actions (checkout, setup-node) are fine and the run is accepted', () => {
     const fixture = repoWith(validateWith('actions/checkout@v6'));
-    expect(verify(H.honest(fixture.headSha), { fixture }).r.ok).toBe(true);
+    expect(verify(H.honest(fixture.headSha, { [VALIDATE]: validateWith('actions/checkout@v6') }), { fixture }).r.ok).toBe(true);
   });
 
   it('only the REQUIRED jobs are looked at: a local action in a job nothing requires does not refuse', () => {
     const text = `name: validate\non: [pull_request]\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm run validate\n  unrelated:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/setup\n`;
     const fixture = repoWith(text);
-    expect(verify(H.honest(fixture.headSha), { fixture }).r.ok).toBe(true);
+    expect(verify(H.honest(fixture.headSha, { [VALIDATE]: text }), { fixture }).r.ok).toBe(true);
   });
 
   it('repoLocalUse: the reference text, null for external or absent uses', () => {

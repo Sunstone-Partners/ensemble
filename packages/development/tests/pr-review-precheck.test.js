@@ -192,6 +192,15 @@ describe('the gate runs the head\'s own code, so only a same-repository head sta
     expect(calls.startGate).toBe(1);
   });
 
+  it('says a pending status that no run is working on needs forceLocal:true, and only for pending', async () => {
+    for (const [state, expected] of [['pending', true], ['failure', false], ['success', false]]) {
+      const { deps } = makeDeps({ readStatuses: async () => ({ ok: true, statuses: [{ context: CONTEXT, state, sha: HEAD }] }) });
+      const body = (await runPrecheck({}, deps)).comment.body;
+      expect(body).toContain(`is already posted on this head (${state}); not started.`);
+      expect(body.includes('needs a gate run with `forceLocal:true`')).toBe(expected);
+    }
+  });
+
   it('reports a status already on a fork head as it is: nothing is started either way', async () => {
     const { deps } = makeDeps({ readPr: prFrom({ isCrossRepository: true }), readStatuses: async () => ({ ok: true, statuses: [{ context: CONTEXT, state: 'success', sha: HEAD }] }) });
     expect((await runPrecheck({}, deps)).gate.action).toBe('status-present');

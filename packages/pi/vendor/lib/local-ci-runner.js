@@ -137,6 +137,56 @@ function redactDeep(value, secretValues) {
   return value;
 }
 
+/* ------------------------------------------------------------ tree removal */
+
+/**
+ * Make every directory under `p` readable and writable by the owner so a removal can succeed. A step of the head can leave
+ * `chmod 000` directories behind. Symlinks are SKIPPED (lstat, never stat): a link to anything outside the clone must
+ * never be chmod-ed, entered or followed. Errors are ignored: this is best effort, the retry decides.
+ */
+function repairPermissions(p) {
+  let st;
+  try {
+    st = fs.lstatSync(p);
+  } catch {
+    return;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) return;
+  try {
+    fs.chmodSync(p, 0o700);
+  } catch {
+    /* the retry reports it */
+  }
+  let names;
+  try {
+    names = fs.readdirSync(p);
+  } catch {
+    return;
+  }
+  for (const name of names) repairPermissions(path.join(p, name));
+}
+
+/**
+ * Remove the tree at `p` and NEVER throw: a head's step controls what is in there, and an exception from a cleanup must
+ * not replace the result of the run (round 4, R1). Removes, and on an error repairs the permissions and retries once.
+ * Returns null on success, else the error message.
+ */
+function removeTree(p) {
+  const remove = () => fs.rmSync(p, { recursive: true, force: true, maxRetries: 2 });
+  try {
+    remove();
+    return null;
+  } catch {
+    repairPermissions(p);
+  }
+  try {
+    remove();
+    return null;
+  } catch (err) {
+    return err && err.message ? String(err.message) : String(err);
+  }
+}
+
 /* ------------------------------------------------------------- stale sweep */
 
 /**
@@ -165,7 +215,8 @@ function sweepStaleClones({ repoRoot, maxAgeMs = DEFAULT_STALE_MS, now = Date.no
     }
     if (!st.isDirectory() || st.isSymbolicLink()) continue;
     if (now - st.mtimeMs <= maxAgeMs) continue;
-    fs.rmSync(p, { recursive: true, force: true });
+    const problem = removeTree(p);
+    if (problem !== null) throw new Error(`could not remove stale clone ${p}: ${problem}`);
     removed.push(name);
   }
   return removed;
@@ -281,11 +332,14 @@ function symlinkStaysInside(dir, abs) {
 /**
  * Every file in the clone that is not tracked, whatever the head's .gitignore says (`ls-files --others` without
  * `--exclude-standard` lists them all; `git status` honours the head's own ignore rules, so a head could hide a planted
- * file from it). Returns an array of repo-relative paths, or null when git could not answer (callers fail closed).
+ * file from it). Returns an array of repo-relative paths, or null when git could not answer or skipped an unreadable directory (callers fail closed).
  */
 function untrackedFiles({ dir, deps }) {
   const r = deps.git(['ls-files', '-z', '--others'], { cwd: dir });
   if (r.status !== 0) return null;
+  // git exits 0 and skips a directory it cannot open, printing only this warning: a step could hide files in one
+  // (`chmod 000`). Fail closed: we cannot see inside, so the clone cannot be inspected (also for the baseline: null stays null).
+  if (/could not open directory/i.test(String(r.stderr || ''))) return null;
   return String(r.stdout).split('\0').filter(Boolean);
 }
 
@@ -597,129 +651,151 @@ function runGate(options, injected) {
   // a caller that supplies none gets the defaults, never "everything is allowed".
   const untrackedBefore = untrackedFiles({ dir, deps });
   const outputPaths = Array.isArray(opts.approvalSet.outputPaths) ? opts.approvalSet.outputPaths : ['node_modules', 'coverage', '.cache', 'dist'];
-  // A throwaway HOME outside the clone for the steps (see ENV_ALLOWLIST); removed in `finally` whatever happens.
+  // A throwaway HOME outside the clone for the steps (see ENV_ALLOWLIST); removed after the run whatever happens.
   const scratchHome = fs.mkdtempSync(path.join(os.tmpdir(), 'local-ci-home-'));
 
-  try {
-    // Read the REQUIRED workflows at the PR head as DATA and compare with the
-    // trusted list. The head can only make this stricter.
-    const workflows = [];
-    const realDir = fs.realpathSync(dir);
-    for (const wf of opts.approvalSet.workflows) {
-      let doc;
-      try {
-        // The head controls what this path resolves to (a committed symlink, or a symlinked parent directory).
-        // Resolve it and refuse anything that leaves the clone, so a head cannot make the gate read, and treat
-        // as its own workflow, a file from the maintainer's disk.
-        const real = fs.realpathSync(path.join(dir, wf.file));
-        if (real !== realDir && !real.startsWith(realDir + path.sep)) {
-          fail('unreadable-workflow', wf.file, undefined, `workflow ${wf.file} resolves outside the clone (symlink); refusing to read it`);
+  // The evaluation never throws and always yields a snapshot of `result`. Cleanup runs AFTER it (below) and a cleanup
+  // problem is merged into that result: a `finally` that removes a head-controlled tree can throw and would REPLACE the
+  // result (round 4, R1: the failure was lost and nothing was published).
+  const evaluate = () => {
+    try {
+      // Read the REQUIRED workflows at the PR head as DATA and compare with the
+      // trusted list. The head can only make this stricter.
+      const workflows = [];
+      const realDir = fs.realpathSync(dir);
+      for (const wf of opts.approvalSet.workflows) {
+        let doc;
+        try {
+          // The head controls what this path resolves to (a committed symlink, or a symlinked parent directory).
+          // Resolve it and refuse anything that leaves the clone, so a head cannot make the gate read, and treat
+          // as its own workflow, a file from the maintainer's disk.
+          const real = fs.realpathSync(path.join(dir, wf.file));
+          if (real !== realDir && !real.startsWith(realDir + path.sep)) {
+            fail('unreadable-workflow', wf.file, undefined, `workflow ${wf.file} resolves outside the clone (symlink); refusing to read it`);
+            doc = undefined;
+          } else if (!fs.statSync(real).isFile()) {
+            fail('unreadable-workflow', wf.file, undefined, `workflow ${wf.file} is not a regular file at the PR head`);
+            doc = undefined;
+          } else {
+            doc = yaml.load(fs.readFileSync(real, 'utf8'));
+          }
+        } catch (err) {
           doc = undefined;
-        } else if (!fs.statSync(real).isFile()) {
-          fail('unreadable-workflow', wf.file, undefined, `workflow ${wf.file} is not a regular file at the PR head`);
-          doc = undefined;
-        } else {
-          doc = yaml.load(fs.readFileSync(real, 'utf8'));
         }
-      } catch (err) {
-        doc = undefined;
+        workflows.push({ file: wf.file, doc });
       }
-      workflows.push({ file: wf.file, doc });
-    }
-    result.unmirrored = findUnmirroredSteps({
-      workflows,
-      approvalSet: opts.approvalSet,
-      runnable: steps,
-      equivalents: opts.equivalents,
-      ignoredActions: opts.ignoredActions,
-      excludedSteps: opts.excludedSteps,
-    });
-    for (const u of result.unmirrored) {
-      fail('unmirrored-step', u.step, undefined, `required workflow step "${u.step}" (${u.workflow} job ${u.job}) is not mirrored: ${u.reason}`);
-    }
-    if (result.unmirrored.length > 0) return finish();
+      result.unmirrored = findUnmirroredSteps({
+        workflows,
+        approvalSet: opts.approvalSet,
+        runnable: steps,
+        equivalents: opts.equivalents,
+        ignoredActions: opts.ignoredActions,
+        excludedSteps: opts.excludedSteps,
+      });
+      for (const u of result.unmirrored) {
+        fail('unmirrored-step', u.step, undefined, `required workflow step "${u.step}" (${u.workflow} job ${u.job}) is not mirrored: ${u.reason}`);
+      }
+      if (result.unmirrored.length > 0) return finish();
 
-    const versions = requiredNodeVersions(opts.approvalSet);
-    if (versions.length === 0) {
-      fail('node-version', null, undefined, 'no required Node versions are configured; refusing to run on the machine default');
+      const versions = requiredNodeVersions(opts.approvalSet);
+      if (versions.length === 0) {
+        fail('node-version', null, undefined, 'no required Node versions are configured; refusing to run on the machine default');
+        return finish();
+      }
+
+      for (const major of versions) {
+        const node = { node: major, ok: false, steps: [] };
+        result.nodes.push(node);
+
+        let binDir;
+        try {
+          binDir = deps.resolveNodeBinDir(major);
+        } catch (err) {
+          fail('node-version', null, major, `required Node ${major} cannot be provided: ${err.message}`);
+          continue;
+        }
+        const stepEnv = buildStepEnv({ env, secrets, binDir, scratchHome });
+
+        const ver = deps.run('node --version', { cwd: dir, env: stepEnv });
+        const reported = ver.status === 0 ? /^v(\d+)\./.exec(ver.stdout.trim()) : null;
+        if (!reported || Number(reported[1]) !== major) {
+          fail('node-version', null, major, `required Node ${major} is not what ran (got ${tail(ver.stdout) || 'no version'}); not counting it`);
+          continue;
+        }
+
+        // Every trusted command is run by the runner; the verdict is its exit status.
+        for (const s of steps) {
+          const r = deps.run(s.cmd, { cwd: dir, env: stepEnv, timeoutMs: opts.stepTimeoutMs });
+          if (r.status === 0 && !r.timedOut) {
+            node.steps.push({ name: s.name, status: 'PASS' });
+          } else {
+            node.steps.push({ name: s.name, status: 'FAIL' });
+            const logFile = opts.failureLogDir
+              ? writeFailureLog({ dir: opts.failureLogDir, sha, major, stepName: s.name, cmd: s.cmd, status: r.status, stdout: r.stdout, stderr: r.stderr, secretValues })
+              : null;
+            const why = r.timedOut
+              ? `step ${s.name} timed out after ${Math.round((opts.stepTimeoutMs || DEFAULT_STEP_TIMEOUT_MS) / 1000)}s (hung?)`
+              : `step "${s.name}" failed on Node ${major} at ${sha} (exit ${r.status})`;
+            fail('step-failed', s.name, major, `${why}${logFile ? `; full output: ${logFile}` : ''}: ${tail(`${r.stdout}\n${r.stderr}`)}`);
+          }
+          // After EVERY step, whether it passed or not: a step may only leave untracked files under the base config's
+          // output_paths. Anything else is a file the next command (or this step's own test) could read as permission.
+          const stray = unexpectedOutput({ dir, deps, before: untrackedBefore, outputPaths });
+          if (stray === null) {
+            fail('clone-tampered', s.name, major, `could not inspect the clone for files left by step "${s.name}"; not counting the run`);
+          } else if (stray.length > 0) {
+            fail('unexpected-output', s.name, major, `step "${s.name}" left untracked files outside output_paths (${outputPaths.join(', ')}): ${stray.slice(0, 5).join(', ')}${stray.length > 5 ? `, and ${stray.length - 5} more` : ''}; not counting the run`);
+          }
+        }
+        node.ok = executedMatches(node.steps, steps) && node.steps.every((x) => x.status === 'PASS');
+      }
+
+      // The attestation is bound to `sha`: a step that moved the clone's HEAD voids the run.
+      const head = deps.git(['rev-parse', 'HEAD'], { cwd: dir });
+      if (head.status !== 0 || head.stdout.trim() !== sha) {
+        fail('clone-moved', null, undefined, `the clean clone no longer sits at ${sha} after the steps ran (got ${tail(head.stdout) || 'no HEAD'}); not counting the run`);
+      }
+
+      // The steps must not have rewritten what they claim to have tested: tracked content is compared by hash against the
+      // tree of `sha` (see trackedIntegrity), and the clone's own git config must be unchanged. Untracked files are held
+      // to the same standard after every step (see unexpectedOutput), so a step cannot plant one for a later step to read.
+      const tampered = trackedIntegrity({ dir, sha, deps });
+      if (tampered.length > 0) {
+        fail('clone-tampered', null, undefined, `a step changed tracked content of the clean clone at ${sha}; not counting the run: ${tampered.slice(0, 5).join('; ')}${tampered.length > 5 ? `; and ${tampered.length - 5} more` : ''}`);
+      }
+      const configAfter = cloneGitConfig({ dir, deps });
+      if (configBefore === null || configAfter === null || configAfter !== configBefore) {
+        fail('clone-config-changed', null, undefined, `the clone's git configuration changed (or could not be read) while the steps ran; not counting the run`);
+      }
+
+      result.ok = result.failures.length === 0 && result.nodes.length === versions.length && result.nodes.every((n) => n.ok);
+      return finish();
+    } catch (err) {
+      result.error = `local CI runner error: ${err.message}`;
+      fail('runner-error', null, undefined, result.error);
       return finish();
     }
+  };
 
-    for (const major of versions) {
-      const node = { node: major, ok: false, steps: [] };
-      result.nodes.push(node);
+  let out = evaluate();
 
-      let binDir;
-      try {
-        binDir = deps.resolveNodeBinDir(major);
-      } catch (err) {
-        fail('node-version', null, major, `required Node ${major} cannot be provided: ${err.message}`);
-        continue;
-      }
-      const stepEnv = buildStepEnv({ env, secrets, binDir, scratchHome });
-
-      const ver = deps.run('node --version', { cwd: dir, env: stepEnv });
-      const reported = ver.status === 0 ? /^v(\d+)\./.exec(ver.stdout.trim()) : null;
-      if (!reported || Number(reported[1]) !== major) {
-        fail('node-version', null, major, `required Node ${major} is not what ran (got ${tail(ver.stdout) || 'no version'}); not counting it`);
-        continue;
-      }
-
-      // Every trusted command is run by the runner; the verdict is its exit status.
-      for (const s of steps) {
-        const r = deps.run(s.cmd, { cwd: dir, env: stepEnv, timeoutMs: opts.stepTimeoutMs });
-        if (r.status === 0 && !r.timedOut) {
-          node.steps.push({ name: s.name, status: 'PASS' });
-        } else {
-          node.steps.push({ name: s.name, status: 'FAIL' });
-          const logFile = opts.failureLogDir
-            ? writeFailureLog({ dir: opts.failureLogDir, sha, major, stepName: s.name, cmd: s.cmd, status: r.status, stdout: r.stdout, stderr: r.stderr, secretValues })
-            : null;
-          const why = r.timedOut
-            ? `step ${s.name} timed out after ${Math.round((opts.stepTimeoutMs || DEFAULT_STEP_TIMEOUT_MS) / 1000)}s (hung?)`
-            : `step "${s.name}" failed on Node ${major} at ${sha} (exit ${r.status})`;
-          fail('step-failed', s.name, major, `${why}${logFile ? `; full output: ${logFile}` : ''}: ${tail(`${r.stdout}\n${r.stderr}`)}`);
-        }
-        // After EVERY step, whether it passed or not: a step may only leave untracked files under the base config's
-        // output_paths. Anything else is a file the next command (or this step's own test) could read as permission.
-        const stray = unexpectedOutput({ dir, deps, before: untrackedBefore, outputPaths });
-        if (stray === null) {
-          fail('clone-tampered', s.name, major, `could not inspect the clone for files left by step "${s.name}"; not counting the run`);
-        } else if (stray.length > 0) {
-          fail('unexpected-output', s.name, major, `step "${s.name}" left untracked files outside output_paths (${outputPaths.join(', ')}): ${stray.slice(0, 5).join(', ')}${stray.length > 5 ? `, and ${stray.length - 5} more` : ''}; not counting the run`);
-        }
-      }
-      node.ok = executedMatches(node.steps, steps) && node.steps.every((x) => x.status === 'PASS');
-    }
-
-    // The attestation is bound to `sha`: a step that moved the clone's HEAD voids the run.
-    const head = deps.git(['rev-parse', 'HEAD'], { cwd: dir });
-    if (head.status !== 0 || head.stdout.trim() !== sha) {
-      fail('clone-moved', null, undefined, `the clean clone no longer sits at ${sha} after the steps ran (got ${tail(head.stdout) || 'no HEAD'}); not counting the run`);
-    }
-
-    // The steps must not have rewritten what they claim to have tested: tracked content is compared by hash against the
-    // tree of `sha` (see trackedIntegrity), and the clone's own git config must be unchanged. Untracked files are held
-    // to the same standard after every step (see unexpectedOutput), so a step cannot plant one for a later step to read.
-    const tampered = trackedIntegrity({ dir, sha, deps });
-    if (tampered.length > 0) {
-      fail('clone-tampered', null, undefined, `a step changed tracked content of the clean clone at ${sha}; not counting the run: ${tampered.slice(0, 5).join('; ')}${tampered.length > 5 ? `; and ${tampered.length - 5} more` : ''}`);
-    }
-    const configAfter = cloneGitConfig({ dir, deps });
-    if (configBefore === null || configAfter === null || configAfter !== configBefore) {
-      fail('clone-config-changed', null, undefined, `the clone's git configuration changed (or could not be read) while the steps ran; not counting the run`);
-    }
-
-    result.ok = result.failures.length === 0 && result.nodes.length === versions.length && result.nodes.every((n) => n.ok);
-    return finish();
-  } catch (err) {
-    result.error = `local CI runner error: ${err.message}`;
-    fail('runner-error', null, undefined, result.error);
-    return finish();
-  } finally {
-    fs.rmSync(scratchHome, { recursive: true, force: true });
-    if (!opts.keep) fs.rmSync(dir, { recursive: true, force: true });
+  // Cleanup, after the result exists. `removeTree` never throws; a tree it cannot remove (even after repairing the
+  // permissions a step left) is a head-bound `runner-error` MERGED into the result, which keeps every earlier failure.
+  // A passing run whose clone cannot be removed is therefore not a pass: a leftover clone also makes the next run of
+  // this sha refuse to start, so it must be loud, and a refusal here is published as a failure like any other.
+  const problems = [];
+  const homeProblem = removeTree(scratchHome);
+  if (homeProblem !== null) problems.push(`could not remove the scratch home ${scratchHome}: ${homeProblem}`);
+  if (!opts.keep) {
+    const cloneProblem = removeTree(dir);
+    if (cloneProblem !== null) problems.push(`could not remove the clean clone ${dir}: ${cloneProblem}; remove it by hand before re-running`);
   }
+  if (problems.length > 0) {
+    for (const message of problems) fail('runner-error', null, undefined, message);
+    if (!result.error) result.error = problems[0];
+    out = finish();
+  }
+  return out;
 }
 
 /** Fail closed: the executed names must be exactly the trusted list, in order. */

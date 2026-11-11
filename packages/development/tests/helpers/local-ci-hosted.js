@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const yaml = require('js-yaml');
 const { defaultDeps } = require('../../lib/local-ci-cli');
 const { validateConfig } = require('../../lib/local-ci-config');
 const { makeBaseRepo, REPO, PR, BASE_BRANCH } = require('./local-ci-base-repo');
@@ -73,20 +74,70 @@ function approvalSetOf(source) {
 const APPROVAL_SET = approvalSetOf(CONFIG);
 
 /**
- * One workflow run with its jobs, as `{ run, jobs }`: completed, green, a pull_request run on `head`. Job ids are
- * `id * 100 + n`. `run` and `job` override fields of the run and of every job (e.g. a different head_sha).
+ * The `steps[]` GitHub's jobs listing carries for one job of `workflowText` (the base workflow): `Set up job`, the
+ * workflow's steps in order (a named step by its evaluated name, an unnamed `uses` as `Run <uses>`, an unnamed `run:` as
+ * `Run <first line>`), a numbering GAP (hidden internal steps, as in real data), `Post ...` for the steps that have a
+ * post action (checkout, setup-*, cache) in reverse order, `Complete job`. A step whose base `if:` is a pure matrix
+ * comparison that is false for this matrix cell is `skipped`, the way `Upload coverage` is on `test (22)`. A job or a
+ * workflow the fixture cannot find gets a generic checkout + run step list.
  */
-function hostedRun(id, file, jobNames, head, { run = {}, job = {} } = {}) {
+function jobSteps(workflowText, jobName) {
+  let def = null;
+  let matrixKeys = [];
+  if (typeof workflowText === 'string') {
+    const jobs = (yaml.load(workflowText) || {}).jobs || {};
+    const id = Object.keys(jobs).find((k) => jobName === k || jobName.startsWith(`${k} (`)) || Object.keys(jobs).find((k) => jobs[k] && jobs[k].name === jobName);
+    def = id ? jobs[id] : null;
+    const m = def && def.strategy && def.strategy.matrix;
+    if (m && typeof m === 'object') matrixKeys = Object.keys(m).filter((k) => Array.isArray(m[k]));
+  }
+  const cell = {};
+  const paren = /\((.*)\)$/.exec(jobName);
+  if (paren) paren[1].split(', ').forEach((v, i) => { if (matrixKeys[i]) cell[matrixKeys[i]] = v; });
+  const fill = (s) => String(s).replace(/\$\{\{\s*matrix\.([\w-]+)\s*\}\}/g, (_m, k) => (k in cell ? cell[k] : _m));
+  const term = (t) => {
+    const m = /^\s*matrix\.([\w-]+)\s*(==|!=)\s*('[^']*'|[\d.]+|true|false)\s*$/.exec(t);
+    if (!m || !(m[1] in cell)) return true; // not a matrix comparison the fixture can evaluate: the step runs
+    const lit = m[3].startsWith("'") ? m[3].slice(1, -1) : m[3];
+    return (cell[m[1]] === lit) === (m[2] === '==');
+  };
+  const runs = (cond) => {
+    if (typeof cond !== 'string') return true;
+    const body = cond.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1');
+    return body.split('||').some((conj) => conj.split('&&').every(term));
+  };
+  const defSteps = def && Array.isArray(def.steps) && def.steps.length > 0 ? def.steps : [{ uses: 'actions/checkout@v6' }, { run: 'npm test' }];
+  const nameOf = (st) => (st.name !== undefined ? fill(st.name) : st.uses ? `Run ${st.uses}` : `Run ${String(st.run).split('\n')[0]}`);
+  const numbered = [{ number: 1, name: 'Set up job', status: 'completed', conclusion: 'success' }];
+  defSteps.forEach((st, i) => numbered.push({ number: i + 2, name: nameOf(st), status: 'completed', conclusion: runs(st.if) ? 'success' : 'skipped' }));
+  const POST = /^actions\/(checkout|setup-[a-z]+|cache)@/;
+  const posts = defSteps.filter((st) => typeof st.uses === 'string' && POST.test(st.uses)).reverse();
+  let next = numbered.length + 5; // the numbering gap
+  for (const st of posts) numbered.push({ number: next++, name: `Post ${nameOf(st)}`, status: 'completed', conclusion: 'success' });
+  numbered.push({ number: next, name: 'Complete job', status: 'completed', conclusion: 'success' });
+  return numbered;
+}
+
+/**
+ * One workflow run with its jobs, as `{ run, jobs }`: completed, green, a pull_request run on `head`. Job ids are
+ * `id * 100 + n`. `run` and `job` override fields of the run and of every job (e.g. a different head_sha). Each job
+ * carries the realistic `steps[]` of its definition in `workflow` (default: the fixture workflow of `file`).
+ */
+function hostedRun(id, file, jobNames, head, { run = {}, job = {}, workflow = WORKFLOW_FILES[file] } = {}) {
   const r = { id, name: path.basename(file, '.yml'), path: file, event: 'pull_request', status: 'completed', conclusion: 'success', head_sha: head, head_branch: 'feat/hosted', run_attempt: 1, pull_requests: [{ number: PR, base: { ref: BASE_BRANCH, sha: 'b'.repeat(40) } }], ...run };
-  const jobs = jobNames.map((name, i) => ({ id: id * 100 + i + 1, run_id: id, name, status: 'completed', conclusion: 'success', head_sha: r.head_sha, run_attempt: 1, ...job }));
+  const jobs = jobNames.map((name, i) => ({ id: id * 100 + i + 1, run_id: id, name, status: 'completed', conclusion: 'success', head_sha: r.head_sha, run_attempt: 1, steps: jobSteps(workflow, name), ...job }));
   return { run: r, jobs };
 }
 
-/** Hosted CI green on `head`: validate (run 101), test 22 + 24 (run 102), drift (run 103). */
-const honest = (head) => [
-  hostedRun(101, VALIDATE, ['validate'], head),
-  hostedRun(102, TEST, ['test (22)', 'test (24)'], head),
-  hostedRun(103, DRIFT, ['drift'], head),
+/**
+ * Hosted CI green on `head`: validate (run 101), test 22 + 24 (run 102), drift (run 103). `workflows` maps a workflow file
+ * to the text of the base workflow the jobs' steps[] must follow (default: the fixture workflow of that file), for a test
+ * that gives the repo a different workflow.
+ */
+const honest = (head, workflows = {}) => [
+  hostedRun(101, VALIDATE, ['validate'], head, { workflow: workflows[VALIDATE] || WORKFLOW_FILES[VALIDATE] }),
+  hostedRun(102, TEST, ['test (22)', 'test (24)'], head, { workflow: workflows[TEST] || WORKFLOW_FILES[TEST] }),
+  hostedRun(103, DRIFT, ['drift'], head, { workflow: workflows[DRIFT] || WORKFLOW_FILES[DRIFT] }),
 ];
 
 /** What verifyHosted reports for `honest(head)`: the jobs it verified. */
@@ -247,6 +298,7 @@ module.exports = {
   REPO,
   hostedRepo,
   approvalSetOf,
+  jobSteps,
   hostedRun,
   honest,
   swap,

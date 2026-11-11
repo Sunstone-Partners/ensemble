@@ -22,7 +22,7 @@ const { runGate: realRunGate } = require('../lib/local-ci-runner');
 const { verifyHosted } = require('../lib/local-ci-hosted');
 const { cleanupBaseRepos, prInfoFor, BASE_BRANCH } = require('./helpers/local-ci-base-repo');
 const H = require('./helpers/local-ci-hosted');
-
+const W = require('./helpers/local-ci-wal');
 const { REPO, PR, CONTEXT, VALIDATE, TEST, DRIFT } = H;
 const GIT = H.memoGit();
 const CLI_PATH = path.join(__dirname, '..', 'lib', 'local-ci-cli.js');
@@ -96,6 +96,8 @@ async function call(sub, payload, w) {
 const gate = (w, extra, fixture = fx) => call('gate', payloadFor(fixture, extra), w);
 const merge = (w, statuses = [], fixture = fx, extra) => call('merge', payloadFor(fixture, { statuses, ...extra }), w);
 const gh = (state, over) => ({ context: CONTEXT, state, description: 'x', ...over });
+/** A success a passing gate would have posted: its record verifies for this fixture. */
+const verifiedOk = () => gh('success', { description: W.verifiedDescription(fx) });
 
 /* ------------------------------------------------------------------------------------------- D1 */
 
@@ -110,14 +112,15 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
     ['an unknown future kind', { kind: 'brand-new-kind', step: 's', node: 22 }, `ci-local refused (brand-new-kind): node 22 / s @ ${SHA8}`],
   ];
 
-  it.each(cases)('%s: a forceLocal gate posts exactly one failure; merge is then refused with green hosted CI; the next gate runs locally', async (_n, failure, description) => {
+  it.each(cases)('%s: a forceLocal gate posts the pending and then exactly one failure; merge is then refused with green hosted CI; the next gate runs locally', async (_n, failure, description) => {
     const w = world();
     w.next = () => refusedRun(failure);
 
     const first = await gate(w, { forceLocal: true });
     expect(first.body).toMatchObject({ ok: false, stage: 'run', posted: true, mergeReady: false });
-    expect(w.gh.posts).toHaveLength(1);
-    expect(w.gh.posts[0]).toEqual({ repo: REPO, sha: HEAD, state: 'failure', context: CONTEXT, description });
+    expect(w.gh.posts).toHaveLength(2);
+    expect(w.gh.posts[0]).toEqual({ repo: REPO, sha: HEAD, state: 'pending', context: CONTEXT, description: `ci-local running @ ${SHA8}` });
+    expect(w.gh.posts[1]).toEqual({ repo: REPO, sha: HEAD, state: 'failure', context: CONTEXT, description });
 
     // what the probe showed: GitHub now holds the failure; the merge payload may well not (statuses [])
     const m = await merge(w, []);
@@ -137,7 +140,7 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
     const w = world();
     w.next = () => refusedRun({ kind: 'step-failed', step: 'test', node: 22 });
     await gate(w, { forceLocal: true });
-    expect(w.gh.posts.map((p) => [p.state, p.description])).toEqual([['failure', `ci-local failed: local-ci steps / node 22 / test @ ${SHA8}`]]);
+    expect(w.gh.posts.map((p) => [p.state, p.description])).toEqual([['pending', `ci-local running @ ${SHA8}`], ['failure', `ci-local failed: local-ci steps / node 22 / test @ ${SHA8}`]]);
     expect((await merge(w, [])).body).toMatchObject({ ok: false, localFailure: true });
     expect((await gate(w)).body.stage).toBe('run');
   });
@@ -147,22 +150,27 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
     w.next = () => ({ ...refusedRun({ kind: 'unmirrored-step', step: 'Upload' }), unmirrored: [{ workflow: TEST, job: 'test', step: 'Upload', reason: 'not mirrored' }] });
     const r = await gate(w, { forceLocal: true });
     expect(r.body.failures.map((f) => f.kind)).toEqual(['unsupported-step']);
-    expect(w.gh.posts.map((p) => [p.state, p.description])).toEqual([['failure', `ci-local failed: ${TEST} / test / Upload @ ${SHA8}`]]);
+    expect(w.gh.posts.map((p) => [p.state, p.description])).toEqual([['pending', `ci-local running @ ${SHA8}`], ['failure', `ci-local failed: ${TEST} / test / Upload @ ${SHA8}`]]);
     expect((await merge(w, [])).body).toMatchObject({ ok: false, localFailure: true });
     expect((await gate(w)).body.stage).toBe('run');
   });
 
+  // Replaced: this pinned "a transient kind posts nothing and hosted CI still stands in". The pending written ahead of the
+  // run now stays (availability, not safety) and vetoes hosted acceptance until a forceLocal run passes.
   it.each(['node-version', 'unfetchable-head', 'prerequisite', 'secrets', 'cleanup', 'invalid-input'])(
-    '%s is transient: nothing is posted, hosted CI still stands in for merge and for gate',
+    '%s is transient: no failure is posted, the pending stays and vetoes merge and gate until a forced local run passes',
     async (kind) => {
       const w = world();
       w.next = () => refusedRun({ kind, step: 'git', node: null });
       const first = await gate(w, { forceLocal: true });
-      expect(first.body).toMatchObject({ ok: false, stage: 'run', posted: false });
-      expect(w.gh.posts).toEqual([]);
+      expect(first.body).toMatchObject({ ok: false, stage: 'run', posted: false, pendingRemains: true });
+      expect(w.gh.posts.map((p) => p.state)).toEqual(['pending']);
+      expect((await merge(w, [])).body).toMatchObject({ ok: false, hostedRefused: true, localFailure: true });
+      expect((await gate(w)).body.stage).toBe('run');
+      w.next = passingRun;
+      expect((await gate(w, { forceLocal: true })).body).toMatchObject({ ok: true, stage: 'attest', posted: true });
       expect((await merge(w, [])).body).toMatchObject({ ok: true, mergeReady: true, source: 'hosted' });
       expect((await gate(w)).body).toMatchObject({ ok: true, stage: 'hosted', source: 'hosted' });
-      expect(w.localRuns).toBe(1);
     }
   );
 
@@ -174,8 +182,8 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
       { kind: 'step-failed', step: 'test', node: 22, sha: HEAD, message: 'red' },
     ] });
     await gate(w, { forceLocal: true });
-    expect(w.gh.posts).toHaveLength(1);
-    expect(w.gh.posts[0]).toMatchObject({ state: 'failure', description: `ci-local refused (clone-tampered): clean clone @ ${SHA8}` });
+    expect(w.gh.posts.map((p) => p.state)).toEqual(['pending', 'failure']);
+    expect(w.gh.posts[1]).toMatchObject({ state: 'failure', description: `ci-local refused (clone-tampered): clean clone @ ${SHA8}` });
     expect((await merge(w, [])).body).toMatchObject({ ok: false, localFailure: true });
   });
 
@@ -188,20 +196,23 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
     expect((await merge(w, [])).body).toMatchObject({ ok: true, source: 'hosted' });
   });
 
-  it('a refusal that lists no failure posts nothing (and does not veto)', async () => {
+  // Replaced: this pinned "a refusal that lists no failure posts nothing (and does not veto)". It still posts no failure, but
+  // the write-ahead pending stays and vetoes (nothing was recorded about the head, so fail closed).
+  it('a refusal that lists no failure posts no failure: the pending stays and vetoes', async () => {
     const w = world();
     w.next = () => ({ ok: false, sha: HEAD, failures: [], unmirrored: [], nodes: [], error: 'boom' });
     const r = await gate(w, { forceLocal: true });
-    expect(r.body).toMatchObject({ ok: false, posted: false });
-    expect(w.gh.posts).toEqual([]);
+    expect(r.body).toMatchObject({ ok: false, posted: false, pendingRemains: true });
+    expect(w.gh.posts.map((p) => p.state)).toEqual(['pending']);
+    expect((await merge(w, [])).body).toMatchObject({ ok: false, localFailure: true, hostedRefused: true });
   });
 
   it('the description is clipped like today\'s (no more than the status limit)', async () => {
     const w = world();
     w.next = () => refusedRun({ kind: 'clone-tampered', step: 's'.repeat(300), node: 22 });
     await gate(w, { forceLocal: true });
-    expect(w.gh.posts[0].description.length).toBeLessThanOrEqual(100);
-    expect(w.gh.posts[0].description.startsWith('ci-local refused (clone-tampered): node 22 / sss')).toBe(true);
+    expect(w.gh.posts[1].description.length).toBeLessThanOrEqual(100);
+    expect(w.gh.posts[1].description.startsWith('ci-local refused (clone-tampered): node 22 / sss')).toBe(true);
   });
 
   it('a later forceLocal PASS posts success, which supersedes the failure: merge accepts the verified local status and a plain gate accepts hosted again', async () => {
@@ -213,7 +224,7 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
     w.next = passingRun;
     const pass = await gate(w, { forceLocal: true });
     expect(pass.body).toMatchObject({ ok: true, stage: 'attest', posted: true });
-    expect(w.gh.store.map((s) => s.state)).toEqual(['success', 'failure']); // newest first
+    expect(w.gh.store.map((s) => s.state)).toEqual(['success', 'pending', 'failure', 'pending']); // newest first: each run wrote ahead
 
     const verified = await merge(w, w.gh.store); // the local success verifies, no hosted needed
     expect(verified.body).toMatchObject({ ok: true, mergeReady: true });
@@ -241,8 +252,8 @@ describe('D1. every head-bound refusal of a local run publishes a failure status
     const r = await gate(w, { forceLocal: true });
     expect(r.body.failures.map((f) => f.kind)).toEqual(['clone-tampered']);
     expect(r.body).toMatchObject({ ok: false, posted: true });
-    expect(w.gh.posts).toHaveLength(1);
-    expect(w.gh.posts[0]).toMatchObject({ state: 'failure', description: `ci-local refused (clone-tampered): clean clone @ ${SHA8}` });
+    expect(w.gh.posts.map((p) => p.state)).toEqual(['pending', 'failure']);
+    expect(w.gh.posts[1]).toMatchObject({ state: 'failure', description: `ci-local refused (clone-tampered): clean clone @ ${SHA8}` });
     expect((await merge(w, [])).body).toMatchObject({ ok: false, localFailure: true, hostedRefused: true });
     const again = await gate(w);
     expect(again.body.stage).toBe('run');
@@ -305,17 +316,20 @@ describe('D2. one veto rule, read from GitHub by merge and by gate, after verify
     expect(w.prInfo.calls).toHaveLength(1);
   });
 
+  // Replaced rows (round 3 -> round 5): "success after an old failure" for ANY success, and "pending on top of ..." not vetoing.
+  // A success clears only with a record that verifies; a pending latest status is a run that did not finish and vetoes.
   it.each([
-    ['success after an old failure', [gh('success'), gh('failure')], true],
-    ['failure after an old success', [gh('failure'), gh('success')], false],
-    ['error after an old success', [gh('error'), gh('success')], false],
-    ['pending on top of an old failure (no evidence either way)', [gh('pending'), gh('failure')], true],
-    ['pending on top of an old success', [gh('pending'), gh('success')], true],
+    ['a VERIFIED success after an old failure', [verifiedOk(), gh('failure')], true],
+    ['an UNVERIFIED success after an old failure', [gh('success'), gh('failure')], false],
+    ['failure after an old success', [gh('failure'), verifiedOk()], false],
+    ['error after an old success', [gh('error'), verifiedOk()], false],
+    ['pending on top of an old failure (a run that did not finish)', [gh('pending'), gh('failure')], false],
+    ['pending on top of an old verified success', [gh('pending'), verifiedOk()], false],
     ['a failure of ANOTHER context', [gh('failure', { context: 'some/other-check' })], true],
-    ['another context\'s failure on top of our success', [gh('failure', { context: 'some/other-check' }), gh('success')], true],
+    ['another context\'s failure on top of our verified success', [gh('failure', { context: 'some/other-check' }), verifiedOk()], true],
     ['another context\'s success on top of our failure', [gh('success', { context: 'some/other-check' }), gh('failure')], false],
     ['the context in other letters (failure)', [gh('failure', { context: CONTEXT.toUpperCase() })], false],
-    ['the context in other letters (success on top of failure)', [gh('success', { context: CONTEXT.toUpperCase() }), gh('failure')], true],
+    ['the context in other letters (verified success on top of failure)', [{ ...verifiedOk(), context: CONTEXT.toUpperCase() }, gh('failure')], true],
   ])('latest wins, merge and gate agree: %s', async (_n, initial, accepted) => {
     const wm = world({ initial });
     const m = await merge(wm, []);
@@ -327,7 +341,7 @@ describe('D2. one veto rule, read from GitHub by merge and by gate, after verify
     const g = await gate(wg);
     expect(g.body.stage === 'hosted').toBe(accepted);
     expect(wg.localRuns).toBe(accepted ? 0 : 1);
-    if (!accepted) expect(g.body.hostedRefused).toContain('the local gate recorded');
+    if (!accepted) expect(g.body.hostedRefused).toMatch(/^hosted CI not accepted: /);
   });
 
   it.each([
@@ -359,8 +373,8 @@ describe('D2. one veto rule, read from GitHub by merge and by gate, after verify
 
     expect((await merge(world({ initial: page(99) }), [])).body).toMatchObject({ ok: true, source: 'hosted' });
     expect((await gate(world({ initial: page(99) }))).body.stage).toBe('hosted');
-    // a full page that DOES hold our context decides by it
-    expect((await merge(world({ initial: [...page(99), gh('success')] }), [])).body).toMatchObject({ ok: true, source: 'hosted' });
+    // a full page that DOES hold our context decides by it (a success only if its record verifies)
+    expect((await merge(world({ initial: [...page(99), verifiedOk()] }), [])).body).toMatchObject({ ok: true, source: 'hosted' });
     expect((await merge(world({ initial: [...page(99), gh('failure')] }), [])).body).toMatchObject({ ok: false, localFailure: true });
   });
 
@@ -463,9 +477,11 @@ describe('D5. static checks of a required job and its needs closure', () => {
   const job = (body) => `    runs-on: ubuntu-latest\n${body}`;
   const steps = (...items) => `    steps:\n${items.map((i) => `      - ${i}`).join('\n')}\n`;
   const workflow = (jobsText, header = 'name: validate\non:\n  pull_request:\n  push:\n    branches: [main, dev]\n') => `${header}jobs:\n${jobsText}`;
-  const verifyText = (text) => {
+  const verifyText = (text, names = ['validate']) => {
     const fixture = H.hostedRepo({ files: { [VALIDATE]: text } });
-    const ghApi = H.actionsApi(H.honest(fixture.headSha));
+    // hosted CI ran the head's jobs of this workflow text: `names` are the jobs in the run listing (a needed job must be there too)
+    const entries = H.swap(H.honest(fixture.headSha, { [VALIDATE]: text }), VALIDATE, () => H.hostedRun(101, VALIDATE, names, fixture.headSha, { workflow: text }));
+    const ghApi = H.actionsApi(entries);
     const r = verifyHosted({ repo: REPO, headSha: fixture.headSha, baseSha: fixture.baseSha, repoRoot: fixture.dir, pr: PR, baseRefName: BASE_BRANCH, approvalSet: H.APPROVAL_SET }, { git: GIT, ghApi });
     return { r, ghApi };
   };
@@ -477,7 +493,7 @@ describe('D5. static checks of a required job and its needs closure', () => {
     for (const c of causes) expect(r.reason).toContain(c);
     expect(ghApi.calls).toEqual([]); // before any GitHub call
   };
-  const accepts = (text) => expect(verifyText(text).r.ok).toBe(true);
+  const accepts = (text, names) => expect(verifyText(text, names).r.ok).toBe(true);
   const checkout = 'uses: actions/checkout@v6';
   const run = 'run: npm run validate';
 
@@ -500,9 +516,9 @@ describe('D5. static checks of a required job and its needs closure', () => {
         'job "c"', './.github/actions/deep'
       );
     });
-    it('positive controls: a needs chain of external actions, and a cycle, are accepted', () => {
-      accepts(workflow(`  c:\n${job(steps(checkout))}  b:\n    needs: c\n${job(steps('uses: actions/setup-node@v6'))}  validate:\n    needs: [b]\n${job(steps(checkout, run))}`));
-      accepts(workflow(`  a:\n    needs: b\n${job(steps(checkout))}  b:\n    needs: a\n${job(steps(checkout))}  validate:\n    needs: a\n${job(steps(checkout, run))}`));
+    it('positive controls: a needs chain of external actions, and a cycle, are accepted (the needed jobs are in the run listing)', () => {
+      accepts(workflow(`  c:\n${job(steps(checkout))}  b:\n    needs: c\n${job(steps('uses: actions/setup-node@v6'))}  validate:\n    needs: [b]\n${job(steps(checkout, run))}`), ['c', 'b', 'validate']);
+      accepts(workflow(`  a:\n    needs: b\n${job(steps(checkout))}  b:\n    needs: a\n${job(steps(checkout))}  validate:\n    needs: a\n${job(steps(checkout, run))}`), ['a', 'b', 'validate']);
     });
     it('a local action in a job that is NOT in the closure is still fine', () => {
       accepts(workflow(`  other:\n${job(steps('uses: ./.github/actions/x'))}  validate:\n${job(steps(checkout, run))}`));
@@ -555,7 +571,7 @@ describe('D5. static checks of a required job and its needs closure', () => {
     const fixture = H.hostedRepo({ files });
     const r = verifyHosted(
       { repo: REPO, headSha: fixture.headSha, baseSha: fixture.baseSha, repoRoot: fixture.dir, pr: PR, baseRefName: BASE_BRANCH, approvalSet: H.APPROVAL_SET },
-      { git: GIT, ghApi: H.actionsApi(H.honest(fixture.headSha)) }
+      { git: GIT, ghApi: H.actionsApi(H.honest(fixture.headSha, files)) }
     );
     expect(r).toMatchObject({ ok: true, jobs: H.VERIFIED });
   });
