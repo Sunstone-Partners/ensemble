@@ -257,7 +257,11 @@ them), each sorted by the fixed-finding check that already decides what a push f
 lines against the push):
 
 - the push touched the cited lines and no reviewer of this round raised the finding again: it is **cleared**, like any prior finding (it
-  was never verified, so it is neither confirmed nor refuted, and it stays in the ledger marked cleared);
+  was never verified, so it is neither confirmed nor refuted, and it stays in the ledger marked cleared). A push that only ADDS lines
+  (`git diff -U0`: `@@ -587,0 +588,5 @@`) touches a cited range when the insertion lies strictly inside it, with a cited line on each side
+  (kata `bh8w`: the measured case was five lines added inside 583-601, which kept the finding open until a person closed it); an insertion
+  right before the first cited line, right after the last, or into a one-line citation does not clear it, and a file-only citation is
+  unchanged (an insertion alone does not touch it);
 - a reviewer of this round raised the same defect (the same path and claim): that candidate is verified, as itself, and replaces the old entry;
 - the cited lines are untouched: the finding comes back as a **candidate of this round under its own id**, its ledger entry as recorded
   (raiser, adjudication, everything but the old verification) at the line this head numbers it. K fresh verifiers are briefed with the
@@ -273,8 +277,8 @@ The TRIAGE answer marks those candidates `fromLastRound: true` (they will be ver
 dropped and nothing is counted refuted for want of a vote: a candidate no verifier returns for again is unverified again under the same
 id, and the round that records it is a base again. Limits, said plainly: the delta's verify round now includes every untouched candidate
 the last round left unverified, so when most of a first round's verifiers were lost the delta's verification can be as large as a first
-round's while its reading stays the delta's; `carried` still needs a settled verdict whose candidate this round's reviewers raise again
-(see "Hash, plan, record"); and whether the path is faster in a real review was not measured here (no model-agent run was made for this change).
+round's while its reading stays the delta's; `carried` still needs a settled verdict whose finding a reviewer of this round raises again (in the
+same words, or in its own once a restatement is confirmed: below; see "Hash, plan, record"); and whether the path is faster in a real review was not measured here (no model-agent run was made for this change).
 
 Three more limits, said plainly. A candidate the delta clears because the push fixed its lines was never verified: `carry.cleared` lists its
 id alone, and the beads recorder closes it as fixed although no verifier ever confirmed it (not new in kind, but this widens it to the candidates
@@ -282,6 +286,42 @@ of a lost verifier). A candidate verified again keeps the disposition, reason an
 and the stamps are dropped), so a Nit deferred with a reason stays deferred whatever the new verdict says, and `adjudicateList` does not present
 it again. And `reReview.delta.unverifiedFromLastRound` is a count while `carry.unverifiedFromLastRound` is an object, whose `verifiedAgain` lists the
 candidates put to verifiers again, some of which can come back unverified again, so it overstates what was verified.
+
+**A restatement of an open finding is that finding (kata `tmf5`).** The delta reviewers never see the prior wording, so a defect one of them
+states again in its own words used to be a NEW candidate: the ledger held it twice, the gate listed two blockers, the verify round paid for
+it and `carried` stayed 0 (run `m2-pr293-re`, a real delta after a real fix push: two of its three new candidates restated findings the ledger
+held open, f20 of f7 on line 284 and f21 of f10 on line 274, and `carried >= 1` never happened in either live delta). Now a candidate is a
+**restatement** of an open finding of the last round when two things hold: a match by location (the same file, cited lines that overlap the
+finding's lines in this head's numbering, the finding one the push left alone: the fixed-finding check says `location-unchanged`) and a cheap
+confirmation (no extra agent: `resemblanceOver` of `lib/pr-review-ledger.js`, the measure `dedupeFindings` joins two reviewers' write-ups of one
+defect by, with the bar `RESTATED_MIN_SIMILARITY = 0.35` against the in-round 0.26, over at least 8 words each, the same class, security relevance
+and Pre-existing status, nothing that needs a person, the shorter description at least a third of the longer one's weight). A restatement is
+merged into the entry BEFORE it becomes a candidate: it is not verified, the entry is. The entry keeps its id and claim and records
+`restatedBy: [{id, source, locationOrLink, severity, failureMode, evidence, similarity, headSha}]`; it takes the more severe of the two
+severities (a restatement can raise what blocks and never lowers it, and a raised entry drops the adjudication, deferral reason and `blocking`
+flag that were decisions about the lesser finding); and it keeps its verdict only through the carry rules it always had, none loosened: a
+settled, complete verdict whose cited hunk, file, dependencies and dependents the push left alone is carried (`carry.carried >= 1`), every other
+entry is verified again as itself (a restated finding whose file the push edited elsewhere is not carried). The restating reviewer is a raiser of
+the entry, so it never verifies it. What is not confirmed stays a separate candidate: a distinct defect on the same lines, a candidate below
+the bar, one that confirms against two open findings (`ambiguous`), a second candidate for an entry that already took one (`entry-already-restated`),
+one of another kind or that needs a person, one on an entry the push touched, and any entry the verifiers refuted, a person must decide, nobody could
+be asked about, a push cleared or an operator resolved. The round says what it did: `carry.restatements` is `{count, merged: [{id, of, source,
+locationOrLink, severity, similarity, carried}], kept: [{id, reason, against, similarity}]}` in the verify manifest, the final answer and the state
+report (it is not the collector's `restated` flag of a result file rewritten after it was read, kata `271n`), the TRIAGE answer marks the
+candidate each restatement was merged into (`restated: [ids]`) and lists the round's `restatements`, the gate's open-finding blocker names and counts
+them (`restated by N later candidates, merged into it: ids`, and `restatedBy` in its extra), and the bead of the finding lists them.
+
+**The bar is fitted, not validated.** 0.35 was chosen from 45 pairs of findings that cite overlapping lines in 12 real ledgers of this repository's
+own reviews (the measurement runs and the review of PR 229), among them the two measured restatements above (0.51 and 0.42): the pairs one defect
+written up twice scored 0.32 to 0.51 and the highest pair of distinct defects 0.29. It was NOT validated on held-out data: no second PR's
+restatements exist yet. The measure is lexical and corpus-relative, so a heavily paraphrased restatement that shares no identifier with the
+finding scores below the bar and stays a separate candidate (the fixtures score such a paraphrase 0.24; a restatement that names the same code,
+0.44 to 0.84), which is the safe side: more findings, never fewer. A false merge is the other side, and it keeps the merged defect from its own
+verification this round (its text and evidence stay in `restatedBy`, and a fix touching the cited lines ends the merge's reach). The first live
+use is the validation: read `carry.restatements.merged` against `.kept` in the next delta run, and treat any merged pair two people would call
+distinct defects as a miss. `tests/pr-review-restated.test.js` pins the measured scores and each pair's merge-or-keep outcome, so a change of the bar
+or of the scoring breaks there. Kata `k7b0` is not changed: a restated finding still inherits its entry's disposition and adjudication (except when
+a more severe restatement raised it), the cleared-never-verified items and the count-versus-object item stand as described above.
 
 **What stays whole.** The security lane, the whole-range reader (when the light run is cut into several slices) and the TRIAGE
 step (full mode) read the whole range (`range.diff`, every changed path of the PR) in a delta round too; a round that planned

@@ -19,9 +19,9 @@
  *
  *  - a pool that cannot give some candidate K verifiers is an explicit error
  *    naming those candidates, never a candidate quietly given fewer;
- *  - nobody who raised a finding is one of its verifiers: its `reviewer`, its ledger `source` and each
- *    `mergedFrom[].source` (`raisersOf`, the same case-insensitive comparison `votes` applies); a candidate
- *    that names no raiser is refused, since it could not be excluded;
+ *  - nobody who raised a finding is one of its verifiers: its `reviewer`, its ledger `source`, each `mergedFrom[].source` and each
+ *    `restatedBy[].source` (a later round's reviewer that restated it, kata tmf5) (`raisersOf`, the same case-insensitive comparison `votes`
+ *    applies); a candidate that names no raiser is refused, since it could not be excluded;
  *  - anything it cannot read is a refusal with a reason and an EMPTY plan.
  *
  * Independence ("no verifier sees another's vote") is a property of the

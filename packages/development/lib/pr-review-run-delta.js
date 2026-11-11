@@ -15,6 +15,10 @@
  *   3. `hashCandidates` / `planRunCarry`  every candidate is hashed at the head (lib/pr-review-carry-hash.js) and judged by
  *                      `planCarry` (lib/pr-review-carry.js) against the prior round's verdicts: the ones whose cited hunk and
  *                      dependencies are untouched keep their verdict (no verifier is asked), every other one is verified again.
+ *   3b. `checkPrior` / `restatedPrior` (kata tmf5)  a candidate a reviewer raised in its own words that restates an OPEN finding of the last
+ *                      round (the same file, overlapping lines, the push left them alone, and lib/pr-review-restated.js confirms the wording)
+ *                      is merged into that finding BEFORE it becomes a candidate: the finding comes back as the candidate (its own id and
+ *                      claim, `restatedBy` naming the restater) and `planCarry` decides by its own rules, none loosened, whether its verdict is kept.
  *   4. `composeDeltaLedger`  the round's ledger is the prior ledger (carried entries restamped with this head, findings the
  *                      push fixed cleared by `deriveCleared`, findings re-reported replaced by their fresh entry) plus the
  *                      fresh entries, so a finding in code nobody re-read is never dropped.
