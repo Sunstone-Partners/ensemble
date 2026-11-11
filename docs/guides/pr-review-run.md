@@ -291,43 +291,68 @@ candidates put to verifiers again, some of which can come back unverified again,
 states again in its own words used to be a NEW candidate: the ledger held it twice, the gate listed two blockers, the verify round paid for
 it and `carried` stayed 0 (run `m2-pr293-re`, a real delta after a real fix push: two of its three new candidates restated findings the ledger
 held open, f20 of f7 on line 284 and f21 of f10 on line 274, and `carried >= 1` never happened in either live delta). Now a candidate is a
-**restatement** of an open finding of the last round when two things hold: a match by location (the same file, cited lines that overlap the
-finding's lines in this head's numbering, the finding one the push left alone: the fixed-finding check says `location-unchanged`) and a cheap
-confirmation (no extra agent: `resemblanceOver` of `lib/pr-review-ledger.js`, the measure `dedupeFindings` joins two reviewers' write-ups of one
-defect by, with the bar `RESTATED_MIN_SIMILARITY = 0.35` against the in-round 0.26, over at least 8 words each, the same class, security relevance
-and Pre-existing status, nothing that needs a person, the shorter description at least a third of the longer one's weight). A restatement is
-merged into the entry BEFORE it becomes a candidate: it is not verified, the entry is. The entry keeps its id and claim and records
-`restatedBy: [{id, source, locationOrLink, severity, failureMode, evidence, similarity, headSha}]`; it takes the more severe of the two
+**restatement** of an open finding of the last round when it matches by location and passes a cheap confirmation, with no extra agent:
+
+- **The match by location:** the same file, and cited lines that overlap the finding's lines in this head's numbering (a SHARED boundary line
+  counts as overlap, an adjacent line does not: a candidate at line 6 does not overlap a finding at line 5, one at 3-5 overlaps a finding at 5-8),
+  and the finding is one the push left alone (the fixed-finding check says `location-unchanged`).
+- **The confirmation, two signals, both required.** (1) The resemblance bar: `resemblanceOver` of `lib/pr-review-ledger.js`, the measure
+  `dedupeFindings` joins two reviewers' write-ups of one defect by, at `RESTATED_MIN_SIMILARITY = 0.35` (the in-round bar is 0.26), over at least
+  8 words each, the same class, security relevance and Pre-existing status, nothing that needs a person, the shorter description at least a third of
+  the longer one's weight. With fewer than three findings in play (the prior ledger and the round's candidates together) there is nothing to weigh
+  the words by, so it refuses (`corpus-too-small`) and the candidate stays a candidate. (2) A shared identifier: the two claims (`failureMode`, not
+  the evidence) name at least one code-like identifier in common, compared without case. A token counts as one when it is a call with empty
+  parentheses (`write()`, three letters or more), snake_case or SCREAMING_SNAKE or a leading underscore (`LABEL_IDS`, `_fixture`: an underscore
+  and two letters in a row), camelCase or PascalCase (`dirnamePaths`: a lowercase letter followed by an uppercase one), or a dotted name or file name
+  (`items.length`, `adapters.js`, every part two characters or more with a letter in it: not `e.g`, `1.5`, `v1.2`). A plain word, a hyphenated compound
+  (`end-to-end`) and an acronym (`JSON`, `E2E`) never count; neither does the cited file's own name (two findings that overlap cite one file) or a short
+  generic list (JavaScript, TypeScript, GitHub, GitLab, macOS, iOS, PostgreSQL, MongoDB, GraphQL, OpenAI, `NaN`, README.md, CHANGELOG.md, package.json,
+  package-lock.json). Why: the lexical bar admits two distinct defects that share vocabulary, and a claim that names no code in common with the finding
+  has nothing but vocabulary to go on.
+
+A restatement is merged into the entry BEFORE it becomes a candidate: it is not verified, the entry is. The entry keeps its id and claim and records
+`restatedBy: [{id, source, locationOrLink, severity, failureMode, evidence, similarity, sharedIdentifiers, headSha}]`; it takes the more severe of the two
 severities (a restatement can raise what blocks and never lowers it, and a raised entry drops the adjudication, deferral reason and `blocking`
 flag that were decisions about the lesser finding); and it keeps its verdict only through the carry rules it always had, none loosened: a
 settled, complete verdict whose cited hunk, file, dependencies and dependents the push left alone is carried (`carry.carried >= 1`), every other
 entry is verified again as itself (a restated finding whose file the push edited elsewhere is not carried). The restating reviewer is a raiser of
-the entry, so it never verifies it. What is not confirmed stays a separate candidate: a distinct defect on the same lines, a candidate below
-the bar, one that confirms against two open findings (`ambiguous`), a second candidate for an entry that already took one (`entry-already-restated`),
-one of another kind or that needs a person, one on an entry the push touched, and any entry the verifiers refuted, a person must decide, nobody could
-be asked about, a push cleared or an operator resolved. The round says what it did: `carry.restatements` is `{count, merged: [{id, of, source,
-locationOrLink, severity, similarity, carried}], kept: [{id, reason, against, similarity}]}` in the verify manifest, the final answer and the state
-report (it is not the collector's `restated` flag of a result file rewritten after it was read, kata `271n`), the TRIAGE answer marks the
-candidate each restatement was merged into (`restated: [ids]`) and lists the round's `restatements`, the gate's open-finding blocker names and counts
-them (`restated by N later candidates, merged into it: ids`, and `restatedBy` in its extra), and the bead of the finding lists them.
+the entry, so it never verifies it. What is not confirmed stays a separate candidate, with its reason: `different-description` (below the bar), `no-shared-identifier`
+(it cleared the bar and names no identifier in common), `corpus-too-small`, `ambiguous` (it confirms against two open findings), `entry-already-restated`
+(a second candidate for an entry that already took one), `different-kind`, `unsettled` (one that needs a person), and one on an entry the push touched, or an
+entry the verifiers refuted, a person must decide, nobody could be asked about, a push cleared or an operator resolved is never compared. The round says what it
+did: `carry.restatements` is `{count, merged: [{id, of, source, locationOrLink, severity, similarity, sharedIdentifiers, carried}], kept: [{id, reason, against,
+similarity}]}` in the verify manifest, the final answer and the state report (it is not the collector's `restated` flag of a result file rewritten after it was
+read, kata `271n`), the TRIAGE answer marks the candidate each restatement was merged into (`restated: [ids]`) and lists the round's `restatements`, the gate's
+open-finding blocker names and counts them (`restated by N later candidates, merged into it: ids`, and `restatedBy` in its extra), and the bead of the finding lists them.
 
-**The bar is fitted, not validated.** 0.35 was chosen from 45 pairs of findings that cite overlapping lines in 7 ledgers of this repository's own
-review runs (21 state files were scanned), among them the two measured restatements above. The pairs are committed, with every entry of each ledger,
-in `tests/fixtures/pr-review-restated-fit-pairs.json`, and `tests/pr-review-restated-fit.test.js` re-scores them, so the fit can be re-derived. Each pair is
-scored over its OWN ledger. By the reading of whoever fitted the bar, 8 of the 45 are one defect written up twice and 35 are distinct defects (2 are unclear):
-the pairs of one defect score 0.51, 0.47, 0.46, 0.45 and 0.42, which the bar merges, and 0.34 and 0.32, which it does NOT (one more is refused for its size
-ratio), so the bar costs recall; the highest of the distinct pairs scores 0.29. **The margin depends on the corpus**: the runner weighs the words over the
-prior ledger and the round's candidates, not over a pair's own ledger, and the same pair scores differently there (a distinct pair of PR 291, f3 and f5, scores
-0.22 over its own ledger and about 0.33 over a union of 98 entries, under the bar by less than two hundredths). With fewer than three findings in play every word
-weighs the same (ln(N/df) is 0 for every shared word of two), the more permissive reading; `dedupeFindings` itself still scores a call of exactly two findings 0, as it
-always did. The bar was NOT validated on held-out data: no second PR's restatements exist yet. The measure is lexical, so a heavily paraphrased restatement that shares
-no identifier with the finding scores below the bar and stays a separate candidate (the hand-written fixtures score such a paraphrase 0.24; a restatement that names the
-same code, 0.44 to 0.84), which is the safe side: more findings, never fewer. A false merge is the other side, and it keeps the merged defect from its own
-verification this round (its text and evidence stay in `restatedBy`, and a fix touching the cited lines ends the merge's reach). The first live use is the validation:
-read `carry.restatements.merged` against `.kept` in the next delta run, and treat any merged pair two people would call distinct defects as a miss.
-`tests/pr-review-restated.test.js` pins how the measure scores hand-written fixture claims (not measured data) and what the matcher does with each, so a change of the bar or
-of the scoring breaks there. Kata `k7b0` is not changed: a restated finding still inherits its entry's disposition and adjudication (except when a more severe
-restatement raised it), the cleared-never-verified items and the count-versus-object item stand as described above.
+**The bar and the signal are fitted, not validated, and they cost recall.** 0.35 was chosen from 45 pairs of findings that cite overlapping lines in 7 ledgers of
+this repository's own review runs (21 state files and one committed ledger were scanned; 7 ledgers held overlapping pairs), among them the two measured restatements above, and the identifier rule was derived from the
+same pairs. The pairs are committed, with every entry of each ledger, in `tests/fixtures/pr-review-restated-fit-pairs.json`, and
+`tests/pr-review-restated-fit.test.js` re-scores them, so the fit can be re-derived. Each pair is scored over its OWN ledger. By the reading of whoever fitted
+the bar (every call is a reading of the two claims' text; the 14 distinct calls that had cited the in-round same-source rule were re-read from the text, and
+pr-207 f4~f16, which may be one defect or two, is unclear), 7 of the 45 are one defect written up twice, 35 are distinct and 3 are unclear. The pairs of one
+defect score 0.51, 0.47, 0.46, 0.45 and 0.42, which the bar merges, and 0.32, which it does NOT (one more is refused for its size ratio): the bar costs recall
+(5 of 7); the highest distinct pair scores 0.29. All 7 pairs of one defect and all 3 unclear pairs name an identifier in common, and 8 of the 35 distinct pairs do
+(none of them clears the bar over its own ledger), so on this data the signal costs no recall and removes nothing the bar had let through. **The margin depends
+on the corpus**: the runner weighs the words over the prior ledger and the round's candidates, not over a pair's own ledger, and the same pair scores differently
+there (a distinct pair of PR 291, f3 and f5, scores 0.22 over its own ledger and about 0.33 over a union of 98 entries, under the bar by less than two
+hundredths). Below three findings the measure is refused rather than replaced: a uniform weight merged RT-4 and RT-7 of PR 229 (a missing test and an off-by-one
+title, 0.465) and 4 of the 35 distinct pairs, which the corpus weights never reach. `dedupeFindings` is untouched and still scores a call of exactly two findings 0, as it
+always did. **The costs, said plainly:** a restatement in a delta round of one or two findings stays a duplicate candidate; a restatement written in plain words that names
+no code stays a separate candidate however alike the two are (the hand-written fixtures score an abstract paraphrase 0.24; a restatement that names the same code,
+0.44 to 0.84); an entry takes one restatement a round, so when two reviewers restate one finding the better candidate merges and the other stays (the ledger then holds
+that defect twice). **The residual false merges, measured on synthetic pairs and not proof of anything**: `tests/fixtures/pr-review-restated-synthetic-pairs.json` holds
+30 hand-written pairs of distinct defects on the same lines (each called distinct, scored over the PR 229 ledger plus the pair). The reviewer's 10 pairs written to share
+vocabulary and naming no code: 6 clear the bar, 0 merge (the signal separates all six). 10 natural pairs of two defects in one named function: 1 clears the bar and merges
+(`cacheKey` leaving out the tenant id, and `cacheKey` lowercasing the resource name), and all 10 name the function, so the signal separates none of them. The worst case
+(the reviewer's 10 with a function name added to both claims): 7 of 10 merge. The signal is a heuristic, not a proof: it cannot tell two defects in one named function
+apart, and a false merge keeps the merged defect from its own verification this round (its text and evidence stay in `restatedBy`, its identifiers in
+`sharedIdentifiers`, and a fix touching the cited lines ends the merge's reach). **The first live use is the validation:** read `carry.restatements.merged` (with
+its `similarity` and `sharedIdentifiers`) against `.kept` in the next delta run, and treat any merged pair two people would call distinct defects as a miss.
+`tests/pr-review-restated.test.js` pins how the measure scores hand-written fixture claims (not measured data) and what the matcher does with each, and
+`tests/pr-review-restated-synthetic.test.js` pins the residual above, so a change of the bar, the identifier rule or the scoring breaks there. Kata `k7b0` is not
+changed: a restated finding still inherits its entry's disposition and adjudication (except when a more severe restatement raised it), the
+cleared-never-verified items and the count-versus-object item stand as described above.
 
 Two more limits, said plainly. A push that only adds lines inside a cited range clears the finding (kata `bh8w`) even when the added lines are a comment and the defect is
 still there, unless a reviewer of the round raises it again: "cleared" means never verified and never refuted, not fixed. And an entry takes one restatement a round
