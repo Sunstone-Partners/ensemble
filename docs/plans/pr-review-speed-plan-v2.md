@@ -1,6 +1,6 @@
 # Plan v2: PR review speed, re-based targets and a design for Medium
 
-- **Status:** Proposed, design only. This document changes no code and creates no kata issue; the children it proposes are in section 5. Written 2026-11-10 against `origin/dev` `84c6739` (kata `a8yz`).
+- **Status:** Adopted by the owner on 2026-11-11 (design document; no code changed by this PR); the decisions taken are recorded in section 6. This document changes no code and creates no kata issue; the children it proposes are in section 5. Written 2026-11-10 against `origin/dev` `84c6739` (kata `a8yz`).
 - **Builds on:** [the original plan](pr-review-speedup-plan.md), left as written because `pr-review-walltime-baseline.test.js` pins its figures, and the three measurement reports with their evidence directories: **R1** [BEFORE, `8afd3e3`](../guides/review-speedup-measurement-2026-11-08.md), **R2** [AFTER, `aea0b19`](../guides/review-speedup-measurement-2026-11-09-after.md), **R3** [FINAL, `3209237`](../guides/review-speedup-measurement-2026-11-10-final.md). Together they hold 15 real-model runs (3 + 3 + 9).
 - **Hard constraints (unchanged, none is traded away here):** independent fresh-context reviewers and verifiers; base-commit guidance; `REVIEW_COMPLETE` computed only by the CLI; a path nobody reviewed is reported as not reviewed; the gate owns approvals; no gate, coverage rule or `MINIMUMS` is relaxed to make a number pass. The 2026-11-07 baseline file and `MINIMUMS` (3 PRs per stratum) are not touched by anything below.
 - **Basis tags.** **[M]** measured: read from a committed trace, `summary.json`, `timing.json`, `walltime-compare.json` or report text, with the source named. **[D]** derived: arithmetic or a replay on measured values; the script is named (S00 to S14, appendix A) and every assumption is stated beside the figure. **[I]** inference: a belief the data do not establish. A figure with no tag is a definition or a quotation.
@@ -362,6 +362,16 @@ Existing katas that gate claims rather than speed, not duplicated here: `dx53` (
 | D7 | Whether Nit and Pre-existing candidates may go unverified | Not before the negative controls report |
 | D8 | How tool-call counts are obtained. The runner cannot see them; this plan did not open any session file | The dispatcher records them from the harness job result if it exposes one; otherwise count-only parsing of session records (calls and timestamps, never content) only on the owner's explicit approval |
 | D9 | Approval for scratch re-creations of merged or fork PRs for the next cohort (each earlier measurement asked once) | Approve for the #225, #228 and #233 diffs and one Medium PR of the baseline's size class |
+
+### Owner decisions taken
+
+Recorded 2026-11-11: the owner adopted this plan with the recommendations of the table above. The targets of section 1.4 are therefore adopted where this document says proposed, and the quorum-first reading of D4 is the adopted one; sections 1 to 5 are otherwise unchanged, and no figure or analysis was altered by the decision.
+
+- **D1 decided, yes.** The re-based targets are adopted beside the unchanged 5x yardstick; `fiveX` stays `not-met`; `MINIMUMS` and the baseline file are untouched.
+- **D2 decided, option B.** Absolute-minute targets for the thin baseline strata `medium/first` and `high/re-review`; no baseline edit.
+- **D3 decided, no reviewer-depth trade before the guard program passes.** No reviewer-depth trade before V2-4a to V2-4c pass; verifier-side trades only after V2-4b.
+- **D4 decided, "3 verifiers per finding" means deciding, not dispatched.** The electorate stays 3 (5 at Deep) and the vote rule is unchanged; carry is unchanged, so a quorum-settled candidate is never carried and a delta verifies it again.
+- **D5 to D9 open.** Not decided yet; each is put to the owner when the child that needs it starts: D5 with V2-2, D6 with V2-4, D7 with V2-7, D8 with V2-1, D9 with V2-6.
 
 ## 7. Not measured, and limits
 
