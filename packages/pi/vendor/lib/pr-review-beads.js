@@ -95,6 +95,7 @@ const crypto = require('crypto');
 const { normalizeSeverity, anchorOf, normalizeFailureMode, fingerprintPath } = require('./pr-review-ledger');
 const { redact } = require('./pr-review-state');
 const { COLLAPSE_THRESHOLD, isSecurity } = require('./pr-review-disposition');
+const { restatementsOf } = require('./pr-review-restated');
 
 const BEAD_LABEL = 'pr-review';
 const FOLLOW_ON_LABEL = 'follow-on';
@@ -390,7 +391,9 @@ function locationOf(entry) {
 function memberLine(entry) {
   const resolved = isObject(entry.finding.resolution) && isText(entry.finding.resolution.reason);
   const decision = resolved ? ` -- operator: ${flat(entry.finding.resolution.reason, 160)}` : '';
-  return `- ${flat(locationOf(entry), 200)}: ${flat(entry.finding.failureMode, CLAIM_MAX)} [${votesLine(entry.vote)}]${decision}`;
+  const restated = restatementsOf(entry.finding);
+  const restatement = restated.length === 0 ? '' : ` (restated by ${restated.length}: ${restated.map((record) => flat(String(record.id), 40)).join(', ')})`;
+  return `- ${flat(locationOf(entry), 200)}: ${flat(entry.finding.failureMode, CLAIM_MAX)} [${votesLine(entry.vote)}]${restatement}${decision}`;
 }
 
 function footer(context) {
@@ -443,6 +446,17 @@ function renderUnit(unit, context) {
   const lines = [head, '', 'Claim: ' + flat(first.finding.failureMode, CLAIM_MAX), '', 'Locations and verifier votes:'];
   entries.slice(0, MEMBERS_LISTED_MAX).forEach((entry) => lines.push(memberLine(entry)));
   if (entries.length > MEMBERS_LISTED_MAX) lines.push(`- ... and ${entries.length - MEMBERS_LISTED_MAX} more`);
+  // kata tmf5: what later rounds' reviewers said again in their own words is named here and was never a finding of its own
+  const restated = entries.flatMap((entry) => restatementsOf(entry.finding));
+  if (restated.length > 0) {
+    lines.push('', `Restated by ${restated.length} later candidate${restated.length === 1 ? '' : 's'}, merged into this finding (named and counted here, not findings of their own):`);
+    restated.slice(0, MEMBERS_LISTED_MAX).forEach((record) => {
+      const who = isText(record.source) ? flat(record.source, 80) : 'a reviewer';
+      const where = isText(record.headSha) ? ` at head ${flat(record.headSha, 40)}` : '';
+      lines.push(`- ${flat(String(record.id), 40)} (${who}${isText(record.severity) ? `, ${flat(record.severity, 40)}` : ''}${where}): ${flat(record.failureMode, CLAIM_MAX)}`);
+    });
+    if (restated.length > MEMBERS_LISTED_MAX) lines.push(`- ... and ${restated.length - MEMBERS_LISTED_MAX} more`);
+  }
   if (isText(first.finding.evidence)) lines.push('', 'Evidence: ' + flat(first.finding.evidence, EVIDENCE_MAX));
   lines.push('', ...footer(context));
   return {

@@ -137,6 +137,12 @@ A candidate the last round left unverified, or settled on a majority (kata `dx53
 (`reReview.delta.unverifiedFromLastRound` counts them; the verify manifest's `carry.unverifiedFromLastRound` lists the ones put to
 verifiers again and the ones kept unverified, each with why); one kept stays unverified in the ledger and the round's verification reads
 `partial`. A lost reviewer or security lane is still a full re-read.
+A candidate a delta reviewer raises in its own words that restates an OPEN finding of the last round (kata `tmf5`: the same file and overlapping
+lines, the push left them alone, and the dedupe measure confirms it at its bar) is merged into that finding before it becomes a candidate: the
+finding keeps its id, records `restatedBy`, takes the more severe severity, keeps its verdict only by the carry rules above and is otherwise
+verified again as itself. The round names them (`carry.restatements`: `merged`, and `kept` with why a candidate that overlapped a finding stayed
+apart); a distinct defect on the same lines stays a candidate. The bar (0.35) is fitted to one set of measured pairs and not validated on
+held-out data, so a heavily paraphrased restatement stays a separate candidate: report `merged` against `kept` after a delta round.
 The security lane and the whole-range reader keep the whole range. Your job does not change: dispatch what the manifest lists and
 call `collect`. The honest limits are listed in the answer (`reReview.delta.limits`): the read set is the changed files, their direct
 importers and tests; a High or sensitive file can be in it as a caller of a changed file; `remediationShas` is your statement of which

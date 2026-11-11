@@ -352,6 +352,68 @@ function rangesAreNear(rangesA, rangesB) {
 }
 
 /**
+ * How alike two descriptions are, given the weight of each word: the weight of the words they share over the smaller
+ * description's total weight (`similarity`), and the smaller description's weight over the larger one's (`sizeRatio`).
+ * `smaller` is the smaller total weight: when it is 0 (every word is one every finding uses) nothing can be told.
+ */
+function resemblanceOf(wordsA, wordsB, weightOf) {
+  let shared = 0;
+  let totalA = 0;
+  let totalB = 0;
+  for (const word of wordsA) {
+    totalA += weightOf(word);
+    if (wordsB.has(word)) shared += weightOf(word);
+  }
+  for (const word of wordsB) totalB += weightOf(word);
+  const smaller = Math.min(totalA, totalB);
+  const larger = Math.max(totalA, totalB);
+  return { similarity: smaller > 0 ? shared / smaller : 0, sizeRatio: larger > 0 ? smaller / larger : 0, smaller };
+}
+
+/**
+ * The measure `dedupeFindings` joins two reviewers' write-ups of one defect by, as a function of any two findings, for the
+ * callers that must ask it of findings that are not in one call (a finding of an earlier round and one of this round):
+ * `resemblanceOver(corpus)` weighs each word by ln(N / df), N the distinct findings of `corpus` (exact duplicates are one) and
+ * df how many of them use the word, exactly as `dedupeFindings` weighs the findings of its call, and answers
+ * `(a, b) -> { comparable, why?, similarity, sizeRatio, words:[n, n] }`. `a` and `b` belong in `corpus`.
+ *
+ * It compares the DESCRIPTIONS (failure mode and evidence) and what two findings must agree on besides them: it knows nothing
+ * of their lines or their sources, which are the caller's to ask. `comparable` is false, with `why`, when the two are of
+ * another kind (class, security relevance, Pre-existing status: `kind`), when either needs a person (an open thread or an
+ * uncertain flag: `unsettled`), when either has fewer than SAME_DEFECT_MIN_WORDS distinct words (`too-few-words`), when the
+ * shorter description weighs under SAME_DEFECT_MIN_SIZE_RATIO of the longer one (`size-ratio`) or when it cannot tell (`unreadable`);
+ * `similarity` is then 0. `dedupeFindings` asks `similarity >= SAME_DEFECT_MIN_SIMILARITY` of a comparable pair.
+ */
+function resemblanceOver(corpus) {
+  const documents = new Map();
+  if (Array.isArray(corpus)) {
+    for (const finding of corpus) {
+      if (!isObject(finding)) continue;
+      const key = dedupeKey(finding);
+      if (!documents.has(key)) documents.set(key, new Set());
+      for (const word of descriptionWords(finding)) documents.get(key).add(word);
+    }
+  }
+  const documentFrequency = new Map();
+  for (const words of documents.values()) for (const word of words) documentFrequency.set(word, (documentFrequency.get(word) || 0) + 1);
+  // a word of a finding that is not in the corpus counts as one only that finding uses
+  const weightOf = (word) => Math.log(Math.max(documents.size, 1) / (documentFrequency.get(word) || 1));
+  const not = (why, words = [0, 0]) => ({ comparable: false, why, similarity: 0, sizeRatio: 0, words });
+  return (a, b) => {
+    if (!isObject(a) || !isObject(b)) return not('unreadable');
+    const wordsA = descriptionWords(a);
+    const wordsB = descriptionWords(b);
+    const words = [wordsA.size, wordsB.size];
+    if ([a, b].some((finding) => isUnsettled(finding.unresolvedThread) || isUnsettled(finding.uncertain))) return not('unsettled', words);
+    if (kindOf(a) !== kindOf(b)) return not('kind', words);
+    if (wordsA.size < SAME_DEFECT_MIN_WORDS || wordsB.size < SAME_DEFECT_MIN_WORDS) return not('too-few-words', words);
+    const { similarity, sizeRatio, smaller } = resemblanceOf(wordsA, wordsB, weightOf);
+    if (smaller <= 0 || sizeRatio < SAME_DEFECT_MIN_SIZE_RATIO) return { ...not('size-ratio', words), sizeRatio };
+    return { comparable: true, similarity, sizeRatio, words };
+  };
+}
+
+/**
  * Joins the exact-duplicate clusters (arrays of indexes into `findings`) whose findings are probably one defect
  * (see SAME_DEFECT_MIN_SIMILARITY). The strongest matches join first, so a finding meets its best partner
  * before a weaker one, and a join that would put two findings of one source in one entry is refused.
@@ -401,18 +463,9 @@ function joinProbableDuplicates(findings, clusters) {
         if (clusterOf[i] === clusterOf[j]) continue;
         if (kinds[clusterOf[i]] !== kinds[clusterOf[j]] || !rangesAreNear(facts[i].ranges, facts[j].ranges)) continue;
 
-        let shared = 0;
-        let totalI = 0;
-        let totalJ = 0;
-        for (const word of wordSets[i]) {
-          totalI += weightOf(word);
-          if (wordSets[j].has(word)) shared += weightOf(word);
-        }
-        for (const word of wordSets[j]) totalJ += weightOf(word);
-        const smaller = Math.min(totalI, totalJ);
-        const larger = Math.max(totalI, totalJ);
-        if (smaller <= 0 || smaller / larger < SAME_DEFECT_MIN_SIZE_RATIO) continue;
-        if (shared / smaller >= SAME_DEFECT_MIN_SIMILARITY) edges.push({ i, j, score: shared / smaller });
+        const { similarity, sizeRatio, smaller } = resemblanceOf(wordSets[i], wordSets[j], weightOf);
+        if (smaller <= 0 || sizeRatio < SAME_DEFECT_MIN_SIZE_RATIO) continue;
+        if (similarity >= SAME_DEFECT_MIN_SIMILARITY) edges.push({ i, j, score: similarity });
       }
     }
   }
@@ -986,6 +1039,22 @@ function fingerprintFinding(finding) {
   return `${path}::${mode}::${className === null ? '' : className.toLowerCase()}`;
 }
 
+/**
+ * The finding of `incoming` that is the same defect as `entry` (a repeat), or `null`: the same `fingerprintFinding` identity (the
+ * LINE is not part of it, so a defect re-reported lower after the file shifted still counts) or, when either side has no
+ * fingerprint, the same exact `locationOrLink` and `failureMode`. The fixed-finding check (`pr-review-clear-cli.js`) and the delta
+ * round's restatement match both ask it, so what one calls a re-report the other does too.
+ */
+function reRaisedBy(entry, incoming) {
+  const own = fingerprintFinding(entry);
+  const match = incoming.find((other) => {
+    const theirs = fingerprintFinding(other);
+    if (own !== null && theirs !== null) return own === theirs;
+    return other.locationOrLink === entry.locationOrLink && other.failureMode === entry.failureMode;
+  });
+  return match === undefined ? null : match;
+}
+
 /** One instance line inside a class finding: who found it, where, and whether it is still open. */
 function instanceOf(entry) {
   const anchor = anchorOf(entry);
@@ -1208,10 +1277,16 @@ module.exports = {
   resolutionProvenanceProblem,
   clearFixedFindings,
   fingerprintFinding,
+  reRaisedBy,
   fingerprintPath,
   normalizeFailureMode,
   classFindings,
   recordRound,
+  resemblanceOver,
+  severityRank,
+  SAME_DEFECT_MIN_SIMILARITY,
+  SAME_DEFECT_MIN_SIZE_RATIO,
+  SAME_DEFECT_MIN_WORDS,
   SEVERITIES,
   LEGACY_SEVERITY_MAP,
 };
