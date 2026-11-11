@@ -392,12 +392,15 @@ function evaluateGate(input) {
           const id = String(entry.id);
           open.push(id);
           const unrecognised = severity === null;
+          // A Critical reads as Important once a ledger has been read (`normalizeFinding`), so `entry.severity` cannot name it:
+          // the blocker asks `isCritical`, the one reading, and says what the finding is. The verdict is the same either way.
+          const critical = !unrecognised && isCritical(entry);
           blockers.push(
             blocker(
               unrecognised ? BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING : BLOCKER_CODES.OPEN_IMPORTANT_FINDING,
               (unrecognised
                 ? `finding ${nameOf(entry)} carries a severity this gate cannot read ('${String(entry.severity)}'), so it is treated as Important and is still open`
-                : `Important finding ${nameOf(entry)} is still open`) + refusalNote(rejectedBecause, deferralRejected),
+                : `${critical ? 'Critical' : 'Important'} finding ${nameOf(entry)} is still open`) + refusalNote(rejectedBecause, deferralRejected),
               rejectedBecause !== null
                 ? 'fix it, or have the operator record the decision again on the current head with their login, a timestamp and a reason (ledger resolve)'
                 : unrecognised
@@ -406,7 +409,7 @@ function evaluateGate(input) {
               {
                 findingId: id,
                 locationOrLink: entry.locationOrLink || null,
-                severity: entry.severity,
+                severity: critical ? 'critical' : entry.severity,
                 ...(rejectedBecause === null ? {} : { resolutionRejected: rejectedBecause }),
                 ...(deferralRejected === null ? {} : { deferralRejected }),
               }

@@ -13,14 +13,22 @@
  *   - a verifier vote never closes a Critical (`tallyVotes`: it is `disputed`, a person decides it);
  *   - the operator's list offers a Critical's Accept as a security finding's: its own reason, never batched
  *     (`buildDispositionChoices`), and the bead the recorder files says `security` (`planBeads`);
- *   - a Critical re-report outranks a recorded Major (`recordRound`, `dedupeFindings`).
+ *   - a Critical re-report outranks a recorded Major (`recordRound`, `dedupeFindings`);
+ *   - the merge gate's blocker names a Critical as one (it said "Important");
+ *   - and a re-report that outranks a recorded finding clears the decision taken before it (`recordRound`): the operator's
+ *     acceptance of a Major is not a decision on the Critical it became.
  *
  * THE MERGE GATE. Before #253 the repro (a Critical, `blocking: false`, `deferred`, with a reason) was `mergeable: true`:
  * `partitionFindings` normalized it before the gate asked `isActionable`. Since #253 the gate takes no deferral of an
  * Important finding as an answer (`applyProvenance` strips `blocking`), which refuses the repro for that reason and masks the
- * hole; the cases here that are not marked FAILING FIRST pin that verdict (and the way an operator can still close a Critical)
- * so that relaxing the strip can never again let a Critical through. The cases marked FAILING FIRST failed on the code before
- * the fix.
+ * hole: on origin/dev the repro's verdict is already `mergeable: false`, so the cases that pin the verdict pass there. They are
+ * here so that relaxing the strip can never again let a Critical through (one compiles the real gate without it).
+ *
+ * WHAT "FAILING FIRST" MEANS. The baseline is the library on origin/dev (84c6739), the code this change fixes. A case marked
+ * FAILING FIRST fails on that library with an assertion about behaviour. A case without the mark either passes there (it pins
+ * behaviour that already held, such as the gate's verdict) or calls `isCritical`, which origin/dev does not export, and fails
+ * there with a TypeError because the function is new: that says nothing about behaviour, so it is not marked. The marks are
+ * checked by running this file against an export of origin/dev's lib and reading each case's first failure, not by hand.
  */
 
 const fs = require('fs');
@@ -100,6 +108,8 @@ const recorded = (run, entry, round = 1, ledger = []) => run('ledger', { action:
 
 const blockersOf = (verdict, code = BLOCKER_CODES.OPEN_IMPORTANT_FINDING) => verdict.blockers.filter((entry) => entry.code === code);
 
+const FAILING_FIRST = ' (FAILING FIRST)';
+
 // ---------------------------------------------------------------------------------------------------------------------
 describe('reading a finding into the taxonomy changes no blocking outcome (REVIEW.md: nothing is lost)', () => {
   const WORDS = ['critical', 'Critical', 'CRITICAL', 'major', 'Major', 'minor', 'nitpick', 'important', 'Important', 'nit', 'pre-existing', 'spicy'];
@@ -112,16 +122,23 @@ describe('reading a finding into the taxonomy changes no blocking outcome (REVIE
     ['an open thread on a deferral', { disposition: 'deferred', blocking: false, reason: 'x', unresolvedThread: true }],
     ['an uncertain flag on a deferral', { disposition: 'deferred', blocking: false, reason: 'x', uncertain: true }],
     ['still open', { disposition: 'fix' }],
+    // `originalSeverity` is the word the ledger keeps, and a caller can write one of its own: the claim is part of the shape.
+    ['a deferral beside a Critical claim in originalSeverity', { disposition: 'deferred', blocking: false, reason: 'opt-in component', originalSeverity: 'critical' }],
+    ['an operator resolution beside a Critical claim in originalSeverity', { disposition: 'resolved', resolution: { reason: 'accepted', ...DECISION }, originalSeverity: 'critical' }],
   ];
-  const CASES = WORDS.flatMap((severity) => SHAPES.map(([shape, extra]) => [severity, shape, { severity, ...extra }]));
+  // The rows that fail on origin/dev's library: the WRITTEN word Critical with the stopping rule's deferral (the raw finding was
+  // refused, the same finding read into the taxonomy was taken). Every other row agrees there too.
+  const failsOnOriginDev = (severity, extra) =>
+    /^critical$/i.test(severity) && extra.disposition === 'deferred' && extra.blocking === false && extra.unresolvedThread === undefined && extra.uncertain === undefined;
+  const CASES = WORDS.flatMap((severity) => SHAPES.map(([shape, extra]) => [severity, shape, failsOnOriginDev(severity, extra) ? FAILING_FIRST : '', { severity, ...extra }]));
 
-  test.each(CASES)('%s, %s: isActionable answers the same before and after normalizeFinding (FAILING FIRST for a deferred Critical)', (_severity, _shape, extra) => {
+  test.each(CASES)('%s, %s: isActionable answers the same before and after normalizeFinding%s', (_severity, _shape, _mark, extra) => {
     const written = finding(extra);
 
     expect(isActionable(normalizeFinding(written))).toBe(isActionable(written));
   });
 
-  test.each(CASES)('%s, %s: the merge gate answers the same for the finding as written and as normalized', (_severity, _shape, extra) => {
+  test.each(CASES.map(([severity, shape, , extra]) => [severity, shape, extra]))('%s, %s: the merge gate answers the same for the finding as written and as normalized', (_severity, _shape, extra) => {
     const written = finding(extra);
     const asked = (entry) => {
       const verdict = evaluateGate(gateInput({ ledger: [entry] }));
@@ -131,7 +148,7 @@ describe('reading a finding into the taxonomy changes no blocking outcome (REVIE
     expect(asked(normalizeFinding(written))).toEqual(asked(written));
   });
 
-  test.each(['critical', 'Critical', 'CRITICAL'])('a deferred non-blocking %s is actionable after normalizeFinding: the stopping rule never defers it (FAILING FIRST)', (severity) => {
+  test.each(['critical', 'Critical', 'CRITICAL'])(`a deferred non-blocking %s is actionable after normalizeFinding: the stopping rule never defers it${FAILING_FIRST}`, (severity) => {
     const normalized = normalizeFinding(deferred(severity));
 
     expect(normalized.severity).toBe('important');
@@ -146,7 +163,7 @@ describe('reading a finding into the taxonomy changes no blocking outcome (REVIE
     expect(isActionable(normalizeFinding(major))).toBe(false);
   });
 
-  test('partitionFindings keeps a deferred Critical in `blocking`, and a deferred Major out of it (FAILING FIRST)', () => {
+  test(`partitionFindings keeps a deferred Critical in \`blocking\`, and a deferred Major out of it${FAILING_FIRST}`, () => {
     const parts = partitionFindings([
       deferredCritical({ id: 'C', locationOrLink: 'a.js:1' }),
       deferred('major', { id: 'M', locationOrLink: 'a.js:2', reason: 'opt-in component' }),
@@ -155,6 +172,143 @@ describe('reading a finding into the taxonomy changes no blocking outcome (REVIE
     expect(parts.ok).toBe(true);
     expect(parts.blocking.map((entry) => entry.id)).toEqual(['C']);
     expect(parts.important.map((entry) => entry.id).sort()).toEqual(['C', 'M']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+describe('a Critical claim beside a severity word counts while the finding reads Important, never against a Nit (review of #296)', () => {
+  // `originalSeverity` is the word `normalizeFinding` keeps of a Critical it read, and a caller can write one of its own.
+  // `isActionable` and the gate read a Nit or Pre-existing finding as that, whatever else it carries, so a Critical claim beside
+  // such a word is stale: the vote tally, the rank and the operator's list read it as a Critical where `isActionable` and the
+  // gate did not. All of them now agree. Beside Important, a word nobody can read or no word at all the claim stands (fail
+  // closed), and `normalizeFinding` never trades it for a lesser word. The claim is never erased from a record: it is dormant
+  // beside a Nit and counts again if a report raises the finding to Important.
+  const rejected = [
+    { verifier: 'v1', verdict: 'not-real' },
+    { verifier: 'v2', verdict: 'not-real' },
+    { verifier: 'v3', verdict: 'abstain' },
+  ];
+  const voteOutcome = (entry) => tallyVotes({ depth: 'standard', findings: [{ ...entry, kind: 'bug', votes: rejected }] }).findings[0];
+  const listed = (entry) => buildDispositionChoices({ ledger: [entry], security: { status: 'clean', findings: [] }, headSha: HEAD }).dispositionChoices;
+
+  test.each([
+    // written as Critical: always Critical, whatever originalSeverity says
+    ['critical', undefined, true],
+    ['Critical', 'nit', true],
+    [' CRITICAL ', 'major', true],
+    // beside Important, as `normalizeFinding` writes a Critical it read, or as a caller claims it
+    ['important', 'critical', true],
+    ['Important', 'Critical', true],
+    ['major', 'critical', true],
+    ['Major', ' critical ', true],
+    // beside a word nobody can read, or none: the finding blocks as Important, so the claim stands
+    [undefined, 'critical', true],
+    [null, 'critical', true],
+    [5, 'critical', true],
+    ['spicy', 'critical', true],
+    [' nit ', 'critical', true],
+    // beside Nit or Pre-existing the claim is stale
+    ['nit', 'critical', false],
+    ['Nit', 'Critical', false],
+    ['minor', 'critical', false],
+    ['nitpick', 'critical', false],
+    ['pre-existing', 'critical', false],
+    ['Pre-Existing', 'critical', false],
+    ['preexisting', 'critical', false],
+    ['pre existing', 'critical', false],
+    // and nothing else is a claim
+    ['important', 'nit', false],
+    ['important', 'major', false],
+    ['important', undefined, false],
+    ['important', 5, false],
+    ['major', 'criticalx', false],
+  ])('severity %p beside originalSeverity %p: Critical is %p', (severity, originalSeverity, expected) => {
+    expect(isCritical({ severity, originalSeverity })).toBe(expected);
+  });
+
+  const RECOGNISED = ['critical', 'Critical', 'major', 'Major', 'important', 'Important', 'minor', 'nitpick', 'nit', 'Nit', 'pre-existing', 'Pre-existing', 'preexisting', 'pre existing'];
+  const BESIDE = [undefined, 'critical', 'Critical', 'major', 'nit'];
+
+  test.each(RECOGNISED.flatMap((severity) => BESIDE.map((originalSeverity) => [severity, originalSeverity])))(
+    'severity %p beside originalSeverity %p: a deferral closes it if and only if it is not a Critical, written or read into the taxonomy',
+    (severity, originalSeverity) => {
+      const entry = deferred(severity, originalSeverity === undefined ? {} : { originalSeverity });
+
+      expect(isActionable(entry)).toBe(isCritical(entry));
+      expect(isActionable(normalizeFinding(entry))).toBe(isCritical(entry));
+      expect(isCritical(normalizeFinding(entry))).toBe(isCritical(entry));
+    }
+  );
+
+  test.each([
+    ['critical', undefined, 'critical', ''],
+    ['Critical', 'nit', 'Critical', ''],
+    ['major', undefined, 'major', ''],
+    ['Major', 'nit', 'Major', ''],
+    ['major', 'critical', 'critical', FAILING_FIRST],
+    ['Major', 'Critical', 'Critical', FAILING_FIRST],
+    ['minor', 'critical', 'minor', ''],
+    ['nitpick', 'Critical', 'nitpick', ''],
+    ['important', 'critical', 'critical', ''],
+    ['nit', 'critical', 'critical', ''],
+  ])('normalizeFinding keeps severity %p beside originalSeverity %p as originalSeverity %p%s', (severity, originalSeverity, kept) => {
+    const normalized = normalizeFinding(finding({ severity, ...(originalSeverity === undefined ? {} : { originalSeverity }) }));
+
+    expect(normalized.originalSeverity).toBe(kept);
+    expect(normalizeFinding(normalized)).toEqual(normalized);
+  });
+
+  describe('a Major that claims Critical in originalSeverity, deferred non-blocking (the review\'s probe)', () => {
+    const forged = () => deferred('major', { originalSeverity: 'critical' });
+
+    test(`the stopping rule never defers it, as written and as read into the taxonomy${FAILING_FIRST}`, () => {
+      expect(isActionable(forged())).toBe(true);
+      expect(isActionable(normalizeFinding(forged()))).toBe(true);
+      expect(normalizeFinding(forged())).toMatchObject({ severity: 'important', originalSeverity: 'critical' });
+      expect(isCritical(normalizeFinding(forged()))).toBe(true);
+    });
+
+    test(`a vote cannot close it, as written and as read: it is disputed and a person decides it${FAILING_FIRST}`, () => {
+      for (const entry of [forged(), normalizeFinding(forged())]) {
+        expect(voteOutcome(entry)).toMatchObject({ outcome: 'disputed', presented: true });
+      }
+    });
+
+    test(`the operator's list offers it as a security finding, as written and as read${FAILING_FIRST}`, () => {
+      for (const entry of [forged(), normalizeFinding(forged())]) {
+        expect(listed(entry).map((item) => item.security)).toEqual([true]);
+      }
+    });
+  });
+
+  describe('a Nit or Pre-existing finding that carries a stale Critical claim is that, to every rule', () => {
+    test.each(['nit', 'Nit', 'minor', 'nitpick', 'pre-existing'])('%s: the stopping rule, the gate, the vote tally and the list read it as they always did', (severity) => {
+      const stale = deferred(severity, { originalSeverity: 'critical' });
+      const open = finding({ severity, originalSeverity: 'critical' });
+
+      expect(isActionable(stale)).toBe(false);
+      expect(isActionable(normalizeFinding(stale))).toBe(false);
+      expect(evaluateGate(gateInput({ ledger: [stale] })).mergeable).toBe(true);
+      expect(voteOutcome(open)).toMatchObject({ outcome: 'filtered', presented: false });
+      expect(voteOutcome(normalizeFinding(open))).toMatchObject({ outcome: 'filtered', presented: false });
+      expect(listed(open).map((item) => item.security)).not.toContain(true);
+      expect(listed(normalizeFinding(open)).map((item) => item.security)).not.toContain(true);
+      expect(isCritical(stale)).toBe(false);
+      expect(isCritical(normalizeFinding(stale))).toBe(false);
+    });
+
+    test('and in the rank: it does not outrank an open Important finding of another reviewer, whichever comes first', () => {
+      const stale = finding({ id: 'S', source: 'reviewer-b', severity: 'nit', originalSeverity: 'critical' });
+      const important = finding({ id: 'M', source: 'reviewer-a', severity: 'major' });
+
+      for (const group of [[important, stale], [stale, important]]) {
+        expect(dedupeFindings(group).map((entry) => entry.id)).toEqual(['M']);
+      }
+    });
+
+    test('normalizeFinding keeps the claim on the record: nothing is erased', () => {
+      expect(normalizeFinding(deferred('nit', { originalSeverity: 'critical' }))).toMatchObject({ severity: 'nit', originalSeverity: 'critical' });
+    });
   });
 });
 
@@ -183,7 +337,7 @@ describe.each(RUNNERS)('the ledger verbs keep a Critical Critical: %s', (_name, 
     expect(run('ledger', { action: 'isActionable', finding: stored })).toEqual({ actionable: true });
   });
 
-  test('a Critical re-report of a recorded Critical, and a Major re-report of one, stay repeats (nothing is escalated twice)', () => {
+  test('a Critical re-report of a recorded Critical, and a Major re-report of one, stay repeats (nothing is escalated twice) (FAILING FIRST)', () => {
     const first = recorded(run, deferredCritical());
 
     const critical = recorded(run, finding({ id: 'C2', source: 'security-reviewer' }), 2, first.findings);
@@ -195,7 +349,7 @@ describe.each(RUNNERS)('the ledger verbs keep a Critical Critical: %s', (_name, 
     expect(run('ledger', { action: 'isActionable', finding: major.findings[0] })).toEqual({ actionable: true });
   });
 
-  test('a lower-severity first record is escalated by a Critical report and keeps what it was first recorded as in `escalatedFrom`', () => {
+  test('a lower-severity first record is escalated by a Critical report and keeps what it was first recorded as in `escalatedFrom` (FAILING FIRST)', () => {
     const nit = recorded(run, finding({ id: 'N', severity: 'nit', disposition: 'deferred', reason: 'style' }));
     const second = recorded(run, finding({ id: 'C', source: 'security-reviewer', severity: 'critical' }), 2, nit.findings);
 
@@ -204,13 +358,142 @@ describe.each(RUNNERS)('the ledger verbs keep a Critical Critical: %s', (_name, 
   });
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+describe.each(RUNNERS)('a re-report that outranks a recorded finding clears the decision taken before it: `ledger recordRound` through %s', (_name, run) => {
+  const reported = (overrides) => finding({ id: 'M', source: 'reviewer-a', severity: 'major', ...overrides });
+  const worse = (overrides) => finding({ id: 'C', source: 'security-reviewer', severity: 'critical', ...overrides });
+  /** The operator's decision on a recorded finding, as `ledger resolve` writes it: a reason, their login, a time and this head. */
+  const decide = (entry, reason = 'the caller validates it upstream') => run('ledger', { action: 'resolve', finding: entry, resolution: { reason, ...DECISION } }).finding;
+  const gateOn = (ledger) => run('gate', gateInput({ ledger }));
+  const isOpen = (entry) => run('ledger', { action: 'isActionable', finding: entry }).actionable;
+  /** Round 1 records the finding and the operator accepts it; round 2 reports it again as `second`. */
+  const reportedAgain = (first, second) => {
+    const accepted = decide(recorded(run, first).findings[0]);
+    return { accepted, round: recorded(run, second, 2, [accepted]) };
+  };
+  const REPEAT = { id: 'C', repeatOf: 'M', fingerprint: expect.any(String), reason: 'severity-escalated' };
+
+  test('the operator\'s acceptance of a Major closes it and the gate takes it (the baseline)', () => {
+    const accepted = decide(recorded(run, reported()).findings[0]);
+
+    expect(accepted).toMatchObject({ disposition: 'resolved', resolution: { reason: 'the caller validates it upstream', ...DECISION } });
+    expect(isOpen(accepted)).toBe(false);
+    expect(gateOn([accepted]).mergeable).toBe(true);
+  });
+
+  test(`a Critical re-report of the accepted Major escalates it and clears the acceptance: the record is open again and says what was cleared${FAILING_FIRST}`, () => {
+    const { accepted, round } = reportedAgain(reported(), worse());
+    const [stored] = round.findings;
+
+    expect(round.repeats).toEqual([{ ...REPEAT, resolutionCleared: true }]);
+    expect(round.presented.map((entry) => entry.id)).toEqual(['M']);
+    expect(stored).toMatchObject({ id: 'M', severity: 'important', originalSeverity: 'critical', escalatedInRound: 2, escalatedFrom: 'important', disposition: 'fix' });
+    expect(stored.resolution).toBeUndefined();
+    expect(stored.supersededResolutions).toEqual([{ severity: 'important', supersededInRound: 2, resolution: accepted.resolution }]);
+  });
+
+  test(`the gate does not take the acceptance of a Major as the decision on the Critical it became (origin/dev: mergeable true)${FAILING_FIRST}`, () => {
+    const { round } = reportedAgain(reported(), worse());
+    const verdict = gateOn(round.findings);
+
+    expect(isOpen(round.findings[0])).toBe(true);
+    expect(verdict.mergeable).toBe(false);
+    expect(blockersOf(verdict)).toEqual([expect.objectContaining({ findingId: 'M', severity: 'critical' })]);
+    expect(blockersOf(verdict)[0].message).toMatch(/^Critical finding M \(a\.js:1\) is still open/);
+    // the old decision was cleared, not refused: the blocker does not claim a resolution was rejected
+    expect(blockersOf(verdict)[0].resolutionRejected).toBeUndefined();
+  });
+
+  test('a new decision with its own reason closes the Critical, and replaying the same round does not clear it again', () => {
+    const { round } = reportedAgain(reported(), worse());
+    const again = decide(round.findings[0], 'accepted as a Critical: the caller validates it upstream');
+
+    expect(again.resolution.reason).toBe('accepted as a Critical: the caller validates it upstream');
+    expect(gateOn([again]).mergeable).toBe(true);
+
+    for (const [roundNumber, repeat] of [[2, worse()], [3, worse({ id: 'C3', source: 'reviewer-b' })]]) {
+      const replay = recorded(run, repeat, roundNumber, [again]);
+
+      expect(replay.repeats.map((entry) => entry.reason)).toEqual(['already-recorded']);
+      expect(replay.repeats[0].resolutionCleared).toBeUndefined();
+      expect(replay.findings[0].resolution).toEqual(again.resolution);
+      expect(gateOn(replay.findings).mergeable).toBe(true);
+    }
+  });
+
+  test.each([
+    ['a Major re-report of the accepted Major', () => reported({ id: 'M2', source: 'reviewer-b' })],
+    ['an Important re-report of the accepted Major', () => reported({ id: 'M2', source: 'reviewer-b', severity: 'important' })],
+    ['a Nit re-report of the accepted Major', () => reported({ id: 'N2', source: 'reviewer-b', severity: 'nit' })],
+  ])('%s is no escalation: the acceptance stands and the gate takes it', (_name, second) => {
+    const { accepted, round } = reportedAgain(reported(), second());
+
+    expect(round.repeats.map((entry) => entry.reason)).toEqual(['already-recorded']);
+    expect(round.findings[0].resolution).toEqual(accepted.resolution);
+    expect(round.findings[0].supersededResolutions).toBeUndefined();
+    expect(gateOn(round.findings).mergeable).toBe(true);
+  });
+
+  test('a Critical re-report of an accepted Critical is no escalation either: the acceptance stands', () => {
+    const { accepted, round } = reportedAgain(worse(), worse({ id: 'C2', source: 'reviewer-b' }));
+
+    expect(round.repeats.map((entry) => entry.reason)).toEqual(['already-recorded']);
+    expect(round.findings[0].resolution).toEqual(accepted.resolution);
+    expect(round.findings[0].supersededResolutions).toBeUndefined();
+    expect(gateOn(round.findings).mergeable).toBe(true);
+  });
+
+  test(`any escalation clears it, not only one to Critical: an accepted Nit that is reported again as Important${FAILING_FIRST}`, () => {
+    const { accepted, round } = reportedAgain(reported({ id: 'N', severity: 'nit' }), finding({ id: 'I', source: 'reviewer-b', severity: 'important' }));
+    const [stored] = round.findings;
+
+    expect(accepted).toMatchObject({ severity: 'nit', disposition: 'resolved' });
+    expect(round.repeats).toEqual([{ id: 'I', repeatOf: 'N', fingerprint: expect.any(String), reason: 'severity-escalated', resolutionCleared: true }]);
+    expect(stored).toMatchObject({ severity: 'important', escalatedFrom: 'nit', disposition: 'fix' });
+    expect(stored.resolution).toBeUndefined();
+    expect(stored.supersededResolutions).toEqual([{ severity: 'nit', supersededInRound: 2, resolution: accepted.resolution }]);
+    expect(isOpen(stored)).toBe(true);
+  });
+
+  test(`two escalations clear two decisions and the record keeps both, in order${FAILING_FIRST}`, () => {
+    const { accepted, round } = reportedAgain(reported({ id: 'N', severity: 'nit' }), finding({ id: 'I', source: 'reviewer-b', severity: 'important' }));
+    const decidedAgain = decide(round.findings[0], 'accepted as an Important finding');
+    const third = recorded(run, worse({ id: 'C3' }), 3, [decidedAgain]);
+
+    expect(third.repeats).toEqual([{ id: 'C3', repeatOf: 'N', fingerprint: expect.any(String), reason: 'severity-escalated', resolutionCleared: true }]);
+    expect(third.findings[0].resolution).toBeUndefined();
+    expect(third.findings[0].supersededResolutions).toEqual([
+      { severity: 'nit', supersededInRound: 2, resolution: accepted.resolution },
+      { severity: 'important', supersededInRound: 3, resolution: decidedAgain.resolution },
+    ]);
+    expect(gateOn(third.findings).mergeable).toBe(false);
+  });
+
+  test(`a bare recorded reason is cleared too, and a finding that is also uncertain goes back to adjudication${FAILING_FIRST}`, () => {
+    const bare = { ...reported(), disposition: 'resolved', resolution: { reason: 'accepted' } };
+
+    expect(recorded(run, worse(), 2, [bare]).findings[0]).toMatchObject({ disposition: 'fix', supersededResolutions: [{ resolution: { reason: 'accepted' } }] });
+    expect(recorded(run, worse(), 2, [bare]).findings[0].resolution).toBeUndefined();
+    expect(recorded(run, worse(), 2, [{ ...bare, uncertain: true }]).findings[0]).toMatchObject({ disposition: 'adjudicate' });
+  });
+
+  test(`an escalation that finds no decision on the record reports none cleared${FAILING_FIRST}`, () => {
+    const first = recorded(run, reported());
+    const round = recorded(run, worse(), 2, first.findings);
+
+    expect(round.repeats).toEqual([REPEAT]);
+    expect(round.findings[0].supersededResolutions).toBeUndefined();
+    expect(round.findings[0]).toMatchObject({ disposition: 'fix', severity: 'important', originalSeverity: 'critical' });
+  });
+});
+
 describe('dedupe and merge keep a Critical on top however the ledger was written', () => {
   const major = finding({ id: 'M', source: 'reviewer-a', severity: 'major', blocking: false, disposition: 'deferred', reason: 'opt-in component' });
 
   test.each([
-    ['a Critical written as such', (entry) => entry],
-    ['a Critical already read into the taxonomy', normalizeFinding],
-  ])('%s: a deferred Major cannot hide it, whichever comes first (FAILING FIRST for the normalized one)', (_name, read) => {
+    ['a Critical written as such', '', (entry) => entry],
+    ['a Critical already read into the taxonomy', FAILING_FIRST, normalizeFinding],
+  ])('%s: a deferred Major cannot hide it, whichever comes first%s', (_name, _mark, read) => {
     const critical = read(deferredCritical({ id: 'C', source: 'reviewer-b' }));
 
     for (const group of [[major, critical], [critical, major]]) {
@@ -293,15 +576,28 @@ describe.each(RUNNERS)('a verifier vote never closes a Critical, read or written
     expect(tally(finding({ severity: 'major' }))).toMatchObject({ outcome: 'filtered', presented: false });
   });
 
-  test('tallyVotes itself agrees with the CLI', () => {
+  test('tallyVotes itself agrees with the CLI (FAILING FIRST)', () => {
     const entry = normalizeFinding(finding());
 
     expect(tallyVotes({ depth: 'standard', findings: [{ ...entry, kind: 'bug', votes: rejected }] }).findings[0].outcome).toBe('disputed');
   });
+
+  test(`a Major that claims Critical in originalSeverity is disputed too, as written and as \`ledger recordRound\` recorded it${FAILING_FIRST}`, () => {
+    const forged = deferred('major', { originalSeverity: 'critical' });
+    const entry = recorded(run, forged).findings[0];
+
+    expect(tally(forged)).toMatchObject({ outcome: 'disputed', presented: true });
+    expect(tally(entry)).toMatchObject({ outcome: 'disputed', presented: true });
+    expect(entry).toMatchObject({ severity: 'important', originalSeverity: 'critical' });
+  });
+
+  test('a Nit that carries a stale Critical claim is filtered like any Nit the verifiers reject', () => {
+    expect(tally(deferred('nit', { originalSeverity: 'critical' }))).toMatchObject({ outcome: 'filtered', presented: false });
+  });
 });
 
 describe('the vote tally reads Critical exactly as the ledger does (it mirrors `isCritical`, being a leaf that imports nothing)', () => {
-  const WORDS = [undefined, null, '', 5, 'critical', 'Critical', ' CRITICAL ', 'major', 'important', 'minor', 'nit'];
+  const WORDS = [undefined, null, '', 5, 'critical', 'Critical', ' CRITICAL ', 'major', 'important', 'minor', 'nit', 'nitpick', 'Nit', 'Pre-Existing', 'preexisting', 'pre existing', ' nit ', 'spicy'];
   const CASES = WORDS.flatMap((severity) => WORDS.map((originalSeverity) => [severity, originalSeverity]));
   const rejected = [
     { verifier: 'v1', verdict: 'not-real' },
@@ -346,6 +642,20 @@ describe('the operator\'s list and the recorder read a Critical as a security fi
     expect(shape(askList(normalizeFinding(finding({ severity: 'major' }))))[0].security).toBe(false);
   });
 
+  test(`an open Major that claims Critical in originalSeverity is listed as a security finding, as written and as read into the taxonomy${FAILING_FIRST}`, () => {
+    const forged = finding({ severity: 'major', originalSeverity: 'critical' });
+
+    expect(shape(askList(forged))).toEqual(shape(askList(finding())));
+    expect(shape(askList(normalizeFinding(forged)))).toEqual(shape(askList(finding())));
+  });
+
+  test('an open Nit that carries a stale Critical claim is listed as any Nit is, as written and as read', () => {
+    const stale = finding({ severity: 'nit', originalSeverity: 'critical' });
+
+    expect(askList(stale).map((entry) => entry.security)).toEqual([false]);
+    expect(askList(normalizeFinding(stale)).map((entry) => entry.security)).toEqual([false]);
+  });
+
   const bead = (entry) => {
     const input = { repo: 'Acme/Widgets', prNumber: 7, headSha: HEAD, ledger: [entry] };
     const lookups = Object.fromEntries(beadKeys(input).keys.map((key) => [key, { ok: true, found: false }]));
@@ -363,19 +673,26 @@ describe('the operator\'s list and the recorder read a Critical as a security fi
   test('the bead filed for an Important finding does not say security', () => {
     expect(bead(normalizeFinding(finding({ severity: 'major' }))).title).not.toContain('security');
   });
+
+  test(`the bead filed for an open Major that claims Critical in originalSeverity says security too${FAILING_FIRST}`, () => {
+    const forged = finding({ severity: 'major', originalSeverity: 'critical' });
+
+    expect(bead(forged).title).toContain('[important, security]');
+    expect(bead(normalizeFinding(forged)).title).toBe(bead(forged).title);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
 describe('the merge gate refuses a deferred Critical, names it, and lets the operator close it (kata 1jp6)', () => {
-  test('the repro of kata 1jp6, evaluateGate: not mergeable, one named blocker that says a Critical is never deferrable (FAILING FIRST for the wording)', () => {
+  test(`the repro of kata 1jp6, evaluateGate: not mergeable, one blocker that names a Critical and says it is never deferrable${FAILING_FIRST}`, () => {
     const verdict = evaluateGate(gateInput({ ledger: [deferredCritical()] }));
 
     expect(verdict.mergeable).toBe(false);
     expect(verdict.findings.open).toEqual(['F']);
     const [blocker, ...rest] = blockersOf(verdict);
     expect(rest).toEqual([]);
-    expect(blocker).toMatchObject({ findingId: 'F', locationOrLink: 'a.js:1' });
-    expect(blocker.message).toContain('F (a.js:1)');
+    expect(blocker).toMatchObject({ findingId: 'F', locationOrLink: 'a.js:1', severity: 'critical' });
+    expect(blocker.message).toMatch(/^Critical finding F \(a\.js:1\) is still open/);
     expect(blocker.message).toMatch(/deferral/);
     expect(blocker.deferralRejected).toMatch(/Critical is never deferrable/);
     expect(blocker.message).toContain(blocker.deferralRejected);
@@ -399,7 +716,7 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
       return mod.exports.evaluateGate;
     };
 
-    test.each(['critical', 'Critical'])('a deferred non-blocking %s: not mergeable, as written and as read into the taxonomy (FAILING FIRST: this was mergeable:true, the symptom of kata 1jp6)', (severity) => {
+    test.each(['critical', 'Critical'])('a deferred non-blocking %s: not mergeable, as written and as read into the taxonomy (FAILING FIRST: without the strip the gate answered mergeable:true for the one read into the taxonomy)', (severity) => {
       const evaluate = gateWithoutStrip();
 
       for (const entry of [deferred(severity), normalizeFinding(deferred(severity))]) {
@@ -411,6 +728,29 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
       }
     });
 
+    test.each([
+      ['a Major that claims Critical in originalSeverity', () => deferred('major', { originalSeverity: 'critical' })],
+      ['an Important finding that claims Critical in originalSeverity', () => deferred('important', { originalSeverity: 'critical' })],
+    ])(`%s, deferred non-blocking: not mergeable, as written and as read into the taxonomy${FAILING_FIRST}`, (_name, entry) => {
+      const evaluate = gateWithoutStrip();
+
+      for (const asked of [entry(), normalizeFinding(entry())]) {
+        const verdict = evaluate(gateInput({ ledger: [asked] }));
+
+        expect(verdict.mergeable).toBe(false);
+        expect(verdict.findings.open).toEqual(['F']);
+        expect(verdict.blockers.map((blocker) => blocker.code)).toEqual([BLOCKER_CODES.OPEN_IMPORTANT_FINDING]);
+      }
+    });
+
+    test('the same gate still takes the deferral of a Nit that carries a stale Critical claim: the claim was never read for a Nit', () => {
+      const evaluate = gateWithoutStrip();
+
+      for (const asked of [deferred('nit', { originalSeverity: 'critical' }), normalizeFinding(deferred('nit', { originalSeverity: 'critical' }))]) {
+        expect(evaluate(gateInput({ ledger: [asked] })).mergeable).toBe(true);
+      }
+    });
+
     test('the same gate does take the deferral of a non-blocking Major, so the strip really is what is missing', () => {
       const evaluate = gateWithoutStrip();
 
@@ -419,7 +759,41 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
     });
   });
 
-  test.each(['critical', 'Critical', 'CRITICAL'])('%s is held the same way, and a Critical that is also an open thread still names it', (severity) => {
+  describe('the blocker names a Critical as one, however the ledger was written (it said "Important")', () => {
+    test.each([
+      ['a deferred Critical as written', () => deferredCritical()],
+      ['an open Critical as written', () => finding()],
+      ['a Critical as the ledger records it', () => normalizeFinding(deferredCritical())],
+      ['a Major that claims Critical in originalSeverity', () => deferred('major', { originalSeverity: 'critical' })],
+    ])(`%s: "Critical finding ... is still open", severity critical, the verdict, code and next action unchanged${FAILING_FIRST}`, (_name, entry) => {
+      const verdict = evaluateGate(gateInput({ ledger: [entry()] }));
+      const [blocker, ...rest] = blockersOf(verdict);
+
+      expect(verdict.mergeable).toBe(false);
+      expect(rest).toEqual([]);
+      expect(blocker).toMatchObject({ code: BLOCKER_CODES.OPEN_IMPORTANT_FINDING, findingId: 'F', severity: 'critical', locationOrLink: 'a.js:1' });
+      expect(blocker.message).toMatch(/^Critical finding F \(a\.js:1\) is still open/);
+      expect(blocker.nextAction).toContain('ledger resolve');
+    });
+
+    test.each(['important', 'Important', 'major'])('an open %s finding is still "Important finding ... is still open", severity important', (severity) => {
+      const [blocker] = blockersOf(evaluateGate(gateInput({ ledger: [finding({ severity })] })));
+
+      expect(blocker).toMatchObject({ code: BLOCKER_CODES.OPEN_IMPORTANT_FINDING, findingId: 'F', severity: 'important' });
+      expect(blocker.message).toMatch(/^Important finding F \(a\.js:1\) is still open/);
+    });
+
+    test.each(['spicy', ' Critical '])('a severity the gate cannot read (%p) keeps its own wording and its own word as the severity', (severity) => {
+      const verdict = evaluateGate(gateInput({ ledger: [finding({ severity })] }));
+      const [blocker] = blockersOf(verdict, BLOCKER_CODES.OPEN_UNRECOGNISED_FINDING);
+
+      expect(verdict.mergeable).toBe(false);
+      expect(blocker.severity).toBe(severity);
+      expect(blocker.message).toContain('carries a severity this gate cannot read');
+    });
+  });
+
+  test.each(['critical', 'Critical', 'CRITICAL'])('%s is held the same way, and a Critical that is also an open thread still names it (FAILING FIRST)', (severity) => {
     for (const extra of [{}, { unresolvedThread: true }]) {
       const verdict = evaluateGate(gateInput({ ledger: [deferred(severity, extra)] }));
 
@@ -442,6 +816,8 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
       expect(verdict.mergeable).toBe(false);
       expect(blocker.deferralRejected).toContain("the review's own classification");
       expect(blocker.deferralRejected).not.toMatch(/Critical/);
+      expect(blocker.severity).toBe('important');
+      expect(blocker.message).toMatch(/^Important finding F \(a\.js:1\) is still open/);
     }
   });
 
@@ -497,13 +873,13 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
 
 // ---------------------------------------------------------------------------------------------------------------------
 describe.each(RUNNERS)('the real gate action over a ledger the CLI wrote: %s', (_name, run) => {
-  test('the repro verbatim: not mergeable, named, and the same answer as the library', () => {
+  test('the repro verbatim: not mergeable, named, and the same answer as the library (FAILING FIRST)', () => {
     const request = gateInput({ ledger: [deferredCritical()] });
     const answer = run('gate', request);
 
     expect(answer.mergeable).toBe(false);
     expect(answer.reasons).toEqual([BLOCKER_CODES.OPEN_IMPORTANT_FINDING]);
-    expect(blockersOf(answer)[0]).toMatchObject({ findingId: 'F' });
+    expect(blockersOf(answer)[0]).toMatchObject({ findingId: 'F', severity: 'critical' });
     expect(blockersOf(answer)[0].deferralRejected).toMatch(/Critical is never deferrable/);
     expect(answer.blockers).toEqual(evaluateGate(request).blockers);
   });
