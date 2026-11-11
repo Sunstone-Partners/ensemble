@@ -255,8 +255,8 @@ agent this call did not record come back in `warnings`. Where a figure comes fro
 The omp `task` job result reports status, duration and output only (observed 2026-11-11), so there pass `effort` and `model` when you chose them and leave
 the rest out or `null` with that reason.
 
-Host load is optional too: start `node lib/pr-review-load.js sample --run-id <runId> --cwd <repoRoot> &` BEFORE `prepare` (pass that `runId` to `prepare`),
-resolved like the other CLIs, and stop it when the review is over. It appends a load-average sample every 30 s beside the trace; `timing`
+Host load is optional too: start `node "$PR_REVIEW_LOAD_CLI" sample --run-id <runId> --cwd <repoRoot> &` BEFORE `prepare` (pass that `runId` to `prepare`) and stop it when the review is over
+(`PR_REVIEW_LOAD_CLI` is resolved the way `PR_REVIEW_CLI` is, file `lib/pr-review-load.js`). It appends a load-average sample every 30 s beside the trace; `timing`
 reports `hostLoad` and each agent's highest load, MISSING with the reason when no sampler ran. Nothing waits for it.
 
 ## Honest limits
