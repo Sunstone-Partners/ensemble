@@ -328,4 +328,22 @@ timing_budget: Finish within five minutes of wall clock.
     expect(migrate.main([repo.yamlPath, '--check-parity'], out)).toBe(1);
     expect(out.logs.join('\n')).toContain(expected);
   });
+
+  test('a carried key moved into a non-markdown file under references/ still passes parity; deleting that file fails it', () => {
+    const repo = migrated();
+    const dataFile = path.join(repo.skillDir, 'references', 'carried-data.yaml');
+    const text = fs.readFileSync(skillPath(repo), 'utf8');
+    const start = text.indexOf('## Expected Input');
+    const end = text.indexOf('## Usage Examples');
+    fs.mkdirSync(path.dirname(dataFile), { recursive: true });
+    fs.writeFileSync(dataFile, text.slice(start, end));
+    fs.writeFileSync(skillPath(repo), text.slice(0, start) + text.slice(end));
+
+    expect(migrate.checkMigrationParity(repo.yamlPath, repo.skillDir).ok).toBe(true);
+
+    fs.rmSync(dataFile);
+    const result = migrate.checkMigrationParity(repo.yamlPath, repo.skillDir);
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.runtime.startsWith('carried:'))).toBe(true);
+  });
 });

@@ -544,6 +544,25 @@ function readBaseYaml(yamlPath, base) {
 }
 
 /**
+ * The non-markdown files directly inside a skill's `references/` directory (for example a data
+ * file the skill's code reads, `team-configuration.yaml`), as one string. They are part of the
+ * skill's content: moving a carried key's data out of SKILL.md and into such a file must not
+ * read as losing it.
+ * @param {string} skillDir
+ * @returns {string}
+ */
+function readReferenceDataFiles(skillDir) {
+  const dir = path.join(skillDir, 'references');
+  if (!fs.existsSync(dir)) {
+    return '';
+  }
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !entry.name.endsWith('.md'))
+    .map((entry) => fs.readFileSync(path.join(dir, entry.name), 'utf8'))
+    .join('\n');
+}
+
+/**
  * Every sentence / list item of every pre-migration render must appear in the skill's prose
  * (SKILL.md plus references/*.md), whitespace- and markdown-emphasis-insensitive.
  * @param {string} oldYamlPath - The command YAML (its pre-migration text comes from git)
@@ -558,7 +577,7 @@ function checkMigrationParity(oldYamlPath, skillDir, options = {}) {
   if (isSkillBacked(parsed)) {
     throw new Error(`${oldYamlPath} at ${options.base || 'HEAD'} is already a manifest; pass --base <ref before the migration>`);
   }
-  const skillText = stripMarkup(readSkillProse(path.join(skillDir, 'SKILL.md')));
+  const skillText = stripMarkup(`${readSkillProse(path.join(skillDir, 'SKILL.md'))}\n${readReferenceDataFiles(skillDir)}`);
 
   const missing = [];
   let checked = 0;
