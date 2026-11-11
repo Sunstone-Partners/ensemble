@@ -14,7 +14,7 @@
  */
 
 const { matchRestatements, absorbRestatements, restatementRecord, restatementsOf, restatedIds, RESTATED_MIN_SIMILARITY, KEPT_REASONS, EVIDENCE_KEPT } = require('../lib/pr-review-restated');
-const { checkPrior, restatedPrior, restatable, idSeed } = require('../lib/pr-review-run-delta');
+const { checkPrior, restatedPrior, restatable, idSeed, composeDeltaLedger } = require('../lib/pr-review-run-delta');
 const { raisersOf } = require('../lib/pr-review-votes');
 const { evaluateGate, BLOCKER_CODES } = require('../lib/pr-review-gate');
 const { planBeads, beadKeys } = require('../lib/pr-review-beads');
@@ -275,6 +275,20 @@ describe('the delta steps: which prior findings a candidate may restate', () => 
 
   test('a new round\'s ids start after the ids restatements used too', () => {
     expect(idSeed([{ id: 'f1', restatedBy: [{ id: 'f11' }], mergedFrom: [{ id: 'f3' }] }, { id: 'f2' }])).toBe(11);
+  });
+
+  test('the ledger holds a restated finding once: the entry the round verified again replaces the prior one, with or without a fixed-finding check', () => {
+    const entries = ledger();
+    const reverified = prior('LOOP', 'f1', { verification: { outcome: 'present', reason: 'verifier-majority', tally: { real: 3, notReal: 0, expected: 3 } } });
+    const run = { priorRound: { ledger: entries }, carry: { carried: [], carriedIds: [] }, restatements: { entries: ['f1'] }, candidates: [], headSha: HEAD };
+    const unavailable = composeDeltaLedger(run, [reverified], null);
+    expect(unavailable.ok).toBe(true);
+    expect(unavailable.ledger.map((entry) => entry.id)).toEqual(['f2', 'f3', 'f4', 'f1']);
+    // the same round with nothing restated would keep the prior entry and add the fresh one: a finding twice (the case the restated ids guard)
+    const without = composeDeltaLedger({ ...run, restatements: { entries: [] } }, [reverified], null);
+    expect(without.ledger.map((entry) => entry.id)).toEqual(['f1', 'f2', 'f3', 'f4', 'f1']);
+    const answering = composeDeltaLedger(run, [reverified], ({ ledger: given }) => ({ ok: true, ledger: given, kept: given.map((entry) => ({ id: entry.id, reason: 'location-unchanged' })), cleared: [] }));
+    expect(answering.ledger.map((entry) => entry.id)).toEqual(['f2', 'f3', 'f4', 'f1']);
   });
 });
 
