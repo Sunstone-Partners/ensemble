@@ -92,9 +92,10 @@ describe('reading a samples file', () => {
     ['JSON that is not an object', '[1,2]'],
     ['a line with no time', JSON.stringify({ load1: 1, load5: 1, load15: 1 })],
     ['a time that is not ISO-8601 with a zone', JSON.stringify({ ts: '2026-11-11 10:00:00', load1: 1, load5: 1, load15: 1 })],
-    ['a negative load', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: -1, load5: 1, load15: 1 })],
-    ['a load that is a string', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: '1', load5: 1, load15: 1 })],
-    ['a missing load', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: 1, load5: 1 })],
+    ['a negative load', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: -1, load5: 1, load15: 1, cpus: 8 })],
+    ['a load that is a string', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: '1', load5: 1, load15: 1, cpus: 8 })],
+    ['a load that is null (what JSON makes of NaN)', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: 1, load5: null, load15: 1, cpus: 8 })],
+    ['a missing load', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: 1, load5: 1, cpus: 8 })],
     ['a cpu count that is 0', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: 1, load5: 1, load15: 1, cpus: 0 })],
     ['a line with no cpus key', JSON.stringify({ ts: '2026-11-11T10:00:00.000Z', load1: 1, load5: 1, load15: 1 })],
   ])('%s is skipped and named, never read as a sample of 0', (_label, line) => {
