@@ -364,7 +364,7 @@ describe('c. the step environment', () => {
     const { S, seen } = observed();
     for (const name of ['USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'NODE_OPTIONS']) expect(seen.env[name]).toBe(S.w.env[name]);
     expect(seen.env.npm_config_cache).toBe(path.join(S.w.env.HOME, '.npm'));
-    expect(seen.env.TMPDIR).not.toBe(S.w.env.TMPDIR); // TMPDIR is the one allowlisted name that is gone: the scratch dir has its own
+    expect(seen.env.TMPDIR).not.toBe(S.w.env.TMPDIR); // TMPDIR is allowlisted (the baseline run pins the same list) but always overridden: the scratch dir has its own
   });
 
   it('a configured secret is forwarded, but a secret can never undo the scratch HOME, the empty git config, the marker or CI', () => {

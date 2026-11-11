@@ -522,8 +522,10 @@ const MIN_SECRET_LENGTH = 6;
 /**
  * The only inherited variables a step sees. The rest of the maintainer's environment stays behind: GH_TOKEN, GITHUB_TOKEN,
  * GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GITLAB_TOKEN, NPM_TOKEN, NODE_AUTH_TOKEN, SSH_AUTH_SOCK, GIT_ASKPASS,
- * SSH_ASKPASS, GH_HOST, GH_CONFIG_DIR, XDG_*, AWS_* and every other variable are NOT passed on, and neither is TMPDIR (the
- * scratch dir has its own). The configured secrets are the one deliberate exception: the maintainer names them.
+ * SSH_ASKPASS, GH_HOST, GH_CONFIG_DIR, XDG_*, AWS_* and every other variable are NOT passed on. TMPDIR is on the list (the
+ * list is pinned equal to the baseline run's in lib/review-prepare-runtime.js) but is always overridden by the scratch dir's own
+ * tmp dir (buildStepEnv), so the maintainer's value never reaches a step. The configured secrets are the one deliberate
+ * exception: the maintainer names them.
  *
  * A step is the PR head's code and runs as the maintainer's OS user, so this isolates what a step INHERITS; it is not a
  * sandbox. It closes: a credential handed down through the environment, gh's, git's and the XDG tools' config, cache and
@@ -537,7 +539,7 @@ const MIN_SECRET_LENGTH = 6;
  * run); the npm cache is pointed back at the maintainer's real cache so installs stay warm (npm verifies cache entries by
  * integrity hash).
  */
-const ENV_ALLOWLIST = ['USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'NODE_OPTIONS'];
+const ENV_ALLOWLIST = ['USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'NODE_OPTIONS'];
 
 /** In every step's environment; the value is a fresh random id per run. reapLeftovers finds the run's processes by it. */
 const RUN_MARKER_VAR = 'ENSEMBLE_LOCAL_CI_RUN';
