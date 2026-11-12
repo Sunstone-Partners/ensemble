@@ -1,0 +1,67 @@
+{
+  "captured_on": "2026-10-27",
+  "repository": "Sunstone-Partners/ensemble",
+  "cohort": {
+    "definition": "All PRs in state merged for Sunstone-Partners/ensemble (gh pr list --state merged --limit 1000)",
+    "note": "This cohort is broader than the TRD-044 marker-defined cohort (PRs created by fix-issue / implement-trd-beads, identified by body markers). No merged PR matches those markers, so by user decision all merged PRs are used. It mostly measures the absence of human review (most PRs were never offered for human review) and must not be compared with a marker-defined cohort as if equivalent.",
+    "pr_count": 169,
+    "earliest_created_at": "2026-07-03T16:36:28Z",
+    "latest_created_at": "2026-10-24T15:48:12Z",
+    "span_days": 112,
+    "meets_min_prs": true,
+    "meets_min_span_days": true
+  },
+  "bots": [
+    "github-actions",
+    "coderabbitai",
+    "dependabot",
+    "copilot-pull-request-reviewer",
+    "renovate"
+  ],
+  "metrics": {
+    "human_approvals_per_pr": {
+      "median": 0,
+      "p95": 0,
+      "prs_with_any": 2
+    },
+    "human_comments": {
+      "total": 19,
+      "median_per_pr": 0,
+      "p95_per_pr": 1,
+      "prs_with_any": 14
+    },
+    "wait_on_human_hours": {
+      "median": 165.7426388888889,
+      "p95": 362.19944444444445,
+      "prs_with_human_response": 14,
+      "prs_with_no_human_response": 155
+    },
+    "rounds_to_pass": {
+      "median": 0,
+      "p95": 1,
+      "mean": 0.14201183431952663,
+      "max": 3,
+      "prs_commit_data_truncated": [
+        85,
+        107,
+        118
+      ]
+    },
+    "share_needing_5plus_rounds": {
+      "count": 0,
+      "share": 0.0
+    },
+    "noise_rate_by_author_response_class": {
+      "value": null,
+      "reason": "requires per-finding records with the author's response class (fixed / said wrong / said intentional / judged unimportant); the review ledger (TRD-009) and classifier (TRD-032/TRD-042) that produce them do not exist for historical PRs, and hand-classifying comments would be an invented measurement"
+    },
+    "reverts": {
+      "revert_prs_in_cohort": 1,
+      "revert_commits_on_default_branch": 3
+    },
+    "incidents": {
+      "value": null,
+      "reason": "no incident tracker or alerting export exists for this repository, so an incident count could only be asserted, not measured"
+    }
+  }
+}

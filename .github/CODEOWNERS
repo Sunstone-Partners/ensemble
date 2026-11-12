@@ -1,0 +1,17 @@
+# Ownership declaration for ensemble-plugins.
+# Every review and approval rule that consults ownership reads this file from
+# the base branch. Narrower entries below override the default owner.
+
+# Default owner for everything.
+* @ldangelo
+
+# Sensitive areas: CI workflows, release gates, installers and the
+# generation pipeline (see REVIEW.md -> sensitivePaths).
+/.github/workflows/ @ldangelo
+/scripts/ @ldangelo
+
+# Review behaviour itself: policy, rules and the libraries that grade them.
+/REVIEW.md @ldangelo
+/.github/CODEOWNERS @ldangelo
+/packages/development/lib/ @ldangelo
+/docs/standards/ @ldangelo

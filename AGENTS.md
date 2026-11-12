@@ -7,6 +7,16 @@ The ensemble repo has a GitHub wiki at `https://github.com/Sunstone-Partners/ens
 - **Drafts** are staged at `.wiki-staging/` at the repo root (gitignored via `.git/info/exclude`; local-only).
 - **Publish** via `scripts/wiki-publish.sh`. Handles add/update/sidebar cases with diff gates, idempotent, replays as no-op when wiki is already in the desired state. Run with `--yes` for non-interactive. See header comments in the script for the full contract.
 
+## Worktrees and scratch files: never under `/tmp`
+
+`/tmp` is wiped on reboot, so unpushed work left there is lost.
+
+- **Never** create a git worktree, clone or branch checkout under `/tmp` (including `/private/tmp`, `$TMPDIR` and `mktemp -d`).
+- Create worktrees as **siblings of the main checkout**, named `<repo>.<purpose>` (for example `~/Development/Sunstone/ensemble.<purpose>`): `git worktree add -b <branch> <that path> origin/<base>`.
+- Put non-worktree scratch (patches, findings, PR bodies, logs, snapshots) under `~/.omp/<task-dir>/`, never `/tmp`.
+- When delegating to a subagent, give it the persistent path explicitly; do not let it choose a temp directory.
+- Remove a worktree only after its work is merged or saved, and say so when you do.
+
 ## Generated Artifact Policy
 
 - Edit source files, not generated artifacts.

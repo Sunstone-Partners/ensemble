@@ -1,6 +1,6 @@
 {
   "name": "ensemble-blazor",
-  "version": "6.0.0",
+  "version": "7.0.1",
   "description": "Blazor frontend skills: Server and WebAssembly components, Razor, Fluent UI",
   "author": {
     "name": "Sunstone Partners",
@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "blazor",
     "dotnet",

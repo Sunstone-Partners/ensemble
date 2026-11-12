@@ -167,6 +167,134 @@ describe('loadAdapter: duplicate-id tie-break (first by origin priority, then so
   });
 });
 
+describe('loadAdapter: ctx.category keys resolution on (id, category), not id alone (#146)', () => {
+  // The shipped `plain-git` is declared by two directories, one category each
+  // (`adapter-workflow-plain-git` -> workflow, `adapter-worktree-plain-git` -> worktree), so
+  // resolving by id alone returned whichever sorted first and made the OTHER category's
+  // capabilities unreachable: `worktree: plain-git` is the shipped default and
+  // `worktree.create` failed UNAVAILABLE. These fixtures reproduce that shape without
+  // depending on the real shipped manifests.
+  test('two installed directories split one id by category: ctx.category selects the one declaring it, in both directions', () => {
+    const projectRoot = mkTempDir('ensemble-adapters-catkey-project-');
+    const xdgConfigHome = mkTempDir('ensemble-adapters-catkey-xdg-');
+    const env = { XDG_CONFIG_HOME: xdgConfigHome };
+
+    // `aaa-` sorts first, so without category keying every lookup lands on the tracker half
+    // whatever category it asked for -- which is exactly the defect.
+    const trackerDir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'aaa-split-tracker');
+    writeAdapterDir(
+      trackerDir,
+      validAdapterManifest({ adapter: 'split-id', categories: ['tracker'], contract: { tracker: '1.0' } })
+    );
+    const lintDir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'zzz-split-lint');
+    writeAdapterDir(
+      lintDir,
+      validAdapterManifest({
+        adapter: 'split-id',
+        categories: ['lint'],
+        contract: { lint: '1.0' },
+        capabilities: { 'lint.run': { run: ['example-tool', 'lint'] } }
+      })
+    );
+
+    // The later-sorting half is the one the old code could never reach.
+    expect(loadAdapter('split-id', { projectRoot, env, category: 'lint' }).dir).toBe(lintDir);
+    expect(loadAdapter('split-id', { projectRoot, env, category: 'tracker' }).dir).toBe(trackerDir);
+    // Both directions asserted on purpose: a resolver that ignored `category` and simply
+    // returned the LAST match would satisfy the `lint` expectation alone.
+  });
+
+  test('a manifest declaring several categories matches each of them (the adapter-tracker-beads shape)', () => {
+    const projectRoot = mkTempDir('ensemble-adapters-multicat-project-');
+    const xdgConfigHome = mkTempDir('ensemble-adapters-multicat-xdg-');
+    const env = { XDG_CONFIG_HOME: xdgConfigHome };
+
+    const dir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'multi');
+    writeAdapterDir(
+      dir,
+      validAdapterManifest({
+        adapter: 'multi-id',
+        categories: ['tracker', 'work-graph'],
+        contract: { tracker: '1.0', 'work-graph': '2.0' }
+      })
+    );
+
+    expect(loadAdapter('multi-id', { projectRoot, env, category: 'tracker' }).dir).toBe(dir);
+    expect(loadAdapter('multi-id', { projectRoot, env, category: 'work-graph' }).dir).toBe(dir);
+  });
+
+  test('origin priority applies among the candidates declaring the category: a wrong-category user adapter never shadows the right installed one', () => {
+    const projectRoot = mkTempDir('ensemble-adapters-catprio-project-');
+    const xdgConfigHome = mkTempDir('ensemble-adapters-catprio-xdg-');
+    const env = { XDG_CONFIG_HOME: xdgConfigHome };
+
+    const userDir = userAdapterDir(xdgConfigHome, 'shadow-owner');
+    writeAdapterDir(userDir, validAdapterManifest({ adapter: 'shadowed-id', categories: ['tracker'] }));
+    const installedDir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'the-lint-half');
+    writeAdapterDir(
+      installedDir,
+      validAdapterManifest({
+        adapter: 'shadowed-id',
+        categories: ['lint'],
+        contract: { lint: '1.0' },
+        capabilities: { 'lint.run': { run: ['example-tool', 'lint'] } }
+      })
+    );
+
+    const lint = loadAdapter('shadowed-id', { projectRoot, env, category: 'lint' });
+    expect(lint.origin).toBe('installed');
+    expect(lint.dir).toBe(installedDir);
+
+    // Control: for the category the user adapter DOES declare, user still wins over installed,
+    // so the category filter narrows the candidate set without reordering it.
+    const tracker = loadAdapter('shadowed-id', { projectRoot, env, category: 'tracker' });
+    expect(tracker.origin).toBe('user');
+    expect(tracker.dir).toBe(userDir);
+  });
+
+  test('omitting ctx.category keeps the historical id-only tie-break, so every existing caller is unaffected', () => {
+    const projectRoot = mkTempDir('ensemble-adapters-catopt-project-');
+    const xdgConfigHome = mkTempDir('ensemble-adapters-catopt-xdg-');
+    const env = { XDG_CONFIG_HOME: xdgConfigHome };
+
+    const firstDir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'aaa-half');
+    writeAdapterDir(firstDir, validAdapterManifest({ adapter: 'optional-cat-id', categories: ['tracker'] }));
+    const secondDir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'zzz-half');
+    writeAdapterDir(
+      secondDir,
+      validAdapterManifest({
+        adapter: 'optional-cat-id',
+        categories: ['lint'],
+        contract: { lint: '1.0' },
+        capabilities: { 'lint.run': { run: ['example-tool', 'lint'] } }
+      })
+    );
+
+    expect(loadAdapter('optional-cat-id', { projectRoot, env }).dir).toBe(firstDir);
+  });
+
+  test('an id that exists but declares no such category fails NOT_INSTALLED naming the category, the id and the directories that were rejected for it', () => {
+    const projectRoot = mkTempDir('ensemble-adapters-catmiss-project-');
+    const xdgConfigHome = mkTempDir('ensemble-adapters-catmiss-xdg-');
+    const env = { XDG_CONFIG_HOME: xdgConfigHome };
+
+    const dir = path.join(projectRoot, 'packages', 'pkg-a', 'skills', 'tracker-only');
+    writeAdapterDir(dir, validAdapterManifest({ adapter: 'narrow-id', categories: ['tracker'] }));
+
+    expect.assertions(4);
+    try {
+      loadAdapter('narrow-id', { projectRoot, env, category: 'worktree' });
+    } catch (error) {
+      expect(error.code).toBe('NOT_INSTALLED');
+      expect(error.message).toContain('narrow-id');
+      expect(error.message).toContain('worktree');
+      // The id DID resolve to a directory; saying only "not installed" would send a reader
+      // looking for a missing install instead of a missing category.
+      expect(error.message).toContain(dir);
+    }
+  });
+});
+
 describe('loadAdapter: NOT_INSTALLED', () => {
   test('AC-007-2: a name found in no search location fails with code NOT_INSTALLED naming the adapter, every search location (repo-local, user, project packages, and this library\'s own installed-tier roots), and a marketplace install hint', () => {
     const projectRoot = mkTempDir('ensemble-adapters-missing-project-');
@@ -321,6 +449,127 @@ describe('loadAdapter: ctx.env replaces process.env wholesale for the trust look
       } else {
         process.env.HOME = savedHome;
       }
+    }
+  });
+});
+
+/**
+ * kata vsg4 review round 1: `ctx.untrustedProjectRoot` (set by `toolchain-cli.js` for an explicit
+ * `--project-root`) makes the named tree a source of cwd, config and state only -- never of code.
+ * Every test pairs the flagged result with a no-flag control over the SAME fixture, so a flagged
+ * refusal cannot be a broken fixture.
+ */
+describe('ctx.untrustedProjectRoot: the named tree supplies config and state, never adapter code', () => {
+  const SHIPPED_BEADS_DIR = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    'packages',
+    'development',
+    'skills',
+    'adapter-tracker-beads'
+  );
+  let projectRoot;
+  let xdgConfigHome;
+  let env;
+
+  beforeEach(() => {
+    projectRoot = mkTempDir('ensemble-adapters-untrusted-project-');
+    xdgConfigHome = mkTempDir('ensemble-adapters-untrusted-xdg-');
+    env = { XDG_CONFIG_HOME: xdgConfigHome };
+  });
+
+  function thrown(fn) {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error('expected the call to throw');
+  }
+
+  test("discoverAdapters skips <root>/packages/*/skills but still lists repo-local, user and the library's own shipped adapters", () => {
+    writeAdapterDir(
+      path.join(projectRoot, 'packages', 'evil', 'skills', 'evil-skill'),
+      validAdapterManifest({ adapter: 'shadow-adapter' })
+    );
+    writeAdapterDir(
+      path.join(projectRoot, '.ensemble', 'adapters', 'rl'),
+      validAdapterManifest({ adapter: 'repo-local-adapter' })
+    );
+    writeAdapterDir(userAdapterDir(xdgConfigHome, 'u'), validAdapterManifest({ adapter: 'user-adapter' }));
+    const seededNames = (extraCtx) =>
+      withinProjectRoot(discoverAdapters({ projectRoot, env, ...extraCtx }), projectRoot, xdgConfigHome)
+        .map((entry) => entry.name)
+        .sort();
+
+    expect(seededNames({})).toEqual(['repo-local-adapter', 'shadow-adapter', 'user-adapter']); // control
+    expect(seededNames({ untrustedProjectRoot: true })).toEqual(['repo-local-adapter', 'user-adapter']);
+
+    // The library's own shipped adapters (installed tier, library-relative) are not touched.
+    const shipped = discoverAdapters({ projectRoot, env, untrustedProjectRoot: true }).find(
+      (entry) => entry.name === 'beads'
+    );
+    expect(shipped.origin).toBe('installed');
+    expect(fs.realpathSync(shipped.dir)).toBe(fs.realpathSync(SHIPPED_BEADS_DIR));
+  });
+
+  test('a same-id shadow of a shipped adapter under packages/*/skills wins without the flag and loses to the shipped adapter with it', () => {
+    const shadowDir = path.join(projectRoot, 'packages', 'evil', 'skills', 'evil-beads');
+    writeAdapterDir(shadowDir, validAdapterManifest({ adapter: 'beads' }));
+
+    // Control: a project the process was started in keeps its packages/*/skills tier, unchanged.
+    expect(loadAdapter('beads', { projectRoot, env }).dir).toBe(shadowDir);
+
+    const flagged = loadAdapter('beads', { projectRoot, env, untrustedProjectRoot: true });
+    expect(flagged.origin).toBe('installed');
+    expect(fs.realpathSync(flagged.dir)).toBe(fs.realpathSync(SHIPPED_BEADS_DIR));
+  });
+
+  test('an adapter only the tree ships is NOT_INSTALLED under the flag, and the error says its own packages are not searched', () => {
+    const dir = path.join(projectRoot, 'packages', 'pkg', 'skills', 'tree-only');
+    writeAdapterDir(dir, validAdapterManifest({ adapter: 'tree-only' }));
+
+    expect(loadAdapter('tree-only', { projectRoot, env }).dir).toBe(dir); // control
+
+    const error = thrown(() => loadAdapter('tree-only', { projectRoot, env, untrustedProjectRoot: true }));
+    expect(error.code).toBe('NOT_INSTALLED');
+    expect(error.message).toContain("'tree-only'");
+    expect(error.message).toContain('untrusted');
+    expect(error.message).not.toContain(dir); // never listed as a searched location
+  });
+
+  test('a repo-local adapter needs trustedRepoAdapters in EVERY mode under the flag, and the tree cannot vouch for itself', () => {
+    const dir = path.join(projectRoot, '.ensemble', 'adapters', 'foo');
+    writeAdapterDir(dir, validAdapterManifest({ adapter: 'foo' }));
+    // A project-level toolchain.yaml that names the adapter as trusted must NOT count: only the
+    // user-level file is ever read for trust.
+    fs.writeFileSync(
+      path.join(projectRoot, '.ensemble', 'toolchain.yaml'),
+      yaml.dump({ trustedRepoAdapters: ['foo'] })
+    );
+
+    // Control: without the flag an interactive call resolves it (TRD I5/AC-007-3, unchanged).
+    expect(loadAdapter('foo', { projectRoot, env, interactive: true }).origin).toBe('repo-local');
+
+    for (const interactive of [true, false]) {
+      const error = thrown(() =>
+        loadAdapter('foo', { projectRoot, env, interactive, untrustedProjectRoot: true })
+      );
+      expect({ interactive, code: error.code }).toEqual({ interactive, code: 'UNTRUSTED_REPO_ADAPTER' });
+      expect(error.message).toContain("'foo'");
+      expect(error.message).toContain('trustedRepoAdapters');
+      expect(error.message).toContain('--project-root');
+    }
+
+    writeUserToolchainConfig(xdgConfigHome, { trustedRepoAdapters: ['foo'] });
+    for (const interactive of [true, false]) {
+      const result = loadAdapter('foo', { projectRoot, env, interactive, untrustedProjectRoot: true });
+      expect({ interactive, origin: result.origin, dir: result.dir }).toEqual({
+        interactive,
+        origin: 'repo-local',
+        dir
+      });
     }
   });
 });

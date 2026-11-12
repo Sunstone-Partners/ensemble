@@ -89,7 +89,7 @@ description = "Product lifecycle orchestrator managing requirements gathering, s
 config_file = "agents/product-management-orchestrator.toml"
 
 [agents."code-reviewer"]
-description = "Definition-of-Done review gate with severity-classified findings and merge-blocking rules"
+description = "Read-only Definition-of-Done review gate with severity-classified, ledger-shaped findings and merge-blocking rules"
 config_file = "agents/code-reviewer.toml"
 
 [agents."deep-debugger"]

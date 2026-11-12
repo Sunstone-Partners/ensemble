@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # pr7-track028/029 read pre-refactor files via `git show <ref>:<path>`.
+          fetch-depth: 0
 
       # Filenames containing ':' are legal on Linux (where CI runs) but illegal
       # on NTFS. Committing one makes the whole repo impossible to check out on

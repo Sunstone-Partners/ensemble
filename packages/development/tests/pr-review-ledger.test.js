@@ -60,6 +60,26 @@ describe('pr-review-ledger: stopping rule defers non-blocking Major', () => {
   });
 });
 
+describe('pr-review-ledger: stopping rule applies to the canonical Important word', () => {
+  const deferred = { disposition: 'deferred', reason: 'opt-in heuristic, bead filed' };
+  test.each(['Important', 'important', 'IMPORTANT'])('%s with blocking:false deferred with a reason is not actionable', (severity) => {
+    expect(isActionable(finding({ severity, blocking: false, ...deferred }))).toBe(false);
+  });
+  test.each([
+    ['no blocking marker', { severity: 'Important', ...deferred }],
+    ['blocking as string', { severity: 'Important', blocking: 'false', ...deferred }],
+    ['blocking true', { severity: 'Important', blocking: true, ...deferred }],
+    ['blank reason', { severity: 'Important', blocking: false, disposition: 'deferred', reason: ' ' }],
+    ['not deferred', { severity: 'Important', blocking: false, disposition: 'fix' }],
+    ['open thread', { severity: 'Important', blocking: false, unresolvedThread: true, ...deferred }],
+    ['uncertain', { severity: 'Important', blocking: false, uncertain: true, ...deferred }],
+    ['Critical in any case', { severity: 'CRITICAL', blocking: false, ...deferred }],
+    ['unrecognised severity', { severity: 'severe', blocking: false, ...deferred }],
+  ])('stays actionable: %s', (_n, f) => {
+    expect(isActionable(finding(f))).toBe(true);
+  });
+});
+
 describe('pr-review-ledger: isActionable', () => {
   test('unresolved thread is actionable regardless of severity', () => {
     expect(isActionable(finding({ severity: 'minor', unresolvedThread: true, disposition: 'deferred', reason: 'cosmetic' }))).toBe(true);

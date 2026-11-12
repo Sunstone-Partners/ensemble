@@ -26,3 +26,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `writing-playwright-tests` skill and its `playwright.config.ts` template now set `screenshot: 'on'` (was `'only-on-failure'`), so passing tests get an end-state screenshot too.
 - Trimmed narrative from step descriptions in `author-playwright-tests.yaml` and `playwright-tester.yaml` to stay within the prompt word budget; no step, action or rule changed.
+- Trimmed three rationale clauses to stay within the prompt word budget after the xUnit additions: the follow-along step of the `ensemble-author-playwright-tests` skill, and two repeats of the stateless-stage rationale in `playwright-tester.yaml`; no step, action or rule changed.

@@ -1,6 +1,6 @@
 {
   "name": "ensemble-exunit",
-  "version": "5.1.1",
+  "version": "5.1.2",
   "description": "ExUnit testing framework integration for Elixir",
   "author": {
     "name": "Sunstone Partners",
@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "exunit",
     "testing",

@@ -18,13 +18,15 @@ var __toESM = (mod, isNodeMode, target) => {
       return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
-  for (let key of __getOwnPropNames(mod))
-    if (!__hasOwnProp.call(to, key))
-      __defProp(to, key, {
-        get: __accessProp.bind(mod, key),
-        enumerable: true
-      });
+  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  if (mod && typeof mod === "object" || typeof mod === "function") {
+    for (let key of __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(to, key))
+        __defProp(to, key, {
+          get: __accessProp.bind(mod, key),
+          enumerable: true
+        });
+  }
   if (canCache)
     cache.set(mod, to);
   return to;
@@ -62,7 +64,7 @@ var __export = (target, all) => {
 };
 
 // ../agent-core/dist/new-feature/types.js
-var require_types = __commonJS((exports2) => {
+var require_types = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.STAGE_ORDER = undefined;
   exports2.STAGE_ORDER = [
@@ -80,7 +82,7 @@ var require_types = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/types.js
-var require_types2 = __commonJS((exports2) => {
+var require_types2 = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.DEFAULT_PROMPT_TIMEOUT_MS = exports2.DEFAULT_SHELL_TIMEOUT_MS = undefined;
   exports2.DEFAULT_SHELL_TIMEOUT_MS = 5000;
@@ -88,7 +90,7 @@ var require_types2 = __commonJS((exports2) => {
 });
 
 // ../../node_modules/js-yaml/lib/common.js
-var require_common = __commonJS((exports2, module2) => {
+var require_common = __commonJS(function(exports2, module2) {
   function isNothing(subject) {
     return typeof subject === "undefined" || subject === null;
   }
@@ -132,7 +134,7 @@ var require_common = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/exception.js
-var require_exception = __commonJS((exports2, module2) => {
+var require_exception = __commonJS(function(exports2, module2) {
   function formatError(exception, compact) {
     var where = "", message = exception.reason || "(unknown reason)";
     if (!exception.mark)
@@ -169,7 +171,7 @@ var require_exception = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/snippet.js
-var require_snippet = __commonJS((exports2, module2) => {
+var require_snippet = __commonJS(function(exports2, module2) {
   var common = require_common();
   function getLine(buffer, lineStart, lineEnd, position, maxLineLength) {
     var head = "";
@@ -245,7 +247,7 @@ var require_snippet = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type.js
-var require_type = __commonJS((exports2, module2) => {
+var require_type = __commonJS(function(exports2, module2) {
   var YAMLException = require_exception();
   var TYPE_CONSTRUCTOR_OPTIONS = [
     "kind",
@@ -306,7 +308,7 @@ var require_type = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/schema.js
-var require_schema = __commonJS((exports2, module2) => {
+var require_schema = __commonJS(function(exports2, module2) {
   var YAMLException = require_exception();
   var Type = require_type();
   function compileList(schema, name) {
@@ -394,7 +396,7 @@ var require_schema = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/str.js
-var require_str = __commonJS((exports2, module2) => {
+var require_str = __commonJS(function(exports2, module2) {
   var Type = require_type();
   module2.exports = new Type("tag:yaml.org,2002:str", {
     kind: "scalar",
@@ -405,7 +407,7 @@ var require_str = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/seq.js
-var require_seq = __commonJS((exports2, module2) => {
+var require_seq = __commonJS(function(exports2, module2) {
   var Type = require_type();
   module2.exports = new Type("tag:yaml.org,2002:seq", {
     kind: "sequence",
@@ -416,7 +418,7 @@ var require_seq = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/map.js
-var require_map = __commonJS((exports2, module2) => {
+var require_map = __commonJS(function(exports2, module2) {
   var Type = require_type();
   module2.exports = new Type("tag:yaml.org,2002:map", {
     kind: "mapping",
@@ -427,7 +429,7 @@ var require_map = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/schema/failsafe.js
-var require_failsafe = __commonJS((exports2, module2) => {
+var require_failsafe = __commonJS(function(exports2, module2) {
   var Schema = require_schema();
   module2.exports = new Schema({
     explicit: [
@@ -439,7 +441,7 @@ var require_failsafe = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/null.js
-var require_null = __commonJS((exports2, module2) => {
+var require_null = __commonJS(function(exports2, module2) {
   var Type = require_type();
   function resolveYamlNull(data) {
     if (data === null)
@@ -480,7 +482,7 @@ var require_null = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/bool.js
-var require_bool = __commonJS((exports2, module2) => {
+var require_bool = __commonJS(function(exports2, module2) {
   var Type = require_type();
   function resolveYamlBoolean(data) {
     if (data === null)
@@ -515,7 +517,7 @@ var require_bool = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/int.js
-var require_int = __commonJS((exports2, module2) => {
+var require_int = __commonJS(function(exports2, module2) {
   var common = require_common();
   var Type = require_type();
   function isHexCode(c) {
@@ -650,7 +652,7 @@ var require_int = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/float.js
-var require_float = __commonJS((exports2, module2) => {
+var require_float = __commonJS(function(exports2, module2) {
   var common = require_common();
   var Type = require_type();
   var YAML_FLOAT_PATTERN = new RegExp("^(?:[-+]?(?:[0-9][0-9_]*)(?:\\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?" + "|\\.[0-9_]+(?:[eE][-+]?[0-9]+)?" + "|[-+]?\\.(?:inf|Inf|INF)" + "|\\.(?:nan|NaN|NAN))$");
@@ -726,7 +728,7 @@ var require_float = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/schema/json.js
-var require_json = __commonJS((exports2, module2) => {
+var require_json = __commonJS(function(exports2, module2) {
   module2.exports = require_failsafe().extend({
     implicit: [
       require_null(),
@@ -738,12 +740,12 @@ var require_json = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/schema/core.js
-var require_core = __commonJS((exports2, module2) => {
+var require_core = __commonJS(function(exports2, module2) {
   module2.exports = require_json();
 });
 
 // ../../node_modules/js-yaml/lib/type/timestamp.js
-var require_timestamp = __commonJS((exports2, module2) => {
+var require_timestamp = __commonJS(function(exports2, module2) {
   var Type = require_type();
   var YAML_DATE_REGEXP = new RegExp("^([0-9][0-9][0-9][0-9])" + "-([0-9][0-9])" + "-([0-9][0-9])$");
   var YAML_TIMESTAMP_REGEXP = new RegExp("^([0-9][0-9][0-9][0-9])" + "-([0-9][0-9]?)" + "-([0-9][0-9]?)" + "(?:[Tt]|[ \\t]+)" + "([0-9][0-9]?)" + ":([0-9][0-9])" + ":([0-9][0-9])" + "(?:\\.([0-9]*))?" + "(?:[ \\t]*(Z|([-+])([0-9][0-9]?)" + "(?::([0-9][0-9]))?))?$");
@@ -804,7 +806,7 @@ var require_timestamp = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/merge.js
-var require_merge = __commonJS((exports2, module2) => {
+var require_merge = __commonJS(function(exports2, module2) {
   var Type = require_type();
   function resolveYamlMerge(data) {
     return data === "<<" || data === null;
@@ -816,7 +818,7 @@ var require_merge = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/binary.js
-var require_binary = __commonJS((exports2, module2) => {
+var require_binary = __commonJS(function(exports2, module2) {
   var Type = require_type();
   var BASE64_MAP = `ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=
 \r`;
@@ -900,7 +902,7 @@ var require_binary = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/omap.js
-var require_omap = __commonJS((exports2, module2) => {
+var require_omap = __commonJS(function(exports2, module2) {
   var Type = require_type();
   var _hasOwnProperty = Object.prototype.hasOwnProperty;
   var _toString = Object.prototype.toString;
@@ -941,7 +943,7 @@ var require_omap = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/pairs.js
-var require_pairs = __commonJS((exports2, module2) => {
+var require_pairs = __commonJS(function(exports2, module2) {
   var Type = require_type();
   var _toString = Object.prototype.toString;
   function resolveYamlPairs(data) {
@@ -980,7 +982,7 @@ var require_pairs = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/type/set.js
-var require_set = __commonJS((exports2, module2) => {
+var require_set = __commonJS(function(exports2, module2) {
   var Type = require_type();
   var _hasOwnProperty = Object.prototype.hasOwnProperty;
   function resolveYamlSet(data) {
@@ -1006,7 +1008,7 @@ var require_set = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/schema/default.js
-var require_default = __commonJS((exports2, module2) => {
+var require_default = __commonJS(function(exports2, module2) {
   module2.exports = require_core().extend({
     implicit: [
       require_timestamp(),
@@ -1022,7 +1024,7 @@ var require_default = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/loader.js
-var require_loader = __commonJS((exports2, module2) => {
+var require_loader = __commonJS(function(exports2, module2) {
   var common = require_common();
   var YAMLException = require_exception();
   var makeSnippet = require_snippet();
@@ -1339,7 +1341,7 @@ var require_loader = __commonJS((exports2, module2) => {
     }
   }
   function readPlainScalar(state, nodeIndent, withinFlowCollection) {
-    var preceding, following, captureStart, captureEnd, hasPendingContent, _line, _lineStart, _lineIndent, _kind = state.kind, _result = state.result, ch;
+    var preceding, following, captureStart, captureEnd, hasPendingContent, _line, _lineStart, _lineIndent, { kind: _kind, result: _result } = state, ch;
     ch = state.input.charCodeAt(state.position);
     if (is_WS_OR_EOL(ch) || is_FLOW_INDICATOR(ch) || ch === 35 || ch === 38 || ch === 42 || ch === 33 || ch === 124 || ch === 62 || ch === 39 || ch === 34 || ch === 37 || ch === 64 || ch === 96) {
       return false;
@@ -1669,7 +1671,7 @@ var require_loader = __commonJS((exports2, module2) => {
     return true;
   }
   function readBlockSequence(state, nodeIndent) {
-    var _line, _tag = state.tag, _anchor = state.anchor, _result = [], following, detected = false, ch;
+    var _line, { tag: _tag, anchor: _anchor } = state, _result = [], following, detected = false, ch;
     if (state.firstTabInLine !== -1)
       return false;
     if (state.anchor !== null) {
@@ -1718,7 +1720,7 @@ var require_loader = __commonJS((exports2, module2) => {
     return false;
   }
   function readBlockMapping(state, nodeIndent, flowIndent) {
-    var following, allowCompact, _line, _keyLine, _keyLineStart, _keyPos, _tag = state.tag, _anchor = state.anchor, _result = {}, overridableKeys = Object.create(null), keyTag = null, keyNode = null, valueNode = null, atExplicitKey = false, detected = false, ch;
+    var following, allowCompact, _line, _keyLine, _keyLineStart, _keyPos, { tag: _tag, anchor: _anchor } = state, _result = {}, overridableKeys = Object.create(null), keyTag = null, keyNode = null, valueNode = null, atExplicitKey = false, detected = false, ch;
     if (state.firstTabInLine !== -1)
       return false;
     if (state.anchor !== null) {
@@ -2195,7 +2197,7 @@ var require_loader = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/lib/dumper.js
-var require_dumper = __commonJS((exports2, module2) => {
+var require_dumper = __commonJS(function(exports2, module2) {
   var common = require_common();
   var YAMLException = require_exception();
   var DEFAULT_SCHEMA = require_default();
@@ -2456,8 +2458,8 @@ var require_dumper = __commonJS((exports2, module2) => {
       var indent = state.indent * Math.max(1, level);
       var lineWidth = state.lineWidth === -1 ? -1 : Math.max(Math.min(state.lineWidth, 40), state.lineWidth - indent);
       var singleLineOnly = iskey || state.flowLevel > -1 && level >= state.flowLevel;
-      function testAmbiguity(string2) {
-        return testImplicitResolving(state, string2);
+      function testAmbiguity(string) {
+        return testImplicitResolving(state, string);
       }
       switch (chooseScalarStyle(string, singleLineOnly, state.indent, lineWidth, testAmbiguity, state.quotingType, state.forceQuotes && !iskey, inblock)) {
         case STYLE_PLAIN:
@@ -2829,7 +2831,7 @@ var require_dumper = __commonJS((exports2, module2) => {
 });
 
 // ../../node_modules/js-yaml/index.js
-var require_js_yaml = __commonJS((exports2, module2) => {
+var require_js_yaml = __commonJS(function(exports2, module2) {
   var loader = require_loader();
   var dumper = require_dumper();
   function renamed(from, to) {
@@ -2868,7 +2870,7 @@ var require_js_yaml = __commonJS((exports2, module2) => {
 });
 
 // ../agent-core/dist/type-guards.js
-var require_type_guards = __commonJS((exports2) => {
+var require_type_guards = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.isRecord = isRecord;
   function isRecord(value) {
@@ -2877,7 +2879,7 @@ var require_type_guards = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/config.js
-var require_config = __commonJS((exports2) => {
+var require_config = __commonJS(function(exports2) {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
       k2 = k;
@@ -2900,10 +2902,10 @@ var require_config = __commonJS((exports2) => {
   });
   var __importStar = exports2 && exports2.__importStar || function() {
     var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
+      ownKeys = Object.getOwnPropertyNames || function(o) {
         var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
+        for (var k in o)
+          if (Object.prototype.hasOwnProperty.call(o, k))
             ar[ar.length] = k;
         return ar;
       };
@@ -3124,7 +3126,7 @@ var require_config = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/payload.js
-var require_payload = __commonJS((exports2) => {
+var require_payload = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.SENSITIVE_VARIABLE_NAMES = exports2.SECRET_PATTERNS = exports2.REDACTION_MARKER = undefined;
   exports2.redactText = redactText;
@@ -3267,7 +3269,7 @@ var require_payload = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/prompt-runner.js
-var require_prompt_runner = __commonJS((exports2) => {
+var require_prompt_runner = __commonJS(function(exports2) {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
       k2 = k;
@@ -3290,10 +3292,10 @@ var require_prompt_runner = __commonJS((exports2) => {
   });
   var __importStar = exports2 && exports2.__importStar || function() {
     var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
+      ownKeys = Object.getOwnPropertyNames || function(o) {
         var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
+        for (var k in o)
+          if (Object.prototype.hasOwnProperty.call(o, k))
             ar[ar.length] = k;
         return ar;
       };
@@ -3444,10 +3446,10 @@ var require_prompt_runner = __commonJS((exports2) => {
   }
   async function runPromptHandler(name, handler, eventJson, evaluator, options = {}) {
     const started = Date.now();
-    const outcome = (fields2) => ({
+    const outcome = (fields) => ({
       handler: name,
       duration_ms: Date.now() - started,
-      ...fields2
+      ...fields
     });
     const projectRoot = options.projectRoot ?? process.cwd();
     const readFile = options.readFile ?? ((file) => node_fs_1.promises.readFile(file, "utf8"));
@@ -3499,7 +3501,7 @@ var require_prompt_runner = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/run-tracker.js
-var require_run_tracker = __commonJS((exports2) => {
+var require_run_tracker = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.CommandRunTracker = undefined;
   var node_crypto_1 = require("node:crypto");
@@ -3595,7 +3597,7 @@ var require_run_tracker = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/shell-runner.js
-var require_shell_runner = __commonJS((exports2) => {
+var require_shell_runner = __commonJS(function(exports2) {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
       k2 = k;
@@ -3618,10 +3620,10 @@ var require_shell_runner = __commonJS((exports2) => {
   });
   var __importStar = exports2 && exports2.__importStar || function() {
     var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
+      ownKeys = Object.getOwnPropertyNames || function(o) {
         var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
+        for (var k in o)
+          if (Object.prototype.hasOwnProperty.call(o, k))
             ar[ar.length] = k;
         return ar;
       };
@@ -3830,7 +3832,7 @@ var require_shell_runner = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/dispatch.js
-var require_dispatch = __commonJS((exports2) => {
+var require_dispatch = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.dispatchHandlers = dispatchHandlers;
   async function runOne(name, config, eventJson, runners) {
@@ -3874,7 +3876,7 @@ var require_dispatch = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/trust-store.js
-var require_trust_store = __commonJS((exports2) => {
+var require_trust_store = __commonJS(function(exports2) {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
       k2 = k;
@@ -3897,10 +3899,10 @@ var require_trust_store = __commonJS((exports2) => {
   });
   var __importStar = exports2 && exports2.__importStar || function() {
     var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
+      ownKeys = Object.getOwnPropertyNames || function(o) {
         var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
+        for (var k in o)
+          if (Object.prototype.hasOwnProperty.call(o, k))
             ar[ar.length] = k;
         return ar;
       };
@@ -4098,7 +4100,7 @@ var require_trust_store = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/capabilities.js
-var require_capabilities = __commonJS((exports2) => {
+var require_capabilities = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PI_END_DEFINITION = exports2.HARNESS_CAPABILITIES = exports2.CAPABILITY_NAMES = exports2.HARNESS_NAMES = undefined;
   exports2.unsupportedHookWarnings = unsupportedHookWarnings;
@@ -4180,7 +4182,7 @@ var require_capabilities = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/lifecycle-hooks/index.js
-var require_lifecycle_hooks = __commonJS((exports2) => {
+var require_lifecycle_hooks = __commonJS(function(exports2) {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
       k2 = k;
@@ -4214,7 +4216,7 @@ var require_lifecycle_hooks = __commonJS((exports2) => {
 });
 
 // ../agent-core/dist/index.js
-var require_dist = __commonJS((exports2) => {
+var require_dist = __commonJS(function(exports2) {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
       k2 = k;
@@ -4248,20 +4250,20 @@ var require_dist = __commonJS((exports2) => {
 // src/main.ts
 var exports_main = {};
 __export(exports_main, {
-  trustCommand: () => trustCommand,
+  handleEvent: () => handleEvent,
   resolveClaudeCommand: () => resolveClaudeCommand,
-  handleEvent: () => handleEvent
+  trustCommand: () => trustCommand
 });
 module.exports = __toCommonJS(exports_main);
 var import_node_crypto2 = require("node:crypto");
 var fs = __toESM(require("node:fs"));
 var path = __toESM(require("node:path"));
 var readline = __toESM(require("node:readline"));
-var import_ensemble_agent_core2 = __toESM(require_dist(), 1);
+var import_ensemble_agent_core2 = __toESM(require_dist());
 
 // ../pi-extension/src/lifecycle/adapter.ts
 var import_node_crypto = require("node:crypto");
-var import_ensemble_agent_core = __toESM(require_dist(), 1);
+var import_ensemble_agent_core = __toESM(require_dist());
 
 // ../pi-extension/src/lifecycle/completion.ts
 var COMPLETION_TOOL_NAME = "ensemble_command_complete";
@@ -4502,7 +4504,7 @@ async function handleEvent(input, projectRoot) {
         messages.push(note);
       return reply(messages);
     }
-    const run2 = {
+    const run = {
       run_id: import_node_crypto2.randomUUID(),
       command: resolved.command,
       arguments: resolved.arguments,
@@ -4510,26 +4512,26 @@ async function handleEvent(input, projectRoot) {
       session_id: sessionId,
       started_at: Date.now()
     };
-    const event = import_ensemble_agent_core2.buildStartEvent(run2);
+    const event = import_ensemble_agent_core2.buildStartEvent(run);
     const result = await import_ensemble_agent_core2.dispatchHandlers({
       config: decision.config,
-      command: run2.command,
+      command: run.command,
       event: "start",
       eventJson: import_ensemble_agent_core2.serializeEvent(event),
       runners: runners(projectRoot)
     });
-    messages.push(...problems("start", run2.command, result.outcomes));
+    messages.push(...problems("start", run.command, result.outcomes));
     if (result.blocked) {
       const by = result.blockedBy ?? "a start handler";
-      messages.push(...await endRun(projectRoot, run2, "failed", `Blocked by start handler "${by}".`));
+      messages.push(...await endRun(projectRoot, run, "failed", `Blocked by start handler "${by}".`));
       return reply([], {
         decision: "block",
-        reason: `Ensemble lifecycle hook "${by}" blocked ${run2.command}.
+        reason: `Ensemble lifecycle hook "${by}" blocked ${run.command}.
 ${messages.join(`
 `)}`
       });
     }
-    writePending(file, run2);
+    writePending(file, run);
     return reply(messages);
   }
   const outcomeByEvent = {
@@ -4566,7 +4568,7 @@ async function trustCommand(projectRoot) {
   console.log(["Trust this project's lifecycle hooks?", ...import_ensemble_agent_core2.describeHooksForTrust(loaded.config)].join(`
 `));
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise((resolve2) => rl.question("Type yes to trust: ", resolve2));
+  const answer = await new Promise((resolve) => rl.question("Type yes to trust: ", resolve));
   rl.close();
   if (answer.trim().toLowerCase() !== "yes") {
     console.log("Nothing was trusted.");

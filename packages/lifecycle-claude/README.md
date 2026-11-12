@@ -7,4 +7,4 @@ Runs the `command.start` / `command.end` hooks from `.ensemble/hooks.yaml` in Cl
 - **Shell handlers only**; prompt handlers are Pi-only and count as failed.
 - **Trust** (outside the repo): run `node <plugin>/bundle/lifecycle.cjs trust` in a terminal.
 
-Rebuild after changing agent-core hooks: `npm run build` (needs bun); the bundle is committed.
+Rebuild after changing agent-core hooks: `npm run build` (needs bun); the bundle is committed. `bundle/BUN_VERSION` records the bun that built it; the freshness test compares a fresh build only under that exact bun and skips otherwise, because bun's output differs between versions.

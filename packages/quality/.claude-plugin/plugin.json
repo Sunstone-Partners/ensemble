@@ -1,6 +1,6 @@
 {
   "name": "ensemble-quality",
-  "version": "6.0.0",
+  "version": "6.0.2",
   "description": "Quality assurance, code review, and DoD enforcement",
   "author": {
     "name": "Sunstone Partners",
@@ -8,7 +8,7 @@
     "url": "https://github.com/Sunstone-Partners"
   },
   "repository": "https://github.com/Sunstone-Partners/ensemble",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "quality",
     "review",

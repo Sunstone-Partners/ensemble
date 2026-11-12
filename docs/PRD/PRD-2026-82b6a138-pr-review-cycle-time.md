@@ -116,7 +116,7 @@ All findings are triaged before the first edit and fixed together, delegating pe
 
 ### REQ-008: Bounded rounds without false completion (Must) [RISK: waiting on an external service]
 
-- AC-008-1: Given a head/review cycle, when remediation rounds run automatically, then at most two rounds occur for that cycle.
+- AC-008-1: Given a head/review cycle, when remediation rounds run automatically, then at most the repository's shared round cap of rounds occur for that cycle. (Superseded by PRD-2026-70e784f2 REQ-009: the cap is one configurable number, 1-5, default 3, read from the policy block in REVIEW.md and shared by every review procedure. The original 2 is no longer in force.)
 - AC-008-2: Given the round limit is reached while actionable findings remain, when the result is reported, then it is `REVIEW_PENDING` or `REVIEW_BLOCKED` with the ledger and next action, never `REVIEW_COMPLETE`.
 - AC-008-3: Given an interactive run is waiting for the remote review, when 10 minutes elapse without a review of the current head, then the wait ends, the result is `REVIEW_PENDING`, and a resume instruction is printed.
 - AC-008-4: Given review access is unavailable or unauthorized, when status is evaluated, then it is `REVIEW_BLOCKED` naming the access problem.

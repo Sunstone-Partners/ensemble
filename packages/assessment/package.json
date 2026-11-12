@@ -1,6 +1,6 @@
 {
   "name": "@sunstone-partners/ensemble-assessment",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Repository, team, and AI-readiness assessment and diagnostic reporting skills",
   "main": "lib/index.js",
   "scripts": {
@@ -37,7 +37,7 @@
     ]
   },
   "author": "Sunstone Partners",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Sunstone-Partners/ensemble.git",

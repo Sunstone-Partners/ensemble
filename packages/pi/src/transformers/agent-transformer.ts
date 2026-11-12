@@ -106,6 +106,32 @@ function filterTools(tools: string[]): string[] {
 }
 
 /**
+ * Abstract model tiers used by the source agent YAMLs (`metadata.model`).
+ *
+ * OMP resolves a BARE word in an agent's `model:` as a model-name substring
+ * pattern (e.g. `high` matches `o3-mini-high`, `medium` matches `*-medium*`),
+ * not as a role. A role alias needs the `@` prefix (`@high` resolves through
+ * the user's `modelRoles.high`).
+ *
+ * An `@role` naming a role the user never configured is NOT skipped: OMP keeps
+ * it as a literal pattern that matches no model, and a lone unresolved
+ * selector leaves the subagent with no model ("No model selected"). So each
+ * tier is emitted as an ordered selector list, `@<tier>,@default`: the tier
+ * role where it is configured, the user's `default` role everywhere else.
+ */
+const MODEL_TIER_ROLES: Record<string, true> = { high: true, medium: true };
+
+/**
+ * Map an agent's source model to the value written into the Pi frontmatter.
+ * Exactly a tier word becomes `@<tier>,@default`; anything else (a concrete
+ * `provider/id`, an existing `@role`) passes through unchanged.
+ */
+function resolveModelValue(model: string): string {
+  const trimmed = model.trim();
+  return MODEL_TIER_ROLES[trimmed] === true ? `@${trimmed},@default` : model;
+}
+
+/**
  * Emit a value as a quoted, single-line YAML scalar.
  *
  * Quoting is unconditional. The previous rule quoted only when the value
@@ -139,7 +165,7 @@ function renderFrontmatter(
     `tools: ${toolsInline}`
   ];
   if (model) {
-    lines.push(`model: ${yamlScalar(model)}`);
+    lines.push(`model: ${yamlScalar(resolveModelValue(model))}`);
   }
   lines.push('---');
   return lines.join('\n');
@@ -224,6 +250,43 @@ function renderBody(raw: Record<string, unknown>, agentName: string): string {
         sections.push(resp.description.trim());
         sections.push('');
       }
+    }
+  }
+
+  // Render the output contract when an agent declares one (the read-only code
+  // reviewer's ledger findings and summary rule). Absent on every other agent,
+  // so no other generated file changes.
+  if (raw.outputContract && typeof raw.outputContract === 'object') {
+    const contract = raw.outputContract as Record<string, unknown>;
+    const guide = (contract.fieldGuide && typeof contract.fieldGuide === 'object'
+      ? contract.fieldGuide
+      : {}) as Record<string, unknown>;
+    sections.push('## Output Contract');
+    sections.push('');
+    if (Array.isArray(contract.findingFields)) {
+      sections.push('### Finding Fields');
+      sections.push('');
+      for (const field of contract.findingFields as string[]) {
+        const note = typeof guide[field] === 'string' ? `: ${guide[field] as string}` : '';
+        sections.push(`- \`${field}\`${note}`);
+      }
+      sections.push('');
+    }
+    if (Array.isArray(contract.severities)) {
+      sections.push(`**Severities:** ${(contract.severities as string[]).map((word) => `\`${word}\``).join(', ')}`);
+      sections.push('');
+    }
+    if (typeof contract.summaryRule === 'string') {
+      sections.push('### Summary');
+      sections.push('');
+      sections.push(contract.summaryRule.trim());
+      sections.push('');
+    }
+    if (typeof contract.secretHandling === 'string') {
+      sections.push('### Secrets');
+      sections.push('');
+      sections.push(contract.secretHandling.trim());
+      sections.push('');
     }
   }
 

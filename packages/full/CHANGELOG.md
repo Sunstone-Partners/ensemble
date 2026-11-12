@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Mirror the `pr-review-*.js` libraries (`pr-review-policy`, `pr-review-rules`, `pr-review-paths`, `pr-review-description`, `pr-review-scope`, `pr-review-state`, `pr-review-status`, `pr-review-ledger`, `pr-review-remote`, `pr-review-cli`) under `packages/full/lib/`, matching `packages/development/lib/`, so the `pr-review-cycle` skill resolves its libraries from the `ensemble-full` install.
+
 ## [6.9.2] - 2026-06-23
 
 ### Fixed

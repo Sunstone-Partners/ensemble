@@ -4,7 +4,7 @@ Modular plugin ecosystem for AI coding agents (Claude Code first, plus Pi/Oh My 
 
 ![The Spec-Driven Factory: Ensemble Plugin Ecosystem](docs/images/ensemble-architecture.png)
 
-Current release: **7.0.0** (`ensemble-full`, `ensemble-development`). Each package is versioned independently; see [Packages](#packages).
+Current release: **8.1.0** (`ensemble-full`). Each package is versioned independently; see [Packages](#packages).
 
 ## Contents
 
@@ -134,32 +134,32 @@ Versions below are taken from each package's `package.json`.
 
 | Package | Version | Contents |
 |---------|---------|----------|
-| `ensemble-full` | 7.0.0 | Meta-package that bundles all plugins |
-| `ensemble-core` | 6.0.0 | `detect-stack` skill, `/ensemble:standards`, `fold-prompt`, `sessionlog`, `reinstall-plugins`, orchestration agents, XDG config |
-| `ensemble-product` | 6.0.0 | PRD commands (`create-prd`, `refine-prd`, `prd`, `reqnroll`) and the product-management orchestrator |
-| `ensemble-development` | 7.0.0 | TRD, Beads, feature and issue workflows; language skills; development agents |
-| `ensemble-quality` | 6.0.0 | `pr-review-remediation` skill; code-reviewer, deep-debugger, test-runner agents |
-| `ensemble-infrastructure` | 6.0.0 | Cloud, Kubernetes, Helm, Fly.io, Railway, Supabase, Vercel, Jira and Linear skills; infrastructure agents |
-| `ensemble-git` | 6.0.0 | `/ensemble:pr-merge`, `/ensemble:release`; `git-town`, `changelog-generator`, `act-local-ci` skills; git agents |
-| `ensemble-e2e-testing` | 6.0.0 | `/ensemble:author-playwright-tests`; `smoke-test-runner`, `writing-playwright-tests` skills; `playwright-tester` agent |
-| `ensemble-assessment` | 1.1.0 | `/ensemble:assess` and the 22 assessment and report skills; installable on its own on Pi |
-| `ensemble-react` | 6.0.0 | `react` skill |
-| `ensemble-nestjs` | 5.1.1 | `nestjs` skill |
-| `ensemble-rails` | 5.1.1 | `rails` skill |
-| `ensemble-phoenix` | 5.1.1 | `phoenix` skill |
-| `ensemble-blazor` | 6.0.0 | `blazor` skill |
-| `ensemble-dotnet` | 1.1.0 | `dotnet` skill; `dotnet-backend-expert` agent |
-| `ensemble-ai` | 6.0.0 | `anthropic`, `openai`, `perplexity`, `weaviate`, `langgraph` skills |
-| `ensemble-jest` | 5.1.1 | `jest` skill |
-| `ensemble-pytest` | 5.1.1 | `pytest` skill |
-| `ensemble-rspec` | 5.2.0 | `rspec` skill |
-| `ensemble-xunit` | 5.2.0 | `xunit` skill |
-| `ensemble-exunit` | 5.1.1 | `exunit` skill |
+| `ensemble-full` | 8.1.0 | Meta-package that bundles all plugins |
+| `ensemble-core` | 6.1.1 | `detect-stack` skill, `/ensemble:standards`, `fold-prompt`, `sessionlog`, `reinstall-plugins`, orchestration agents, XDG config |
+| `ensemble-product` | 7.0.1 | PRD commands (`create-prd`, `refine-prd`, `prd`, `reqnroll`) and the product-management orchestrator |
+| `ensemble-development` | 7.0.2 | TRD, Beads, feature and issue workflows; language skills; development agents |
+| `ensemble-quality` | 6.0.2 | `pr-review-remediation` and `flake-reproduction` skills; code-reviewer, deep-debugger, test-runner agents |
+| `ensemble-infrastructure` | 6.1.1 | Cloud, Kubernetes, Helm, Fly.io, Railway, Supabase, Vercel, Jira and Linear skills; infrastructure agents |
+| `ensemble-git` | 6.1.1 | `/ensemble:pr-merge`, `/ensemble:release`; `git-town`, `changelog-generator`, `act-local-ci` skills; git agents |
+| `ensemble-e2e-testing` | 6.1.1 | `/ensemble:author-playwright-tests`; `smoke-test-runner`, `writing-playwright-tests` skills; `playwright-tester` agent |
+| `ensemble-assessment` | 2.0.0 | `/ensemble:assess` and the 22 assessment and report skills; installable on its own on Pi |
+| `ensemble-react` | 7.0.1 | `react` skill |
+| `ensemble-nestjs` | 6.0.1 | `nestjs` skill |
+| `ensemble-rails` | 6.0.1 | `rails` skill |
+| `ensemble-phoenix` | 6.0.1 | `phoenix` skill |
+| `ensemble-blazor` | 7.0.1 | `blazor` skill |
+| `ensemble-dotnet` | 2.0.1 | `dotnet` skill; `dotnet-backend-expert` agent |
+| `ensemble-ai` | 7.0.1 | `anthropic`, `openai`, `perplexity`, `weaviate`, `langgraph` skills |
+| `ensemble-jest` | 5.1.3 | `jest` skill |
+| `ensemble-pytest` | 5.2.1 | `pytest` skill |
+| `ensemble-rspec` | 5.2.1 | `rspec` skill |
+| `ensemble-xunit` | 5.2.1 | `xunit` skill |
+| `ensemble-exunit` | 5.1.2 | `exunit` skill |
 | `ensemble-reqnroll` | 1.0.2 | `reqnroll` skill; `reqnroll-binding-specialist` agent |
-| `ensemble-permitter` | 5.2.1 | Permission-expansion hook with allowlist (opt out with `ENSEMBLE_PERMITTER_DISABLE=1`) |
-| `ensemble-opencode` | 5.3.1 | OpenCode runtime translation layer |
-| `ensemble-pi` | 1.6.16 | Pi runtime translation layer (own version line) |
-| `ensemble-codex` | 6.0.0 | Codex CLI runtime translation layer |
+| `ensemble-permitter` | 5.2.3 | Permission-expansion hook with allowlist (opt out with `ENSEMBLE_PERMITTER_DISABLE=1`) |
+| `ensemble-opencode` | 5.4.1 | OpenCode runtime translation layer |
+| `ensemble-pi` | 1.6.20 | Pi runtime translation layer (own version line) |
+| `ensemble-codex` | 6.0.2 | Codex CLI runtime translation layer |
 | `ensemble-agent-core` | 0.1.2 | Shared run-index I/O primitives for the `new-feature` and `fix-issue` workflows (library) |
 | `ensemble-pi-extension` | 0.1.2 | Pi extension providing native command completion for the dispatcher commands (no marketplace entry; installed from a checkout) |
 
@@ -167,7 +167,9 @@ Versions below are taken from each package's `package.json`.
 
 ## Commands
 
-Commands are invoked as `/ensemble:<name>` in Claude Code. The tree contains 40 command definitions (`packages/*/commands/*.yaml`); **32 are typable** and 8 are hidden behind a dispatcher or the wave runner (see [Hidden commands](#hidden-commands)). One more typable command, `/ensemble:init-project`, is hand-authored Markdown in `packages/core/commands/ensemble/` with no YAML source, so it is outside those counts and is not generated for Pi.
+Commands are invoked as `/ensemble:<name>` in Claude Code. The tree contains 41 command definitions (`packages/*/commands/*.yaml`), all of them skill-backed manifests. **33 are typable** and 8 are hidden behind a dispatcher or the wave runner (see [Hidden commands](#hidden-commands)). One more typable command, `/ensemble:init-project`, is hand-authored Markdown in `packages/core/commands/ensemble/` with no YAML source, so it is outside those counts and is not generated for Pi.
+
+A command's prompt lives in a skill (`packages/<pkg>/skills/ensemble-<name>/SKILL.md`, plus `references/` for long phases), and the command itself is a thin entry point per runtime: a stub that reads the skill in Claude Code, a stub prompt in Pi, the skill itself in Codex, and a stub in OpenCode. To change what a command does, edit its skill, not its YAML. The six dispatchers (`prd`, `trd`, `issue`, `feature`, `reqnroll`, `standards`) are manifests like every other command; their routing table is the `## Subcommands` section of their `SKILL.md` (keyword, description, `/ensemble:<ref>` and the sibling path `../ensemble-<ref>/SKILL.md`), which the Pi extension reads for tab completion.
 
 ### Product and requirements
 
@@ -264,6 +266,82 @@ Eight commands are marked `metadata.visibility: hidden` in their YAML. They cann
 
 `--tunnel=quick` requires the [`cloudflared`](https://github.com/cloudflare/cloudflared) binary on `PATH` (or `CLOUDFLARED_PATH` set to its absolute path). Completed sessions can be re-opened by re-running with `--collab` against the same path; to start over, delete the session file under `~/.config/ensemble/logs/refinement-review/`. Details: [docs/guides/refinement-review-collab.md](docs/guides/refinement-review-collab.md).
 
+### Review metrics and the reviewer eval set
+
+`pr-review-cli.js` (in `ensemble-development`, reached through the `pr-review-cycle` and
+`pr-review-eval` skills) computes the review-process metrics and the reviewer eval score by hand —
+no dashboard, no scheduler, no new dependency:
+
+| Subcommand | Answers |
+|---|---|
+| `metrics` | Per-cohort human approvals per PR (median and p95), human comments, wait-on-human hours, rounds-to-pass, the share of PRs needing five or more rounds, and the noise rate. Bot reviewers are never counted. |
+| `metrics-compare` | A post-change cohort against the committed baseline: every target graded relative to baseline, plus a revert/incident guardrail that fails the cohort on its own. |
+| `walltime` | Review wall time by tier against the committed wall-time baseline (`docs/guides/review-walltime-baseline-<date>.json`): median and p75 per tier and round, gate runs and review chains per PR, and whether the 5x claim may be made. A tier with fewer than three PRs on either side is `unknown`, never `met`, and the claim is withheld unless a real re-review that carried verdicts is in the data. See [docs/guides/pr-review-walltime.md](docs/guides/pr-review-walltime.md). |
+| `eval-score` | Whether the reviewer found the bug in each eval case (a PR that caused an incident or a revert, confirmed by the code owner of the affected area). |
+| `eval-compare` | This eval run against the previous one, naming regressions. |
+| `eval-stale` | Which cases need re-review because their area's review rules changed. |
+
+The `pr-review-eval` skill walks a maintainer through adding a case
+(`docs/review-eval/cases/<id>.json`) and through running the eval set when the reviewer's rules,
+prompts or model change. Recurrence is the host repository's responsibility; ensemble runs no
+recurring job of its own.
+
+**Entry criterion — capture the baseline first.** A comparison only means something against a
+baseline captured *before* the review changes land, so the baseline cohort is captured once (at
+least 20 PRs **and** at least 30 days) and committed as `docs/guides/review-baseline-<date>.json`.
+It is never edited in place: a baseline that moves proves nothing. A cohort that misses either
+floor comes back `insufficient` with no targets graded at all. Procedure:
+[docs/guides/pr-review-metrics.md](docs/guides/pr-review-metrics.md), which extends §6 of
+[docs/guides/pr-review-cycle-time-pilot.md](docs/guides/pr-review-cycle-time-pilot.md).
+
+### Risk tiers, human approvals and the merge gate
+
+Every PR is reviewed and approved at a risk tier derived from **the change itself**, never from
+who wrote it. The tier decides how many people must approve before `pr-merge` will merge:
+
+| Effective tier | Human approvals required | Typical change |
+|---|---|---|
+| Low | 0 | docs or copy only — **and only with the Low waiver enabled** (see below) |
+| Medium | 1 | the default for ordinary product changes |
+| High | 2 | sensitive paths, or a second assessment saying another person is needed |
+
+**Strict by default.** The Low tier is *treated as Medium* unless the `lowWaiver` policy key is
+explicitly enabled with its evidence. A fresh repository therefore requires a human approval on
+every PR that is not already covered, and nothing silently drops to zero reviewers.
+
+**Raise-only.** An agent or the author may *propose* a tier. A proposal that raises the tier is
+accepted from anyone; a proposal that lowers it is **ignored** and recorded as
+`lowering-needs-code-owner` unless a code owner of the affected path makes it. Lowering the
+assigned tier still does not bypass the Low-waiver rule above.
+
+**Approvals are bound to a commit and to a person.** An approval counts only when it is bound to
+the commit (or tree) under review, so a push invalidates it. Bot approvals never count. Where an
+agent authored the PR on a person's instruction, the `Directed by:` line in the PR body makes that
+person count as one of the required reviewers, as if they had written the code themselves. It is a
+line the PR's author writes, so it never lowers a requirement on its own: the `soloMaintainer`
+discount below needs that person's own approval of the head unless they are the PR's author, in
+which case it rests on their own credit as author-as-director.
+
+Policy keys live in the fenced `ensemble-review-policy` block of the **root `REVIEW.md` on the base
+branch** — never the PR head, so a PR cannot loosen its own review:
+
+| Key | Meaning | Default |
+|---|---|---|
+| `roundCap` | Shared review-round cap before escalating to the author | `3` (valid 1–5) |
+| `lowWaiverEnabled` | Whether a Low-tier PR may merge with no human approval | `false` |
+| `soloMaintainer` | With exactly one maintainer login, a High PR that touches no sensitive path and was directed by that maintainer needs one human instead of two. A maintainer who is not the PR's author must have approved the current head on the host; a maintainer who is the author (an agent PR under their own login) is credited on their own word as author-as-director, with the warning `solo-maintainer-self-credit` in the result (a `Directed by:` line alone never lowers it for anyone else); the security lane still blocks | `false` |
+| `botLogins` | Logins whose approvals are never counted | empty |
+| `maintainerLogins` | Logins eligible to enable the Low waiver | empty |
+| `sensitivePaths` / `highPaths` | Globs that floor the tier at Medium / High | empty |
+
+> **Recommended: turn on branch protection.** These gates run where ensemble runs, so they cannot
+> stop a direct push or a merge made outside `pr-merge`. Ensemble reports when server-side
+> enforcement is absent, and recommends it, but **cannot enforce it**. For the guarantee, configure
+> a GitHub branch-protection rule on the default branch requiring pull requests and at least the
+> number of approving reviews your highest tier expects (2 for High), with stale approvals
+> dismissed on new commits. `pr-merge` prints a `SERVER-SIDE ENFORCEMENT ABSENT` notice with the
+> rule to configure whenever it finds the base branch unprotected.
+
 ## The PRD to TRD to Beads to implementation workflow
 
 ```text
@@ -306,7 +384,7 @@ Passing two or more TRD paths directly now halts with an error. Generate one nor
 
 ### Reqnroll acceptance tests
 
-For .NET projects, `/ensemble:reqnroll` turns PRD acceptance criteria into Gherkin features, step bindings and a test-first loop, with drift checks (`features`, `feature-drift`, `bindings`, `binding-drift`, `tdd`). `implement-trd-beads` also routes `-TEST` tasks through the Reqnroll path and delegates step bodies to `reqnroll-binding-specialist`.
+For .NET projects, `/ensemble:reqnroll` turns PRD acceptance criteria into Gherkin features, step bindings and a test-first loop, with drift checks (`features`, `feature-drift`, `bindings`, `binding-drift`, `tdd`). `create-trd` and `implement-trd-beads` use the Reqnroll path (`-TEST` tasks scaffolded as features, step bodies delegated to `reqnroll-binding-specialist`) by default, as before; a repo that does not use Reqnroll opts out with `--no-bdd` or `ENSEMBLE_BDD=0` and gets the repo's own test framework. See [Optional BDD](packages/development/README.md#optional-bdd-reqnroll).
 
 ## Assessment
 
@@ -341,15 +419,15 @@ Other options: `--framework=<name>`, `--provider=<name>`, `--tools=<comma-separa
 
 ## Skills
 
-Skill directories use the bare technology name. The tree has 58 source skill directories (`packages/*/skills/<name>/`, plus the single-skill framework packages).
+Skill directories use the bare technology name. The tree has 58 source skill directories (`packages/*/skills/<name>/`).
 
 | Package | Skills |
 |---------|--------|
 | core | `detect-stack` |
-| development | `completion-verification`, `pr-review-cycle`, `staleness-gate`, `tool-path-resolution` |
+| development | `completion-verification`, `pr-review-cycle`, `pr-review-eval`, `pr-review-explainer`, `pr-review-sweep`, `staleness-gate`, `tool-path-resolution` |
 | infrastructure | `aws`, `kubernetes`, `helm`, `flyio`, `railway`, `supabase`, `vercel`, `jira`, `linear` |
 | git | `git-town`, `changelog-generator`, `act-local-ci` |
-| quality | `pr-review-remediation` |
+| quality | `pr-review-remediation`, `flake-reproduction` |
 | e2e-testing | `smoke-test-runner`, `writing-playwright-tests` |
 | ai | `anthropic`, `openai`, `perplexity`, `weaviate`, `langgraph` |
 | assessment | `ensemble-assess` and the 22 assessment skills listed under [Assessment](#assessment) |
@@ -556,7 +634,7 @@ Create `packages/my-plugin/.claude-plugin/plugin.json`:
   "version": "1.0.0",
   "description": "My custom plugin",
   "author": { "name": "Your Name", "email": "you@example.com" },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["my-plugin", "ensemble"],
   "agents": "./agents",
   "commands": "./commands",
@@ -583,7 +661,7 @@ All plugins follow [Semantic Versioning](https://semver.org/) and every plugin i
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ---
 

@@ -1,0 +1,31 @@
+# PR Review Request -- Reading a PR head's CI and the local-changes snapshot
+
+Companion to `SKILL.md`; the rules here are normative. Every read here is delegated to
+`@git-workflow` as **read-only**. The router still grades nothing and never calls
+`pr-review-cli.js`: it hands these facts to `pr-review-cycle`, whose CLI alone decides
+what they show.
+
+## A PR head's CI (`CHECK_RUNS`, `CHECK_RUNS_TOTAL`)
+
+Read once, for exactly `HEAD_SHA`, after the head is fetched (Review PR #N, step 3).
+Delegate to `@git-workflow` a GET of the host's listing of that commit's check runs,
+`/repos/<REPO_SLUG>/commits/<HEAD_SHA>/check-runs`, 100 to a page, every page followed:
+
+- `CHECK_RUNS` = every run in it, unfiltered and unedited, each as
+  `{ id, name, commitSha, conclusion }`. `commitSha` is the run's own `head_sha`; a run
+  still going has no conclusion, so it has none here.
+- `CHECK_RUNS_TOTAL` = the `total_count` the host reports.
+- The toolchain's `host.change-request-checks` is not used for this: its output names no
+  commit, so it cannot show which head a result is for.
+- A read that fails leaves both unset: say so, and the cycle runs the tests itself.
+- Never wait for CI, poll it, or narrow the list to the runs you think matter. Whether CI
+  counts is not decided here: the cycle's CLI decides, from these facts and nothing else.
+
+## The local-changes snapshot (`SNAPSHOT_HEAD`)
+
+`SNAPSHOT_HEAD` is a snapshot commit of the working tree **including untracked files**,
+never a stash. Build its tree in a TEMPORARY index (`GIT_INDEX_FILE` at a not-yet-existing
+path; the real index, working tree and branches untouched). When that tree equals HEAD's
+tree, `SNAPSHOT_HEAD` is HEAD; otherwise it is a synthetic commit of the tree with HEAD as
+its sole parent, fixed author and committer `ensemble <ensemble@localhost>` and dates
+`2000-01-01T00:00:00Z`, so the SHA is deterministic. Never pushed.

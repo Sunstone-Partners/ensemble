@@ -243,8 +243,12 @@ describe('plugin package', () => {
     expect(fs.existsSync(BUNDLE)).toBe(true);
   });
 
+  // bun's bundle output differs between versions (runtime helpers change), so a byte comparison is only meaningful
+  // against the bun that built the committed bundle (bundle/BUN_VERSION, written by scripts/build.mjs). Any other bun,
+  // or none, skips the comparison; a stale bundle is still caught by whoever rebuilds with the recorded version.
   const bun = spawnSync('bun', ['--version'], { encoding: 'utf8' });
-  (bun.status === 0 ? test : test.skip)('the committed bundle matches a fresh build of agent-core and the gate (rebuild with npm run build)', () => {
+  const recordedBun = fs.readFileSync(path.join(PKG, 'bundle', 'BUN_VERSION'), 'utf8').trim();
+  (bun.status === 0 && bun.stdout.trim() === recordedBun ? test : test.skip)('the committed bundle matches a fresh build of agent-core and the gate (rebuild with npm run build)', () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-build-'));
     try {
       const r = spawnSync('bun', ['build', 'src/main.ts', '--target=node', '--format=cjs', `--outfile=${path.join(out, 'lifecycle.cjs')}`], { cwd: PKG, encoding: 'utf8' });

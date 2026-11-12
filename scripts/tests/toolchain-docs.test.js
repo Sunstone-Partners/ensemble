@@ -80,6 +80,39 @@ function sectionFor(markdown, code) {
   return start === -1 ? null : lines.slice(start + 1, end).join('\n');
 }
 
+const ASCII_PUNCTUATION = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~';
+
+/** The text a Markdown renderer shows for `raw`: a backslash before ASCII punctuation is an escape. */
+function unescapeMarkdown(raw) {
+  let text = '';
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '\\' && i + 1 < raw.length && ASCII_PUNCTUATION.includes(raw[i + 1])) i++;
+    text += raw[i];
+  }
+  return text;
+}
+
+/**
+ * The cell texts of a rendered Markdown table row. A pipe ends a cell unless a backslash escapes
+ * it, and a doubled backslash is one literal backslash that escapes nothing.
+ */
+function tableCells(row) {
+  const cells = [];
+  let raw = '';
+  for (let i = 1; i < row.length; i++) {
+    if (row[i] === '\\' && i + 1 < row.length) {
+      raw += row[i] + row[i + 1];
+      i++;
+    } else if (row[i] === '|') {
+      cells.push(raw);
+      raw = '';
+    } else {
+      raw += row[i];
+    }
+  }
+  return cells.map((cell) => unescapeMarkdown(cell.trim()));
+}
+
 describe('contract docs', () => {
   test('docs/toolchain/contracts holds one non-empty file per category plus a README', () => {
     const names = categoryNames();
@@ -124,6 +157,32 @@ describe('contract docs', () => {
     expect(out).toContain('`fb`');
     expect(out).toContain('A \\| pipe');
     expect(out.endsWith('\n')).toBe(true);
+  });
+
+  describe('description escaping', () => {
+    // A backslash before a pipe, before a letter and before punctuation, plus a bare pipe.
+    const description = 'Matches C:\\tmp\\|out, a\\*b or a|b';
+    const renderedLines = () =>
+      generator
+        .renderContract({
+          category: 'lint',
+          version: '1.0',
+          capabilities: { 'lint.a': { description, inputs: ['x'], outputs: ['y'], required: true, sideEffect: false } }
+        })
+        .split('\n');
+
+    test('a description keeps its backslashes and pipes in the table row without adding cells', () => {
+      const lines = renderedLines();
+      const header = tableCells(lines.find((l) => l.startsWith('| Capability |')));
+      const row = tableCells(lines.find((l) => l.startsWith('| `lint.a` |')));
+      expect(row).toHaveLength(header.length);
+      expect(row[row.length - 1]).toBe(description);
+    });
+
+    test('a description keeps its backslashes and pipes in the details paragraph', () => {
+      const lines = renderedLines();
+      expect(unescapeMarkdown(lines[lines.indexOf('### lint.a') + 2])).toBe(description);
+    });
   });
 
   test('--check exits 0 on the committed docs', () => {
