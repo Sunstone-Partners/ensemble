@@ -28,7 +28,7 @@
  *                    that head and policy (`findingAsGateReads`: a resolution the gate would not honour and an Important
  *                    finding's `blocking:false` deferral are dropped first; answers `reading:'gate'`), the reading the gate and
  *                    the run's status counts take. WITHOUT `headSha` it is the ledger's RAW reading of the finding as written
- *                    (a recorded reason closes it, whatever head, login or decision; answers `reading:'raw'`): never use that
+ *                    (a recorded reason closes it, whatever head, login or decision; answers `{ actionable }` with no `reading` key): never use that
  *                    to decide whether a finding still blocks the merge.
  *   dedupe           { findings } -- one entry per defect: identical findings, and findings different
  *                    reviewers probably wrote up twice (same file, nearby lines, matching description),
@@ -437,10 +437,10 @@ const LEDGER_ACTIONS = Object.freeze({
     run: (p) => {
       // Given `headSha` the answer is the finding AS THE MERGE GATE READS IT at that head and policy (`findingAsGateReads`: a
       // resolution the gate would not honour and an Important finding's `blocking:false` deferral are dropped first), the reading
-      // the gate and the run's status counts take. Without it the answer is the ledger's RAW reading, and says so (`reading`).
+      // the gate and the run's status counts take. Without it the answer is the ledger's RAW reading, `{ actionable }` alone (no `reading` key, so every older caller is unchanged).
       if (p.headSha === undefined) {
         if (p.policy !== undefined || p.lane !== undefined) throw new Error("ledger action 'isActionable' reads 'policy' and 'lane' only together with 'headSha'");
-        return { actionable: isActionable(p.finding), reading: 'raw' };
+        return { actionable: isActionable(p.finding) };
       }
       const read = findingAsGateReads(p.finding, p.headSha, p.lane === true, p.policy);
       return { actionable: isActionable(read.entry), reading: 'gate', ...(read.refusal === null ? {} : { resolutionRefused: read.refusal }) };
