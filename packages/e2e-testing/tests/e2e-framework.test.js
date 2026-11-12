@@ -43,6 +43,15 @@ describe('detectE2eFramework', () => {
     expect(detectE2eFramework('<!--\n<PackageReference Include="xunit" />\n-->')).toBeNull();
   });
 
+  test('comments are cut out whole: several in a row, one touching a reference, an unterminated opener left alone', () => {
+    expect(detectE2eFramework('<!-- a --><PackageReference Include="xunit" /><!-- <PackageReference Include="NUnit" /> -->')).toBe('xunit');
+    expect(detectE2eFramework('<!----><PackageReference Include="NUnit" />')).toBe('nunit');
+    // an opener that never closes hides nothing: the regex this replaced left it too
+    expect(detectE2eFramework('<!-- <PackageReference Include="xunit" />')).toBe('xunit');
+    // the pieces around a removed comment are not re-read as a new comment
+    expect(detectE2eFramework('<!<!-- x -->-- <PackageReference Include="xunit" />')).toBe('xunit');
+  });
+
   test('several project files are read together; a mix is ambiguous', () => {
     expect(detectE2eFramework([csproj('Microsoft.Playwright'), csproj('xunit')])).toBe('xunit');
     expect(detectE2eFramework([csproj('NUnit'), csproj('xunit')])).toBeNull();
