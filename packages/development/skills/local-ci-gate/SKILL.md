@@ -60,23 +60,23 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected, no effect.
 
 1. `gate` with `{repoRoot, headSha, baseRef, repo, pr, dryRun}` (`baseRef` as for
    `merge`: the freshly fetched `origin/<baseRefName>`; `pr` is the PR number); `forceLocal:true`
-   only when the user asks for a local run. The CLI orders: prerequisites
-   (Node, git), config, hosted CI if accepted, lock, run, record, post.
+   only when the user asks for a local run. The CLI orders: prerequisites, config, hosted CI if accepted, lock, run, record, post.
 
-   The run step (and `run`) holds a per-user lock: a second gate waits and reports `queued_ms`. Never start a gate during a
-   reviewer swarm. Policy knobs: `RUNBOOK.md`.
+   The run step (and `run`) holds a per-user lock: a second gate waits (`queued_ms`). Never start a gate during a
+   reviewer swarm. Knobs: `RUNBOOK.md`.
 2. Report the result, in this order of precedence:
    - `prerequisite` set: say which prerequisite is missing and that nothing was
      run or posted. Do not fall back to merging.
    - `stage:"lock"`: not run (`errorCode`, `lockHolder.pid`); report it, never loop-retry or delete the lock file.
    - `cannotAttest:true`: say the gate cannot attest (the status could not be
      posted with the maintainer's `gh` login: not logged in, or the post failed),
-     that nothing was published and the merge is refused.
+     nothing was published; the merge is refused.
    - `failures` non-empty: list each with workflow, job, step, node and the
      exact head SHA (full 40 hex), plus `message` and its `full output:` file. A failing or unsupported step
      is never success; at most a failure status was posted.
+   - `notes` `head-behind-base`: relay it (stale head; update, re-run).
    - `error` without failures (unfetchable head, unprovidable Node,
-     malformed config): report it as a refusal.
+     malformed config): a refusal.
    - `dryRun` and `mergeReady:true`: report readiness, state that nothing was
      posted.
    - `source:"hosted"`, `mergeReady:true`: report hosted CI passed on this head;
