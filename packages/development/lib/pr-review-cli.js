@@ -24,7 +24,12 @@
  * one via `action` (validate|isActionable|dedupe|merge|scopeViolations|recordRound|resolve) and
  * carries that action's keys:
  *   validate         { findings }
- *   isActionable     { finding }
+ *   isActionable     { finding, headSha?, policy?, lane? } -- WITH `headSha` it answers as the MERGE GATE reads the finding at
+ *                    that head and policy (`findingAsGateReads`: a resolution the gate would not honour and an Important
+ *                    finding's `blocking:false` deferral are dropped first; answers `reading:'gate'`), the reading the gate and
+ *                    the run's status counts take. WITHOUT `headSha` it is the ledger's RAW reading of the finding as written
+ *                    (a recorded reason closes it, whatever head, login or decision; answers `reading:'raw'`): never use that
+ *                    to decide whether a finding still blocks the merge.
  *   dedupe           { findings } -- one entry per defect: identical findings, and findings different
  *                    reviewers probably wrote up twice (same file, nearby lines, matching description),
  *                    keep every original link; an entry joined that way lists its `mergedFrom`
@@ -33,16 +38,24 @@
  *   recordRound      { ledger, incoming, round } -- suppresses repeats, attaches
  *                    class instances to their one class finding and reports
  *                    both (AC-010-2, AC-011-1, AC-011-2)
- *   resolve          { finding, resolution:{ decision, reason, by, headSha, at }, policy?, lane? } -- records a decision on a
- *                    finding (`recordOperatorResolution`): all five resolution keys are required, `decision` is exactly `accept` or `follow-on` (a "fix on this PR" answer is a FIX_SELECTION and is refused here; only `accept` closes a blocking finding, a security-lane entry -- pass `lane: true` -- or a coverage gap, `follow-on` is for a Nit or Pre-existing finding), `by` is a login,
- *                    `headSha` the head the decision was made against, `at` an ISO-8601 timestamp with a zone. Given
- *                    `policy` (the base-branch policy block) `by` must also be a login it lets decide: not one of its
- *                    `botLogins`, and one of its `maintainerLogins` when it names any. Answers `{ finding }` on
- *                    success; a refusal is an error (exit 1). The merge gate only honours an Important or security
- *                    resolution that passes the same check and whose `headSha` is the gate's head. HONEST LIMIT: that
- *                    proves a reason, a named login (a bot or a stranger is refused only when a policy says so) and a
- *                    head binding, never that a human typed it -- the skill must put the operator's own answer here,
- *                    never an agent's.
+ *   resolve          { id, resolution:{ decision, reason, by, headSha, at }, ledger, security?, coverage?, policy? } -- records a
+ *                    decision on one STORED finding (`recordStoredResolution`). `ledger` is the state report's ledger,
+ *                    `security` its security record (`{ status, findings }`) and `coverage` its coverage record (for a gap); the
+ *                    finding is looked up BY `id` there and its severity and lane come from where it is stored: a finding in the
+ *                    security lane's findings is a lane entry (blocking whatever its severity), one in the ledger has its own
+ *                    severity, a gap is blocking. The payload carries no class: an unknown `id`, an `id` held twice in one list, or
+ *                    a `severity` / `lane` given anyway that differs from the stored one is REFUSED. All five resolution keys are
+ *                    required, `decision` is exactly `accept` or `follow-on` (a "fix on this PR" answer is a FIX_SELECTION and is
+ *                    refused here; only `accept` closes a blocking finding, a security-lane entry or a coverage gap, `follow-on` is
+ *                    for a Nit or Pre-existing finding), `by` is a login, `headSha` the head the decision was made against, `at` an
+ *                    ISO-8601 timestamp with a zone. Given `policy` (the base-branch policy block) `by` must also be a login it lets
+ *                    decide: not one of its `botLogins`, and one of its `maintainerLogins` when it names any. Answers
+ *                    `{ finding, lane, source }` on success, `finding` being the STORED finding with the resolution attached (splice it
+ *                    back in its place); a refusal is an error (exit 1). BREAKING (kata 0465): the old `{ finding, lane }` payload is
+ *                    refused. The merge gate only honours an Important or security resolution that passes the same check and whose
+ *                    `headSha` is the gate's head. HONEST LIMIT: that proves a reason, a named login (a bot or a stranger is refused
+ *                    only when a policy says so) and a head binding, never that a human typed it -- the skill must put the operator's
+ *                    own answer here, never an agent's; and the stored state the caller passes is taken as the stored state.
  * `state-read` takes { headSha } plus an optional { treeSha } (the tree of that
  * head) and `state-write` { state } (whose `reviewedTreeSha`, when present, must
  * be a full object id), each with either an explicit `targetPath` or a `prId`
@@ -325,7 +338,8 @@ const {
   mergeFindings,
   scopeViolations,
   recordRound,
-  recordOperatorResolution,
+  recordStoredResolution,
+  findingAsGateReads,
   normalizeLedger,
 } = require('./pr-review-ledger');
 const { evaluateRemoteReview } = require('./pr-review-remote');
@@ -361,6 +375,8 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const ARRAY = { check: Array.isArray, describe: 'an array' };
 const OBJECT = { check: isObject, describe: 'an object' };
 const TEXT = { check: (value) => typeof value === 'string' && value.trim() !== '', describe: 'a non-empty string' };
+const ID = { check: (value) => (typeof value === 'string' && value.trim() !== '') || Number.isFinite(value), describe: 'a finding id (non-empty text or a number)' };
+const OBJECT_OR_ARRAY = { check: (value) => isObject(value) || Array.isArray(value), describe: 'an object or an array' };
 const BOOLEAN = { check: (value) => typeof value === 'boolean', describe: 'true or false' };
 const INTEGER = { check: (value) => Number.isInteger(value), describe: 'an integer' };
 
@@ -417,7 +433,18 @@ const LEDGER_ACTIONS = Object.freeze({
   },
   isActionable: {
     keys: { finding: OBJECT },
-    run: (p) => ({ actionable: isActionable(p.finding) }),
+    optional: { headSha: TEXT, policy: OBJECT, lane: BOOLEAN },
+    run: (p) => {
+      // Given `headSha` the answer is the finding AS THE MERGE GATE READS IT at that head and policy (`findingAsGateReads`: a
+      // resolution the gate would not honour and an Important finding's `blocking:false` deferral are dropped first), the reading
+      // the gate and the run's status counts take. Without it the answer is the ledger's RAW reading, and says so (`reading`).
+      if (p.headSha === undefined) {
+        if (p.policy !== undefined || p.lane !== undefined) throw new Error("ledger action 'isActionable' reads 'policy' and 'lane' only together with 'headSha'");
+        return { actionable: isActionable(p.finding), reading: 'raw' };
+      }
+      const read = findingAsGateReads(p.finding, p.headSha, p.lane === true, p.policy);
+      return { actionable: isActionable(read.entry), reading: 'gate', ...(read.refusal === null ? {} : { resolutionRefused: read.refusal }) };
+    },
   },
   dedupe: {
     keys: { findings: ARRAY },
@@ -440,12 +467,13 @@ const LEDGER_ACTIONS = Object.freeze({
     },
   },
   resolve: {
-    keys: { finding: OBJECT, resolution: OBJECT },
-    optional: { policy: OBJECT, lane: BOOLEAN },
+    keys: { id: ID, resolution: OBJECT, ledger: ARRAY },
+    optional: { security: OBJECT_OR_ARRAY, coverage: OBJECT, policy: OBJECT, severity: TEXT, lane: BOOLEAN },
     run: (p) => {
-      const result = recordOperatorResolution(p.finding, p.resolution, p.policy, p.lane === true);
+      if (p.finding !== undefined) throw new Error("ledger action 'resolve' no longer takes a 'finding' object: pass the finding's 'id' and the STORED 'ledger' (and 'security', 'coverage') it is looked up in");
+      const result = recordStoredResolution(p);
       if (!result.ok) throw new Error(result.reason);
-      return { finding: result.finding };
+      return { finding: result.finding, lane: result.lane, source: result.source };
     },
   },
 });
