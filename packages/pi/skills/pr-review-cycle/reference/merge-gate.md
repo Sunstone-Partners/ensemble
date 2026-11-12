@@ -234,11 +234,9 @@ ledger` action `resolve`
 (`{ action, id, resolution:{ decision, reason, by, headSha, at }, ledger, security, coverage, policy }`: the finding's `id`, the STORED `ledger`, `security` and `coverage` from `state-read`, and the same
 `policy`; `decision` is exactly `accept` or `follow-on`, the operator's closing choice, and anything else is refused: a
 "Fix on this PR" answer is a `FIX_SELECTION`, never a recorded resolution), and only from the operator's own answer: never type a reason, a
-login or a decision on the operator's behalf. Pass no `severity`
-and no `lane`: the recorder looks the finding up BY `id` in the stored `ledger`, `security` and `coverage` you hand it and takes
-its severity and lane from where it is stored (a finding in `security.findings` is a lane entry), as the gate does; an unknown
-`id` is refused, and so is a `severity` or `lane` you state that differs from the stored one. Splice the returned `finding` (the
-STORED finding with the resolution attached) back where it came from. A new push moves the head, so a
+login or a decision on the operator's behalf. `severity` and `lane` need not be passed (one you pass must match): the recorder looks the finding up BY `id` in the `ledger`, `security` and `coverage` you hand it and takes its severity and lane from the entry found (a finding in `security.findings` is a lane entry), as the gate does. An unknown
+`id` is refused, and so is a `severity` or `lane` that differs from the one found. The CLI never reads the persisted report, so a relabelled copy of the state can still get `ok` for a decision the gate (the authority) then ignores. Splice the returned `finding` (the
+found entry with the resolution attached) back where it came from. A new push moves the head, so a
 decision made on an earlier head stops counting and is asked again. **What this
 proves and what it does not:** a `decision` (`accept` or `follow-on`) and a reason are present, it names a login (a bot or a
 stranger is refused only when `policy` says so) and it is bound to this head; it
@@ -474,7 +472,7 @@ own remediation subagents.
    follow-on: ONE single-choice question, follow-on (recommended) or Accept, with one typed
    reason for the group when `dispositionGroups` lists `accept` as a batch choice. Record each
    through `ledger` `resolve` with `decision: 'accept'` (`'follow-on'` for a Nit or Pre-existing
-   follow-on; a security-lane entry is recognised by `resolve` from the stored `security` findings, not by a flag you pass) (a collapsed `file:<path>` entry expands to its members first).
+   follow-on; a security-lane entry is recognised by `resolve` from the `security` findings you pass, not by a flag) (a collapsed `file:<path>` entry expands to its members first).
    The reason of a follow-on is `follow-on: <bead id>`, or `follow-on` when the entry has no
    bead.
    A coverage entry offers Accept only as well: one at a time, for a reason the operator types, through `ledger` `resolve`

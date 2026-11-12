@@ -27,7 +27,8 @@
  *   isActionable     { finding, headSha?, policy?, lane? } -- WITH `headSha` it answers as the MERGE GATE reads the finding at
  *                    that head and policy (`findingAsGateReads`: a resolution the gate would not honour and an Important
  *                    finding's `blocking:false` deferral are dropped first; answers `reading:'gate'`), the reading the gate and
- *                    the run's status counts take. WITHOUT `headSha` it is the ledger's RAW reading of the finding as written
+ *                    the run's status counts take. Pass `lane: true` for a security-lane entry (blocking whatever its severity: a lane Nit
+ *                    with a `follow-on` reads as not actionable without it, actionable with it, as at the gate). WITHOUT `headSha` it is the ledger's RAW reading of the finding as written
  *                    (a recorded reason closes it, whatever head, login or decision; answers `{ actionable }` with no `reading` key): never use that
  *                    to decide whether a finding still blocks the merge.
  *   dedupe           { findings } -- one entry per defect: identical findings, and findings different
@@ -50,12 +51,16 @@
  *                    for a Nit or Pre-existing finding), `by` is a login, `headSha` the head the decision was made against, `at` an
  *                    ISO-8601 timestamp with a zone. Given `policy` (the base-branch policy block) `by` must also be a login it lets
  *                    decide: not one of its `botLogins`, and one of its `maintainerLogins` when it names any. Answers
- *                    `{ finding, lane, source }` on success, `finding` being the STORED finding with the resolution attached (splice it
- *                    back in its place); a refusal is an error (exit 1). BREAKING (kata 0465): the old `{ finding, lane }` payload is
- *                    refused. The merge gate only honours an Important or security resolution that passes the same check and whose
+ *                    `{ finding, lane, source }` on success, `finding` being the entry found by id with the resolution attached (splice it
+ *                    back in its place); a refusal is an error (exit 1), and so is a key this action does not know (a misspelt `policy`).
+ *                    BREAKING (kata 0465): the old `{ finding, resolution, policy?, lane? }` payload is refused with its own message.
+ *                    The merge gate only honours an Important or security resolution that passes the same check and whose
  *                    `headSha` is the gate's head. HONEST LIMIT: that proves a reason, a named login (a bot or a stranger is refused
  *                    only when a policy says so) and a head binding, never that a human typed it -- the skill must put the operator's
- *                    own answer here, never an agent's; and the stored state the caller passes is taken as the stored state.
+ *                    own answer here, never an agent's. The CLI is stateless: `ledger`, `security` and `coverage` are whatever the
+ *                    caller passes, never read from disk, so a caller that passes a relabelled copy of the state can still get `ok`
+ *                    for a decision the gate then ignores (it fails closed, never closes). The GATE, which acts on the persisted
+ *                    record, stays the authority.
  * `state-read` takes { headSha } plus an optional { treeSha } (the tree of that
  * head) and `state-write` { state } (whose `reviewedTreeSha`, when present, must
  * be a full object id), each with either an explicit `targetPath` or a `prId`
@@ -68,8 +73,10 @@
  * nothing here re-grades, trims or defaults a recorded decision.
  *
  * `status` grades the accumulated review facts IN BAND (a missing or invalid fact is a BLOCKED result, never a default):
- *   status     { baseSha, headSha, reviewedHeadSha, findingCounts{ total, actionable, deferred }, coverage, tests?, remotePhase?,
+ *   status     { baseSha, headSha, reviewedHeadSha, findingCounts{ total, actionable, deferred, awaitingDecision? }, coverage, tests?, remotePhase?,
  *                reviewedTreeSha?, headTreeSha?, roundsUsed?, roundCap?, access?, prUrl?, reportPath?, reviewOnly?, policy? }
+ *              `awaitingDecision` is informational and set by `review-run` only (the Nit and Pre-existing findings still awaiting the
+ *              operator's recorded decision): `status` ignores it and no phase reads it.
  *              `coverage` (kata k48x) is the review's coverage record (lib/pr-review-coverage.js: the `coverage` the `slices`
  *              answer carries when it is given `reviewedBy`, or the one `carry` `coverage` answers for a delta round) and is a
  *              REQUIRED fact: absent, unreadable or `unavailable` is a missing fact (LOCAL_REVIEW_BLOCKED, named), and an open
@@ -467,10 +474,11 @@ const LEDGER_ACTIONS = Object.freeze({
     },
   },
   resolve: {
+    exact: true,
+    refuse: (p) => (p.finding !== undefined ? "ledger action 'resolve' no longer takes a 'finding' object (the old { finding, resolution } payload): pass the finding's 'id' and the stored 'ledger' (and 'security', 'coverage') it is looked up in" : null),
     keys: { id: ID, resolution: OBJECT, ledger: ARRAY },
     optional: { security: OBJECT_OR_ARRAY, coverage: OBJECT, policy: OBJECT, severity: TEXT, lane: BOOLEAN },
     run: (p) => {
-      if (p.finding !== undefined) throw new Error("ledger action 'resolve' no longer takes a 'finding' object: pass the finding's 'id' and the STORED 'ledger' (and 'security', 'coverage') it is looked up in");
       const result = recordStoredResolution(p);
       if (!result.ok) throw new Error(result.reason);
       return { finding: result.finding, lane: result.lane, source: result.source };
@@ -487,7 +495,16 @@ function runLedger(payload) {
       `Unknown ledger action ${shown(name)}. Expected one of: ${Object.keys(LEDGER_ACTIONS).join(', ')}`
     );
   }
+  if (action.refuse !== undefined) {
+    const refusal = action.refuse(payload);
+    if (refusal !== null) throw new Error(refusal);
+  }
   requireKeys(payload, action.keys, `ledger action '${name}'`);
+  if (action.exact === true) {
+    const known = new Set(['action', ...Object.keys(action.keys), ...Object.keys(action.optional || {})]);
+    const unknown = Object.keys(payload).filter((key) => !known.has(key));
+    if (unknown.length > 0) throw new Error(`ledger action '${name}' does not take ${unknown.map(shown).join(', ')}; it takes ${[...known].filter((key) => key !== 'action').join(', ')}`);
+  }
   if (action.optional !== undefined) optionalKeys(payload, action.optional, `ledger action '${name}'`);
   return action.run(payload);
 }
