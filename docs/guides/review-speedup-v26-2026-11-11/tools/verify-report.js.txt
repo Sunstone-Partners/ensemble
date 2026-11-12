@@ -71,7 +71,7 @@ for (const id of IDS) {
   check(`${id} verifiers dispatched (first + second wave)`, `${r.ver} (${r.firstWave} + ${r.secondWave})`, row);
   check(`${id} verifiers stopped at the deadline`, `${r.stopped}`, row);
   check(`${id} candidates`, `${r.cands} (`, row);
-  check(`${id} verifier agent-minutes`, f1(r.agentMin), row);
+  check(`${id} verifier agent-minutes`, f2(r.agentMin), row);
 }
 // unverified counts and second-wave tails
 const un = (id) => raw[id].unverified;
@@ -114,6 +114,46 @@ for (const id of IDS) { const a = fs.readFileSync(path.join(RUNS, id, 'trace.jso
 out.push('OK   evidence traces are byte-identical to the run directories');
 // stored walltime rows
 for (const id of IDS) { const row = rd(path.join(EVID, id, 'walltime-row.json')); const r = row.row || row; out.push(`INFO walltime row ${id}: wall_min ${r.wall_min} (trace-derived ${raw[id].wallMin.toFixed(3)})`); if (Math.abs(r.wall_min - raw[id].wallMin) > 0.0015) { bad += 1; out.push(`FAIL walltime row differs for ${id}`); } }
+// ---- QA round 2: stage ends, agent-minutes, sampler comparison, run 1 burst, the #314 pair's base branches, GitHub facts from the evidence files
+{
+  const RUNNO = [1, 2, 3, 4, 5, 6, 8, 9, 10];
+  const hms = (iso) => iso.slice(11, 19);
+  const endedByStop = []; const durs = [];
+  IDS.forEach((id, i) => { const vs = readTrace(path.join(RUNS, id)).filter((s) => s.name === 'review.verifier'); const last = vs.reduce((b, s) => (s.iend > b.iend ? s : b), vs[0]); if (last.status === 'expired') { endedByStop.push(RUNNO[i]); durs.push((last.iend - last.start) / 60000); } });
+  check('verify stage ended at a stopped verifier', `(runs ${endedByStop.join(', ')}: the last verifier to finish was a stopped one, ${f2(Math.min(...durs))} to ${f2(Math.max(...durs))} min after its own dispatch): OLD 2 of 4, NEW 2 of 5`);
+  if (endedByStop.filter((n) => [1, 5, 6, 10].includes(n)).length !== 2 || endedByStop.filter((n) => [2, 3, 4, 8, 9].includes(n)).length !== 2) { bad += 1; out.push('FAIL OLD/NEW split of stage ends at a stop is not 2 and 2'); }
+  const [o319, n319, o314, n314, o315, n315] = ['v26-05-pr319-old-first', 'v26-04-pr319-new-first', 'v26-06-pr314-old-first', 'v26-08-pr314-new-first-redo4', 'v26-10-pr315-old-first', 'v26-09-pr315-new-first'];
+  const pc = (a, b) => 100 * (raw[b].agentMin - raw[a].agentMin) / raw[a].agentMin;
+  check('#319 agent-minutes', `#319 ${f2(raw[o319].agentMin)} (OLD) against ${f2(raw[n319].agentMin)} (NEW), ${pc(o319, n319).toFixed(1)}%`);
+  check('#314 agent-minutes', `#314: ${f2(raw[o314].agentMin)} against ${f2(raw[n314].agentMin)}, +${pc(o314, n314).toFixed(1)}%`);
+  check('#315 agent-minutes', `#315: ${f2(raw[o315].agentMin)} against ${f2(raw[n315].agentMin)}, 0.0%`);
+  if (Math.abs(pc(o315, n315)) >= 0.05) { bad += 1; out.push('FAIL #315 agent-minutes differ by 0.05% or more'); }
+  const diffs = IDS.map((id, i) => ({ no: RUNNO[i], d: Math.abs(raw[id].ownMean - raw[id].stageMean) }));
+  check('own sampler vs session log, eight runs', `within ${f2(Math.max(...diffs.filter((x) => x.no !== 2).map((x) => x.d)))} of them for eight runs`);
+  check('own sampler vs session log, run 2', `it gives ${f2(raw[IDS[1]].ownMean)} over ${raw[IDS[1]].ownN} samples where the session log gives ${f2(raw[IDS[1]].stageMean)} over ${raw[IDS[1]].stageSamples}`);
+  const sessText = fs.readFileSync(path.join(HOME, '.omp/pr-review-speedup/v26/load/load.log'), 'utf8').split('\n');
+  const burst = SESSION.filter((x) => x.t >= Date.parse('2026-11-11T21:55:50Z') && x.t <= Date.parse('2026-11-11T22:09:22Z')).map((x) => x.load1);
+  check('run 1 preceding burst', `\`load1\` ${f1(Math.min(...burst))} to ${f1(Math.max(...burst))} in every sample from the sampler's start at 21:55:50Z to 22:09:22Z; 5.32 at the start, \`load5\` 17.47`);
+  const startLine = sessText.find((l) => l.startsWith('2026-11-11T22:12:53Z')); const mm = /load1=([\d.]+) load5=([\d.]+)/.exec(startLine);
+  if (!mm || Number(mm[1]) !== 5.32 || Number(mm[2]) !== 17.47) { bad += 1; out.push('FAIL run 1 start sample is not load1 5.32 / load5 17.47'); } else out.push('OK   run 1 start sample 22:12:53Z load1 5.32 load5 17.47 (run 1 started ' + raw[IDS[0]].startedAt + ')');
+  const ap = (id) => rd(path.join(RUNS, id, 'arm-proof.json'));
+  if (!(ap(o314).runJsonBaseRefName === 'dev' && ap(n314).runJsonBaseRefName === 'scratch/v26-base' && ap(o314).runJsonBaseSha.startsWith('63da19f') && ap(n314).runJsonBaseSha.startsWith('63da19f'))) { bad += 1; out.push('FAIL #314 base branches differ from the report'); } else out.push('OK   #314: OLD base dev, NEW base scratch/v26-base, both at 63da19f');
+  const s8 = rd(path.join(RUNS, n314, 'summary.json')); const gb = s8.gateBlockers; const c8 = s8.ledger.candidates; const f1c = c8.find((c) => c.id === 'f1'); const f2c = c8.find((c) => c.id === 'f2');
+  if (!(gb.includes('open-important-finding:f1') && gb.includes('open-important-finding:f2') && f1c.severity === 'important' && f1c.real + f1c.notReal + f1c.abstain === 0 && f1c.outcome === 'unverified' && f2c.severity === 'important' && f2c.real === 2 && f2c.notReal === 0 && f2c.outcome === 'present' && f1c.loc === f2c.loc)) { bad += 1; out.push('FAIL run 8 f1/f2 and gate blockers differ from the report'); } else out.push(`OK   run 8: f1 important, 0 votes, unverified; f2 important, 2/0/0 present, same line (${f1c.loc}); gate blockers list both`);
+  const merges = rd(path.join(EVID, 'incidents', 'pr-merges.json')); const mg = (n) => merges.find((x) => x.number === n);
+  const batch = [228, 225, 205, 202].map((n) => mg(n).mergedAt).sort();
+  check('merge batch #228 #225 #205 #202', `${hms(batch[0])} to ${hms(batch[3])}Z`);
+  check('#205 merge time', `${hms(mg(205).mergedAt)}`); check('#205 merge commit', mg(205).mergeCommit.slice(0, 7)); check('#205 head', mg(205).headRefOid.slice(0, 7));
+  check('#297 merge time', `${hms(mg(297).mergedAt)}`); check('#297 merge commit', mg(297).mergeCommit.slice(0, 7));
+  check('#207 merge time', `${hms(mg(207).mergedAt)}`); check('#207 merge commit', mg(207).mergeCommit.slice(0, 7));
+  const sc = rd(path.join(EVID, 'incidents', 'scratch-prs.json')); check('#319 created', `${hms(sc.find((x) => x.number === 319).createdAt)}Z`);
+  const p207 = rd(path.join(EVID, 'incidents', 'pr207-state.json')); check('#207 third comment', `${hms(p207.comments[2].createdAt)}Z`);
+  const evOf = (n) => JSON.parse(fs.readFileSync(path.join(EVID, 'incidents', 'pr-events', `pr${n}-events.json`), 'utf8'));
+  const times = (kind) => [314, 315, 316, 317, 319].map((n) => hms(evOf(n).find((e) => e.event === kind).created_at)).sort();
+  check('closed times of the five scratch PRs', `(${times('closed').join(', ')})`);
+  check('reopened times', `reopened at ${times('reopened')[0]} to ${times('reopened')[4]}Z`);
+  check('base-changed times', `${times('base_ref_changed')[0]} to ${times('base_ref_changed')[4]}Z`);
+}
 fs.writeFileSync(path.join(HOME, '.omp/pr-review-speedup/v26/final/out/verification.txt'), out.join('\n') + '\n');
 console.log(out.join('\n'));
 console.log(bad ? `\n${bad} MISMATCH(ES)` : '\nALL CHECKS PASSED');

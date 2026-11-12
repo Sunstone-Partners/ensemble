@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-11-12T05:02:40.259Z",
+ "generatedAt": "2026-11-12T05:24:30.028Z",
  "code": "7f75b07",
  "runsAnalysed": [
   "v26-01-pr207-old-first",
@@ -2237,6 +2237,10 @@
    "stageMin": 15.37,
    "slowestMin": 6.86,
    "expired": 0,
+   "lastToFinish": "verifier-18",
+   "lastToFinishStatus": "ok",
+   "lastToFinishDispatchedMin": 9.07,
+   "lastToFinishDurationMin": 6.3,
    "stageSetByDeadline": false
   },
   {
@@ -2245,6 +2249,10 @@
    "stageMin": 6.56,
    "slowestMin": 6.56,
    "expired": 0,
+   "lastToFinish": "verifier-4",
+   "lastToFinishStatus": "ok",
+   "lastToFinishDispatchedMin": 0,
+   "lastToFinishDurationMin": 6.56,
    "stageSetByDeadline": false
   },
   {
@@ -2253,6 +2261,10 @@
    "stageMin": 8.06,
    "slowestMin": 6.14,
    "expired": 0,
+   "lastToFinish": "verifier-10",
+   "lastToFinishStatus": "ok",
+   "lastToFinishDispatchedMin": 3.16,
+   "lastToFinishDurationMin": 4.9,
    "stageSetByDeadline": false
   },
   {
@@ -2261,7 +2273,11 @@
    "stageMin": 17.19,
    "slowestMin": 8.02,
    "expired": 1,
-   "stageSetByDeadline": true
+   "lastToFinish": "verifier-16",
+   "lastToFinishStatus": "ok",
+   "lastToFinishDispatchedMin": 10.75,
+   "lastToFinishDurationMin": 6.45,
+   "stageSetByDeadline": false
   },
   {
    "id": "v26-05-pr319-old-first",
@@ -2269,6 +2285,10 @@
    "stageMin": 22.04,
    "slowestMin": 8.03,
    "expired": 1,
+   "lastToFinish": "verifier-24",
+   "lastToFinishStatus": "expired",
+   "lastToFinishDispatchedMin": 14.01,
+   "lastToFinishDurationMin": 8.03,
    "stageSetByDeadline": true
   },
   {
@@ -2277,6 +2297,10 @@
    "stageMin": 6.71,
    "slowestMin": 6.71,
    "expired": 0,
+   "lastToFinish": "verifier-2",
+   "lastToFinishStatus": "ok",
+   "lastToFinishDispatchedMin": 0,
+   "lastToFinishDurationMin": 6.71,
    "stageSetByDeadline": false
   },
   {
@@ -2285,6 +2309,10 @@
    "stageMin": 16.03,
    "slowestMin": 8.02,
    "expired": 3,
+   "lastToFinish": "verifier-5",
+   "lastToFinishStatus": "expired",
+   "lastToFinishDispatchedMin": 8.01,
+   "lastToFinishDurationMin": 8.02,
    "stageSetByDeadline": true
   },
   {
@@ -2293,6 +2321,10 @@
    "stageMin": 16.02,
    "slowestMin": 8.03,
    "expired": 4,
+   "lastToFinish": "verifier-9",
+   "lastToFinishStatus": "expired",
+   "lastToFinishDispatchedMin": 8,
+   "lastToFinishDurationMin": 8.03,
    "stageSetByDeadline": true
   },
   {
@@ -2301,9 +2333,24 @@
    "stageMin": 12.87,
    "slowestMin": 8.02,
    "expired": 2,
+   "lastToFinish": "verifier-10",
+   "lastToFinishStatus": "expired",
+   "lastToFinishDispatchedMin": 4.86,
+   "lastToFinishDurationMin": 8.01,
    "stageSetByDeadline": true
   }
  ],
+ "stageSetByDeadline": {
+  "runs": [
+   5,
+   8,
+   9,
+   10
+  ],
+  "old": 2,
+  "new": 2,
+  "of": 9
+ },
  "harness": [
   {
    "id": "v26-01-pr207-old-first",
@@ -3856,5 +3903,77 @@
     "warnings"
    ]
   }
+ },
+ "samplerComparison": {
+  "1": {
+   "sessionMean": 6.56,
+   "sessionSamples": 31,
+   "ownMean": 6.56,
+   "ownSamples": 31,
+   "absDiff": 0
+  },
+  "2": {
+   "sessionMean": 43.37,
+   "sessionSamples": 13,
+   "ownMean": 42.16,
+   "ownSamples": 14,
+   "absDiff": 1.2129670329670361
+  },
+  "3": {
+   "sessionMean": 48.15,
+   "sessionSamples": 16,
+   "ownMean": 48.15,
+   "ownSamples": 16,
+   "absDiff": 0
+  },
+  "4": {
+   "sessionMean": 6.43,
+   "sessionSamples": 34,
+   "ownMean": 6.43,
+   "ownSamples": 34,
+   "absDiff": 0
+  },
+  "5": {
+   "sessionMean": 4.8,
+   "sessionSamples": 44,
+   "ownMean": 4.69,
+   "ownSamples": 44,
+   "absDiff": 0.11568181818181866
+  },
+  "6": {
+   "sessionMean": 5.52,
+   "sessionSamples": 14,
+   "ownMean": 5.5,
+   "ownSamples": 14,
+   "absDiff": 0.011428571428570677
+  },
+  "8": {
+   "sessionMean": 4.32,
+   "sessionSamples": 32,
+   "ownMean": 4.4,
+   "ownSamples": 32,
+   "absDiff": 0.08624999999999883
+  },
+  "9": {
+   "sessionMean": 4.8,
+   "sessionSamples": 32,
+   "ownMean": 4.9,
+   "ownSamples": 32,
+   "absDiff": 0.096562500000001
+  },
+  "10": {
+   "sessionMean": 4.61,
+   "sessionSamples": 26,
+   "ownMean": 4.61,
+   "ownSamples": 26,
+   "absDiff": 0.0038461538461529443
+  }
+ },
+ "textValues": {
+  "lastStopRange": "8.01 to 8.03",
+  "weakMatches": "14",
+  "minJaccard": "0.17",
+  "samplerMaxDiff": "0.12",
+  "run2Own": "42.16"
  }
 }
