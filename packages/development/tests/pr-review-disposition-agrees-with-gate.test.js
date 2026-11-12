@@ -39,7 +39,7 @@ function finding(overrides = {}) {
   };
 }
 
-const decision = (overrides = {}) => ({ reason: 'accepted: low risk', by: 'ldangelo', at: AT, headSha: HEAD, ...overrides });
+const decision = (overrides = {}) => ({ decision: 'accept', reason: 'accepted: low risk', by: 'ldangelo', at: AT, headSha: HEAD, ...overrides });
 /** A finding closed with a resolution carrying full provenance for HEAD. */
 const decided = (base, overrides) => ({ ...base, disposition: 'resolved', resolution: decision(overrides) });
 const lane = (...findings) => ({ status: 'findings', findings });

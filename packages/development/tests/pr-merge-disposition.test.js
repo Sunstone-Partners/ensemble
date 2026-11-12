@@ -210,7 +210,7 @@ describe('AC2: --foreman records nothing as decided, runs no fix agent, and the 
     const closedByFixAnswer = {
       ...importantFinding(),
       disposition: 'resolved',
-      resolution: { reason: 'fix on this PR', by: 'ldangelo', at: '2026-11-07T10:00:00Z', headSha: HEAD },
+      resolution: { decision: 'accept', reason: 'fix on this PR', by: 'ldangelo', at: '2026-11-07T10:00:00Z', headSha: HEAD },
     };
     expect(runGate(gateInput({ ledger: [closedByFixAnswer] })).mergeable).toBe(true);
     const fix = sentencesOf(interactiveAction()).find((s) => /FIX_SELECTION/.test(s));

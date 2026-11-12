@@ -756,6 +756,7 @@ function recordResolution(finding, resolution) {
   }
 
   const record = { reason: redact(resolution.reason.trim()) };
+  if (typeof resolution.decision === 'string' && RESOLUTION_DECISIONS.includes(resolution.decision)) record.decision = resolution.decision;
   if (isText(resolution.by)) record.by = redact(resolution.by.trim());
   if (isText(resolution.at)) record.at = resolution.at.trim();
   if (isText(resolution.headSha)) record.headSha = resolution.headSha.trim();

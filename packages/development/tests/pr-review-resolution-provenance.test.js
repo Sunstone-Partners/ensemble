@@ -19,7 +19,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { evaluateGate, BLOCKER_CODES } = require('../lib/pr-review-gate');
-const { recordResolution, recordOperatorResolution, isActionable } = require('../lib/pr-review-ledger');
+const { recordResolution, recordOperatorResolution, isActionable, RESOLUTION_DECISIONS } = require('../lib/pr-review-ledger');
 
 const CLI = path.join(__dirname, '..', 'lib', 'pr-review-cli.js');
 const HEAD = 'a'.repeat(40);
@@ -67,7 +67,7 @@ function gateInput(overrides = {}) {
   };
 }
 
-const decision = (overrides = {}) => ({ reason: 'the caller validates it upstream', by: 'ldangelo', headSha: HEAD, at: AT, ...overrides });
+const decision = (overrides = {}) => ({ decision: 'accept', reason: 'the caller validates it upstream', by: 'ldangelo', headSha: HEAD, at: AT, ...overrides });
 const resolved = (base, overrides) => ({ ...base, disposition: 'resolved', resolution: decision(overrides) });
 
 describe('recordOperatorResolution refuses a decision that lacks provenance', () => {
@@ -92,6 +92,89 @@ describe('recordOperatorResolution refuses a decision that lacks provenance', ()
     expect(result.ok).toBe(true);
     expect(result.finding.disposition).toBe('resolved');
     expect(result.finding.resolution).toEqual(decision());
+  });
+});
+
+describe('the typed decision: a closing resolution says accept or follow-on, and nothing else closes', () => {
+  const BAD = [
+    ['missing', undefined],
+    ['a fix selection (fix-here)', 'fix-here'],
+    ['a fix selection (fix)', 'fix'],
+    ['the label of the answer (Fix on this PR)', 'Fix on this PR'],
+    ['wrong case (ACCEPT)', 'ACCEPT'],
+    ['wrong case (Follow-on)', 'Follow-on'],
+    ['padded (" accept")', ' accept'],
+    ['empty', ''],
+    ['not text (true)', true],
+    ['not text (a number)', 1],
+    ['not text (a list)', ['accept']],
+    ['not text (null)', null],
+  ];
+
+  test('RESOLUTION_DECISIONS is exactly accept and follow-on', () => {
+    expect(RESOLUTION_DECISIONS).toEqual(['accept', 'follow-on']);
+  });
+
+  test.each(BAD)('recordOperatorResolution refuses a decision that is %s: names the allowed values, FIX_SELECTION, leaves the finding unchanged', (_name, bad) => {
+    const result = recordOperatorResolution(finding(), decision({ decision: bad }));
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("'accept'");
+    expect(result.reason).toContain("'follow-on'");
+    expect(result.reason).toContain('FIX_SELECTION');
+    expect(result.finding.resolution).toBeUndefined();
+    expect(result.finding.disposition).toBe('fix');
+  });
+
+  test('recordOperatorResolution refuses a decision object with no decision key at all', () => {
+    const { decision: _dropped, ...without } = decision();
+    const result = recordOperatorResolution(finding(), without);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("'accept'");
+    expect(result.finding.resolution).toBeUndefined();
+  });
+
+  test.each(RESOLUTION_DECISIONS)('recordOperatorResolution accepts %s and stores it on the resolution', (value) => {
+    const result = recordOperatorResolution(finding(), decision({ decision: value }));
+
+    expect(result.ok).toBe(true);
+    expect(result.finding.disposition).toBe('resolved');
+    expect(result.finding.resolution.decision).toBe(value);
+  });
+
+  test.each(BAD)('the gate ignores a hand-written resolution whose decision is %s: not mergeable, resolutionRejected names the decision', (_name, bad) => {
+    const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { decision: bad })] }));
+    const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
+
+    expect(result.mergeable).toBe(false);
+    expect(blocker.resolutionRejected).toContain('decision');
+    expect(blocker.resolutionRejected).toContain("'accept'");
+  });
+
+  test('the gate ignores a hand-written resolution with no decision key', () => {
+    const { decision: _dropped, ...without } = decision();
+    const result = evaluateGate(gateInput({ ledger: [{ ...finding(), disposition: 'resolved', resolution: without }] }));
+    const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
+
+    expect(result.mergeable).toBe(false);
+    expect(blocker.resolutionRejected).toContain('decision');
+  });
+
+  test('the gate ignores a decision-less resolution on a security-lane finding too', () => {
+    const { decision: _dropped, ...without } = decision();
+    const lane = { status: 'findings', findings: [{ ...finding({ id: 'S-1' }), disposition: 'resolved', resolution: without }] };
+    const result = evaluateGate(gateInput({ security: lane }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.securityLane.open).toEqual(['S-1']);
+  });
+
+  test.each(RESOLUTION_DECISIONS)('the gate takes a resolution whose decision is %s', (value) => {
+    const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { decision: value })] }));
+
+    expect(result.mergeable).toBe(true);
+    expect(result.findings.open).toEqual([]);
   });
 });
 

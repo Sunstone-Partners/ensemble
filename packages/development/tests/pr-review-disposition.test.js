@@ -31,7 +31,7 @@ function build(ledger, extra = {}) {
 }
 
 function resolution(overrides = {}) {
-  return { reason: 'accepted: low risk', by: 'octocat', at: '2026-01-01T00:00:00Z', headSha: HEAD, ...overrides };
+  return { decision: 'accept', reason: 'accepted: low risk', by: 'octocat', at: '2026-01-01T00:00:00Z', headSha: HEAD, ...overrides };
 }
 
 function acceptChoice(entry) {
