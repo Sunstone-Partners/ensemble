@@ -21,7 +21,7 @@
  *
  * A GAP is shaped like a ledger finding (the fields `validateLedger` requires, `kind: 'coverage-gap'`,
  * `source: 'review-coverage'`) so the operator's decision on it travels the path every other decision travels: the
- * disposition list shows it, `ledger resolve` stamps `{ reason, by, at, headSha }` on it, and the gate honours that exactly
+ * disposition list shows it, `ledger resolve` stamps `{ decision, reason, by, at, headSha }` on it, and the gate honours that exactly
  * as it honours one on an Important or security finding (`resolutionProvenanceProblem`). It is NOT a ledger entry: it lives
  * in the record (the state report's `coverage`), as the security lane's findings live in `security`, so verification, the
  * ledger's dedupe and repeat suppression, the carry candidates and the fix run never treat it as a finding about the code.

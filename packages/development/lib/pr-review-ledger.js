@@ -820,8 +820,22 @@ function decidingLoginProblem(by, policy) {
 }
 
 /**
+ * The two decisions that close a blocking finding: `accept` (the operator takes the risk) and `follow-on` (the
+ * operator moves the work to a follow-on). "Fix on this PR" is neither: it is a fix selection (`FIX_SELECTION`), which
+ * runs a fix agent and closes nothing by being said. Matched exactly, in lower case.
+ */
+const RESOLUTION_DECISIONS = Object.freeze(['accept', 'follow-on']);
+
+/** Why `decision` is not one of `RESOLUTION_DECISIONS`, as a sentence. */
+function decisionProblem(decision) {
+  const shown = typeof decision === 'string' ? JSON.stringify(decision) : decision === undefined ? 'missing' : `not text (${typeof decision})`;
+  return `the resolution has no valid decision (decision is ${shown}; it must be exactly one of ${RESOLUTION_DECISIONS.map((d) => `'${d}'`).join(' or ')}); a "fix on this PR" answer is a fix selection (FIX_SELECTION), not a recorded resolution`;
+}
+
+/**
  * Whether a finding's recorded resolution carries the provenance the merge
- * gate requires of an Important or security closure: a stated reason, the
+ * gate requires of an Important or security closure: a `decision` (`accept` or
+ * `follow-on`, `RESOLUTION_DECISIONS`), a stated reason, the
  * login of whoever decided (`by`), an ISO-8601 timestamp (`at`) and the head
  * commit the decision was made against (`headSha`, equal to `headSha`, the
  * commit the gate is being asked about). Given the repository's `policy`, `by`
@@ -857,8 +871,9 @@ function hasResolutionProvenance(finding, headSha, policy) {
 function resolutionProvenanceProblem(finding, headSha, policy) {
   if (!isObject(finding) || !isObject(finding.resolution)) return 'it has no recorded resolution';
   if (!isText(headSha)) return 'the gate was given no head commit to bind it to';
-  const { reason, by, at, headSha: decidedAt } = finding.resolution;
+  const { reason, by, at, headSha: decidedAt, decision } = finding.resolution;
   if (!isText(reason)) return 'the resolution states no reason';
+  if (typeof decision !== 'string' || !RESOLUTION_DECISIONS.includes(decision)) return decisionProblem(decision);
   if (!isText(by) || !LOGIN_PATTERN.test(by.trim())) return 'the resolution names no deciding login (by)';
   const notAllowed = decidingLoginProblem(by, policy);
   if (notAllowed !== null) return notAllowed;
@@ -872,7 +887,7 @@ function resolutionProvenanceProblem(finding, headSha, policy) {
 
 /**
  * Records a decision on a finding with the provenance the merge gate demands
- * of one: `recordResolution` plus `by` (a login), `headSha` (the head the
+ * of one: `recordResolution` plus `decision` (`accept` or `follow-on`), `by` (a login), `headSha` (the head the
  * decision was made against) and `at` (an ISO-8601 timestamp with a zone), all
  * REQUIRED. A decision missing any of them, or one the gate would ignore (a
  * login the policy refuses, a policy that cannot be read), is refused and the
@@ -886,7 +901,7 @@ function resolutionProvenanceProblem(finding, headSha, policy) {
  * `hasResolutionProvenance` for what is and is not proven.
  *
  * @param {Object} finding
- * @param {{reason:string, by:string, headSha:string, at:string}} decision
+ * @param {{decision:'accept'|'follow-on', reason:string, by:string, headSha:string, at:string}} decision
  * @param {Object} [policy] The policy block, to check who may decide.
  * @returns {{ok:true, finding:Object}|{ok:false, reason:string, finding:Object}}
  */
@@ -897,6 +912,9 @@ function recordOperatorResolution(finding, decision, policy) {
     if (!isText(decision[key])) {
       return { ok: false, reason: `an operator resolution needs '${key}' as non-empty text`, finding: redact(finding) };
     }
+  }
+  if (typeof decision.decision !== 'string' || !RESOLUTION_DECISIONS.includes(decision.decision)) {
+    return { ok: false, reason: `an operator resolution needs 'decision': ${decisionProblem(decision.decision)}`, finding: redact(finding) };
   }
   const problem = resolutionProvenanceProblem({ resolution: decision }, decision.headSha, policy);
   if (problem !== null) {
@@ -1293,6 +1311,7 @@ module.exports = {
   recordOperatorResolution,
   hasResolutionProvenance,
   resolutionProvenanceProblem,
+  RESOLUTION_DECISIONS,
   clearFixedFindings,
   fingerprintFinding,
   fingerprintPath,
