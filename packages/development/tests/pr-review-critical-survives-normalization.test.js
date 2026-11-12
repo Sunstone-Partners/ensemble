@@ -711,7 +711,7 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
     // removed and hands it to the REAL gate (an anchor that stops matching is an error, never a silent pass; the way
     // pr-review-vote-gate-scenarios compiles a mutant of the vote tally), so the refusal of a Critical is shown to rest on
     // `isActionable` and not on the line above it.
-    const STRIP = 'const { blocking, ...rest } = kept;';
+    const STRIP = 'return { entry: withoutDeferral(kept), refusal };';
     const LEDGER_PATH = path.join(__dirname, '..', 'lib', 'pr-review-ledger.js');
     const GATE_PATH = path.join(__dirname, '..', 'lib', 'pr-review-gate.js');
     const compile = (file, source, requireFn) => {
@@ -723,7 +723,7 @@ describe('the merge gate refuses a deferred Critical, names it, and lets the ope
     const gateWithoutStrip = () => {
       const ledgerSource = fs.readFileSync(LEDGER_PATH, 'utf8');
       expect(ledgerSource).toContain(STRIP);
-      const mutantLedger = compile(LEDGER_PATH, ledgerSource.replace(STRIP, 'const rest = kept;'), createRequire(LEDGER_PATH));
+      const mutantLedger = compile(LEDGER_PATH, ledgerSource.replace(STRIP, 'return { entry: kept, refusal };'), createRequire(LEDGER_PATH));
       const real = createRequire(GATE_PATH);
       const gate = compile(GATE_PATH, fs.readFileSync(GATE_PATH, 'utf8'), (id) => (id === './pr-review-ledger' ? mutantLedger : real(id)));
       return gate.evaluateGate;

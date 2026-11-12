@@ -948,8 +948,10 @@ function resolutionProvenanceProblem(finding, headSha, policy, lane = false) {
  *
  * HONEST LIMIT of THIS recorder: it acts on the finding object and `lane` flag it is handed. Handed a relabelled or lane-omitted
  * copy it can return `ok:true` for a `follow-on` the gate then ignores (the finding stays open: it fails closed, it never
- * closes). The CLI does not hand it a payload's class: it goes through `recordStoredResolution`, which looks the finding up BY ID
- * in the STORED state and takes its severity and lane from there.
+ * closes). The CLI goes through `recordStoredResolution`, which takes the class from the entry it finds BY ID in the state the
+ * caller supplies, not from a free-standing finding. The CLI is stateless (it never reads the persisted report), so a caller
+ * that passes a relabelled copy of the state can still get `ok` for a decision the gate ignores; the gate, which acts on the
+ * persisted record, remains the authority.
  *
  * @param {Object} finding
  * @param {{decision:'accept'|'follow-on', reason:string, by:string, headSha:string, at:string}} decision
@@ -1006,13 +1008,17 @@ function idKey(id) {
 }
 
 /**
- * Records an operator decision on a finding the STORED state holds, found BY ID, with its class read from where it is stored: the
- * gate acts on the stored record, so the recorder must too. The caller passes the stored `ledger`, the stored `security` record
- * (`{status, findings}`, or just the findings array) and, for a coverage gap, the stored `coverage` record (`{gaps}`); a finding in
- * the security lane's findings is a lane entry (blocking whatever its severity), one in the ledger takes its own severity, a gap
- * is blocking. The payload carries no class. If it states a `severity` or `lane` anyway and it differs from the stored one, the
- * decision is REFUSED (a mislabelled request is never quietly corrected). Unknown id, an id found twice in one list, and a stored
- * record that cannot be read are refused too. The answer carries the STORED finding with the resolution attached.
+ * Records an operator decision on a finding found BY ID in the state the caller supplies, with its class read from the entry found
+ * there rather than from a free-standing finding. The caller passes the `ledger`, the `security` record (`{status, findings}`, or
+ * just the findings array) and, for a coverage gap, the `coverage` record (`{gaps}`) from the state report; a finding in the
+ * security lane's findings is a lane entry (blocking whatever its severity), one in the ledger takes its own severity, a gap is
+ * blocking. The payload carries no class: a `severity` or `lane` it states anyway must MATCH the one found, or the decision is
+ * REFUSED (a mislabelled request is never quietly corrected). An unknown id, an id found twice in one list and a state that cannot
+ * be read are refused too. The answer carries the entry found with the resolution attached.
+ *
+ * HONEST LIMIT: nothing here reads the persisted report, so a caller that supplies a relabelled copy of the state can still get
+ * `ok:true` for a decision the gate then ignores (it fails closed, it never closes). The GATE acts on the persisted record and
+ * remains the authority.
  *
  * @param {{id:string|number, resolution:Object, ledger:Object[], security?:Object|Object[], coverage?:Object, policy?:Object, severity?:string, lane?:boolean}} input
  * @returns {{ok:true, finding:Object, lane:boolean, source:'ledger'|'security'|'coverage'}|{ok:false, reason:string}}
@@ -1050,6 +1056,12 @@ function recordStoredResolution(input) {
   return { ok: true, finding: result.finding, lane, source };
 }
 
+/** An Important finding's own `blocking:false` deferral is no answer at the gate: the entry without it. The one definition of that strip. */
+function withoutDeferral(entry) {
+  const { blocking, ...rest } = entry;
+  return rest;
+}
+
 /**
  * THE finding as the merge gate reads it at (`headSha`, `policy`): the one reading the gate (`applyProvenance`), the run's
  * status counts and the CLI `ledger isActionable` (when given a head) all take. Two strips, in the gate's own order:
@@ -1070,8 +1082,7 @@ function findingAsGateReads(entry, headSha, lane, policy) {
   if (lane !== true && (severity === 'pre-existing' || severity === 'nit')) return { entry, refusal: null };
   const { entry: kept, refusal } = withoutRefusedResolution(entry, headSha, lane === true, policy);
   if (severity !== 'important') return { entry: kept, refusal };
-  const { blocking, ...rest } = kept;
-  return { entry: rest, refusal };
+  return { entry: withoutDeferral(kept), refusal };
 }
 
 /**
@@ -1474,6 +1485,7 @@ module.exports = {
   resolutionProvenanceProblem,
   withoutRefusedResolution,
   findingAsGateReads,
+  withoutDeferral,
   recordStoredResolution,
   isNonBlockingDecided,
   closesBlockingFinding,

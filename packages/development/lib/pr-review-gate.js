@@ -60,6 +60,7 @@ const {
   claimsStoppingRuleDeferral,
   normalizeSeverity,
   findingAsGateReads,
+  withoutDeferral,
 } = require('./pr-review-ledger');
 const { gradeCoverage } = require('./pr-review-coverage');
 const { TIERS, HUMANS_REQUIRED } = require('./pr-review-tier');
@@ -198,10 +199,6 @@ function applyProvenance(entry, headSha, lane, policy) {
   if (!needsOperator || entry.cleared === true) return { entry, rejectedBecause: null, deferralRejected: null };
 
   const { resolution, ...withoutResolution } = entry;
-  const withoutDeferral = (candidate) => {
-    const { blocking, ...rest } = candidate;
-    return rest;
-  };
   // The reading itself is the shared one (`findingAsGateReads`); the status counts and the CLI take the same.
   const { entry: reading, refusal: found } = findingAsGateReads(entry, headSha, lane, policy);
   const refusal = isObject(resolution) ? found : null;

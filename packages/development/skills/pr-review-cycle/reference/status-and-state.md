@@ -10,7 +10,7 @@ findingCounts:{total, actionable, deferred}, coverage:{status, gaps}, tests:{exi
 remotePhase, roundsUsed, roundCap, access, prUrl, reportPath, reviewOnly }`. `baseSha`, `headSha` and
 `reviewedHeadSha` (full 40- or 64-hex
 object ids, never a bare ref), `findingCounts` (`total`, `actionable` and
-`deferred`: non-negative integers with `total >= actionable + deferred`) and
+`deferred`: non-negative integers with `total >= actionable + deferred`; `review-run` also echoes an informational `awaitingDecision`, the Nits and Pre-existing findings awaiting the operator's decision, which `status` ignores) and
 `coverage` (below) are required, `roundsUsed`, when given, is a non-negative integer, `roundCap`,
 when given, is the policy's integer 1-5 (absent means the strict default of
 3, and a value outside the range is refused with the default applied), and

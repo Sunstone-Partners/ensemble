@@ -134,12 +134,23 @@ describe('recordStoredResolution / `ledger resolve` reads the STORED record (kat
     expect(ask({ id: 'L-1', lane: true }).lane).toBe(true);
   });
 
+  test('an unknown key is refused, so a misspelt policy is a CLI error and never read as no policy', () => {
+    expect(() => ask({ id: 'I-1', polciy: { botLogins: ['ldangelo'] } })).toThrow(/does not take 'polciy'/);
+    expect(() => ask({ id: 'I-1', policy: { botLogins: ['ldangelo'] } })).toThrow(/bot login/);
+  });
+
+  test('a lane Nit with a follow-on reads as not actionable without lane and actionable with it, as at the gate', () => {
+    const laneNit = finding({ id: 'L-1', severity: 'nit', disposition: 'resolved', resolution: decision({ decision: 'follow-on' }) });
+    expect(runLedger({ action: 'isActionable', finding: laneNit, headSha: HEAD }).actionable).toBe(false);
+    expect(runLedger({ action: 'isActionable', finding: laneNit, headSha: HEAD, lane: true }).actionable).toBe(true);
+  });
+
   test('a coverage gap is found in the stored coverage record', () => {
     expect(ask({ id: 'slice:s1' })).toMatchObject({ source: 'coverage', finding: { id: 'slice:s1', resolution: expect.any(Object) } });
   });
 
   test('the old payload shape ({ finding, lane }) is refused, and the ledger and the security record are read as the stored state', () => {
-    expect(() => runLedger({ action: 'resolve', finding: important, resolution: decision() })).toThrow(/'id'/);
+    expect(() => runLedger({ action: 'resolve', finding: important, resolution: decision() })).toThrow(/no longer takes a 'finding'/);
     expect(() => runLedger({ action: 'resolve', finding: important, id: 'I-1', ledger: [important], resolution: decision() })).toThrow(/no longer takes a 'finding'/);
     expect(recordStoredResolution({ id: 'L-1', resolution: decision(), ledger: [], security: [lane] })).toMatchObject({ ok: true, lane: true });
     expect(recordStoredResolution({ id: 'I-1', resolution: decision(), ledger: [important, important] })).toMatchObject({ ok: false, reason: expect.stringContaining('2 entries') });
