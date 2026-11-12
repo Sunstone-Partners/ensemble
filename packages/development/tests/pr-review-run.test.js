@@ -2441,7 +2441,7 @@ describe('the gate stage', () => {
     expect(next.status).toBe('DONE');
     // no findings, clean lane, tests passed, fresh head: every fact the runner supplies is "good"
     expect(next.reviewStatus.tests.passed).toBe(true);
-    expect(next.reviewStatus.findingCounts).toEqual({ total: 0, actionable: 0, deferred: 0 });
+    expect(next.reviewStatus.findingCounts).toEqual({ total: 0, actionable: 0, deferred: 0, awaitingDecision: 0 });
     // ... and approvals are short (a Medium PR needs one human), so the gate blocks
     expect(next.gate.mergeable).toBe(false);
     expect(next.gate.blockers.map((b) => b.code)).toContain('approvals-unsatisfied');
