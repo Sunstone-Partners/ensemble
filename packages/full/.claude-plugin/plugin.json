@@ -15,14 +15,6 @@
     "meta",
     "ensemble"
   ],
-  "commands": [
-    "./commands/core",
-    "./commands/product",
-    "./commands/development",
-    "./commands/git",
-    "./commands/e2e-testing",
-    "./commands/assessment"
-  ],
   "skills": "./skills",
   "agents": [
     "./agents/core/ensemble-orchestrator.md",
