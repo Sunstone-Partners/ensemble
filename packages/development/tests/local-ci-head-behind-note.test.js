@@ -91,4 +91,33 @@ describe('head-behind-base note', () => {
     expect(good.ok).toBe(true);
     expect(good.notes).toBeUndefined();
   });
+
+  test('gate (NOT a dry run): the posted failure status is identical with and without the note, and the note rides the report', async () => {
+    const control = repoFx();
+    const cPoster = fakePostStatus();
+    const c = await cli.runGateFlow(payload(control, { dryRun: false }), mk(control, jest.fn(failing), { postStatus: cPoster }));
+    const fx = repoFx();
+    advanceBase(fx, 4);
+    const poster = fakePostStatus();
+    const r = await cli.runGateFlow(payload(fx, { dryRun: false }), mk(fx, jest.fn(failing), { postStatus: poster }));
+    expect(c.notes).toBeUndefined();
+    expect(r.notes).toEqual([expect.objectContaining({ kind: 'head-behind-base', behind: 4 })]);
+    const failurePosts = (p) => p.statuses().filter((x) => x.body.state === 'failure').map((x) => x.body.description.replace(/@ [0-9a-f]{8}/, '@ SHA'));
+    expect(failurePosts(poster)).toHaveLength(1);
+    expect(failurePosts(poster)).toEqual(failurePosts(cPoster));
+    expect(poster.statuses().map((x) => x.body.state)).toEqual(cPoster.statuses().map((x) => x.body.state));
+    for (const k of ['ok', 'mergeReady', 'posted', 'stage', 'pendingRemains']) expect(r[k]).toEqual(c[k]);
+    expect(r.posted).toBe(true);
+  });
+
+  test('gate: the ancestry probe itself erroring (status other than 0/1) gives no note', async () => {
+    const fx = repoFx();
+    advanceBase(fx, 2);
+    const real = cli.defaultDeps().git;
+    const git = (args, cwd) => (args[0] === 'merge-base' && args[1] === '--is-ancestor' && args[2] === fx.git('rev-parse', fx.baseRef) ? { status: 128, stdout: '', stderr: 'fatal: not a valid object' } : real(args, cwd));
+    const r = await cli.runGateFlow(payload(fx), mk(fx, jest.fn(failing), { git }));
+    expect(r.ok).toBe(false);
+    expect(r.failures.map((f) => f.kind)).toEqual(['step-failed']);
+    expect(r.notes).toBeUndefined();
+  });
 });

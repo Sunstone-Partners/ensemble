@@ -57,9 +57,8 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected, no effect.
    (`git fetch origin $BASE_BRANCH`, then `origin/$BASE_BRANCH`); required.
 3. `mergeReady:true`: report ready to merge, quoting the record or `hostedJobs`.
    `mergeReady:false`: report the CLI
-   `reason` verbatim and refuse. Typical reasons: no local status (name the
-   missing run and tell the user to run `gate` for `HEAD_SHA`); head moved
-   (run `gate` again for the new head); status not success; blocking review;
+   `reason` verbatim and refuse. Typical reasons: no local status (tell the user to run `gate` for `HEAD_SHA`); head moved
+   (run `gate` again); status not success; blocking review;
    `hosted CI not accepted: …`.
 
 ### `gate`
@@ -80,7 +79,7 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected, no effect.
    - `failures` non-empty: list each with workflow, job, step, node and the
      exact head SHA (full 40 hex), plus `message` and its `full output:` file. A failing or unsupported step
      is never success; at most a failure status was posted.
-   - `notes` `head-behind-base`: relay it (stale head; update, re-run).
+   - `notes` `head-behind-base`: relay it (may be staleness: update, re-run).
    - `error` without failures (unfetchable head, unprovidable Node,
      malformed config): a refusal.
    - `dryRun` and `mergeReady:true`: report readiness, state that nothing was
@@ -88,10 +87,8 @@ refusal. Payloads over 1 MiB or malformed JSON are rejected, no effect.
    - `source:"hosted"`, `mergeReady:true`: report hosted CI passed on this head;
      nothing run or posted. `hostedRefused`: the CLI ran locally instead. A latest status that is not a verified success (`pending`, `failure`, `error`, unverified) vetoes hosted (`merge` refuses; `gate` runs locally, posting `pending` first, and will not run if it cannot); fork PRs and workflows using repo-local actions are never accepted hosted.
    - `posted:true`, `mergeReady:true`: report the record; the PR is mergeable.
-3. Never retry with a different SHA, never post by hand, never edit the config
-   to make a step pass. Never pass `config`, `path`, `runner` or other keys:
-   unknown keys are rejected. A step the runner cannot mirror is a gap to report to
-   the user, who may record it in `.ensemble/local-ci.yaml` `excluded_steps`.
+3. Never retry with a different SHA (after a pushed update, re-run on the new PR head), never post by hand, never edit the config
+   to make a step pass. Never pass `config`, `path`, `runner` or other keys (rejected). A step the runner cannot mirror is a gap to report; the user may record it in `.ensemble/local-ci.yaml` `excluded_steps`.
 
 ---
 
