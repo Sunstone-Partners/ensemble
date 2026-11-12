@@ -22,7 +22,7 @@ anything short of all five: `decision` is exactly `accept` or `follow-on` (a "Fi
 decision was made against, `at` an ISO-8601 timestamp with a zone. Pass the Step 1b
 `policy` block as `policy` (the one key that may be left out): `by` must then not be one of its `botLogins` and, when it
 names `maintainerLogins`, must be one of them (without it the login is checked for
-shape only). Use it only with an answer the operator gave you for that finding; the
+shape only). The recorder acts on the finding payload you pass (its `severity`, and `lane`), while the gate acts on the STORED record: pass the finding as the stored state report holds it (severity and lane read from there, not from memory) and splice only the returned `resolution` onto the stored finding looked up by id, never a payload-supplied finding; a mislabelled payload can make a `follow-on` record that the gate then ignores (it fails closed, never closes). Use it only with an answer the operator gave you for that finding; the
 merge gate ignores an Important or security resolution that lacks any of the five (or says `follow-on`),
 names another head or comes from a login the policy refuses, and the CLI cannot tell
 whether the operator or this session wrote the words, so you never write them for the

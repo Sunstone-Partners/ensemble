@@ -946,6 +946,12 @@ function resolutionProvenanceProblem(finding, headSha, policy, lane = false) {
  * session that wrote a login there, is the skill's rule; see
  * `hasResolutionProvenance` for what is and is not proven.
  *
+ * HONEST LIMIT of THIS recorder: it acts on the finding payload the caller passes (its `severity`, and the optional `lane`),
+ * whereas the gate acts on the STORED record and is independent of it. A relabelled or lane-omitted payload can make this return
+ * `ok:true` for a `follow-on` the gate then ignores: the finding stays open (it fails closed, it never closes). So the caller
+ * splices only the returned `resolution` onto the STORED finding it looked up by id, never a payload-supplied finding, and reads
+ * `severity` and `lane` from the stored state report.
+ *
  * @param {Object} finding
  * @param {{decision:'accept'|'follow-on', reason:string, by:string, headSha:string, at:string}} decision
  * @param {Object} [policy] The policy block, to check who may decide.
@@ -970,8 +976,10 @@ function recordOperatorResolution(finding, decision, policy, lane = false) {
 /**
  * The finding as the gate and the status count read it: a resolution that does not count (`resolutionProvenanceProblem`, with
  * `headSha` and `policy`) is dropped, so `isActionable` is asked about what the gate would ask. A finding that needs no
- * operator answer (a Nit or Pre-existing ledger finding) or that a later head cleared is returned as written. ONE strip step:
- * the gate and the run's status counts both use it.
+ * operator answer (a Nit or Pre-existing ledger finding) or that a later head cleared is returned as written. What is shared is exactly this
+ * strip of a refused resolution: the gate (`applyProvenance`) and the run's status counts both use it. What is NOT shared is
+ * the gate's further strip of an Important finding's `blocking:false` deferral (`withoutDeferral`): the status counts do not do
+ * it, a difference that predates the typed decision and is tracked in its own kata issue.
  *
  * @param {Object} entry
  * @param {string|null} headSha

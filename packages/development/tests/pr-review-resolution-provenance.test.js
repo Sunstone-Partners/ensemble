@@ -230,10 +230,16 @@ describe('the typed decision: only accept closes a blocking finding; follow-on i
     expect(result.securityLane.open).toEqual(['S-1']);
   });
 
-  test('the gate does not block on a Nit, so a follow-on or a missing decision on it changes nothing', () => {
-    const result = evaluateGate(gateInput({ ledger: [nit()] }));
-
-    expect(result.mergeable).toBe(true);
+  test('a Nit never blocks: the gate is mergeable with follow-on, with no decision and with none recorded; the recorder takes follow-on on it and refuses a missing decision', () => {
+    for (const closed of [resolved(nit(), { decision: 'follow-on' }), resolved(nit(), { decision: undefined }), nit()]) {
+      expect(evaluateGate(gateInput({ ledger: [closed] })).mergeable).toBe(true);
+    }
+    const recorded = recordOperatorResolution(nit(), decision({ decision: 'follow-on' }));
+    expect(recorded.ok).toBe(true);
+    expect(recorded.finding.resolution.decision).toBe('follow-on');
+    const missing = recordOperatorResolution(nit(), decision({ decision: undefined }));
+    expect(missing.ok).toBe(false);
+    expect(missing.finding.resolution).toBeUndefined();
   });
 
   test('recordResolution refuses a decision that is present and invalid, and takes one that is absent or valid', () => {
