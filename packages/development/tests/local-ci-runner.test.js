@@ -568,7 +568,7 @@ describe('local-ci-runner: failure log retention', () => {
     const flood = 'PASS tests/a-passing-suite.test.js\n'.repeat(400); // far longer than the report's short tail
     const r = gate({ failureLogDir: logDir }, fakeDeps({ onCmd: failing('test', { stdout: `${head}\n${flood}` }) }));
     const f = r.failures.find((x) => x.kind === 'step-failed' && x.node === 22);
-    expect(f.message).not.toContain('the-real-culprit'); // the tail alone loses the cause: this is the gap
+    expect(f.message).toContain('the-real-culprit'); // kata ce0c: the report leads with the extracted failing test
     const file = files().find((n) => n.includes('node22') && n.includes('test'));
     expect(file).toBeDefined();
     expect(f.message).toContain(path.join(logDir, file));
@@ -576,6 +576,27 @@ describe('local-ci-runner: failure log retention', () => {
     expect(text).toContain('the-real-culprit.test.js');
     expect(text).toContain('exit: 1');
     expect(text).toContain(shaB);
+  });
+
+  test('kata ce0c: a flood of warnings after a jest FAIL + block does not hide the failure; bounded and redacted', () => {
+    const block = `FAIL tests/x.test.js\n  ● x › explodes with ${SECRET}\n\n    expected 1 to be 2\n\n      at tests/x.test.js:3:1`;
+    const flood = 'lib-bundler: warning - cannot read /some/where/missing.md\n'.repeat(600);
+    const run = () => gate({ failureLogDir: logDir, secretNames: ['LOG_TOKEN'], env: { PATH: '/usr/bin', LOG_TOKEN: SECRET } }, fakeDeps({ onCmd: failing('test', { stdout: `${block}\n${flood}\nFAIL tests/x.test.js` }) }));
+    const r = run();
+    const f = r.failures.find((x) => x.kind === 'step-failed' && x.node === 22);
+    expect(f.message).toContain('FAIL tests/x.test.js');
+    expect(f.message.match(/FAIL tests\/x\.test\.js/g)).toHaveLength(1 + (f.message.split('--- output tail ---')[1].includes('FAIL tests/x.test.js') ? 1 : 0));
+    expect(f.message).toContain('expected 1 to be 2');
+    expect(f.message).not.toContain(SECRET);
+    expect(f.message.length).toBeLessThan(4000 + 1500 + 600); // tail + evidence + prefix, never the whole 600-line flood
+    expect(r.ok).toBe(false);
+  });
+
+  test('kata ce0c: output with no jest markers keeps the plain tail', () => {
+    const r = gate({}, fakeDeps({ onCmd: failing('test', { stdout: 'plain tool failure: boom' }) }));
+    const f = r.failures.find((x) => x.kind === 'step-failed' && x.node === 22);
+    expect(f.message).toMatch(/: plain tool failure: boom$/);
+    expect(f.message).not.toContain('extracted');
   });
 
   test('a secret in a failing step output never reaches the log file or the report', () => {

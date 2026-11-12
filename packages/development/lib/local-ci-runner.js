@@ -484,6 +484,41 @@ function tail(text) {
   return t.length > OUTPUT_TAIL ? `...${t.slice(-OUTPUT_TAIL)}` : t;
 }
 
+/**
+ * Failing-test evidence for the head of a step-failure report. The tail alone can be all noise (hundreds of warnings
+ * from passing tests), so for jest output lead with every distinct `FAIL <path>` line (at most EVIDENCE_MAX_FAILS, each
+ * at most EVIDENCE_LINE_MAX chars) and the first `●` failure block (at most EVIDENCE_BLOCK_MAX chars). Other tools: ''.
+ * Best-effort: it never throws and never touches a verdict. Total report text is bounded by
+ * EVIDENCE_MAX + OUTPUT_TAIL plus the fixed prefix; the caller's redaction covers everything emitted.
+ */
+const EVIDENCE_MAX_FAILS = 10;
+const EVIDENCE_LINE_MAX = 200;
+const EVIDENCE_BLOCK_MAX = 400;
+const EVIDENCE_MAX = EVIDENCE_MAX_FAILS * (EVIDENCE_LINE_MAX + 1) + EVIDENCE_BLOCK_MAX + 100;
+
+function failureEvidence(text) {
+  try {
+    const src = String(text || '').replace(/\u001b\[[0-9;]*m/g, '');
+    const fails = [];
+    for (const m of src.matchAll(/^[ \t]*FAIL[ \t]+(\S.*)$/gm)) {
+      const line = `FAIL ${m[1].trim()}`.slice(0, EVIDENCE_LINE_MAX);
+      if (!fails.includes(line)) fails.push(line);
+    }
+    const bullet = /^[ \t]*●.*$/m.exec(src);
+    if (fails.length === 0 && !bullet) return '';
+    const parts = [];
+    if (fails.length) {
+      const shown = fails.slice(0, EVIDENCE_MAX_FAILS);
+      if (fails.length > shown.length) shown.push(`... and ${fails.length - shown.length} more FAIL line(s)`);
+      parts.push(shown.join('\n'));
+    }
+    if (bullet) parts.push(src.slice(bullet.index).trim().slice(0, EVIDENCE_BLOCK_MAX));
+    return `failing tests (extracted):\n${parts.join('\n\n')}\n--- output tail ---\n`;
+  } catch {
+    return '';
+  }
+}
+
 /** A failing step's retained output is capped: a runaway test must not fill the disk. */
 const FAILURE_LOG_MAX = 2 * 1024 * 1024;
 
@@ -947,7 +982,7 @@ function runGate(options, injected) {
             const why = r.timedOut
               ? `step ${s.name} timed out after ${Math.round((opts.stepTimeoutMs || DEFAULT_STEP_TIMEOUT_MS) / 1000)}s (hung?)`
               : `step "${s.name}" failed on Node ${major} at ${sha} (exit ${r.status})`;
-            fail('step-failed', s.name, major, `${why}${logFile ? `; full output: ${logFile}` : ''}: ${tail(`${r.stdout}\n${r.stderr}`)}`);
+            fail('step-failed', s.name, major, `${why}${logFile ? `; full output: ${logFile}` : ''}: ${failureEvidence(`${r.stdout}\n${r.stderr}`)}${tail(`${r.stdout}\n${r.stderr}`)}`);
           }
           // After EVERY step, whether it passed or not: a step may only leave untracked files under the base config's
           // output_paths. Anything else is a file the next command (or this step's own test) could read as permission.
