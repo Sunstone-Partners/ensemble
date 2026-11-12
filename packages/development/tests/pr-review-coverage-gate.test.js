@@ -175,6 +175,20 @@ describe('the gate: an unread path is not mergeable', () => {
       }
     });
 
+    test('a gap resolution without a decision, with follow-on, or with another word is not a decision: the gap stays open at the gate and in the list', () => {
+      const record = incomplete();
+      const full = { reason: 'fine', by: 'ldangelo', at: AT, headSha: HEAD };
+      for (const resolution of [full, { ...full, decision: 'follow-on' }, { ...full, decision: 'ACCEPT' }, { ...full, decision: 'fix-here' }, { ...full, decision: 1 }]) {
+        const coverage = { ...record, gaps: record.gaps.map((gap) => ({ ...gap, disposition: 'resolved', resolution })) };
+        const verdict = evaluateGate(gateInput({ coverage }));
+        expect([JSON.stringify(resolution), verdict.mergeable]).toEqual([JSON.stringify(resolution), false]);
+        expect(verdict.blockers[0].resolutionRejected).toContain('decision');
+        const listed = buildDispositionChoices({ ledger: [], security: { status: 'clean', findings: [] }, headSha: HEAD, coverage });
+        expect(listed.dispositionChoices.map((entry) => entry.id)).toEqual(['coverage:slice:s2']);
+        expect(listed.mergeConfirmation.acceptedCoverage).toEqual([]);
+      }
+    });
+
     test('a bot, or a login the policy does not name as a maintainer, cannot decide a gap', () => {
       const bot = evaluateGate(gateInput({ policy: { botLogins: ['ldangelo'] }, coverage: accepted(incomplete()) }));
       expect(bot.mergeable).toBe(false);

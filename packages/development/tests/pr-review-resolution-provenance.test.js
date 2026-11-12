@@ -95,7 +95,7 @@ describe('recordOperatorResolution refuses a decision that lacks provenance', ()
   });
 });
 
-describe('the typed decision: a closing resolution says accept or follow-on, and nothing else closes', () => {
+describe('the typed decision: only accept closes a blocking finding; follow-on is for a finding that never blocked', () => {
   const BAD = [
     ['missing', undefined],
     ['a fix selection (fix-here)', 'fix-here'],
@@ -110,40 +110,79 @@ describe('the typed decision: a closing resolution says accept or follow-on, and
     ['not text (a list)', ['accept']],
     ['not text (null)', null],
   ];
+  const nit = (overrides = {}) => finding({ id: 'N-1', severity: 'nit', ...overrides });
+  const withoutDecision = () => {
+    const { decision: _dropped, ...without } = decision();
+    return without;
+  };
 
   test('RESOLUTION_DECISIONS is exactly accept and follow-on', () => {
     expect(RESOLUTION_DECISIONS).toEqual(['accept', 'follow-on']);
   });
 
-  test.each(BAD)('recordOperatorResolution refuses a decision that is %s: names the allowed values, FIX_SELECTION, leaves the finding unchanged', (_name, bad) => {
+  test.each(BAD)('recordOperatorResolution refuses a decision that is %s: names the allowed values and leaves the finding unchanged', (_name, bad) => {
     const result = recordOperatorResolution(finding(), decision({ decision: bad }));
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("'accept'");
     expect(result.reason).toContain("'follow-on'");
-    expect(result.reason).toContain('FIX_SELECTION');
     expect(result.finding.resolution).toBeUndefined();
     expect(result.finding.disposition).toBe('fix');
   });
 
+  test.each(BAD.filter(([, value]) => typeof value === 'string' && /fix/i.test(value)))('a fix answer (%s) is named as a fix selection, FIX_SELECTION', (_name, bad) => {
+    const result = recordOperatorResolution(finding(), decision({ decision: bad }));
+
+    expect(result.reason).toContain('FIX_SELECTION');
+  });
+
+  test.each(BAD.filter(([, value]) => !(typeof value === 'string' && /fix/i.test(value))))('a decision that is %s is not called a fix selection, and the refusal says what to do next', (_name, bad) => {
+    const result = recordOperatorResolution(finding(), decision({ decision: bad }));
+
+    expect(result.reason).not.toContain('FIX_SELECTION');
+    expect(result.reason).toContain("record 'accept'");
+  });
+
   test('recordOperatorResolution refuses a decision object with no decision key at all', () => {
-    const { decision: _dropped, ...without } = decision();
-    const result = recordOperatorResolution(finding(), without);
+    const result = recordOperatorResolution(finding(), withoutDecision());
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("'accept'");
     expect(result.finding.resolution).toBeUndefined();
   });
 
-  test.each(RESOLUTION_DECISIONS)('recordOperatorResolution accepts %s and stores it on the resolution', (value) => {
-    const result = recordOperatorResolution(finding(), decision({ decision: value }));
+  test('recordOperatorResolution records accept on a blocking finding and stores it', () => {
+    const result = recordOperatorResolution(finding(), decision({ decision: 'accept' }));
 
     expect(result.ok).toBe(true);
     expect(result.finding.disposition).toBe('resolved');
+    expect(result.finding.resolution.decision).toBe('accept');
+  });
+
+  test('recordOperatorResolution refuses follow-on on a blocking finding: a follow-on PR cannot unblock the gate', () => {
+    const result = recordOperatorResolution(finding(), decision({ decision: 'follow-on' }));
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('a follow-on PR cannot unblock the gate');
+    expect(result.finding.resolution).toBeUndefined();
+  });
+
+  test('recordOperatorResolution refuses follow-on on a security-lane entry, whatever its severity, when told it is one', () => {
+    const entry = finding({ id: 'S-1', severity: 'pre-existing' });
+
+    expect(recordOperatorResolution(entry, decision({ decision: 'follow-on' }), undefined, true).ok).toBe(false);
+    expect(recordOperatorResolution(entry, decision({ decision: 'follow-on' })).ok).toBe(true);
+    expect(recordOperatorResolution(entry, decision({ decision: 'accept' }), undefined, true).ok).toBe(true);
+  });
+
+  test.each(['accept', 'follow-on'])('recordOperatorResolution records %s on a Nit and stores it', (value) => {
+    const result = recordOperatorResolution(nit(), decision({ decision: value }));
+
+    expect(result.ok).toBe(true);
     expect(result.finding.resolution.decision).toBe(value);
   });
 
-  test.each(BAD)('the gate ignores a hand-written resolution whose decision is %s: not mergeable, resolutionRejected names the decision', (_name, bad) => {
+  test.each(BAD)('the gate ignores a hand-written Important resolution whose decision is %s: not mergeable, resolutionRejected names the decision', (_name, bad) => {
     const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { decision: bad })] }));
     const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
 
@@ -153,8 +192,7 @@ describe('the typed decision: a closing resolution says accept or follow-on, and
   });
 
   test('the gate ignores a hand-written resolution with no decision key', () => {
-    const { decision: _dropped, ...without } = decision();
-    const result = evaluateGate(gateInput({ ledger: [{ ...finding(), disposition: 'resolved', resolution: without }] }));
+    const result = evaluateGate(gateInput({ ledger: [{ ...finding(), disposition: 'resolved', resolution: withoutDecision() }] }));
     const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
 
     expect(result.mergeable).toBe(false);
@@ -162,19 +200,50 @@ describe('the typed decision: a closing resolution says accept or follow-on, and
   });
 
   test('the gate ignores a decision-less resolution on a security-lane finding too', () => {
-    const { decision: _dropped, ...without } = decision();
-    const lane = { status: 'findings', findings: [{ ...finding({ id: 'S-1' }), disposition: 'resolved', resolution: without }] };
+    const lane = { status: 'findings', findings: [{ ...finding({ id: 'S-1' }), disposition: 'resolved', resolution: withoutDecision() }] };
     const result = evaluateGate(gateInput({ security: lane }));
 
     expect(result.mergeable).toBe(false);
     expect(result.securityLane.open).toEqual(['S-1']);
   });
 
-  test.each(RESOLUTION_DECISIONS)('the gate takes a resolution whose decision is %s', (value) => {
-    const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { decision: value })] }));
+  test('the gate takes accept on an Important finding', () => {
+    const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { decision: 'accept' })] }));
 
     expect(result.mergeable).toBe(true);
     expect(result.findings.open).toEqual([]);
+  });
+
+  test('the gate does NOT take follow-on on an Important finding: it stays open and says why', () => {
+    const result = evaluateGate(gateInput({ ledger: [resolved(finding(), { decision: 'follow-on' })] }));
+    const blocker = result.blockers.find((entry) => entry.code === BLOCKER_CODES.OPEN_IMPORTANT_FINDING);
+
+    expect(result.mergeable).toBe(false);
+    expect(blocker.resolutionRejected).toContain('a follow-on PR cannot unblock the gate');
+  });
+
+  test('the gate does NOT take follow-on on a security-lane finding', () => {
+    const lane = { status: 'findings', findings: [resolved(finding({ id: 'S-1' }), { decision: 'follow-on' })] };
+    const result = evaluateGate(gateInput({ security: lane }));
+
+    expect(result.mergeable).toBe(false);
+    expect(result.securityLane.open).toEqual(['S-1']);
+  });
+
+  test('the gate does not block on a Nit, so a follow-on or a missing decision on it changes nothing', () => {
+    const result = evaluateGate(gateInput({ ledger: [nit()] }));
+
+    expect(result.mergeable).toBe(true);
+  });
+
+  test('recordResolution refuses a decision that is present and invalid, and takes one that is absent or valid', () => {
+    for (const bad of ['ACCEPT', 'fix-here', 7, null, '']) {
+      const refused = recordResolution(finding(), { reason: 'r', decision: bad });
+      expect(refused.ok).toBe(false);
+      expect(refused.finding.resolution).toBeUndefined();
+    }
+    expect(recordResolution(finding(), { reason: 'r' }).ok).toBe(true);
+    expect(recordResolution(finding(), { reason: 'r', decision: 'follow-on' }).finding.resolution.decision).toBe('follow-on');
   });
 });
 

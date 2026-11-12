@@ -399,11 +399,15 @@ and any approvals reset. It is the operator's own answer that gets recorded; an 
 chooses for the operator, applies a `default`, or types a login or reason.
 
 * **Fix in a follow-on PR** and **Accept without fixing**: `ledger` `resolve` with the
-  operator's login, this head and a timestamp. A follow-on reason names the bead when
+  operator's login, this head, a timestamp, a reason and the typed `decision`
+  (`'follow-on'` or `'accept'`). Only `accept` closes a blocking or security finding or a coverage
+  gap (a follow-on PR cannot unblock the gate, so `resolve` refuses `follow-on` there); `follow-on`
+  is for a Nit or Pre-existing finding. A follow-on reason names the bead when
   one was recorded (`follow-on: <bead id>`), an accept carries the reason the operator gave.
 * **Fix on this PR: never `ledger` `resolve`.** The gate reads a resolution with
-  provenance as the finding closed, whatever its reason says, so recording this answer
-  there would let the merge pass with no fix. The selection (`{ id, by, at, headSha }`
+  provenance as the finding closed, so recording this answer
+  there would let the merge pass with no fix; `resolve` refuses it (`decision` must be `accept` or
+  `follow-on`, and a fix answer is neither). The selection (`{ id, by, at, headSha }`
   per finding: the operator's login, the time and the head) is the `FIX_SELECTION` of a
   separate fix run (`SKILL.md`, Step 5), which sends all of it to ONE fix agent and ONE
   push. The push moves the head, so approvals and every earlier decision stop counting;
@@ -463,7 +467,8 @@ own remediation subagents.
    security finding is never batched). Only a non-security Nit or Pre-existing group gets
    follow-on: ONE single-choice question, follow-on (recommended) or Accept, with one typed
    reason for the group when `dispositionGroups` lists `accept` as a batch choice. Record each
-   through `ledger` `resolve` (a collapsed `file:<path>` entry expands to its members first).
+   through `ledger` `resolve` with `decision: 'accept'` (`'follow-on'` for a Nit or Pre-existing
+   follow-on; `lane: true` for a security-lane entry) (a collapsed `file:<path>` entry expands to its members first).
    The reason of a follow-on is `follow-on: <bead id>`, or `follow-on` when the entry has no
    bead.
    A coverage entry offers Accept only as well: one at a time, for a reason the operator types, through `ledger` `resolve`

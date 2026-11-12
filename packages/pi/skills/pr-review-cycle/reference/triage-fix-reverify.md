@@ -6,6 +6,7 @@ Companion to `SKILL.md`; every rule here is normative.
 ### Step 4 -- Triage all findings before any edit
 
 Classify every **presented** ledger entry from Step 3b with `isActionable`
+(the ledger's raw reading: the gate and the run's status are the authority on whether a recorded decision counts)
 **before making any code change**. An unresolved thread or an Important
 finding is actionable unless the stopping rule (top of this skill) lets the
 triager defer it as non-blocking: `blocking: false` with a recorded reason, and

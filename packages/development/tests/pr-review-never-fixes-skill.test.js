@@ -117,7 +117,7 @@ describe('the operator chooses, and a Fix on this PR answer is never a resolutio
     expect(INPUTS).toContain('Never written with `ledger` `resolve`, which would close the finding at the gate without the fix.');
   });
 
-  test('the premise is false now: a Fix on this PR answer is refused as a resolution, only accept or follow-on close, and a decision-less resolution closes nothing', () => {
+  test('the premise is false now: a Fix on this PR answer is refused as a resolution, only accept closes, and a decision-less resolution closes nothing', () => {
     const head = 'a'.repeat(40);
     const important = {
       id: 'F-1',
@@ -161,13 +161,16 @@ describe('the operator chooses, and a Fix on this PR answer is never a resolutio
     const blocker = handWritten.blockers.find((entry) => entry.resolutionRejected);
     expect(blocker.resolutionRejected).toContain('decision');
 
-    // accept and follow-on close it.
-    for (const decision of ['accept', 'follow-on']) {
-      const recorded = recordOperatorResolution(important, { ...base, reason: 'operator decided', decision });
-      expect(recorded.ok).toBe(true);
-      expect(recorded.finding.resolution.decision).toBe(decision);
-      expect(gateFor([recorded.finding]).mergeable).toBe(true);
-    }
+    // follow-on cannot unblock the gate.
+    const followOn = recordOperatorResolution(important, { ...base, reason: 'operator decided', decision: 'follow-on' });
+    expect(followOn.ok).toBe(false);
+    expect(gateFor([{ ...important, disposition: 'resolved', resolution: { ...base, decision: 'follow-on' } }]).mergeable).toBe(false);
+
+    // accept closes it.
+    const accepted = recordOperatorResolution(important, { ...base, reason: 'operator decided', decision: 'accept' });
+    expect(accepted.ok).toBe(true);
+    expect(accepted.finding.resolution.decision).toBe('accept');
+    expect(gateFor([accepted.finding]).mergeable).toBe(true);
   });
 
   test('the decision list the skill shows says the head moves and approvals reset, and lets a blocking finding be fixed or accepted only', () => {
