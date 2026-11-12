@@ -1,0 +1,23 @@
+{
+ "number": 207,
+ "state": "MERGED",
+ "head": "562ded7dd65c0221481af21d416a5ea9edfc70ef",
+ "base": "dev",
+ "draft": false,
+ "comments": [
+  {
+   "author": "ldangelo",
+   "createdAt": "2026-10-30T14:04:54Z"
+  },
+  {
+   "author": "ldangelo",
+   "createdAt": "2026-11-03T18:25:15Z"
+  },
+  {
+   "author": "ldangelo",
+   "createdAt": "2026-11-12T02:43:00Z"
+  }
+ ],
+ "reviews": 1,
+ "labels": []
+}
