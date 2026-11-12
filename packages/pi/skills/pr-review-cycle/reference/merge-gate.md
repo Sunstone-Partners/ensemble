@@ -229,14 +229,16 @@ skill) is not a decision either: the gate ignores it, and the finding stays open
 its blocker carrying `deferralRejected`, until it is fixed or the operator
 records a decision. Record a decision only with `node "$PR_REVIEW_CLI"
 ledger` action `resolve`
-(`{ action, finding, resolution:{ reason, by, headSha, at }, policy }`, the same
-`policy`), and only from the operator's own answer: never type a reason, a
+(`{ action, finding, resolution:{ decision, reason, by, headSha, at }, policy }`, the same
+`policy`; `decision` is exactly `accept` or `follow-on`, the operator's closing choice, and anything else is refused: a
+"Fix on this PR" answer is a `FIX_SELECTION`, never a recorded resolution), and only from the operator's own answer: never type a reason, a
 login or a decision on the operator's behalf. A new push moves the head, so a
 decision made on an earlier head stops counting and is asked again. **What this
-proves and what it does not:** a reason is present, it names a login (a bot or a
+proves and what it does not:** a `decision` (`accept` or `follow-on`) and a reason are present, it names a login (a bot or a
 stranger is refused only when `policy` says so) and it is bound to this head; it
 cannot prove a human typed it, and a session that writes a permitted login into
-`by` defeats it. A `cleared: true` flag is likewise taken at its word: the skill's only
+`by`, or types `accept`, defeats it: the typed `decision` makes the closing choice explicit and refuses a fix
+answer, it does not authenticate the operator. A `cleared: true` flag is likewise taken at its word: the skill's only
 writer of it is `PR_REVIEW_CLEAR_CLI`, which derives it from git (Step 6); `carry reconcile`
 writes none. A flag written any other way is outside this rule. The control against that is
 this rule, not the code.

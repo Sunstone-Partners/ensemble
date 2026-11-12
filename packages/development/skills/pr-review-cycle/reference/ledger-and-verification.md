@@ -16,8 +16,9 @@ absent or misspelt one is a CLI error (non-zero exit), never an empty default.
 * `recordRound` -- `{ action, ledger, incoming, round }` (TRD-013)
 * `resolve` -- `{ action, finding, resolution }`, plus an optional `policy` -- records a decision on one finding (see below)
 
-`resolve` takes `resolution: { reason, by, headSha, at }` and refuses (CLI error)
-anything short of all four: `by` is the deciding login, `headSha` the head the
+`resolve` takes `resolution: { decision, reason, by, headSha, at }` and refuses (CLI error)
+anything short of all five: `decision` is exactly `accept` or `follow-on` (a "Fix on this PR" answer is a
+`FIX_SELECTION`, not a resolution, and is refused), `by` is the deciding login, `headSha` the head the
 decision was made against, `at` an ISO-8601 timestamp with a zone. Pass the Step 1b
 `policy` block as `policy` (the one key that may be left out): `by` must then not be one of its `botLogins` and, when it
 names `maintainerLogins`, must be one of them (without it the login is checked for
