@@ -221,7 +221,7 @@ when it carries all five of `decision`, `reason`, `by` (the deciding login),
 `at` (an ISO-8601 timestamp with a zone) and `headSha` (equal to the `headSha` the gate
 is asked about). `accept` is the only decision that closes a blocking finding (Important,
 Critical, unrecognised severity, a security-lane finding, a coverage gap); `follow-on` closes
-only a Nit or Pre-existing finding, because a follow-on PR cannot unblock the gate. Given `policy`, `by` is not one of its `botLogins` and is
+only a Nit or Pre-existing finding, because a follow-on PR cannot unblock the gate; and, given `policy`, `by` is not one of its `botLogins` and is
 one of its `maintainerLogins` when it names any. Anything less is ignored: the
 finding stays open and its blocker carries `resolutionRejected` saying why. The
 review's own deferral of an Important finding (`blocking: false`,
