@@ -10,8 +10,7 @@ Classify every **presented** ledger entry from Step 3b with `isActionable`, pass
 answers as the gate reads the finding (`reading: 'gate'`); without `headSha` it is the ledger's raw reading, which is not
 whether a finding still blocks. **Before making any code change.** An unresolved thread or an Important
 finding is actionable: the gate holds an Important finding open whatever its own `blocking: false`
-deferral and reason say, and it closes only on a fix or the operator's recorded decision (a Critical never closes
-by deferral). A Nit finding may be `deferred` only with a recorded reason; a `Pre-existing`
+deferral and reason say, and it closes only on a fix or the operator's recorded decision. A Nit finding may be `deferred` only with a recorded reason; a `Pre-existing`
 finding is reported separately and never blocks; an
 uncertain finding is `adjudicate` and is never dropped. A `filtered` finding
 is not triaged and not fixed -- it was already answered by verification --
