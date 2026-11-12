@@ -59,7 +59,7 @@ const {
   isCritical,
   claimsStoppingRuleDeferral,
   normalizeSeverity,
-  withoutRefusedResolution,
+  findingAsGateReads,
 } = require('./pr-review-ledger');
 const { gradeCoverage } = require('./pr-review-coverage');
 const { TIERS, HUMANS_REQUIRED } = require('./pr-review-tier');
@@ -202,10 +202,10 @@ function applyProvenance(entry, headSha, lane, policy) {
     const { blocking, ...rest } = candidate;
     return rest;
   };
-  const refusal = isObject(resolution) ? withoutRefusedResolution(entry, headSha, lane, policy).refusal : null;
+  // The reading itself is the shared one (`findingAsGateReads`); the status counts and the CLI take the same.
+  const { entry: reading, refusal: found } = findingAsGateReads(entry, headSha, lane, policy);
+  const refusal = isObject(resolution) ? found : null;
 
-  let reading = refusal === null ? entry : withoutResolution;
-  if (severity === 'important') reading = withoutDeferral(reading);
   const stillOpen = isActionable(reading);
 
   const resolutionWouldHaveClosed = refusal !== null && !isActionable(severity === 'important' ? withoutDeferral(entry) : entry);

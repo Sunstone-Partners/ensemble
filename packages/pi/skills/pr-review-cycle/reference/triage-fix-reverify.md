@@ -6,7 +6,7 @@ Companion to `SKILL.md`; every rule here is normative.
 ### Step 4 -- Triage all findings before any edit
 
 Classify every **presented** ledger entry from Step 3b with `isActionable`
-(the ledger's raw reading: the gate and the run's status are the authority on whether a recorded decision counts)
+passing `headSha` (the head under review) and `policy` (the Step 1b block) so it answers as the gate reads the finding (`reading: 'gate'`: a resolution the gate would not honour and an Important finding's `blocking: false` deferral are dropped first); without `headSha` it is the ledger's raw reading, which is not whether a finding still blocks
 **before making any code change**. An unresolved thread or an Important
 finding is actionable unless the stopping rule (top of this skill) lets the
 triager defer it as non-blocking: `blocking: false` with a recorded reason, and

@@ -946,11 +946,10 @@ function resolutionProvenanceProblem(finding, headSha, policy, lane = false) {
  * session that wrote a login there, is the skill's rule; see
  * `hasResolutionProvenance` for what is and is not proven.
  *
- * HONEST LIMIT of THIS recorder: it acts on the finding payload the caller passes (its `severity`, and the optional `lane`),
- * whereas the gate acts on the STORED record and is independent of it. A relabelled or lane-omitted payload can make this return
- * `ok:true` for a `follow-on` the gate then ignores: the finding stays open (it fails closed, it never closes). So the caller
- * splices only the returned `resolution` onto the STORED finding it looked up by id, never a payload-supplied finding, and reads
- * `severity` and `lane` from the stored state report.
+ * HONEST LIMIT of THIS recorder: it acts on the finding object and `lane` flag it is handed. Handed a relabelled or lane-omitted
+ * copy it can return `ok:true` for a `follow-on` the gate then ignores (the finding stays open: it fails closed, it never
+ * closes). The CLI does not hand it a payload's class: it goes through `recordStoredResolution`, which looks the finding up BY ID
+ * in the STORED state and takes its severity and lane from there.
  *
  * @param {Object} finding
  * @param {{decision:'accept'|'follow-on', reason:string, by:string, headSha:string, at:string}} decision
@@ -976,10 +975,7 @@ function recordOperatorResolution(finding, decision, policy, lane = false) {
 /**
  * The finding as the gate and the status count read it: a resolution that does not count (`resolutionProvenanceProblem`, with
  * `headSha` and `policy`) is dropped, so `isActionable` is asked about what the gate would ask. A finding that needs no
- * operator answer (a Nit or Pre-existing ledger finding) or that a later head cleared is returned as written. What is shared is exactly this
- * strip of a refused resolution: the gate (`applyProvenance`) and the run's status counts both use it. What is NOT shared is
- * the gate's further strip of an Important finding's `blocking:false` deferral (`withoutDeferral`): the status counts do not do
- * it, a difference that predates the typed decision and is tracked in its own kata issue.
+ * operator answer (a Nit or Pre-existing ledger finding) or that a later head cleared is returned as written. The whole gate reading (this strip and the Important deferral strip) is `findingAsGateReads`.
  *
  * @param {Object} entry
  * @param {string|null} headSha
@@ -994,6 +990,98 @@ function withoutRefusedResolution(entry, headSha, lane, policy) {
   if (refusal === null) return { entry, refusal: null };
   const { resolution, ...rest } = entry;
   return { entry: rest, refusal };
+}
+
+/** Two severity words name one class: the same canonical class, or (when neither is a known word) the same text. */
+function sameSeverityWord(a, b) {
+  const na = normalizeSeverity(a);
+  const nb = normalizeSeverity(b);
+  if (na !== null || nb !== null) return na === nb;
+  return String(a).trim().toLowerCase() === String(b === undefined ? '' : b).trim().toLowerCase();
+}
+
+/** One finding id however it was written (`7` and `'7'` are the same finding). */
+function idKey(id) {
+  return typeof id === 'number' ? String(id) : isText(id) ? id.trim() : null;
+}
+
+/**
+ * Records an operator decision on a finding the STORED state holds, found BY ID, with its class read from where it is stored: the
+ * gate acts on the stored record, so the recorder must too. The caller passes the stored `ledger`, the stored `security` record
+ * (`{status, findings}`, or just the findings array) and, for a coverage gap, the stored `coverage` record (`{gaps}`); a finding in
+ * the security lane's findings is a lane entry (blocking whatever its severity), one in the ledger takes its own severity, a gap
+ * is blocking. The payload carries no class. If it states a `severity` or `lane` anyway and it differs from the stored one, the
+ * decision is REFUSED (a mislabelled request is never quietly corrected). Unknown id, an id found twice in one list, and a stored
+ * record that cannot be read are refused too. The answer carries the STORED finding with the resolution attached.
+ *
+ * @param {{id:string|number, resolution:Object, ledger:Object[], security?:Object|Object[], coverage?:Object, policy?:Object, severity?:string, lane?:boolean}} input
+ * @returns {{ok:true, finding:Object, lane:boolean, source:'ledger'|'security'|'coverage'}|{ok:false, reason:string}}
+ */
+function recordStoredResolution(input) {
+  if (!isObject(input)) return { ok: false, reason: 'a resolution needs a request object' };
+  const key = idKey(input.id);
+  if (key === null) return { ok: false, reason: "a resolution needs the stored finding's 'id' (text or a number)" };
+  if (!Array.isArray(input.ledger)) return { ok: false, reason: "a resolution needs the STORED 'ledger' array, to look the finding up by id" };
+  const securityFindings = Array.isArray(input.security) ? input.security : isObject(input.security) && Array.isArray(input.security.findings) ? input.security.findings : [];
+  if (input.security !== undefined && input.security !== null && !Array.isArray(input.security) && !(isObject(input.security) && (input.security.findings === undefined || Array.isArray(input.security.findings)))) {
+    return { ok: false, reason: "'security' must be the stored security record ({ status, findings }) or its findings array" };
+  }
+  const gaps = isObject(input.coverage) && Array.isArray(input.coverage.gaps) ? input.coverage.gaps : [];
+
+  const found = [];
+  for (const [source, list] of [['security', securityFindings], ['ledger', input.ledger], ['coverage', gaps]]) {
+    const matches = list.filter((entry) => isObject(entry) && idKey(entry.id) === key);
+    if (matches.length > 1) return { ok: false, reason: `the stored ${source} holds ${matches.length} entries with id ${JSON.stringify(input.id)}: the finding cannot be told apart` };
+    if (matches.length === 1) found.push({ source, stored: matches[0] });
+  }
+  if (found.length === 0) return { ok: false, reason: `no stored finding has id ${JSON.stringify(input.id)} (in the ledger, the security findings or the coverage gaps): a decision is recorded only on a finding the state holds` };
+
+  // The lane's copy wins, as it does for the gate and the disposition list (security is blocking whatever its severity).
+  const { source, stored } = found[0];
+  const lane = source === 'security';
+  if (input.severity !== undefined && !sameSeverityWord(input.severity, stored.severity)) {
+    return { ok: false, reason: `the payload says severity ${JSON.stringify(input.severity)} but the stored finding ${JSON.stringify(input.id)} is ${JSON.stringify(stored.severity === undefined ? null : stored.severity)}: the class is read from the stored record, never from the request` };
+  }
+  if (input.lane !== undefined && input.lane !== lane) {
+    return { ok: false, reason: `the payload says lane:${JSON.stringify(input.lane)} but the stored finding ${JSON.stringify(input.id)} ${lane ? 'is a security-lane finding' : `is not in the security lane (found in the ${source})`}: the class is read from the stored record, never from the request` };
+  }
+  const result = recordOperatorResolution(stored, input.resolution, input.policy, lane);
+  if (!result.ok) return { ok: false, reason: result.reason };
+  return { ok: true, finding: result.finding, lane, source };
+}
+
+/**
+ * THE finding as the merge gate reads it at (`headSha`, `policy`): the one reading the gate (`applyProvenance`), the run's
+ * status counts and the CLI `ledger isActionable` (when given a head) all take. Two strips, in the gate's own order:
+ * a resolution the gate would not honour is dropped (`withoutRefusedResolution`), and an Important finding's `blocking:false`
+ * deferral is dropped (a deferral is not an answer; it never closed an Important finding at the gate). A finding that needs no
+ * operator answer (a Nit or Pre-existing ledger finding, not a lane entry) or that a later head cleared is returned as written.
+ * Ask `isActionable` of `.entry`.
+ *
+ * @param {Object} entry
+ * @param {string|null} headSha
+ * @param {boolean} [lane] True for a security-lane entry.
+ * @param {Object} [policy]
+ * @returns {{entry:Object, refusal:string|null}} `refusal` is why a recorded resolution was dropped, else null.
+ */
+function findingAsGateReads(entry, headSha, lane, policy) {
+  if (!isObject(entry) || entry.cleared === true) return { entry, refusal: null };
+  const severity = normalizeSeverity(entry.severity);
+  if (lane !== true && (severity === 'pre-existing' || severity === 'nit')) return { entry, refusal: null };
+  const { entry: kept, refusal } = withoutRefusedResolution(entry, headSha, lane === true, policy);
+  if (severity !== 'important') return { entry: kept, refusal };
+  const { blocking, ...rest } = kept;
+  return { entry: rest, refusal };
+}
+
+/**
+ * Whether a Nit or Pre-existing finding is DECIDED: a later head cleared it, or the operator's decision is recorded on it
+ * with the provenance the gate demands. The ONE predicate the disposition list and the run's status counts share. It never
+ * touches a merge verdict (a Nit never blocks) and never opens a fix round (`isActionable` is unchanged): a reason-only Nit
+ * is closed for the gate and the status, and still undecided for the operator, in both places.
+ */
+function isNonBlockingDecided(entry, headSha, policy) {
+  return isObject(entry) && (entry.cleared === true || hasResolutionProvenance(entry, headSha, policy, false));
 }
 
 /** One changed location: `'path'`, `'path:line'`, or `{ path, lines?: number[] }`. `lines: null` means the whole file. */
@@ -1385,6 +1473,9 @@ module.exports = {
   hasResolutionProvenance,
   resolutionProvenanceProblem,
   withoutRefusedResolution,
+  findingAsGateReads,
+  recordStoredResolution,
+  isNonBlockingDecided,
   closesBlockingFinding,
   RESOLUTION_DECISIONS,
   clearFixedFindings,
