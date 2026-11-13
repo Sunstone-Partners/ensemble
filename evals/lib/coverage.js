@@ -1,0 +1,143 @@
+'use strict';
+
+/**
+ * Skill coverage: every shipped skill appears exactly once as `evaluated`, `exempt` or `missing`; only `missing` counts
+ * against coverage.
+ *   shipped skills  source skills `packages/<pkg>/skills/<skill>/SKILL.md` (the generated/aggregate packages `full`, `pi`,
+ *                   `codex`, `opencode` are skipped: they hold copies or symlinks). A skill directory that is a symlink,
+ *                   an invalid name, or a name shipped by two source packages is an error, not a silent pick.
+ *   evaluated       a VALID loaded `evals/skills/<skill>/eval.json` names it. A rejected definition leaves the skill
+ *                   missing (with the rejection shown). Legacy `evals/scenarios/*` are never read: they are not skills.
+ *   exempt          `evals/exemptions.json` maps the skill to a non-empty reason. An empty/blank reason is `missing`.
+ * Errors (the report must not be trusted until fixed): an unreadable or malformed exemptions file, a duplicate key, an
+ * exemption for a skill that does not exist (stale) or that already has an eval, an invalid skill name.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { loadEvalDefs, NON_SOURCE_PACKAGES } = require('./eval-def');
+const { isSkillName } = require('./results');
+
+const REPO_ROOT = path.resolve(__dirname, '../..');
+const EXEMPTIONS_FILE = path.join(__dirname, '..', 'exemptions.json');
+
+class CoverageError extends Error {
+  constructor(message) { super(message); this.name = 'CoverageError'; }
+}
+
+/**
+ * Parse the exemptions file text: a flat JSON object `{ "<skill>": "<reason>" }`. JSON.parse keeps the last of two equal
+ * keys, so the top-level keys are scanned separately and a repeat is reported. Returns `{ map, duplicates }`.
+ */
+function parseExemptions(text, name = 'exemptions.json') {
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { throw new CoverageError(`${name}: not valid JSON (${e.message})`); }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new CoverageError(`${name}: must be a JSON object mapping skill name to reason`);
+  // Key scan (the text is already known to be valid JSON, so the structure is well formed).
+  const keys = [];
+  let depth = 0;
+  let expectKey = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      if (depth === 1 && expectKey) keys.push(JSON.parse(text.slice(i, j + 1)));
+      expectKey = false;
+      i = j;
+    } else if (c === '{' || c === '[') { depth++; expectKey = c === '{' && depth === 1; } else if (c === '}' || c === ']') depth--;
+    else if (c === ',' && depth === 1) expectKey = true;
+  }
+  const seen = new Set();
+  const duplicates = [...new Set(keys.filter((k) => (seen.has(k) ? true : (seen.add(k), false))))];
+  return { map: doc, duplicates };
+}
+
+/** The exemptions file at `file`; a missing file is an empty map, an unreadable or malformed one throws. */
+function loadExemptions(file = EXEMPTIONS_FILE) {
+  if (!fs.existsSync(file)) return { map: {}, duplicates: [] };
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { throw new CoverageError(`${path.basename(file)}: cannot read (${e.code || e.message})`); }
+  return parseExemptions(text, path.basename(file));
+}
+
+/**
+ * Shipped skills: `{ skills: Map(name -> [package, ...]), errors }`. Packages without a `skills/` directory are skipped.
+ */
+function listShippedSkills(repoRoot = REPO_ROOT) {
+  const packagesDir = path.join(repoRoot, 'packages');
+  if (!fs.existsSync(packagesDir)) throw new CoverageError('packages/ directory not found: nothing to cover');
+  const skills = new Map();
+  const errors = [];
+  for (const pkg of fs.readdirSync(packagesDir, { withFileTypes: true }).filter((e) => e.isDirectory() && !NON_SOURCE_PACKAGES.has(e.name)).map((e) => e.name).sort()) {
+    const skillsRoot = path.join(packagesDir, pkg, 'skills');
+    if (!fs.existsSync(skillsRoot) || !fs.lstatSync(skillsRoot).isDirectory()) continue;
+    for (const name of fs.readdirSync(skillsRoot).sort()) {
+      const dir = path.join(skillsRoot, name);
+      const st = fs.lstatSync(dir);
+      if (st.isSymbolicLink()) { errors.push(`packages/${pkg}/skills/${name} is a symlink: a source package must hold real skill directories`); continue; }
+      if (!st.isDirectory()) continue;
+      if (!isSkillName(name)) { errors.push(`packages/${pkg}/skills/${name}: invalid skill name (letters, digits, ".", "_" and "-" only)`); continue; }
+      if (!fs.existsSync(path.join(dir, 'SKILL.md'))) { errors.push(`packages/${pkg}/skills/${name} has no SKILL.md`); continue; }
+      skills.set(name, [...(skills.get(name) || []), pkg]);
+    }
+  }
+  for (const [name, pkgs] of skills) {
+    if (pkgs.length > 1) errors.push(`skill "${name}" is shipped by more than one source package (${pkgs.join(', ')}): a skill must appear once`);
+  }
+  return { skills, errors };
+}
+
+/**
+ * Coverage of the skills under `repoRoot`. Options: skillsDir (evals), exemptionsFile.
+ * Returns { rows: [{ skill, packages, status, reason?, evalId?, runtimes?, note? }], errors, counts }.
+ */
+function computeCoverage({ repoRoot = REPO_ROOT, skillsDir = path.join(__dirname, '..', 'skills'), exemptionsFile = EXEMPTIONS_FILE } = {}) {
+  const { skills, errors: skillErrors } = listShippedSkills(repoRoot);
+  const errors = [...skillErrors];
+  const defs = loadEvalDefs({ skillsDir, repoRoot });
+  const evalsBySkill = new Map();
+  for (const ev of defs.evals) evalsBySkill.set(ev.skill, [...(evalsBySkill.get(ev.skill) || []), ev]);
+  const rejectedBySkill = new Map(defs.rejected.map((r) => [path.basename(r.dir), r.error.message]));
+  const { map: exemptions, duplicates } = loadExemptions(exemptionsFile);
+
+  for (const d of duplicates) errors.push(`exemptions.json: duplicate exemption for "${d}"`);
+  for (const [name, reason] of Object.entries(exemptions)) {
+    if (!isSkillName(name)) errors.push(`exemptions.json: invalid skill name "${name.slice(0, 60)}"`);
+    else if (!skills.has(name)) errors.push(`exemptions.json: stale exemption "${name}": no such shipped skill`);
+    else if (evalsBySkill.has(name)) errors.push(`exemptions.json: stale exemption "${name}": the skill has an eval, so it cannot also be exempt`);
+    if (reason !== null && typeof reason !== 'string') errors.push(`exemptions.json: the reason for "${name}" must be a string`);
+  }
+
+  const rows = [...skills.keys()].sort().map((skill) => {
+    const packages = skills.get(skill);
+    const evs = evalsBySkill.get(skill);
+    if (evs) return { skill, packages, status: 'evaluated', evalId: evs.map((e) => e.id).join(', '), runtimes: [...new Set(evs.flatMap((e) => e.runtimes))].sort() };
+    const reason = Object.prototype.hasOwnProperty.call(exemptions, skill) ? exemptions[skill] : undefined;
+    if (typeof reason === 'string' && reason.trim() !== '') return { skill, packages, status: 'exempt', reason: reason.trim() };
+    const note = rejectedBySkill.has(skill) ? `its eval was rejected: ${rejectedBySkill.get(skill)}`
+      : Object.prototype.hasOwnProperty.call(exemptions, skill) ? 'exempt but no reason is given' : 'no eval and no exemption';
+    return { skill, packages, status: 'missing', note };
+  });
+  const counts = { evaluated: 0, exempt: 0, missing: 0, total: rows.length };
+  for (const r of rows) counts[r.status]++;
+  return { rows, errors, counts };
+}
+
+/** Plain-text report. `missing` is also called out as uncovered; the counts line says how many count against coverage. */
+function formatCoverage(c) {
+  const out = [];
+  for (const status of ['evaluated', 'exempt', 'missing']) {
+    const rows = c.rows.filter((r) => r.status === status);
+    out.push(`${status.toUpperCase()}${status === 'missing' ? ' (uncovered)' : ''}: ${rows.length}`);
+    for (const r of rows) {
+      const detail = status === 'evaluated' ? `eval ${r.evalId} [${r.runtimes.join(', ')}]` : status === 'exempt' ? `reason: ${r.reason}` : r.note;
+      out.push(`  ${r.skill} (${r.packages.join(', ')}): ${detail}`);
+    }
+  }
+  out.push(`total ${c.counts.total}: ${c.counts.evaluated} evaluated, ${c.counts.exempt} exempt, ${c.counts.missing} missing`);
+  for (const e of c.errors) out.push(`ERROR ${e}`);
+  return out.join('\n');
+}
+
+module.exports = { computeCoverage, formatCoverage, listShippedSkills, loadExemptions, parseExemptions, CoverageError, EXEMPTIONS_FILE };

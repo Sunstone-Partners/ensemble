@@ -228,5 +228,5 @@ function evalToScenario(ev) {
 }
 
 module.exports = {
-  EvalDefinitionError, validateEvalDef, loadEvalDefs, findSkillPackages, evalToScenario, isJudged, SKILLS_DIR,
+  EvalDefinitionError, validateEvalDef, loadEvalDefs, findSkillPackages, evalToScenario, isJudged, SKILLS_DIR, NON_SOURCE_PACKAGES,
 };

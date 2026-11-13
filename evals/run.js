@@ -15,7 +15,10 @@ const fs = require('fs');
 const path = require('path');
 const { runGraders } = require('./lib/graders');
 const { loadEvalDefs, evalToScenario, EvalDefinitionError } = require('./lib/eval-def');
-const { summarizeRun } = require('./lib/results');
+const results = require('./lib/results');
+const hash = require('./lib/hash');
+const report = require('./lib/report');
+const { summarizeRun } = results;
 const { resolveJudge } = require('./lib/runners/judge');
 const sandbox = require('./lib/sandbox');
 const envlib = require('./lib/env');
@@ -28,6 +31,8 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const SCENARIOS_DIR = process.env.EVALS_SCENARIOS_DIR || path.join(__dirname, 'scenarios');
 const EVAL_SKILLS_DIR = process.env.EVALS_SKILLS_DIR || path.join(__dirname, 'skills');
 const RESULTS_DIR = process.env.EVALS_RESULTS_DIR || path.join(__dirname, 'results');
+// Committed baseline summaries. Overridable; when only EVALS_RESULTS_DIR is overridden (tests) they go beside it, never into the repository.
+const BASELINES_DIR = process.env.EVALS_BASELINES_DIR || (process.env.EVALS_RESULTS_DIR ? path.join(path.dirname(process.env.EVALS_RESULTS_DIR), 'baselines') : results.BASELINES_DIR);
 
 let activeSecrets = []; // credential values in play; the top-level error handler redacts with these
 
@@ -358,12 +363,12 @@ async function main(argv = process.argv.slice(2)) {
   const suite = await runSuite(items, { concurrency, capUsd, reserve: reserveItem, run: exec });
   const byItem = new Map(suite.done.map((d) => [d.item, d.result]));
 
-  const results = [];
+  const evalResults = [];
   for (const s of scenarios) {
     const ev = evById.get(s.id);
     if (!ev) {
       const r = byItem.get(items.find((i) => i.legacy === s)) || { id: s.id, type: s.type, skill: s.skill, pass: null, outcome: 'incomplete', skipped: 'budget exhausted', graders: [], runtime: s.type === 'agent' ? opts.runtime : null };
-      results.push(r);
+      evalResults.push(r);
       continue;
     }
     const plan = plans.get(ev.id);
@@ -374,7 +379,7 @@ async function main(argv = process.argv.slice(2)) {
     }
     const copy = copies.get(ev.id);
     const evalResult = envlib.redactDeep(arms.summarizeEval(ev, plan, runs, { runtime: opts.runtime, abort: aborts.get(ev.id) || null, copy }), secrets);
-    results.push(evalResult);
+    evalResults.push(evalResult);
     out(`eval ${ev.id}: ${evalResult.outcome.toUpperCase()}`);
     if (evalResult.abort) {
       err(`ABORTED ${evalResult.abort}`);
@@ -388,15 +393,48 @@ async function main(argv = process.argv.slice(2)) {
     out(`  skill invoked in ${evalResult.invokedRuns}/${evalResult.withSkill.runs} with-skill run(s)${evalResult.invokedAsExpected === false ? ` (expectInvoked ${evalResult.expectInvoked}: NOT as expected)` : ''}`);
     if (copy) out(`  evaluated copy: ${describeCopy(copy)}`);
   }
-  const incomplete = results.filter((r) => r.outcome === 'incomplete');
+  const incomplete = evalResults.filter((r) => r.outcome === 'incomplete');
   for (const r of incomplete.filter((x) => !x.arms)) out(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
   for (const r of incomplete.filter((x) => x.arms)) out(`  INCOMPLETE ${r.id}: cost cap $${capUsd} reached before every run started (spend plus in-flight reservations)`);
+
+  // Stored records and committed baseline summaries (TRD-014/015). Every record is schema-validated, redacted and relativized
+  // before it is written; missing evidence is a named error, never a silent skip.
+  const records = [];
+  const storeErrors = [];
+  const writtenBaselines = new Set();
+  for (const evalResult of evalResults.filter((r) => r.arms)) {
+    const ev = evById.get(evalResult.id);
+    try {
+      const copy = copies.get(ev.id);
+      const ctx = { skill: ev.skill, skillHash: copy.skillHash, skillVersion: copy.skillVersion, evalVersion: hash.evalHash(ev.dir) };
+      for (const r of evalResult.runs) records.push(results.sanitize(results.buildResult(r, ctx), { secrets, repoRoot: REPO_ROOT }));
+      const bctx = { ...ctx, model: opts.model || 'default' };
+      let candidate;
+      try { candidate = results.toBaselineSummary(evalResult, bctx); } catch (e) {
+        if (!(e instanceof results.BaselineError)) throw e;
+        out(`  baseline summary not written: ${e.message}`);
+        continue;
+      }
+      const key = `${candidate.runtime}/${candidate.skill}`;
+      if (writtenBaselines.has(key)) throw new Error(`two evals in this suite name skill "${candidate.skill}" under ${candidate.runtime}; they would overwrite one baseline file`);
+      const check = results.checkAgainstBaseline(BASELINES_DIR, evalResult, bctx);
+      out(`  regression check vs committed summary: ${check.status}${check.reasons.length ? ` (${check.reasons.join('; ')})` : ''}`);
+      const written = results.writeBaseline(BASELINES_DIR, candidate, { secrets, repoRoot: REPO_ROOT });
+      writtenBaselines.add(key);
+      out(`  baseline summary: ${path.relative(process.cwd(), written)}`);
+    } catch (e) {
+      storeErrors.push(e.message);
+      err(`RESULT NOT STORED for eval "${evalResult.id}": ${e.message}`);
+    }
+  }
+  const perSkill = report.formatReport(report.buildReport(evalResults));
+  if (perSkill) out(`\nper-skill report:\n${perSkill}`);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const modelTag = (opts.model || 'default').replace(/[^A-Za-z0-9._-]/g, '_');
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const file = path.join(RESULTS_DIR, `${modelTag}-${stamp}.json`);
-  const report = {
+  const summary = {
     model: opts.model || 'default',
     runtime: opts.runtime,
     startedAt: new Date().toISOString(),
@@ -406,17 +444,19 @@ async function main(argv = process.argv.slice(2)) {
     totalCostUsd: suite.spent,
     peakCommittedUsd: suite.peakCommitted,
     env: { allowlisted: [...envlib.BASE_NAMES, 'HOME', ...credentials], homeMode: envlib.isCI(process.env) || opts.runtime === 'pi' ? 'ci-temp' : 'passthrough' },
-    passed: results.filter((r) => r.outcome === 'pass').length,
-    failed: results.filter((r) => r.outcome === 'fail' || r.outcome === 'timed_out').length,
+    passed: evalResults.filter((r) => r.outcome === 'pass').length,
+    failed: evalResults.filter((r) => r.outcome === 'fail' || r.outcome === 'timed_out').length,
     incomplete: incomplete.length,
-    total: results.length,
-    results,
+    total: evalResults.length,
+    results: evalResults,
+    records,
   };
-  fs.writeFileSync(file, envlib.redactText(JSON.stringify(report, null, 2), secrets));
-  out(`results: ${path.relative(process.cwd(), file)} (${report.passed}/${report.total} passed${report.incomplete ? `, ${report.incomplete} incomplete` : ''})`);
+  fs.writeFileSync(file, envlib.redactText(JSON.stringify(summary, null, 2), secrets));
+  out(`results: ${path.relative(process.cwd(), file)} (${summary.passed}/${summary.total} passed${summary.incomplete ? `, ${summary.incomplete} incomplete` : ''})`);
   if (rejected.length) return 2;
-  if (report.failed) return 1;
-  return report.incomplete ? 4 : 0;
+  if (summary.failed) return 1;
+  if (storeErrors.length) return 2;
+  return summary.incomplete ? 4 : 0;
 }
 
 if (require.main === module) {
