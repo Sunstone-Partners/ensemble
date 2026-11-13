@@ -127,7 +127,7 @@ describe('ensemble-create-prd (TRD-024)', () => {
   test('definition: foreman-style explicit command, constitution in the sandbox', () => {
     const ev = evals.get(id);
     expect(ev.invocation).toBe('explicit');
-    expect(ev.command).toBe('/ensemble:create-prd');
+    expect(ev.command).toBe('/ensemble-product:ensemble:create-prd');
     expect(ev.prompt).toMatch(/--foreman/);
     expect(ev.prompt).toMatch(/non-interactive/);
     const ws = workspace(id);
@@ -425,7 +425,7 @@ describe('pr-merge-trace (TRD-027)', () => {
     expect(withSkill.pluginDirs).toEqual([path.join(REPO_ROOT, 'packages/git'), path.join(REPO_ROOT, 'packages/development')]);
     // The command is in both arms' prompts; only the packages differ.
     expect(base.prompt).toBe(withSkill.prompt);
-    expect(base.prompt.startsWith('/ensemble:pr-merge 7 --foreman')).toBe(true);
+    expect(base.prompt.startsWith('/ensemble-git:ensemble:pr-merge 7 --foreman')).toBe(true);
     const argv = (job) => claude.buildArgs(job).reduce((acc, a, i, all) => (all[i - 1] === '--plugin-dir' ? [...acc, a] : acc), []);
     expect(argv(base)).toEqual([path.join(REPO_ROOT, 'packages/git')]);
     expect(argv(withSkill)).toEqual([path.join(REPO_ROOT, 'packages/git'), path.join(REPO_ROOT, 'packages/development')]);
@@ -648,7 +648,7 @@ console.log(JSON.stringify({ type: 'result', num_turns: 1, total_cost_usd: 0.01 
     // Same prompt text, command first, in both arms.
     const prompts = new Set(calls.map((c) => c.argv[c.argv.indexOf('-p') + 1]));
     expect(prompts.size).toBe(1);
-    expect([...prompts][0].startsWith('/ensemble:pr-merge 7 --foreman --max-rounds=1')).toBe(true);
+    expect([...prompts][0].startsWith('/ensemble-git:ensemble:pr-merge 7 --foreman --max-rounds=1')).toBe(true);
     // gh resolved to bin/gh of that run's own workspace (first on the agent's PATH), never a real gh.
     for (const c of calls) {
       expect(c.gh).toBe(path.join(c.cwd, 'bin', 'gh'));
@@ -865,5 +865,32 @@ describe('review fixes', () => {
     expect(mk(shared).upliftLabel).toBe('package-level (with-skill adds development)');
     expect(mk(evals.get('ensemble-create-prd')).upliftLabel).toBe('package-level (skills share a package)');
     expect(arms.upliftLabel('pi', ['x'])).toBe('skill-level');
+  });
+});
+
+describe('registered command names (found in the first real trial)', () => {
+  // Claude Code registers a command loaded with --plugin-dir as /<plugin>:ensemble:<command>; any other slash name is sent to
+  // the model as plain text and the command never runs. A stub claude cannot tell, so the name is checked against the shipped packages.
+  const commandOf = (evalDef) => {
+    const m = /^\/([a-z0-9-]+):ensemble:([a-z0-9-]+)$/.exec(evalDef.command || '');
+    if (!m) return null;
+    for (const pkg of fs.readdirSync(path.join(REPO_ROOT, 'packages'))) {
+      const manifest = path.join(REPO_ROOT, 'packages', pkg, '.claude-plugin/plugin.json');
+      if (!fs.existsSync(manifest) || JSON.parse(fs.readFileSync(manifest, 'utf8')).name !== m[1]) continue;
+      if (fs.existsSync(path.join(REPO_ROOT, 'packages', pkg, 'commands/ensemble', `${m[2]}.md`))) return { pkg, plugin: m[1], command: m[2] };
+    }
+    return null;
+  };
+
+  test.each(['ensemble-create-prd', 'ensemble-refine-prd', 'ensemble-create-trd', 'pr-merge-trace'])('%s: command is the registered /<plugin>:ensemble:<command> of a shipped command', (id) => {
+    const ev = loadEvalDefs().evals.find((e) => e.id === id);
+    expect(ev.command).toBeDefined();
+    expect(commandOf(ev)).not.toBeNull();
+  });
+
+  test('the check can fail: the installed-plugin form and a made-up command are not accepted', () => {
+    expect(commandOf({ command: '/ensemble:pr-merge' })).toBeNull();
+    expect(commandOf({ command: '/ensemble-git:ensemble:no-such-command' })).toBeNull();
+    expect(commandOf({ command: '/ensemble-nosuch:ensemble:pr-merge' })).toBeNull();
   });
 });

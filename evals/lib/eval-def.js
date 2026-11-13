@@ -156,7 +156,7 @@ function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
     fail('prompt', 'prompt must be plain language, not a slash command; use `invocation: "explicit"` with `command`');
   }
   if (invocation !== 'plain' && !isNonEmptyString(raw.command)) {
-    fail('command', `invocation "${invocation}" requires \`command\` (for example "/ensemble:create-prd")`);
+    fail('command', `invocation "${invocation}" requires \`command\` (the name Claude Code registers for a --plugin-dir command, /<plugin>:ensemble:<command>, for example "/ensemble-product:ensemble:create-prd")`);
   }
   if (raw.command !== undefined && !isNonEmptyString(raw.command)) fail('command', '`command` must be a non-empty string');
   if (isNonEmptyString(raw.command) && /^\s*-/.test(raw.command)) fail('command', '`command` must not begin with "-"');

@@ -7,7 +7,7 @@
   ],
   "prompt": "docs/PRD/PRD-2026-b2c3d4e5-slugify.md --foreman\n\nThis is a non-interactive run: do not ask questions, choose recommended options, and write the TRD under docs/TRD/. Do not implement anything.",
   "invocation": "explicit",
-  "command": "/ensemble:create-trd",
+  "command": "/ensemble-development:ensemble:create-trd",
   "allowedTools": [
     "Read",
     "Write",
