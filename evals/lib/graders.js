@@ -49,7 +49,7 @@ function trdParses(ctx, args = {}) {
   const cli = path.join(ctx.repoRoot, 'packages/development/lib/trd-cli.js');
   const notes = [];
   for (const file of files) {
-    const r = spawnSync('node', [cli, 'parse', file], { encoding: 'utf8' });
+    const r = spawnSync('node', [cli, 'parse', file], { encoding: 'utf8', env: ctx.env });
     let out;
     try { out = JSON.parse(r.stdout); } catch { notes.push(`${path.basename(file)}: non-JSON output`); continue; }
     const count = out && out.trd && out.trd.tasksById ? Object.keys(out.trd.tasksById).length : 0;
@@ -74,7 +74,7 @@ function fileMatches(ctx, args) {
 }
 
 function runShell(ctx, command) {
-  return spawnSync('sh', ['-c', command], { cwd: ctx.dir, encoding: 'utf8', timeout: 120000 });
+  return spawnSync('sh', ['-c', command], { cwd: ctx.dir, encoding: 'utf8', timeout: 120000, env: ctx.env });
 }
 
 /** Run a command in the sandbox; pass iff exit code 0. */
@@ -87,7 +87,7 @@ function testsPass(ctx, args) {
 function commandOutputMatches(ctx, args) {
   const command = args.command.split('{{repo}}').join(ctx.repoRoot);
   const r = spawnSync('sh', ['-c', command], {
-    cwd: ctx.dir, encoding: 'utf8', input: args.stdin || '', timeout: 60000,
+    cwd: ctx.dir, encoding: 'utf8', input: args.stdin || '', timeout: 60000, env: ctx.env,
   });
   if (args.exitCode !== undefined && r.status !== args.exitCode) {
     return result(false, `exit ${r.status}, wanted ${args.exitCode}`);
@@ -150,7 +150,7 @@ function noForbiddenCommand(ctx, args) {
 function judge(ctx, args) {
   const refusal = !ctx.judge ? 'no judge model configured' : ctx.judge.refusal;
   if (refusal) return { pass: false, judged: true, refused: true, score: null, judgeModel: (ctx.judge && ctx.judge.model) || null, detail: `judged check refused: ${refusal}` };
-  const r = runJudge(ctx.judge.bin, { model: ctx.judge.model, rubric: args.rubric, transcript: ctx.transcript, cwd: ctx.dir });
+  const r = runJudge(ctx.judge.bin, { model: ctx.judge.model, rubric: args.rubric, transcript: ctx.transcript, cwd: ctx.dir, env: ctx.env });
   if (r.error) return { pass: false, judged: true, score: null, judgeModel: ctx.judge.model, costUsd: r.costUsd, detail: r.error };
   const threshold = args.passScore === undefined ? 0.5 : args.passScore;
   return {

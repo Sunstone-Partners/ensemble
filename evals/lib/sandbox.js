@@ -5,6 +5,23 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const DEFAULT_WORKDIR = path.join(os.homedir(), '.omp', 'evals-work');
+const FORBIDDEN_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp'];
+
+const within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
+
+/**
+ * Directory under which every workspace and per-run CI HOME is created: EVALS_WORKDIR, default ~/.omp/evals-work/.
+ * Refuses /tmp (wiped on reboot) and anything inside the repository.
+ */
+function resolveWorkdir(env = process.env, repoRoot = REPO_ROOT) {
+  const dir = path.resolve(env.EVALS_WORKDIR || DEFAULT_WORKDIR);
+  if (FORBIDDEN_ROOTS.some((r) => within(dir, r))) throw new Error(`EVALS_WORKDIR must not be under /tmp: ${dir}`);
+  if (within(dir, path.resolve(repoRoot))) throw new Error(`EVALS_WORKDIR must be outside the repository: ${dir}`);
+  return dir;
+}
+
 function git(cwd, args) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
@@ -12,12 +29,14 @@ function git(cwd, args) {
 }
 
 /**
- * Create a throwaway git repo from scenarios/<id>/fixture on branch `main`.
+ * Create a throwaway git repo from scenarios/<id>/fixture on branch `main`, as a fresh copy under `workdir`
+ * (default: EVALS_WORKDIR), never inside the repository.
  * With scenario.remote === true, also creates a bare `origin` and pushes main.
  * Returns { dir, root, baseline, cleanup }.
  */
-function createSandbox(scenarioDir, scenario = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ensemble-eval-'));
+function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir() } = {}) {
+  fs.mkdirSync(workdir, { recursive: true });
+  const root = fs.mkdtempSync(path.join(workdir, 'ensemble-eval-'));
   const dir = path.join(root, 'project');
   fs.mkdirSync(dir);
   const fixture = path.join(scenarioDir, 'fixture');
@@ -71,17 +90,6 @@ function buildClaudeArgs(scenario, { repoRoot, model, maxUsd }) {
   return args;
 }
 
-/** Run claude in the sandbox; returns { transcript, exitCode, timedOut }. */
-function runClaude(bin, args, cwd, timeoutMs = 600000) {
-  const r = spawnSync(bin, args, { cwd, encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024 });
-  return {
-    transcript: r.stdout || '',
-    stderr: (r.stderr || '').slice(-2000),
-    exitCode: r.status,
-    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
-  };
-}
-
 /** Pull turns / cost from the final `result` line of a stream-json transcript. */
 function summarizeTranscript(transcript) {
   let summary = { turns: null, costUsd: null, isError: null, resultText: null };
@@ -100,4 +108,4 @@ function summarizeTranscript(transcript) {
   return summary;
 }
 
-module.exports = { createSandbox, findClaude, buildClaudeArgs, runClaude, summarizeTranscript };
+module.exports = { createSandbox, resolveWorkdir, findClaude, buildClaudeArgs, summarizeTranscript, DEFAULT_WORKDIR };

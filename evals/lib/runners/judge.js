@@ -75,10 +75,10 @@ function jsonObjects(text) {
 }
 
 /** Run the judge model via the claude CLI. Returns { score, reason, costUsd } or { error, costUsd }. */
-function runJudge(bin, { model, rubric, transcript, cwd, timeoutMs = 120000 }) {
+function runJudge(bin, { model, rubric, transcript, cwd, env, timeoutMs = 120000 }) {
   const args = ['-p', judgePrompt(rubric, transcript), '--output-format', 'json', '--no-session-persistence',
     '--max-turns', '1', '--permission-mode', 'plan', '--model', model];
-  const r = spawnSync(bin, args, { cwd, encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = spawnSync(bin, args, { cwd, env, encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.error || r.status !== 0) return { error: `judge call failed: ${(r.error && r.error.message) || `exit ${r.status}`}`, costUsd: null };
   let text = r.stdout || '';
   let costUsd = null;
