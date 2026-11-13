@@ -200,6 +200,44 @@ The pilot ran on 13 November 2026 through a local LiteLLM proxy with `claude-opu
 - **Found by the pilot.** The first real runs showed that `/ensemble:<name>` is not the command name when a package is loaded with `--plugin-dir` (it is `/<plugin>:ensemble:<name>`), and that a provider or auth failure was being counted as a skill failure; both are fixed (the second by marking such a run `incomplete`).
 - **Not investigated.** The legacy `create-trd` scenario failed in the first pass; it predates this work and its cause was not examined.
 
+## Long, multi-step evals: `env`, `setup`, remote push, ceilings
+
+These fields exist for an eval that drives one long command (many tool calls, subagents, a git remote) in the sandbox. All are checked when the eval loads and all are part of `evalHash` (`eval.json` is hashed whole), so editing one invalidates cached and committed results.
+
+### `env`: non-secret variables for the agent only
+
+`"env": {"ENSEMBLE_NON_INTERACTIVE": "1"}`. After the `sandboxPath` PATH edit, the map is merged into the **agent's** environment. The checks' environment (credential-free, throwaway `HOME`) and the judge's environment never get it, and neither does `setup`.
+
+- Names: `^[A-Z][A-Z0-9_]*$`, at most 32 variables. Denied: `PATH`, `HOME`, `LANG`, `TERM`, `TMPDIR`, `TMP`, `TEMP`, `SHELL`, `USER`, `LOGNAME`, `PWD`, `IFS`, `ENV`, `BASH_ENV`, `NODE_OPTIONS`, `NODE_PATH`, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `RUBYOPT`, `RUBYLIB`, `PERL5OPT`, `PERL5LIB`, `SSH_AUTH_SOCK`, `CLAUDE_CONFIG_DIR`; prefixes `LD_`, `DYLD_`, `GIT_`, `ANTHROPIC_`, `EVALS_`, `NPM_CONFIG_`; any name containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL` or `PROXY`; and every credential name in `evals/env-allowlist.json` (the top-level list and every runtime's list). The list is deliberately broad: it keeps loader, proxy, git and credential variables out of an eval definition. At run time a name that is a credential of this run (`--allow-env NAME`) rejects the eval, and the merge itself throws rather than overwrite a credential or a base variable.
+- Values: strings, at most 200 characters, no control character (C0, DEL, C1).
+- **Not redacted.** The redaction list is built from credential values only, so `"1"` is never added to it and a transcript containing `111` is untouched. Do not put a secret in `env`; use `--allow-env` for credentials.
+
+### `setup`: commands run before the agent
+
+`"setup": [["br","init"],["git","add","-A"],["git","commit","-m","fixture"]]`. Position in `createSandbox`: fixture copied, `git init`, sandbox identity set, fixture committed, bare `origin` added (not yet pushed), **setup**, post-setup check, baseline taken (`mainSha`), `main` pushed. So a commit made by setup moves the baseline and `noProtectedBranchCommit` still means "the agent did not move `main`".
+
+- **No shell.** Each entry is an argv executed directly (`shell: false`); `;`, `$( )`, quotes and globs are plain argument text. A shell (`sh`, `bash`, ...) or a wrapper that runs another program (`env`, `xargs`, `sudo`, ...) is rejected as `argv[0]`.
+- **Binary.** A bare name (no `/`, no `\`, no NUL). It is resolved by the harness on the PATH of the check style environment, using only absolute entries outside the workspace: an empty or relative PATH entry (the current directory is the fixture) and the fixture's own `sandboxPath` directories are never searched. `git` is allowed; it must be followed by a subcommand (no leading `-c`/`-C`), runs with the harness's `GIT_HARDEN` keys, and a git subcommand that reaches a remote (`clone`, `fetch`, `pull`, `push`, `ls-remote`, `remote`, `submodule`) is rejected.
+- **Environment.** The check style: `PATH`, `LANG`, `TERM`, `TMPDIR`, no credentials, a throwaway `HOME` under the sandbox root (outside the project), plus `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND=false` and `GIT_ALLOW_PROTOCOL=file` (only local transports).
+- **Bounds.** 60 seconds per command, 5 minutes for the list, 64 KB of captured output per command (a command over it is killed), at most 20 commands of at most 50 elements. A grandchild process is not group-killed; do not start daemons.
+- **Failure.** Each command must exit 0. Otherwise the run is recorded `incomplete` (`pass: null`, cost 0) with `incompleteReason: "setup failed: setup[i] <binary> [<git subcommand>]: ..."` (exit status, timeout, `not found on the safe PATH`, output too large) and the agent never starts. It is never skipped silently and never counted as a pass or a fail. Output is redacted and cut to one short line.
+- **Re-scan.** After setup the project tree is checked with the fixture rules: no `.claude`, `.claude.json`, `.mcp.json`, `.gitmodules`, `.gitattributes`, `.gitconfig` or nested `.git` anywhere, no symlink pointing outside the tree, no git hook other than git's own `.sample` files, and `.git/config` byte-identical to what the sandbox wrote before setup (so no `core.hooksPath`, alias, remote or include). Anything else makes the run `incomplete` with `setup wrote rejected paths: ...`.
+- **Trust model.** `setup` is repo-authored, reviewed like the fixture and trusted at the same level: it can run any program on the maintainer's PATH (for example `node` or `npm`), and the deny lists above stop mistakes, they are not a sandbox. What it must not do is configure the agent: the re-scan is what keeps a setup step from planting the files a fixture may not carry.
+
+### Remote evals
+
+With `remote: true` the sandbox's own git config (not your global config) also gets `push.autoSetupRemote=true`, so a bare `git push` of a fresh branch (the plain-git adapter's `workflow.push`) sets its upstream on the sandbox `origin`.
+
+### Ceilings: `maxTimeoutSec`, `maxRunUsd`
+
+`evals/limits.json`: `timeoutSec` 900 and `runReserveUsd` 5 stay the defaults. An eval may set `timeoutSec` up to `maxTimeoutSec` (7200) and `runUsd` up to `maxRunUsd` (40); a value above is rejected at load with `exceeds the ceiling maxTimeoutSec` / `maxRunUsd`. Without the keys in a limits file both ceilings equal the defaults (nothing changes). The effective values flow everywhere:
+
+- the time limit is `--timeout`, else the eval's `timeoutSec`, else the default; `--timeout` above `maxTimeoutSec` is exit 2;
+- the per-run budget is `--run-usd`, else the eval's `runUsd`, else `runReserveUsd`, never above `--max-usd`; it is the `--max-budget-usd` the Claude CLI receives, the in-flight reservation, the `settings` recorded in the result, the cache key (`timeoutMs`, `runUsd`) and the replay command (`--timeout`, `--run-usd`);
+- `maxUsdPerSuite` (`--max-usd`, default 50) remains the overall bound: one run at `runUsd: 40` needs `--max-usd` of about 90 for two arms.
+
+Tests: `evals/tests/harness-ext.test.js`.
+
 ## Adding an eval for a skill (kit)
 
 About 70 skills still have no eval. Each gets its own PR, and each PR adds **only new files** and edits no shared file, so the PRs never conflict:
