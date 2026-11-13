@@ -36,8 +36,8 @@ permissions:
 
 jobs:
   evals:
-    # Credential guard (TRD-023): secrets exist only for a branch of this repository. A fork's own dispatch, a tag or a pull ref is refused.
-    if: github.repository == 'Sunstone-Partners/ensemble' && startsWith(github.ref, 'refs/heads/')
+    # Credential guard (TRD-023): secrets exist only for the repository's long-lived branches (main, dev), whose contents went through code-owner review. A fork's dispatch, a tag, a pull ref and an unreviewed feature branch are refused: a dispatch runs the code at the dispatched ref with the key.
+    if: github.repository == 'Sunstone-Partners/ensemble' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -50,7 +50,7 @@ jobs:
       - run: npx jest evals
       # Workflow inputs reach the shell only through env: and are only ever expanded by the shell as quoted "$VARS".
       - name: Run evals
-        if: github.repository == 'Sunstone-Partners/ensemble' && startsWith(github.ref, 'refs/heads/')
+        if: github.repository == 'Sunstone-Partners/ensemble' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           EVAL_SKILL: ${{ inputs.skill }}
@@ -66,9 +66,10 @@ jobs:
       - name: Coverage report
         if: ${{ !cancelled() }}
         run: npm run evals:coverage
-      # Advisory regression check: a regression fails this step (exit 1) and nothing else; it blocks no merge.
+      # Advisory regression check: a regression fails this step (exit 1; `evals/run.js` also exits 1 for it); it blocks no merge. The step also fails (exit 4) when nothing was compared and (exit 2) on a store error.
       - name: Regression check against the committed baselines
-        if: ${{ !cancelled() }}
+        # The legacy scenario input produces no skill evals, so there is nothing to compare (compare exits 4 then).
+        if: ${{ !cancelled() && inputs.scenario == '' }}
         env:
           EVAL_SKILL: ${{ inputs.skill }}
         run: |

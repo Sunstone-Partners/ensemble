@@ -138,7 +138,8 @@ describe('workflow hygiene (script injection, least privilege)', () => {
     expect(users.length).toBeGreaterThan(0);
     for (const l of users) expect(l).toMatch(/^\s+EVAL_[A-Z_]+: \$\{\{ inputs\.[a-z_]+ \}\}$/);
     for (const j of Object.values(wf.jobs)) for (const s of j.steps) {
-      const uses = JSON.stringify({ with: s.with, name: s.name, if: s.if });
+      // An `if:` expression is evaluated by Actions, never by a shell; the one allowed use is the legacy-scenario skip.
+      const uses = JSON.stringify({ with: s.with, name: s.name, if: String(s.if || '').replace("inputs.scenario == ''", '') });
       expect(uses).not.toMatch(/inputs\./);
     }
   });
@@ -155,7 +156,7 @@ describe('workflow hygiene (script injection, least privilege)', () => {
 
 describe('TRD-023-TEST: credential guard (AC-009-4)', () => {
   const GUARD = /github\.repository\s*==\s*'Sunstone-Partners\/ensemble'/;
-  const BRANCH = /startsWith\(github\.ref,\s*'refs\/heads\/'\)/;
+  const BRANCH = /github\.ref\s*==\s*'refs\/heads\/main'\s*\|\|\s*github\.ref\s*==\s*'refs\/heads\/dev'/;
   const guarded = (cond) => GUARD.test(String(cond)) && BRANCH.test(String(cond));
 
   test('the job and the step that reads a secret are both guarded by a same-repository branch condition', () => {
@@ -179,12 +180,20 @@ describe('TRD-023-TEST: credential guard (AC-009-4)', () => {
   test('the guard refuses a fork, a tag and a pull ref (evaluated against the real condition)', () => {
     const cond = String(job(WORKFLOW()).if);
     // Evaluate the two operands the condition is made of; the whole condition must be exactly their conjunction.
-    const evaluate = (repository, ref) => repository === 'Sunstone-Partners/ensemble' && ref.startsWith('refs/heads/');
-    expect(cond.replace(/\s+/g, ' ')).toBe("github.repository == 'Sunstone-Partners/ensemble' && startsWith(github.ref, 'refs/heads/')");
+    const evaluate = (repository, ref) => repository === 'Sunstone-Partners/ensemble' && (ref === 'refs/heads/main' || ref === 'refs/heads/dev');
+    expect(cond.replace(/\s+/g, ' ')).toBe("github.repository == 'Sunstone-Partners/ensemble' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')");
     expect(evaluate('Sunstone-Partners/ensemble', 'refs/heads/main')).toBe(true);
+    expect(evaluate('Sunstone-Partners/ensemble', 'refs/heads/dev')).toBe(true);
+    expect(evaluate('Sunstone-Partners/ensemble', 'refs/heads/feature/evil')).toBe(false); // an unreviewed branch would run its own evals/run.js with the key
     expect(evaluate('brumschlag/ensemble', 'refs/heads/main')).toBe(false);
     expect(evaluate('Sunstone-Partners/ensemble', 'refs/tags/v1')).toBe(false);
     expect(evaluate('Sunstone-Partners/ensemble', 'refs/pull/7/merge')).toBe(false);
+  });
+
+  test('the regression-check step is skipped for the legacy scenario input (nothing to compare), and not otherwise', () => {
+    const step = job(WORKFLOW()).steps.find((x) => /evals:compare/.test(x.run || ''));
+    expect(step).toBeDefined();
+    expect(String(step.if).replace(/\s+/g, ' ')).toBe("${{ !cancelled() && inputs.scenario == '' }}");
   });
 
   test('CODEOWNERS has an explicit /evals/ owner entry beside the other sensitive paths', () => {
