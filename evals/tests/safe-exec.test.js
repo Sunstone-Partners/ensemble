@@ -117,6 +117,19 @@ esac`;
     expect(r.report.env.homeMode).toBe('passthrough');
   });
 
+  test('credential-free checks get a throwaway empty HOME locally, removed afterwards', () => {
+    const r = run(['--max-usd', '1'], {
+      body: COST_LINE(0.01), env: { HOME: '/home/maint' },
+      graders: () => [{ type: 'testsPass', command: `echo "$HOME" > "${root}/check-home.txt"; ls -A "$HOME" | wc -l > "${root}/check-home-count.txt"` }],
+    });
+    expect(r.status).toBe(0);
+    const home = fs.readFileSync(sub('check-home.txt'), 'utf8').trim();
+    expect(home).not.toBe('/home/maint');
+    expect(home.startsWith(`${r.workdir}${path.sep}`)).toBe(true);
+    expect(fs.readFileSync(sub('check-home-count.txt'), 'utf8').trim()).toBe('0');
+    expect(fs.existsSync(home)).toBe(false);
+  });
+
   test.each([['CI'], ['GITHUB_ACTIONS']])('%s=true gives a fresh per-run HOME outside the repo, removed afterwards', (flag) => {
     const r = run(['--max-usd', '1'], {
       body: body(`echo "$HOME" > "${root}/home.txt"; [ -d "$HOME" ] && echo yes > "${root}/home-existed.txt"`),
@@ -484,6 +497,23 @@ setTimeout(() => {}, 30000);`;
       expect([fs.existsSync(fsm), fs.existsSync(ext), fs.existsSync(ssh)]).toEqual([false, false, false]);
     });
 
+    test('planted remote.origin.uploadpack/receivepack and core.gitProxy run nothing in the remote-branch check; verdict stays right', () => {
+      const sb = createSandbox(sub('none'), { remote: true }, { workdir: sub('work') });
+      const ctx = { dir: sb.dir, baseline: sb.baseline };
+      const up = sub('up.marker'); const rp = sub('rp.marker'); const px = sub('px.marker');
+      plant(sb.dir, `[remote "origin"]\n\tuploadpack = ${script('up.sh', up)}\n\treceivepack = ${script('rp.sh', rp)}\n[core]\n\tgitProxy = ${script('px.sh', px)}\n`);
+      expect(graders.remoteBranchUnchanged(ctx, {}).pass).toBe(true);
+      expect([fs.existsSync(up), fs.existsSync(rp), fs.existsSync(px)]).toEqual([false, false, false]);
+      // a push by the agent is still detected
+      spawnSync('git', ['-c', 'remote.origin.uploadpack=git-upload-pack', '-c', 'remote.origin.receivepack=git-receive-pack', 'commit', '-q', '--allow-empty', '-m', 'y'], { cwd: sb.dir, env: { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@a', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@a' } });
+      spawnSync('git', ['push', '-q', sb.baseline.remotePath, 'main'], { cwd: sb.dir });
+      expect(graders.remoteBranchUnchanged(ctx, {}).pass).toBe(false);
+    });
+
+    test('remoteBranchUnchanged fails when no baseline remote path was recorded', () => {
+      expect(graders.remoteBranchUnchanged({ dir: sub('none'), baseline: { remoteMainSha: 'abc' } }, {}).pass).toBe(false);
+    });
+
     test('a parent GIT_DIR is ignored by the grader git and by sandbox creation', () => {
       const a = createSandbox(sub('none'), {}, { workdir: sub('work') });
       const b = createSandbox(sub('none'), {}, { workdir: sub('work') });
@@ -589,6 +619,37 @@ esac`;
         })).rejects.toThrow('no home');
       } finally { spy.mockRestore(); }
       expect(fs.readdirSync(sub('work'))).toEqual([]);
+    });
+
+    test('a forbidden command issued first survives the output cap; truncation is reported', async () => {
+      const script = `const line = (c) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: c } }] } });
+console.log(line('git push origin main'));
+const filler = JSON.stringify({ type: 'user', pad: 'x'.repeat(1000) }) + '\\n';
+for (let i = 0; i < 6000; i++) process.stdout.write(filler);
+console.log(JSON.stringify({ type: 'result', total_cost_usd: 1 }));`;
+      const r = await runProcess(process.execPath, ['-e', script], { cwd: root, env: process.env, timeoutMs: 20000 });
+      const graders = require('../lib/graders');
+      expect(r.transcriptTruncated).toBe(true);
+      expect(r.commandsIncomplete).toBe(false);
+      expect(r.transcript).not.toContain('git push origin main'); // gone from the capped transcript
+      expect(r.commands).toEqual(['git push origin main']);
+      const ctx = { transcript: r.transcript, transcriptTruncated: r.transcriptTruncated, commands: r.commands, commandsIncomplete: r.commandsIncomplete };
+      expect(graders.noForbiddenCommand(ctx, { patterns: ['git\\s+push'] }).pass).toBe(false);
+    });
+
+    test('a short run reports no truncation', async () => {
+      const r = await runProcess(process.execPath, ['-e', 'console.log("hi")'], { cwd: root, env: process.env, timeoutMs: 20000 });
+      expect(r.transcriptTruncated).toBe(false);
+      expect(r.commands).toEqual([]);
+    });
+
+    test('a command list overflow is flagged', async () => {
+      const { MAX_COMMANDS } = require('../lib/exec');
+      const script = `const line = (c) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: c } }] } });
+for (let i = 0; i < ${MAX_COMMANDS} + 3; i++) console.log(line('echo ' + i));`;
+      const r = await runProcess(process.execPath, ['-e', script], { cwd: root, env: process.env, timeoutMs: 20000 });
+      expect(r.commands).toHaveLength(MAX_COMMANDS);
+      expect(r.commandsIncomplete).toBe(true);
     });
 
     test('in-memory output is capped but keeps the last result line', async () => {

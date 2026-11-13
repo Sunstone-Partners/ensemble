@@ -35,6 +35,17 @@ function killTree(child) {
 }
 
 const OUTPUT_KEEP = 1024 * 1024; // bytes of stdout kept in memory (tail); the last `result` line is always kept
+const MAX_COMMANDS = 5000; // Bash commands kept from tool_use lines, independent of the stdout cap
+
+/** Bash commands in one stream-json line (tool_use blocks); [] for anything else. */
+function commandsFromLine(line) {
+  if (!line.includes('"tool_use"')) return [];
+  let obj;
+  try { obj = JSON.parse(line); } catch { return []; }
+  const content = obj && obj.message && Array.isArray(obj.message.content) ? obj.message.content : [];
+  return content.filter((b) => b && b.type === 'tool_use' && b.input && typeof b.input.command === 'string').map((b) => b.input.command);
+}
+
 const KILL_GRACE_MS = 1000; // after a timeout kill, wait this long for 'close' before resolving anyway
 
 /**
@@ -43,13 +54,18 @@ const KILL_GRACE_MS = 1000; // after a timeout kill, wait this long for 'close' 
  * descendant that left the group, e.g. via setsid, can hold the pipes open for as long as it likes).
  * `input` (string) is written to stdin. Memory is bounded: stdout keeps its tail plus the last stream-json
  * `result` line; stderr keeps its last 2000 characters.
- * Resolves { transcript, stderr, exitCode, timedOut }; never rejects.
+ * Every complete stdout line is also scanned for tool_use Bash commands, kept (up to MAX_COMMANDS) apart from the
+ * capped transcript, so early commands survive truncation.
+ * Resolves { transcript, stderr, exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete }; never rejects.
  */
 function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
   return new Promise((resolve) => {
     let out = '';
     let pending = ''; // incomplete trailing line of stdout
     let lastResult = null;
+    let transcriptTruncated = false;
+    let commandsIncomplete = false; // command list overflowed, or a line too long to scan was cut
+    const commands = [];
     let err = '';
     let timedOut = false;
     let settled = false;
@@ -63,7 +79,7 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
       killTree(child); // reap stragglers still in the group
       const tail = out + pending;
       const transcript = lastResult && !tail.includes(lastResult) ? `${tail}\n${lastResult}` : tail;
-      resolve({ transcript, stderr: err.slice(-2000), exitCode, timedOut });
+      resolve({ transcript, stderr: err.slice(-2000), exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete });
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -74,10 +90,16 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
     }, timeoutMs);
     child.stdout.setEncoding('utf8').on('data', (d) => {
       const lines = (pending + d).split('\n');
-      pending = lines.pop().slice(-OUTPUT_KEEP);
-      for (const l of lines) if (l.startsWith('{"type":"result"')) lastResult = l;
+      pending = lines.pop();
+      if (pending.length > OUTPUT_KEEP) { pending = pending.slice(-OUTPUT_KEEP); transcriptTruncated = true; commandsIncomplete = true; }
+      for (const l of lines) {
+        if (l.startsWith('{"type":"result"')) lastResult = l;
+        for (const c of commandsFromLine(l)) {
+          if (commands.length < MAX_COMMANDS) commands.push(c); else commandsIncomplete = true;
+        }
+      }
       out += lines.length ? `${lines.join('\n')}\n` : '';
-      if (out.length > 2 * OUTPUT_KEEP) out = out.slice(-OUTPUT_KEEP);
+      if (out.length > 2 * OUTPUT_KEEP) { out = out.slice(-OUTPUT_KEEP); transcriptTruncated = true; }
     });
     child.stderr.setEncoding('utf8').on('data', (d) => { err = (err + d).slice(-4000); });
     child.stdout.on('error', () => {});
@@ -155,4 +177,4 @@ async function runSuite(items, { concurrency, capUsd, reserve, run, onSettle }) 
   return { done, unstarted: queue, spent, peakCommitted };
 }
 
-module.exports = { loadLimits, runProcess, reservationFor, runSuite, killTree, LIMITS_FILE };
+module.exports = { loadLimits, runProcess, commandsFromLine, MAX_COMMANDS, reservationFor, runSuite, killTree, LIMITS_FILE };

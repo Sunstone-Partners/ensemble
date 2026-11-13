@@ -54,9 +54,16 @@ function buildEnv({ parent = process.env, credentials = DEFAULT_CREDENTIALS, hom
   return env;
 }
 
-/** Arguments placed before every git subcommand the harness runs: no repo-config-driven code execution. */
+/**
+ * Arguments placed before every git subcommand the harness runs. Neutralised keys: core.fsmonitor, core.hooksPath,
+ * protocol.ext.allow, core.pager, core.gitProxy; core.sshCommand is covered by gitEnv's GIT_SSH_COMMAND.
+ * NOT neutralised: remote.<name>.uploadpack / receivepack. A `-c` override does not beat a value planted in the
+ * repository config (git reports "more than one uploadpack given, using the first" and keeps the planted one),
+ * so the harness must never run ls-remote/fetch/push against a workspace remote name; it reads the bare
+ * repository by path instead (see graders.remoteBranchUnchanged).
+ */
 const GIT_HARDEN = ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.ext.allow=never',
-  '-c', 'core.pager=cat'];
+  '-c', 'core.pager=cat', '-c', 'core.gitProxy='];
 
 /**
  * Environment for the harness's own git calls: no GIT_* from the parent (GIT_DIR, GIT_WORK_TREE, GIT_SSH_COMMAND...),

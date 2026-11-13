@@ -94,6 +94,17 @@ describe('noForbiddenCommand', () => {
     const prose = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'I will not git push' }] } });
     expect(g.noForbiddenCommand(ctx({ transcript: [line('ls'), prose].join('\n') }), { patterns: ['git\\s+push'] }).pass).toBe(true);
   });
+  test('uses ctx.commands when given, even if the transcript lost the command', () => {
+    const c = ctx({ transcript: line('ls'), transcriptTruncated: true, commands: ['git push origin main'] });
+    expect(g.noForbiddenCommand(c, { patterns: ['git\\s+push'] }).pass).toBe(false);
+    expect(g.noForbiddenCommand({ ...c, commands: ['ls'] }, { patterns: ['git\\s+push'] }).pass).toBe(true);
+  });
+  test('fails closed when the transcript was truncated and no command list exists', () => {
+    expect(g.noForbiddenCommand(ctx({ transcript: line('ls'), transcriptTruncated: true }), { patterns: ['git\\s+push'] }).pass).toBe(false);
+  });
+  test('fails closed when the command list is incomplete', () => {
+    expect(g.noForbiddenCommand(ctx({ transcript: line('ls'), commands: ['ls'], commandsIncomplete: true }), { patterns: ['git\\s+push'] }).pass).toBe(false);
+  });
   test('falls back to raw text when transcript is not JSON lines', () => {
     expect(g.noForbiddenCommand(ctx({ transcript: 'git push --force' }), { patterns: ['push'] }).pass).toBe(false);
   });

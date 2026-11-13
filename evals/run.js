@@ -79,13 +79,16 @@ async function runScenario(scenario, run) {
   const { bin, model, runUsd, judgeUsd = 0, timeoutMs, repoRoot, judge, workdir, credentials, secrets = [], parentEnv = process.env, keepWorkspace } = run;
   const sb = sandbox.createSandbox(scenario.scenarioDir, scenario, { workdir });
   let ciHome = null;
+  let checkHome = null;
   const started = Date.now();
   try {
     if (envlib.isCI(parentEnv)) ciHome = envlib.makeCiHome(workdir);
     const env = envlib.buildEnv({ parent: parentEnv, credentials, home: ciHome || undefined });
-    const checkEnv = envlib.buildEnv({ parent: parentEnv, credentials: [], home: ciHome || undefined });
+    // Checks run agent-written code: always a throwaway empty HOME, never the real one.
+    checkHome = ciHome || envlib.makeCiHome(workdir);
+    const checkEnv = envlib.buildEnv({ parent: parentEnv, credentials: [], home: checkHome });
     let transcript = '';
-    let proc = { exitCode: 0, stderr: '', timedOut: false };
+    let proc = { exitCode: 0, stderr: '', timedOut: false, transcriptTruncated: false, commands: [], commandsIncomplete: false };
     if (scenario.type === 'agent') {
       const args = sandbox.buildClaudeArgs(scenario, { repoRoot, model, maxUsd: runUsd });
       proc = await runProcess(bin, args, { cwd: sb.dir, env, timeoutMs });
@@ -107,7 +110,8 @@ async function runScenario(scenario, run) {
         durationMs: Date.now() - started,
       };
     }
-    const ctx = { dir: sb.dir, repoRoot, baseline: sb.baseline, transcript, env: checkEnv, judgeEnv: env, judge: judge ? { ...judge, bin } : undefined };
+    const commands = proc.commands.map((c) => envlib.redactText(c, secrets));
+    const ctx = { dir: sb.dir, repoRoot, baseline: sb.baseline, transcript, transcriptTruncated: proc.transcriptTruncated, commands, commandsIncomplete: proc.commandsIncomplete, env: checkEnv, judgeEnv: env, judge: judge ? { ...judge, bin } : undefined };
     const graders = await runGraders(scenario.graders || [], ctx);
     const outcome = summarizeRun(graders);
     // A judge call that ran but reported no cost (failed or timed out) is charged the judge allowance.
@@ -131,6 +135,7 @@ async function runScenario(scenario, run) {
     if (keepWorkspace) console.log(envlib.redactText(`workspace kept: ${sb.dir}`, secrets));
     else sb.cleanup();
     if (ciHome) fs.rmSync(ciHome, { recursive: true, force: true });
+    if (checkHome && checkHome !== ciHome) fs.rmSync(checkHome, { recursive: true, force: true });
   }
 }
 

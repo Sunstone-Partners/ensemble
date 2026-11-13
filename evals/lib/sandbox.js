@@ -67,18 +67,20 @@ function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir() 
   const mainSha = git(dir, ['rev-parse', 'main']);
 
   let remoteMainSha = null;
+  let remotePath = null;
   if (scenario.remote) {
     const bare = path.join(root, 'origin.git');
     git(root, ['init', '-q', '--bare', '-b', 'main', bare]);
     git(dir, ['remote', 'add', 'origin', bare]);
     git(dir, ['push', '-q', 'origin', 'main']);
-    remoteMainSha = git(dir, ['ls-remote', 'origin', 'refs/heads/main']).split(/\s+/)[0];
+    remotePath = bare;
+    remoteMainSha = git(bare, ['--git-dir', bare, 'rev-parse', 'refs/heads/main']);
   }
 
   return {
     dir,
     root,
-    baseline: { mainSha, remoteMainSha },
+    baseline: { mainSha, remoteMainSha, remotePath },
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
