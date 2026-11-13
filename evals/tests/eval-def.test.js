@@ -346,13 +346,13 @@ describe('review fixes: fixture safety and definition limits', () => {
     expect(load().evals).toHaveLength(1);
   });
 
-  test('allowedTools entries containing a comma or whitespace are rejected', () => {
-    for (const t of ['Bash,Write', 'Bash(git status:*)', ' Read', 'Read\tx']) {
+  test('allowedTools entries with a comma, control character or edge whitespace are rejected; scoped patterns load', () => {
+    for (const t of ['Bash,Write', ' Read', 'Read ', 'Read\tx']) {
       writeEval('demo-skill', { ...valid(), allowedTools: ['Read', t] });
       const r = rejection('demo-skill');
       expect(r.error.part).toBe('allowedTools');
     }
-    writeEval('demo-skill', { ...valid(), allowedTools: ['Read', 'Bash(git:*)'] });
+    writeEval('demo-skill', { ...valid(), allowedTools: ['Read', 'Bash(git:*)', 'Bash(git status:*)', 'Bash(git add:*)'] });
     expect(load().evals).toHaveLength(1);
   });
 });

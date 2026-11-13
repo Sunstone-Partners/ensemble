@@ -27,7 +27,7 @@ Several `system`/`init` events in one stream are unioned (skills and plugins); a
 
 **Judged checks** run on the with-skill arm only: `judgedScore` reads only that arm, so the baseline arm skips them and no judge spend is wasted (the judge reservation is not taken for baseline runs either).
 
-**Definition limits.** `skill` must match `^[A-Za-z0-9._-]+$` (and not be `.` or `..`), and its directory must resolve under `packages/<pkg>/skills`. A `prompt` (or `command`) must not begin with `-`, and `allowedTools` entries must not contain a comma or whitespace (they are joined with commas on the command line). A `bar` above `repeats` is rejected at load only when the eval sets both; otherwise it is checked at run time against `--repeats` or the `evals/limits.json` default.
+**Definition limits.** `skill` must match `^[A-Za-z0-9._-]+$` (and not be `.` or `..`), and its directory must resolve under `packages/<pkg>/skills`. A `prompt` (or `command`) must not begin with `-`, and `allowedTools` entries must not contain a comma, a control character or leading/trailing whitespace (they are joined with commas on the command line; scoped patterns such as `Bash(git status:*)` are valid). A `bar` above `repeats` is rejected at load only when the eval sets both; otherwise it is checked at run time against `--repeats` or the `evals/limits.json` default.
 
 ## Repeats and reliability
 

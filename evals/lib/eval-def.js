@@ -121,8 +121,9 @@ function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
   if (raw.allowedTools !== undefined && !(Array.isArray(raw.allowedTools) && raw.allowedTools.every(isNonEmptyString))) {
     fail('allowedTools', '`allowedTools` must be an array of tool names');
   }
-  const badTool = (raw.allowedTools || []).find((t) => /[,\s]/.test(t));
-  if (badTool !== undefined) fail('allowedTools', `\`allowedTools\` entry "${badTool}" contains a comma or whitespace (entries are joined with commas on the command line)`);
+  // Entries are joined with commas into one argv element (no shell), so only a comma, a control character or edge whitespace is ambiguous; scoped patterns like `Bash(git status:*)` are valid.
+  const badTool = (raw.allowedTools || []).find((t) => /[,\x00-\x1f]/.test(t) || t !== t.trim());
+  if (badTool !== undefined) fail('allowedTools', `\`allowedTools\` entry ${JSON.stringify(badTool)} contains a comma, a control character or leading/trailing whitespace (entries are joined with commas on the command line)`);
   for (const key of ['maxTurns', 'timeoutSec', 'repeats', 'bar']) {
     if (raw[key] !== undefined && !isPositiveInt(raw[key])) fail(key, `\`${key}\` must be a positive integer`);
   }
