@@ -4,7 +4,7 @@
 /**
  * Scaffold a skill-keyed eval.
  * Usage: node evals/new.js <skill>
- * Writes evals/skills/<skill>/eval.json (from templates/eval.json) and fixture/. Every TODO placeholder must be
+ * Writes evals/skills/<skill>/eval.json (from templates/eval.json) and fixture/. Every `TODO:` placeholder must be
  * replaced before the eval loads; fixture/ files are the starting workspace the agent sees.
  */
 
@@ -35,7 +35,7 @@ if (require.main === module) {
     if (!skill) throw new Error('usage: node evals/new.js <skill>');
     const dir = scaffold(skill);
     console.log(`created ${path.relative(process.cwd(), dir)}/eval.json and fixture/`);
-    console.log('replace every TODO, then check it with: node evals/run.js --dry-run --skill ' + skill);
+    console.log('replace every `TODO:` placeholder, then check it with: node evals/run.js --dry-run --skill ' + skill);
   } catch (e) {
     console.error(e.message);
     process.exitCode = 2;

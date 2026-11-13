@@ -48,6 +48,32 @@ function runDry(args, env) {
   });
 }
 
+describe('review fixes', () => {
+  test('a prompt like "TODO list app" is accepted; a scaffold "TODO:" marker is not', () => {
+    writeEval('demo-skill', { ...valid(), prompt: 'TODO list app: build it' });
+    expect(load().evals).toHaveLength(1);
+    writeEval('demo-skill', { ...valid(), prompt: 'TODO: the task' });
+    expect(rejection('demo-skill').error.part).toBe('placeholder');
+  });
+
+  test('accepted-but-unused fields produce one warning line and no exit-code change', () => {
+    writeEval('demo-skill', { ...valid(), skill: 'ensemble-create-prd', repeats: 3, bar: 2, runtimes: ['claude'] });
+    const r = runDry([]);
+    const lines = r.stderr.split('\n').filter((l) => /^WARNING eval "demo-skill"/.test(l));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/`runtimes`, `repeats`, `bar`.*not yet acted on/);
+    expect(r.stderr).not.toMatch(/expectInvoked/);
+    expect(r.status).toBe(0);
+  });
+
+  test('a skill eval whose id collides with a legacy scenario id is rejected by name', () => {
+    writeEval('demo-skill', { ...valid(), skill: 'ensemble-create-prd', id: 'fix-issue' });
+    const r = runDry([]);
+    expect(r.stderr).toMatch(/REJECTED eval "fix-issue": id collides with a legacy scenario id/);
+    expect(r.status).toBe(2);
+  });
+});
+
 describe('loading (TRD-001)', () => {
   test('a prompt edited on disk is the one loaded next time, with no build step', () => {
     writeEval('demo-skill', valid());

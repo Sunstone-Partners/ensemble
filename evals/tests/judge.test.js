@@ -60,6 +60,16 @@ describe('resolveJudge', () => {
     expect(resolveJudge({ judgeModel: 'Sonnet', model: 'sonnet', env: {} }).refusal).toMatch(/"Sonnet" is the model under test/);
     expect(resolveJudge({ model: 'sonnet', env: {} }).refusal).toMatch(/no judge model configured/);
   });
+  test('refuses when no model under test is given, and for alias spellings of it; allows a different family', () => {
+    expect(resolveJudge({ judgeModel: 'opus', env: {} }).refusal).toMatch(/pass --model so the judge can be compared/);
+    expect(resolveJudge({ judgeModel: 'sonnet', model: 'claude-sonnet-5-5', env: {} }).refusal).toMatch(/is the model under test/);
+    expect(resolveJudge({ judgeModel: 'claude-sonnet-4-20250514', model: 'sonnet', env: {} }).refusal).toMatch(/is the model under test/);
+    expect(resolveJudge({ judgeModel: 'claude-opus-4-1', model: 'claude-sonnet-5-5', env: {} }).refusal).toBeNull();
+  });
+  test('parseScore handles braces in the reason and picks a later valid object', () => {
+    expect(parseScore('{"score": 0.7, "reason": "uses {x} and }"}')).toEqual({ score: 0.7, reason: 'uses {x} and }' });
+    expect(parseScore('prefix {not json} {"score": 0.1, "reason": "a {b}"}')).toEqual({ score: 0.1, reason: 'a {b}' });
+  });
   test('parseScore takes the first valid score and ignores out-of-range ones', () => {
     expect(parseScore('noise {"score": 2} then {"score": 0.4, "reason": "r"}')).toEqual({ score: 0.4, reason: 'r' });
     expect(parseScore('no json')).toBeNull();
@@ -102,6 +112,13 @@ describe('run with a judged check', () => {
     expect(res.graders.find((g) => g.type === 'judge')).toMatchObject({ judged: true, refused: true, score: null });
     // the judge model was never called
     expect(fs.readFileSync(path.join(tmp, 'calls.txt'), 'utf8')).not.toContain('You are grading');
+  });
+
+  test('without --model the judged check is refused and deterministic checks still run', () => {
+    const r = runEvals(['--judge-model', 'opus']);
+    expect(r.stderr).toMatch(/REFUSED judged checks .*pass --model so the judge can be compared/);
+    expect(r.status).toBe(0);
+    expect(r.rep.results[0].graders.find((g) => g.type === 'judge')).toMatchObject({ refused: true });
   });
 
   test('no judge configured is refused too; EVALS_JUDGE_MODEL is honoured', () => {

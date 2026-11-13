@@ -16,6 +16,8 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 const SKILLS_DIR = path.join(__dirname, '../skills');
 // Generated or aggregate packages hold copies or symlinks of skills; the source package is the one evaluated.
 const NON_SOURCE_PACKAGES = new Set(['full', 'pi', 'codex', 'opencode']);
+// Validated and documented, but not yet acted on by the runner (later PRs).
+const UNACTED_FIELDS = ['runtimes', 'repeats', 'bar', 'expectInvoked'];
 const INVOCATIONS = ['plain', 'explicit'];
 const KNOWN_KEYS = new Set([
   'id', 'skill', 'description', 'runtimes', 'prompt', 'invocation', 'command', 'allowedTools',
@@ -61,7 +63,7 @@ function isJudged(check) {
 /**
  * Validate a parsed eval.json that lives in `dir`. Returns the loaded eval; throws EvalDefinitionError.
  * Loaded: { id, skill, package, description, runtimes, prompt, invocation, command, allowedTools, maxTurns,
- *           timeoutSec, repeats, bar, expectInvoked, checks, dir, fixtureDir }
+ *           timeoutSec, repeats, bar, expectInvoked, checks, unactedFields, dir, fixtureDir }
  */
 function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
   const dirName = path.basename(dir);
@@ -72,7 +74,7 @@ function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
   for (const key of Object.keys(raw)) {
     if (!KNOWN_KEYS.has(key)) fail(key, `unknown field \`${key}\``);
   }
-  const placeholder = stringValues(raw).find((s) => /^\s*TODO\b/.test(s));
+  const placeholder = stringValues(raw).find((s) => /^\s*TODO:/.test(s));
   if (placeholder) fail('placeholder', `placeholder not filled in: "${placeholder.slice(0, 60)}"`);
 
   // The four required parts: task, workspace, skill, checks.
@@ -143,6 +145,7 @@ function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
     bar: raw.bar,
     expectInvoked: raw.expectInvoked,
     checks,
+    unactedFields: UNACTED_FIELDS.filter((k) => raw[k] !== undefined),
     dir,
     fixtureDir,
   };

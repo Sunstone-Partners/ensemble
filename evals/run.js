@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGraders } = require('./lib/graders');
-const { loadEvalDefs, evalToScenario } = require('./lib/eval-def');
+const { loadEvalDefs, evalToScenario, EvalDefinitionError } = require('./lib/eval-def');
 const { summarizeRun } = require('./lib/results');
 const { resolveJudge } = require('./lib/runners/judge');
 const sandbox = require('./lib/sandbox');
@@ -88,8 +88,15 @@ function runScenario(scenario, { bin, model, remainingUsd, repoRoot, judge }) {
 function main(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
   const defs = loadEvalDefs({ skillsDir: EVAL_SKILLS_DIR, repoRoot: REPO_ROOT });
-  let scenarios = [...loadScenarios(), ...defs.evals.map(evalToScenario)];
-  let rejected = defs.rejected;
+  const legacy = loadScenarios();
+  const legacyIds = new Set(legacy.map((s) => s.id));
+  let rejected = [...defs.rejected];
+  const skillEvals = defs.evals.filter((ev) => {
+    if (!legacyIds.has(ev.id)) return true;
+    rejected.push({ id: ev.id, dir: ev.dir, error: new EvalDefinitionError(ev.id, 'id', `id collides with a legacy scenario id "${ev.id}"`) });
+    return false;
+  });
+  let scenarios = [...legacy, ...skillEvals.map(evalToScenario)];
   if (opts.scenario) {
     scenarios = scenarios.filter((s) => s.id === opts.scenario);
     rejected = rejected.filter((r) => r.id === opts.scenario);
@@ -107,6 +114,10 @@ function main(argv = process.argv.slice(2)) {
     }
   }
   for (const r of rejected) console.error(`REJECTED ${r.error.message}`);
+  for (const ev of skillEvals) {
+    if (!scenarios.some((s) => s.id === ev.id && s.skill === ev.skill) || !ev.unactedFields.length) continue;
+    console.error(`WARNING eval "${ev.id}": ${ev.unactedFields.map((f) => `\`${f}\``).join(', ')} accepted but not yet acted on (lands in a later PR)`);
+  }
   const bin = sandbox.findClaude();
   const needsClaude = scenarios.some((s) => s.type === 'agent');
 

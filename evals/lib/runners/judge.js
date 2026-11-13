@@ -7,7 +7,12 @@
 
 const { spawnSync } = require('child_process');
 
-const norm = (m) => String(m || '').trim().toLowerCase();
+/** Compare-form of a model name: `sonnet`, `claude-sonnet-5-5` and `claude-sonnet-4-20250514` all become `sonnet`. */
+const norm = (m) => String(m || '').trim().toLowerCase()
+  .replace(/^claude-/, '')
+  .replace(/^(\d+-)+/, '')
+  .replace(/(-\d[\d.]*)+$/, '')
+  .replace(/\[.*\]$/, '');
 
 /**
  * Decide whether judged checks may run. `judgeModel` comes from --judge-model, else EVALS_JUDGE_MODEL.
@@ -18,7 +23,10 @@ function resolveJudge({ judgeModel, model, env = process.env } = {}) {
   if (!chosen) {
     return { model: null, refusal: 'no judge model configured: set --judge-model or EVALS_JUDGE_MODEL' };
   }
-  if (model && norm(chosen) === norm(model)) {
+  if (!norm(model)) {
+    return { model: chosen, refusal: `judge model "${chosen}" cannot be compared: no model under test was given (pass --model so the judge can be compared)` };
+  }
+  if (norm(chosen) === norm(model)) {
     return { model: chosen, refusal: `judge model "${chosen}" is the model under test; the judge must be a different model` };
   }
   return { model: chosen, refusal: null };
@@ -39,14 +47,31 @@ function judgePrompt(rubric, transcript) {
 
 /** First JSON object in `text` that carries a numeric score, or null. */
 function parseScore(text) {
-  const match = String(text || '').match(/\{[^{}]*\}/g) || [];
-  for (const candidate of match) {
+  for (const candidate of jsonObjects(String(text || ''))) {
     try {
       const o = JSON.parse(candidate);
-      if (typeof o.score === 'number' && o.score >= 0 && o.score <= 1) return { score: o.score, reason: String(o.reason || '') };
+      if (o && typeof o.score === 'number' && o.score >= 0 && o.score <= 1) return { score: o.score, reason: String(o.reason || '') };
     } catch { /* next */ }
   }
   return null;
+}
+
+/** Balanced `{...}` substrings, in order; braces inside JSON strings do not count. */
+function jsonObjects(text) {
+  const out = [];
+  for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+    let depth = 0; let inStr = false;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (inStr) {
+        if (c === '\\') i++;
+        else if (c === '"') inStr = false;
+      } else if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) { out.push(text.slice(start, i + 1)); break; }
+    }
+  }
+  return out;
 }
 
 /** Run the judge model via the claude CLI. Returns { score, reason, costUsd } or { error, costUsd }. */
