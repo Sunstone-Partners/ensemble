@@ -2,8 +2,8 @@
 
 /**
  * With-skill and baseline arms. One eval definition yields two jobs that differ only in what is loaded:
- *   with-skill: the package that ships the skill, as shipped (`pluginDirs`, never a copy)
- *   baseline:   nothing for the skill under test
+ *   with-skill: the package that ships the skill, as shipped (`pluginDirs`, never a copy), after any `sharedPackages`
+ *   baseline:   nothing for the skill under test (only the eval's `sharedPackages`, when it names any)
  * Same prompt text, workspace content, tools and settings in both arms; `invocation: explicit` prefixes the
  * command on the with-skill arm only. A baseline that has the skill loaded or invoked is a leak: the eval aborts.
  */
@@ -45,13 +45,16 @@ function buildJob(ev, arm, ctx) {
   const { repoRoot, runtime = 'claude', model, workspace, env, timeoutMs, maxUsd } = ctx;
   const withSkill = arm === 'with-skill';
   const task = expandRepo(ev.prompt, repoRoot);
+  // `sharedPackages`: packages that hold a command the eval drives, loaded in both arms (Claude only; Pi never gets package dirs).
+  const shared = (ev.sharedPackages || []).map((pkg) => path.join(repoRoot, 'packages', pkg));
   // Explicit invocation: Claude's slash command (`ev.command`), or Pi's `/skill:<name>` (Pi has no package commands).
   const explicit = runtime === 'pi' ? `/skill:${ev.skill}` : ev.command;
   return {
     evalId: ev.id, skill: ev.skill, arm, runtime, model, workspace, env, timeoutMs, maxUsd,
-    prompt: withSkill && ev.invocation === 'explicit' ? `${explicit} ${task}` : task,
+    // `explicit-both` prefixes the command in both arms: the command comes from a shared package, the skill under test only from the with-skill arm's own package.
+    prompt: (withSkill && ev.invocation === 'explicit') || ev.invocation === 'explicit-both' ? `${explicit} ${task}` : task,
     // Pi loads the single skill directory (`skillPaths`); no package is passed to it.
-    pluginDirs: withSkill && runtime !== 'pi' ? [path.join(repoRoot, 'packages', ev.package)] : [],
+    pluginDirs: runtime === 'pi' ? [] : [...shared, ...(withSkill ? [path.join(repoRoot, 'packages', ev.package)] : [])],
     skillPaths: withSkill ? [path.join(repoRoot, 'packages', ev.package, 'skills', ev.skill)] : [],
     maxTurns: ev.maxTurns, allowedTools: ev.allowedTools, permissionMode: undefined,
     invocationMode: ev.invocation,

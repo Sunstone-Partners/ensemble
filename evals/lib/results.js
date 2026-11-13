@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const os = require('os');
+const crypto = require('crypto');
 const envlib = require('./env');
 const hash = require('./hash');
 const { supportedRuntimes } = require('./runners');
@@ -34,7 +35,7 @@ function summarizeRun(graders) {
  * whole package is loaded, so an edit anywhere in it counts). `workingTreeDiffers` is null when the repository
  * is not a git checkout. The installed (marketplace) copy is not inspected.
  */
-function evaluatedCopy({ repoRoot, packageName, skill }) {
+function evaluatedCopy({ repoRoot, packageName, skill, sharedPackages = [] }) {
   const packagePath = path.join(repoRoot, 'packages', packageName);
   const skillDir = path.join(packagePath, 'skills', skill);
   const git = (args) => spawnSync('git', [...envlib.GIT_HARDEN, '-C', repoRoot, ...args], { encoding: 'utf8', env: envlib.gitEnv() });
@@ -50,7 +51,10 @@ function evaluatedCopy({ repoRoot, packageName, skill }) {
   }
   return {
     packagePath: path.relative(repoRoot, packagePath),
-    packageHash: hash.packageHash(packagePath), // the whole package (Claude loads all of it)
+    // The whole package (Claude loads all of it). With `sharedPackages` it is one hash over the package and every shared package (name and
+    // content hash, in order), so a change to a shared package invalidates cached and committed results like a change to the skill's own.
+    packageHash: sharedPackages.length === 0 ? hash.packageHash(packagePath)
+      : crypto.createHash('sha256').update([packageName, ...sharedPackages].map((n) => `${n}:${hash.packageHash(path.join(repoRoot, 'packages', n))}\n`).join('')).digest('hex'),
     skillHash: hash.skillHash(skillDir), // throws HashError naming the problem (missing skill directory, escaping symlink)
     skillVersion: hash.skillVersion(skillDir),
     workingTreeDiffers,
@@ -73,7 +77,7 @@ const SKILL_NAME = /^[A-Za-z0-9._-]+$/;
 const isSkillName = (v) => typeof v === 'string' && SKILL_NAME.test(v) && v !== '.' && v !== '..';
 const OUTCOMES = ['pass', 'fail', 'timed_out', 'incomplete'];
 const ARM_NAMES = ['with-skill', 'baseline'];
-const INVOCATION_MODES = ['plain', 'explicit'];
+const INVOCATION_MODES = ['plain', 'explicit', 'explicit-both'];
 
 /** Uplift granularity per runtime (TRD design decision: Claude loads a whole package, Pi a single skill). */
 const GRANULARITY = { claude: 'package', pi: 'skill' };

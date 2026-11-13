@@ -5,8 +5,9 @@
  *
  * Arguments: `claude -p <prompt> --output-format stream-json --verbose --no-session-persistence
  * --setting-sources project ...`. Both arms get `--setting-sources project`, so user-level and synced plugins
- * cannot leak into either arm. The with-skill arm gets one `--plugin-dir <dir>` per entry of `job.pluginDirs`:
- * the shipped package directory itself, never a copy.
+ * cannot leak into either arm. A job gets one `--plugin-dir <dir>` per entry of `job.pluginDirs`: the shipped package directory
+ * itself, never a copy. For the with-skill arm that is the skill's package (after any `sharedPackages` of the eval); the baseline
+ * gets only the `sharedPackages`, and none when the eval names none.
  *
  * Loaded skills come from the stream's own events (see docs/guides/skills-eval.md, "Claude Code startup events"):
  * the `system`/`init` event lists every available skill (`skills`, namespaced `<plugin>:<skill>`) and plugin

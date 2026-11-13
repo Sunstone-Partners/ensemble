@@ -135,6 +135,11 @@ async function runScenario(scenario, run) {
     // environment); Pi's own auth files under the real HOME are then not reachable. Claude keeps the passthrough HOME for its login.
     if (!ciHome && (run.runtime || 'claude') === 'pi' && scenario.type === 'agent') agentHome = envlib.makeCiHome(workdir);
     const env = envlib.buildEnv({ parent: parentEnv, credentials, home: ciHome || agentHome || undefined });
+    // `sandboxPath`: fixture directories (stub binaries) first on the AGENT's PATH only. The checks' environment below never gets them:
+    // a binary the agent plants there must not be able to stand in for `node` or `sh` when a check runs.
+    if (Array.isArray(scenario.sandboxPath) && scenario.sandboxPath.length) {
+      env.PATH = [...scenario.sandboxPath.map((d) => path.join(sb.dir, d)), ...(env.PATH ? [env.PATH] : [])].join(path.delimiter);
+    }
     // Checks run agent-written code: always a throwaway empty HOME, never the real one.
     checkHome = ciHome || envlib.makeCiHome(workdir);
     const checkEnv = envlib.buildEnv({ parent: parentEnv, credentials: [], home: checkHome });
@@ -445,7 +450,7 @@ async function main(argv = process.argv.slice(2)) {
     if (!ev) { planned.push(s); items.push({ legacy: s }); continue; }
     // A skill whose copy cannot be hashed (missing directory, escaping symlink) is rejected like an invalid definition: skipped, exit 2 at the end.
     try {
-      copies.set(ev.id, arms.evaluatedCopy({ repoRoot: REPO_ROOT, packageName: ev.package, skill: ev.skill }));
+      copies.set(ev.id, arms.evaluatedCopy({ repoRoot: REPO_ROOT, packageName: ev.package, skill: ev.skill, sharedPackages: ev.sharedPackages || [] }));
       evalVersions.set(ev.id, hash.evalHash(ev.dir));
     } catch (e) {
       if (!(e instanceof hash.HashError)) throw e;
