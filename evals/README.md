@@ -65,9 +65,10 @@ A skill eval runs two arms on identical fresh workspaces: **with-skill** (`--plu
 - `--repeats N` overrides the eval's `repeats`; `bar` in `eval.json` overrides the default bar, otherwise the default bar scales with `--repeats`. A bar above the repeats is a usage error (exit 2). The report states repeats, bar and where each came from.
 - `--runtime claude` (the default, the only runtime so far; anything else exits 2).
 - Uplift is labelled **package-level (skills share a package)** for Claude: the whole package is loaded, not only the skill.
-- A baseline that has the skill loaded or invoked aborts that eval, naming the leak (exit 1, no baseline score, no further runs of that eval).
+- A baseline that has the skill loaded or invoked aborts that eval, naming the leak (exit 1, no baseline score; runs not yet started are skipped). A baseline that completed with no startup skill list aborts the same way as `baseline isolation unverifiable: no startup skill list`; a baseline that crashed or timed out before any init event is not counted toward the baseline score.
+- A fixture containing `.claude/`, `.mcp.json`, `.git`, `.gitmodules`-style config or a symlink pointing outside it is rejected (the sandbox copy also skips them). Judged checks run on the with-skill arm only.
 - Each result records `invoked` (from the transcript's `Skill` events) and the evaluated copy (package path, skill hash, whether the working tree differs from the committed copy). `expectInvoked` is report-only.
-- Results: a skill eval is one entry in `results` with `withSkill`/`baseline` counts, `reliable`, `uplift` and the per-run results under `runs` (graders and cost per run). Budget reservation is per in-flight run, so a default eval reserves up to 10 runs.
+- Results: a skill eval is one entry in `results` with `withSkill`/`baseline` counts, `reliable`, `uplift` and the per-run results under `runs` (graders and cost per run). Budget reservation is per in-flight run, so at most `--concurrency` runs are reserved at once.
 
 ## Add a scenario (legacy)
 

@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { redactText } = require('./env');
 
 const LIMITS_FILE = path.join(__dirname, '..', 'limits.json');
 const FALLBACK_LIMITS = { maxUsdPerSuite: 50, timeoutSec: 900, runReserveUsd: 5, judgeReserveUsd: 0.5, concurrency: 4, repeats: 5, bar: 4 };
@@ -60,10 +61,13 @@ const KILL_GRACE_MS = 1000; // after a timeout kill, wait this long for 'close' 
  * `result` line; stderr keeps its last 2000 characters.
  * Every complete stdout line is also scanned for tool_use Bash commands, kept (up to MAX_COMMANDS) apart from the
  * capped transcript, so early commands survive truncation.
+ * `secrets` (optional): credential values removed from stdout lines and stderr as they arrive, before any tail cut, so
+ * a secret that would straddle the cap boundary is already gone and no fragment of it survives.
  * `onLine(line)` (optional) sees every complete stdout line, even when the capped transcript later drops it.
  * Resolves { transcript, stderr, exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete }; never rejects.
  */
-function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine }) {
+function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine, secrets = [] }) {
+  const scrub = (text) => (secrets.length ? redactText(text, secrets) : text);
   const tap = (line) => { if (onLine) { try { onLine(line); } catch { /* a faulty observer must not break the run */ } } };
   return new Promise((resolve) => {
     let out = '';
@@ -84,9 +88,9 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine }) {
       clearTimeout(graceTimer);
       killTree(child); // reap stragglers still in the group
       if (pending && !timedOut) tap(pending);
-      const tail = out + pending;
+      const tail = out + scrub(pending);
       const transcript = lastResult && !tail.includes(lastResult) ? `${tail}\n${lastResult}` : tail;
-      resolve({ transcript, stderr: err.slice(-2000), exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete });
+      resolve({ transcript, stderr: scrub(err).slice(-2000), exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete });
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -98,18 +102,21 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine }) {
     child.stdout.setEncoding('utf8').on('data', (d) => {
       const lines = (pending + d).split('\n');
       pending = lines.pop();
-      if (pending.length > OUTPUT_KEEP) { pending = pending.slice(-OUTPUT_KEEP); transcriptTruncated = true; commandsIncomplete = true; }
+      if (pending.length > OUTPUT_KEEP) { pending = scrub(pending).slice(-OUTPUT_KEEP); transcriptTruncated = true; commandsIncomplete = true; }
+      const kept = [];
       for (const l of lines) {
         tap(l);
-        if (l.startsWith('{"type":"result"')) lastResult = l;
+        const clean = scrub(l); // before the tail cut below
+        if (clean.startsWith('{"type":"result"')) lastResult = clean;
         for (const c of commandsFromLine(l)) {
           if (commands.length < MAX_COMMANDS) commands.push(c); else commandsIncomplete = true;
         }
+        kept.push(clean);
       }
-      out += lines.length ? `${lines.join('\n')}\n` : '';
+      out += kept.length ? `${kept.join('\n')}\n` : '';
       if (out.length > 2 * OUTPUT_KEEP) { out = out.slice(-OUTPUT_KEEP); transcriptTruncated = true; }
     });
-    child.stderr.setEncoding('utf8').on('data', (d) => { err = (err + d).slice(-4000); });
+    child.stderr.setEncoding('utf8').on('data', (d) => { err = scrub(err + d).slice(-4000); });
     child.stdout.on('error', () => {});
     child.stderr.on('error', () => {});
     if (input !== undefined) {
@@ -216,11 +223,12 @@ function expandRuns(ev, repeats) {
 
 /** Counts for one arm. `planned` is the repeat count; runs that never started are `notRun`. */
 function armStats(runs, planned) {
-  const executed = runs.filter((r) => r.outcome !== 'incomplete' && r.outcome !== 'aborted');
+  const executed = runs.filter((r) => r.outcome !== 'incomplete' && r.outcome !== 'aborted' && r.outcome !== 'unverifiable');
   return {
     passes: executed.filter((r) => r.outcome === 'pass').length,
     runs: executed.length,
     timedOut: executed.filter((r) => r.outcome === 'timed_out').length,
+    unverifiable: runs.filter((r) => r.outcome === 'unverifiable').length,
     notRun: Math.max(0, planned - executed.length),
   };
 }

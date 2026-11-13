@@ -8,6 +8,7 @@
  * command on the with-skill arm only. A baseline that has the skill loaded or invoked is a leak: the eval aborts.
  */
 
+const fs = require('fs');
 const path = require('path');
 const exec = require('./exec');
 const results = require('./results');
@@ -60,21 +61,45 @@ function wasInvoked(skill, result) {
   return invoked.some((s) => skillMatches(s, skill));
 }
 
+/** realpath, falling back to resolve when the path does not exist, so a symlinked plugin path still matches. */
+function canonical(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+const UNVERIFIABLE_NAME = 'baseline isolation unverifiable: no startup skill list';
+
 /**
- * Leak check for a baseline run: null when clean, else a message naming the leak. A leak is the skill under test
- * reported loaded (startup event) or invoked (transcript) by the runtime, or its package loaded as a plugin.
+ * Isolation verdict for a baseline run. Returns null when verified clean, else { kind, message }:
+ *   'leak'               the skill under test is loaded (startup event), invoked (transcript) or its package is a loaded plugin
+ *   'unverifiable-abort' the run completed normally (not timed out, exit 0) but the stream had no startup skill list
+ *                        (`loadedSource !== 'startup-event'`): absence of evidence is not isolation; the eval aborts
+ *   'unverifiable-run'   the run crashed or timed out before any startup event: that run is not counted as a clean baseline
+ * A leak outranks everything else. Missing evidence is never read as clean.
  */
-function detectLeak(ev, result, { repoRoot }) {
+function checkBaseline(ev, result, { repoRoot }) {
   const how = [];
   const loaded = (result.loadedSkills || []).filter((s) => skillMatches(s, ev.skill));
   const invoked = (Array.isArray(result.invokedSkills) ? result.invokedSkills : []).filter((s) => skillMatches(s, ev.skill));
   if (invoked.length) how.push(`invoked in the transcript (${invoked.join(', ')})`);
   else if (loaded.length) how.push(`reported loaded by the runtime (${loaded.join(', ')})`);
-  const pkgDir = path.resolve(repoRoot, 'packages', ev.package);
-  const plugin = (result.loadedPlugins || []).find((p) => path.resolve(p.path) === pkgDir);
+  const pkgDir = canonical(path.resolve(repoRoot, 'packages', ev.package));
+  const plugin = (result.loadedPlugins || []).find((p) => p && typeof p.path === 'string' && canonical(p.path) === pkgDir);
   if (plugin) how.push(`its package ${ev.package} was loaded as plugin ${plugin.name}`);
-  if (!how.length) return null;
-  return `eval "${ev.id}": baseline arm leaked the skill under test "${ev.skill}": ${how.join('; ')}; eval aborted, baseline not scored`;
+  if (how.length) {
+    return { kind: 'leak', message: `eval "${ev.id}": baseline arm leaked the skill under test "${ev.skill}": ${how.join('; ')}; eval aborted, baseline not scored` };
+  }
+  if (result.loadedSource === 'startup-event') return null;
+  const code = result.exitCode !== undefined ? result.exitCode : result.claudeExitCode;
+  if (!result.timedOut && code === 0) {
+    return { kind: 'unverifiable-abort', message: `eval "${ev.id}": ${UNVERIFIABLE_NAME}; the stream carried no init skills list, so a clean baseline cannot be told from a leaked one; eval aborted, baseline not scored` };
+  }
+  return { kind: 'unverifiable-run', message: `eval "${ev.id}": baseline run ${result.timedOut ? 'timed out' : 'crashed'} before any startup event; isolation unverifiable, run not counted in the baseline score` };
+}
+
+/** Message when the eval must abort (a leak, or a normally completed baseline with no startup skill list); else null. */
+function detectLeak(ev, result, opts) {
+  const c = checkBaseline(ev, result, opts);
+  return c && c.kind !== 'unverifiable-run' ? c.message : null;
 }
 
 /** Uplift as a fraction: with-skill pass rate minus baseline pass rate; null when either arm has no executed run. */
@@ -124,6 +149,6 @@ function summarizeEval(ev, plan, runs, { runtime = 'claude', abort = null, copy 
 }
 
 module.exports = {
-  ARMS, UPLIFT_LABELS, upliftLabel, scenarioJob, buildJob, skillMatches, wasInvoked, detectLeak, uplift, summarizeEval,
+  ARMS, UPLIFT_LABELS, upliftLabel, scenarioJob, buildJob, skillMatches, wasInvoked, detectLeak, checkBaseline, UNVERIFIABLE_NAME, uplift, summarizeEval,
   evaluatedCopy: results.evaluatedCopy,
 };

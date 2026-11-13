@@ -47,7 +47,7 @@ const resultLine = (usd = 0.01) => JSON.stringify({ type: 'result', num_turns: 1
  * prints `with`/`base` lines (arrays of stream lines) and, when `passes(arm, n)` is a shell condition on $N (the
  * 1-based call number within that arm; use --concurrency 1 for ordered counts), writes SUMMARY.md.
  */
-function stub({ withLines, baseLines, passWith = 'true', passBase = 'false' }) {
+function stub({ withLines, baseLines, passWith = 'true', passBase = 'false', baseTail = '' }) {
   const rec = sub('rec');
   fs.mkdirSync(rec, { recursive: true });
   const bin = sub('bin');
@@ -68,6 +68,7 @@ ${emit(withLines)}
 else
   if ${passBase}; then echo ok > SUMMARY.md; fi
 ${emit(baseLines)}
+${baseTail}
 fi
 `, { mode: 0o755 });
   return { bin, rec };
@@ -238,11 +239,11 @@ describe('TRD-009 arms and leak check', () => {
   test('detectLeak: clean baseline is null; a loaded package, an invocation and a startup listing are each a leak', () => {
     const e = ev();
     const opts = { repoRoot: REPO_ROOT };
-    expect(arms.detectLeak(e, { loadedSkills: ['verify', 'other:x'], invokedSkills: [], loadedPlugins: [] }, opts)).toBeNull();
+    expect(arms.detectLeak(e, { loadedSkills: ['verify', 'other:x'], invokedSkills: [], loadedPlugins: [], loadedSource: 'startup-event' }, opts)).toBeNull();
     expect(arms.detectLeak(e, { loadedSkills: [], invokedSkills: [], loadedPlugins: [{ name: 'p', path: PKG_DIR }] }, opts)).toMatch(/its package product was loaded/);
     expect(arms.detectLeak(e, { loadedSkills: [QUALIFIED], invokedSkills: [QUALIFIED] }, opts)).toMatch(/invoked in the transcript/);
     expect(arms.detectLeak(e, { loadedSkills: [SKILL] }, opts)).toMatch(/reported loaded/);
-    expect(arms.detectLeak(e, { loadedSkills: [`x:${SKILL}-other`] }, opts)).toBeNull(); // a different skill with a similar name
+    expect(arms.detectLeak(e, { loadedSkills: [`x:${SKILL}-other`], loadedSource: 'startup-event' }, opts)).toBeNull(); // a different skill with a similar name
   });
 
   test('near-zero uplift is a valid result: equal pass rates give uplift 0 and exit 0', () => {
@@ -396,5 +397,140 @@ describe('loadEvalDefs still accepts repeats, bar and expectInvoked', () => {
     fs.writeFileSync(path.join(skillsDir, SKILL, 'eval.json'), JSON.stringify({ skill: SKILL, prompt: 'x', repeats: 3, bar: 2, expectInvoked: true, checks: [{ type: 'fileExists', path: 'a' }] }));
     const [e] = loadEvalDefs({ skillsDir, repoRoot: REPO_ROOT }).evals;
     expect(e).toMatchObject({ repeats: 3, bar: 2, expectInvoked: true, unactedFields: [] });
+  });
+});
+
+describe('review fixes: baseline isolation must be verified, not assumed', () => {
+  const ev = { id: 'e', skill: SKILL, package: PKG };
+  const opts = { repoRoot: REPO_ROOT };
+
+  test('a baseline stream with no init event aborts as unverifiable, not scored, exit 1', () => {
+    const s = stub({ withLines: WITH_OK, baseLines: [resultLine()] });
+    const r = runEvals({}, s, ['--concurrency', '1']);
+    expect(r.stderr).toMatch(/ABORTED eval "ensemble-create-prd": baseline isolation unverifiable: no startup skill list/);
+    expect(r.ev).toMatchObject({ baseline: null, uplift: null, outcome: 'fail' });
+    expect(r.ev.abort).toMatch(/baseline isolation unverifiable: no startup skill list/);
+    expect(r.status).toBe(1);
+    expect(r.calls).toHaveLength(1); // nothing after the aborting run started
+  });
+
+  test('detectLeak: no startup list is unverifiable when the run completed normally; a leak still outranks it', () => {
+    const done = { loadedSkills: [], invokedSkills: [], loadedPlugins: [], loadedSource: 'transcript-scan', timedOut: false, exitCode: 0 };
+    expect(arms.detectLeak(ev, done, opts)).toMatch(/baseline isolation unverifiable: no startup skill list/);
+    expect(arms.detectLeak(ev, { ...done, loadedSource: 'startup-event' }, opts)).toBeNull();
+    expect(arms.detectLeak(ev, { ...done, invokedSkills: [SKILL], loadedSkills: [SKILL] }, opts)).toMatch(/leaked the skill/);
+    expect(arms.checkBaseline(ev, { ...done, exitCode: undefined, claudeExitCode: 0 }, opts).kind).toBe('unverifiable-abort');
+  });
+
+  test('a crashed or timed-out baseline before any init event is unverifiable and not scored; one that crashed after init is scored', () => {
+    const crashed = stub({ withLines: WITH_OK, baseLines: [], baseTail: 'exit 1', passBase: 'true' });
+    const r = runEvals({}, crashed, ['--repeats', '2', '--concurrency', '1']);
+    expect(r.status).toBe(0);
+    expect(r.ev.baseline).toMatchObject({ passes: 0, runs: 0, unverifiable: 2, notRun: 2 });
+    expect(r.ev.uplift).toBeNull();
+    expect(r.ev.runs.filter((x) => x.arm === 'baseline').map((x) => x.outcome)).toEqual(['unverifiable', 'unverifiable']);
+    expect(r.stdout).toMatch(/2 run\(s\) not counted: isolation unverifiable/);
+    expect(arms.checkBaseline(ev, { loadedSkills: [], loadedSource: 'transcript-scan', timedOut: true, exitCode: null }, opts).kind).toBe('unverifiable-run');
+    expect(arms.checkBaseline(ev, { loadedSkills: [], loadedSource: 'transcript-scan', timedOut: false, exitCode: 1 }, opts).kind).toBe('unverifiable-run');
+    expect(arms.detectLeak(ev, { loadedSkills: [], loadedSource: 'transcript-scan', timedOut: true }, opts)).toBeNull(); // no abort for a crash
+    // contrast: the same crash after a startup event leaves the run verified and counted
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.mkdirSync(root);
+    const late = stub({ withLines: WITH_OK, baseLines: BASE_OK, baseTail: 'exit 1', passBase: 'true' });
+    const c = runEvals({}, late, ['--repeats', '2', '--concurrency', '1']);
+    expect(c.ev.baseline).toMatchObject({ runs: 2, unverifiable: 0 });
+  });
+
+  test('a symlinked plugin path to the shipped package is caught; a missing path falls back to resolve', () => {
+    const link = sub('plugin-link');
+    fs.symlinkSync(PKG_DIR, link);
+    const base = { loadedSkills: [], invokedSkills: [], loadedSource: 'startup-event' };
+    expect(arms.detectLeak(ev, { ...base, loadedPlugins: [{ name: 'p', path: link }] }, opts)).toMatch(/its package product was loaded as plugin p/);
+    // symlinked repo root as well
+    const rootLink = sub('repo-link');
+    fs.symlinkSync(REPO_ROOT, rootLink);
+    expect(arms.detectLeak(ev, { ...base, loadedPlugins: [{ name: 'p', path: PKG_DIR }] }, { repoRoot: rootLink })).toMatch(/its package product was loaded/);
+    expect(arms.detectLeak(ev, { ...base, loadedPlugins: [{ name: 'p', path: sub('does-not-exist') }] }, opts)).toBeNull();
+  });
+
+  test('a second init event unions into skills and plugins and cannot hide an earlier match', () => {
+    const lines = [initLine([QUALIFIED], [{ name: PLUGIN_NAME, path: PKG_DIR }]), initLine(['verify'], [{ name: 'other', path: sub('x') }]), resultLine()];
+    const scanned = claude.analyzeTranscript(lines.join('\n'));
+    expect(scanned.loadedSkills).toEqual(['verify', QUALIFIED].sort());
+    expect(scanned.loadedPlugins.map((p) => p.name)).toEqual([PLUGIN_NAME, 'other']);
+    expect(scanned.loadedSource).toBe('startup-event');
+    expect(arms.detectLeak(ev, { ...scanned, timedOut: false, exitCode: 0 }, opts)).toMatch(/reported loaded by the runtime/);
+    // an init without a skills array after one with a list keeps the list
+    const keep = claude.analyzeTranscript([initLine([QUALIFIED]), JSON.stringify({ type: 'system', subtype: 'init' })].join('\n'));
+    expect(keep.loadedSkills).toEqual([QUALIFIED]);
+  });
+});
+
+describe('review fixes: runner fails closed and redacts', () => {
+  const baseJob = () => ({ evalId: 'e', skill: SKILL, arm: 'baseline', runtime: 'claude', prompt: 'p', workspace: sub('ws'), env: { PATH: process.env.PATH }, timeoutMs: 20000, pluginDirs: [] });
+
+  test('run() throws when job.env or job.workspace is missing, before any process starts', async () => {
+    const marker = sub('ran');
+    fs.mkdirSync(sub('bin'), { recursive: true });
+    fs.writeFileSync(sub('bin/claude'), `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+    const run = (job) => getRunner('claude').run(job, { bin: sub('bin/claude') });
+    const { env, ...noEnv } = baseJob(); // eslint-disable-line no-unused-vars
+    const { workspace, ...noWs } = baseJob(); // eslint-disable-line no-unused-vars
+    await expect(run(noEnv)).rejects.toThrow(/job\.env is required/);
+    await expect(run(noWs)).rejects.toThrow(/job\.workspace is required/);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test('run() redacts secrets from stderr as well as the transcript', async () => {
+    const secret = 'sk-live-ABCDEF0123456789';
+    fs.mkdirSync(sub('bin'), { recursive: true });
+    fs.mkdirSync(sub('ws'));
+    fs.writeFileSync(sub('bin/claude'), `#!/bin/sh\necho "boom ${secret}" >&2\necho '{"type":"result","result":"${secret}"}'\n`, { mode: 0o755 });
+    const r = await getRunner('claude').run(baseJob(), { bin: sub('bin/claude'), secrets: [secret] });
+    expect(r.stderr).toContain('[REDACTED]');
+    expect(r.stderr).not.toContain(secret);
+    expect(r.transcript).not.toContain(secret);
+  });
+
+  test('a secret straddling the stdout tail cut or the stderr cap leaves no fragment', async () => {
+    const secret = 'sk-live-ABCDEF0123456789';
+    fs.mkdirSync(sub('ws'));
+    // stdout: ~90k short lines, each one secret; the 1 MB tail cut lands inside a line.
+    // stderr: a secret placed so the 4000-character tail starts inside it.
+    const script = sub('emit.js');
+    fs.writeFileSync(script, `
+const line = '${secret}z\\n';
+let chunk = ''; for (let i = 0; i < 2000; i++) chunk += line;
+for (let i = 0; i < 100; i++) process.stdout.write(chunk);
+process.stderr.write('a'.repeat(3995) + '${secret}' + 'b'.repeat(2));
+`);
+    const r = await require('../lib/exec').runProcess(process.execPath, [script], { cwd: sub('ws'), env: { PATH: process.env.PATH }, timeoutMs: 60000, secrets: [secret] });
+    expect(r.transcriptTruncated).toBe(true);
+    const lines = r.transcript.split('\n').filter(Boolean);
+    for (const l of lines) expect('[REDACTED]z').toContain(l); // every line, including the one cut by the cap, is a piece of the redacted line
+    expect(r.stderr.length).toBeLessThanOrEqual(2000);
+    expect(r.stderr).not.toMatch(/sk-|live|ABCDEF|0123456789|DEF0123/);
+    // stderr cut: only the redaction survives where the secret was (a 2000-char tail would start inside it without the fix)
+    const r2 = await require('../lib/exec').runProcess(process.execPath, ['-e', `process.stderr.write('a'.repeat(1975) + '${secret}' + 'b'.repeat(1999))`], { cwd: sub('ws'), env: { PATH: process.env.PATH }, timeoutMs: 20000, secrets: [secret] });
+    expect(r2.stderr).not.toMatch(/ABCDEF|0123456789|-live-/);
+    expect(r2.stderr.length).toBe(2000);
+  });
+
+  test('a secret inside a single over-long line (no newline) straddling the 1 MB pending cut leaves no fragment', async () => {
+    const secret = 'sk-live-ABCDEF0123456789';
+    fs.mkdirSync(sub('ws'));
+    const script = sub('long.js');
+    fs.writeFileSync(script, `
+const unit = '${secret}z';
+let chunk = ''; for (let i = 0; i < 4000; i++) chunk += unit;
+for (let i = 0; i < 20; i++) process.stdout.write(chunk); // ~2 MB, never a newline
+process.stdout.write('q'.repeat(Number(process.argv[2]))); // moves where the 1 MB cut lands inside the units
+`);
+    for (const pad of [1, 4, 7, 10, 13, 16, 19, 22]) {
+      const r = await require('../lib/exec').runProcess(process.execPath, [script, String(pad)], { cwd: sub('ws'), env: { PATH: process.env.PATH }, timeoutMs: 60000, secrets: [secret] });
+      expect(r.transcriptTruncated).toBe(true);
+      const rest = r.transcript.replace(/\[REDACTED\]z/g, '').replace(/q/g, '');
+      expect('[REDACTED]z').toContain(rest); // at most the cut piece of one redacted unit; no piece of the secret
+    }
   });
 });

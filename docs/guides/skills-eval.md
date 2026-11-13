@@ -13,11 +13,25 @@ How `node evals/run.js --skill <skill> --runtime claude` measures a skill: each 
 
 `--setting-sources project` is passed to both arms, so user-level settings and synced or marketplace plugins cannot leak into either one. The job passed to the runner carries `pluginDirs[]` (a list: a skill may need more than one package) and `skillPaths[]`.
 
-A baseline run is checked for a leak: the eval aborts, naming the leak, when the runtime reports the skill under test as loaded, the transcript invokes it, or its package appears among the loaded plugins. The baseline is then not scored (`baseline: null`, no uplift), no further runs of that eval start, and the run exits 1. A skill the model already knows is not a leak: its baseline passes too and the uplift is near zero, which is a valid result.
+A baseline run is checked for isolation. Missing evidence is never read as clean:
+
+- **Leak.** The eval aborts, naming the leak, when the runtime reports the skill under test as loaded, the transcript invokes it, or its package appears among the loaded plugins (plugin paths are compared by `realpath` on both sides, falling back to the resolved path when it does not exist, so a symlinked path is still caught). A leak outranks the cases below.
+- **`baseline isolation unverifiable: no startup skill list`.** A baseline that completed normally (not timed out, exit 0) whose stream had no `system`/`init` skills list (`loadedSource` is not `startup-event`) cannot be told from a leaked one. The eval aborts under that name, exactly like a leak.
+- **Crashed or timed-out baseline before any init event.** That run is marked `outcome: "unverifiable"` and is not counted toward the baseline score (it appears as `notRun` and in `baseline.unverifiable`; its cost still counts). The eval continues with the remaining runs.
+
+After an abort the baseline is not scored (`baseline: null`, no uplift), runs of that eval that have not yet started are skipped, and the run exits 1. A skill the model already knows is not a leak: its baseline passes too and the uplift is near zero, which is a valid result.
+
+Several `system`/`init` events in one stream are unioned (skills and plugins); a later event never overwrites an earlier one.
+
+**Fixtures.** The workspace is a copy of `fixture/`, and both arms use `--setting-sources project`, so project configuration in the fixture would be honoured and run with the agent's environment. An eval whose fixture contains `.claude/`, `.claude.json`, `.mcp.json`, `.git`, `.gitmodules`, `.gitattributes` or `.gitconfig` (at any depth, any letter case), or a symlink that points outside the fixture (or has an absolute target), is rejected with an error naming the eval and the file. The sandbox copy applies the same rules defensively: those entries are skipped, and a symlink is never followed out of the fixture.
+
+**Judged checks** run on the with-skill arm only: `judgedScore` reads only that arm, so the baseline arm skips them and no judge spend is wasted (the judge reservation is not taken for baseline runs either).
+
+**Definition limits.** `skill` must match `^[A-Za-z0-9._-]+$` (and not be `.` or `..`), and its directory must resolve under `packages/<pkg>/skills`. A `prompt` (or `command`) must not begin with `-`, and `allowedTools` entries must not contain a comma or whitespace (they are joined with commas on the command line). A `bar` above `repeats` is rejected at load only when the eval sets both; otherwise it is checked at run time against `--repeats` or the `evals/limits.json` default.
 
 ## Repeats and reliability
 
-Each arm runs `repeats` times (default 5, `evals/limits.json`), at most `--concurrency` at a time (default 4), with budget reserved per in-flight run. With-skill reliability is `passes >= bar` (default bar 4 of 5, `evals/limits.json`). The eval is `pass` when reliable, `fail` when the bar can no longer be reached, `incomplete` when the budget stopped it earlier.
+Each arm runs `repeats` times (default 5, `evals/limits.json`), at most `--concurrency` at a time (default 4), with budget reserved per in-flight run (at most `--concurrency` runs are reserved at once). With-skill reliability is `passes >= bar` (default bar 4 of 5, `evals/limits.json`). The eval is `pass` when reliable, `fail` when the bar can no longer be reached, `incomplete` when the budget stopped it earlier.
 
 - `repeats` and `bar` in `eval.json` override the defaults; `--repeats N` overrides both the eval and the default.
 - When the bar is not set by the eval and the repeat count differs from the default, the default bar is scaled (`ceil(4/5 * repeats)`: 2 of 2, 3 of 3, 8 of 10). The report states each value and its source (`default`, `eval`, `flag`, `scaled`).

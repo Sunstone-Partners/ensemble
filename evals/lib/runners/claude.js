@@ -73,7 +73,7 @@ const MAX_INVOKED = 500;
  * the names passed to the `Skill` tool (`invokedSkills`).
  */
 function createStreamScanner() {
-  let startupSkills = null;
+  let startupSkills = null; // union over every init event; null until one carries a skills array
   const loadedPlugins = [];
   const invoked = [];
   return {
@@ -83,7 +83,8 @@ function createStreamScanner() {
       try { o = JSON.parse(line); } catch { return; }
       if (!o || typeof o !== 'object') return;
       if (o.type === 'system' && o.subtype === 'init') {
-        if (Array.isArray(o.skills)) startupSkills = o.skills.filter((s) => typeof s === 'string');
+        // A later init event adds to what earlier ones reported; it can never hide an earlier match.
+        if (Array.isArray(o.skills)) startupSkills = [...new Set([...(startupSkills || []), ...o.skills.filter((s) => typeof s === 'string')])];
         if (Array.isArray(o.plugins)) {
           for (const p of o.plugins) if (p && typeof p.path === 'string' && p.path !== 'builtin') loadedPlugins.push({ name: p.name, path: p.path });
         }
@@ -126,11 +127,14 @@ function analyzeTranscript(transcript) {
  * `costUsd` is null when the stream reported none (timeout, crash): the scheduler then charges the reservation.
  */
 async function run(job, opts = {}) {
+  // Fail closed: a missing env would inherit the parent's, a missing workspace would run in the caller's cwd.
+  if (!job || !job.env || typeof job.env !== 'object') throw new Error('claude runner: job.env is required (the allowlisted environment); refusing to run with the parent environment');
+  if (!job.workspace) throw new Error('claude runner: job.workspace is required; refusing to run in the current directory');
   const bin = opts.bin || findClaude();
   if (!bin) throw new Error('claude CLI not found on PATH (set EVALS_CLAUDE_BIN to override)');
   const secrets = opts.secrets || [];
   const scanner = createStreamScanner();
-  const proc = await runProcess(bin, buildArgs(job), { cwd: job.workspace, env: job.env, timeoutMs: job.timeoutMs, onLine: (l) => scanner.feed(l) });
+  const proc = await runProcess(bin, buildArgs(job), { cwd: job.workspace, env: job.env, timeoutMs: job.timeoutMs, secrets, onLine: (l) => scanner.feed(l) });
   const transcript = envlib.redactText(proc.transcript, secrets);
   return {
     transcript,
@@ -139,7 +143,7 @@ async function run(job, opts = {}) {
     costUsd: summarizeTranscript(transcript).costUsd,
     ...scanner.result(),
     runtime: RUNTIME,
-    stderr: proc.stderr,
+    stderr: envlib.redactText(proc.stderr, secrets),
     transcriptTruncated: proc.transcriptTruncated,
     commands: proc.commands.map((c) => envlib.redactText(c, secrets)),
     commandsIncomplete: proc.commandsIncomplete,

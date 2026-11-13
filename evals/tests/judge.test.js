@@ -26,6 +26,7 @@ JSON
     ;;
   *)
     echo done > SUMMARY.md
+    echo '{"type":"system","subtype":"init","skills":["verify"],"plugins":[]}'
     echo '{"type":"result","num_turns":1,"total_cost_usd":0.02,"is_error":false}'
     ;;
 esac
@@ -103,7 +104,12 @@ describe('run with a judged check', () => {
     expect(r.rep.results[0]).toMatchObject({ verdict: 'pass', pass: true, judgedScore: 0.8, judgeModel: 'opus' });
     expect(withSkillRun(r.rep).graders.find((g) => g.type === 'judge')).toMatchObject({ judged: true, judgeModel: 'opus', score: 0.8 });
     expect(withSkillRun(r.rep).costUsd).toBeCloseTo(0.03);
-    expect(r.rep.results[0].costUsd).toBeCloseTo(0.06); // both arms
+    // The baseline arm skips judged checks (judgedScore reads only with-skill): no judge spend there.
+    const base = r.rep.results[0].runs.find((x) => x.arm === 'baseline');
+    expect(base.graders.map((g) => g.type)).toEqual(['fileExists']);
+    expect(base.costUsd).toBeCloseTo(0.02);
+    expect(r.rep.results[0].costUsd).toBeCloseTo(0.05);
+    expect(fs.readFileSync(path.join(tmp, 'calls.txt'), 'utf8').split('You are grading').length - 1).toBe(1); // one judge call, with-skill only
     expect(r.stderr).not.toMatch(/REFUSED/);
   });
 

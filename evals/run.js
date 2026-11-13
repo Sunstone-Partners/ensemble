@@ -133,7 +133,9 @@ async function runScenario(scenario, run) {
     }
     const commands = Array.isArray(proc.commands) ? proc.commands.map((c) => envlib.redactText(c, secrets)) : undefined;
     const ctx = { dir: sb.dir, repoRoot, baseline: sb.baseline, transcript, transcriptTruncated: proc.transcriptTruncated, commands, commandsIncomplete: proc.commandsIncomplete, env: checkEnv, judgeEnv: env, judge: judge ? { ...judge, bin } : undefined };
-    const graders = await runGraders(scenario.graders || [], ctx);
+    // Judged checks read only the with-skill arm (judgedScore), so the baseline arm skips them: no judge spend is wasted.
+    const specs = (scenario.graders || []).filter((g) => !(run.arm === 'baseline' && g.type === 'judge'));
+    const graders = await runGraders(specs, ctx);
     const outcome = summarizeRun(graders);
     // A judge call that ran but reported no cost (failed or timed out) is charged the judge allowance.
     const judgeUnknown = graders.filter((g) => g.judged && !g.refused && (g.costUsd === null || g.costUsd === undefined)).length;
@@ -245,8 +247,8 @@ async function main(argv = process.argv.slice(2)) {
   const concurrency = opts.concurrency || limits.concurrency;
   const workdir = sandbox.resolveWorkdir();
   const judgeActive = Boolean(judge && !judge.refusal);
-  const reservationOf = (s) => reservationFor(
-    { model: s.type === 'agent', judged: judgeActive && (s.graders || []).some((g) => g.type === 'judge') },
+  const reservationOf = (s, arm) => reservationFor(
+    { model: s.type === 'agent', judged: arm !== 'baseline' && judgeActive && (s.graders || []).some((g) => g.type === 'judge') },
     { runReserveUsd: opts.runUsd || limits.runReserveUsd, judgeReserveUsd: opts.judgeUsd || limits.judgeReserveUsd, capUsd },
   );
   const runUsdFor = () => Math.min(opts.runUsd || limits.runReserveUsd, capUsd);
@@ -292,8 +294,14 @@ async function main(argv = process.argv.slice(2)) {
     }
     r = { ...r, evalId: ev.id, arm, run: item.run, runtime: opts.runtime, model: opts.model || 'default', invocationMode: ev.invocation };
     if (arm === 'baseline') {
-      const leak = arms.detectLeak(ev, r, { repoRoot: REPO_ROOT });
-      if (leak) { aborts.set(ev.id, leak); r = { ...r, outcome: 'aborted', pass: null, verdict: null, leak }; }
+      const check = arms.checkBaseline(ev, r, { repoRoot: REPO_ROOT });
+      if (check && check.kind === 'unverifiable-run') {
+        // Crashed or timed out before any startup event: cannot be called clean, so it is not counted in the baseline score.
+        r = { ...r, outcome: 'unverifiable', pass: null, verdict: null, unverifiable: check.message };
+      } else if (check) {
+        aborts.set(ev.id, check.message);
+        r = { ...r, outcome: 'aborted', pass: null, verdict: null, leak: check.message };
+      }
     }
     r = envlib.redactDeep(r, secrets);
     show(r, label);
@@ -308,7 +316,7 @@ async function main(argv = process.argv.slice(2)) {
     copies.set(ev.id, arms.evaluatedCopy({ repoRoot: REPO_ROOT, packageName: ev.package, skill: ev.skill }));
     items.push(...expandRuns(ev, plans.get(ev.id).repeats));
   }
-  const reserveItem = (item) => reservationOf(item.ev ? scenarioOf.get(item.ev.id) : item.legacy);
+  const reserveItem = (item) => reservationOf(item.ev ? scenarioOf.get(item.ev.id) : item.legacy, item.arm);
   const suite = await runSuite(items, { concurrency, capUsd, reserve: reserveItem, run: exec });
   const byItem = new Map(suite.done.map((d) => [d.item, d.result]));
 
@@ -332,10 +340,10 @@ async function main(argv = process.argv.slice(2)) {
     out(`eval ${ev.id}: ${evalResult.outcome.toUpperCase()}`);
     if (evalResult.abort) {
       err(`ABORTED ${evalResult.abort}`);
-      out(`  with-skill ${evalResult.withSkill.passes}/${evalResult.withSkill.runs} (not scored: baseline leaked)`);
+      out(`  with-skill ${evalResult.withSkill.passes}/${evalResult.withSkill.runs} (not scored: baseline aborted)`);
     } else {
       const u = evalResult.uplift === null ? 'n/a' : `${evalResult.uplift >= 0 ? '+' : ''}${evalResult.uplift.toFixed(2)}`;
-      out(`  with-skill ${evalResult.withSkill.passes}/${evalResult.withSkill.runs} (bar ${plan.bar} of ${plan.repeats}: ${evalResult.reliable === null ? 'undetermined' : evalResult.reliable ? 'reliable' : 'NOT reliable'}); baseline ${evalResult.baseline.passes}/${evalResult.baseline.runs}`);
+      out(`  with-skill ${evalResult.withSkill.passes}/${evalResult.withSkill.runs} (bar ${plan.bar} of ${plan.repeats}: ${evalResult.reliable === null ? 'undetermined' : evalResult.reliable ? 'reliable' : 'NOT reliable'}); baseline ${evalResult.baseline.passes}/${evalResult.baseline.runs}${evalResult.baseline.unverifiable ? ` (${evalResult.baseline.unverifiable} run(s) not counted: isolation unverifiable)` : ''}`);
       out(`  uplift ${u} ${evalResult.upliftLabel}`);
     }
     out(`  repeats ${plan.repeats} (${plan.repeatsSource}), bar ${plan.bar} (${plan.barSource}${plan.barSource === 'eval' ? ' override' : ''})`);

@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 const envlib = require('./env');
 const claude = require('./runners/claude');
 const arms = require('./arms');
+const { copyFixture } = require('./fixture');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_WORKDIR = path.join(os.homedir(), '.omp', 'evals-work');
@@ -50,7 +51,7 @@ function git(cwd, args) {
  * Create a throwaway git repo from scenarios/<id>/fixture on branch `main`, as a fresh copy under `workdir`
  * (default: EVALS_WORKDIR), never inside the repository.
  * With scenario.remote === true, also creates a bare `origin` and pushes main.
- * Returns { dir, root, baseline, cleanup }.
+ * Returns { dir, root, baseline, skipped, cleanup } (`skipped`: fixture entries not copied).
  */
 function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir() } = {}) {
   fs.mkdirSync(workdir, { recursive: true });
@@ -58,7 +59,8 @@ function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir() 
   const dir = path.join(root, 'project');
   fs.mkdirSync(dir);
   const fixture = path.join(scenarioDir, 'fixture');
-  if (fs.existsSync(fixture)) fs.cpSync(fixture, dir, { recursive: true });
+  // Defensive copy: agent/git configuration and symlinks pointing outside the fixture are never copied (see lib/fixture.js).
+  const skipped = fs.existsSync(fixture) ? copyFixture(fixture, dir) : [];
 
   git(dir, ['init', '-q', '-b', 'main']);
   git(dir, ['config', 'user.email', 'eval@example.invalid']);
@@ -83,6 +85,7 @@ function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir() 
     dir,
     root,
     baseline: { mainSha, remoteMainSha, remotePath },
+    skipped,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
