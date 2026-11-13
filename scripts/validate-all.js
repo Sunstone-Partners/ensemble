@@ -739,9 +739,14 @@ function validateFullCommandSkillsDirect(packagesDir = PACKAGES_DIR) {
       let direct = false;
       try {
         // A direct entry is a per-skill link (or copy) that resolves to a SKILL.md of its own.
-        fs.lstatSync(path.join(fullSkillsDir, skillEntry.name));
-        direct = fs.existsSync(path.join(fullSkillsDir, skillEntry.name, 'SKILL.md'))
-          || deSymlinkedMirrorTarget(path.join(fullSkillsDir, skillEntry.name)) !== null;
+        const entry = path.join(fullSkillsDir, skillEntry.name);
+        fs.lstatSync(entry);
+        // A link must resolve to THIS skill's own directory, not just to some directory holding a SKILL.md.
+        const source = fs.realpathSync(path.join(skillsDir, skillEntry.name));
+        // A checkout without symlink support holds the link as a small file naming its target: it must name this skill too.
+        const textTarget = deSymlinkedMirrorTarget(entry);
+        direct = (fs.existsSync(path.join(entry, 'SKILL.md')) && fs.realpathSync(entry) === source)
+          || (textTarget !== null && fs.realpathSync(path.resolve(path.dirname(entry), textTarget)) === source);
       } catch { /* no entry */ }
       if (!direct) {
         failures.push(

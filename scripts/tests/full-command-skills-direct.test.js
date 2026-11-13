@@ -33,7 +33,7 @@ describe('packages/full/skills: command skills are direct entries', () => {
     let root;
     const write = (p, text) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); };
     beforeEach(() => {
-      root = fs.mkdtempSync(path.join(os.homedir(), '.omp', 'trd-skills-eval', 'jest-full-'));
+      root = fs.mkdtempSync(path.join(os.tmpdir(), 'jest-full-skills-')); // disposable fixture, removed in afterEach
       write(path.join(root, 'git', 'skills', 'ensemble-pr-merge', 'SKILL.md'), '---\nname: ensemble-pr-merge\n---\n');
       write(path.join(root, 'git', 'skills', 'git-town', 'SKILL.md'), '---\nname: git-town\n---\n'); // not a command skill
       fs.mkdirSync(path.join(root, 'full', 'skills'), { recursive: true });
@@ -56,6 +56,27 @@ describe('packages/full/skills: command skills are direct entries', () => {
     test('a broken link does not count as an entry', () => {
       fs.symlinkSync('../../git/skills/does-not-exist', path.join(root, 'full', 'skills', 'ensemble-pr-merge'));
       expect(validateFullCommandSkillsDirect(root)).toHaveLength(1);
+    });
+
+    test('a link to a different skill does not count as the entry for this one', () => {
+      write(path.join(root, 'git', 'skills', 'ensemble-release', 'SKILL.md'), '---\nname: ensemble-release\n---\n');
+      fs.symlinkSync('../../git/skills/ensemble-release', path.join(root, 'full', 'skills', 'ensemble-pr-merge')); // wrong target
+      fs.symlinkSync('../../git/skills/ensemble-release', path.join(root, 'full', 'skills', 'ensemble-release'));
+      const failures = validateFullCommandSkillsDirect(root);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatch(/ensemble-pr-merge is not a direct entry/);
+    });
+
+    test('a checkout without symlink support (the link is a file naming its target) counts only when it names this skill', () => {
+      const entry = path.join(root, 'full', 'skills', 'ensemble-pr-merge');
+      fs.writeFileSync(entry, '../../git/skills/ensemble-pr-merge');
+      expect(validateFullCommandSkillsDirect(root)).toEqual([]);
+      write(path.join(root, 'git', 'skills', 'ensemble-release', 'SKILL.md'), '---\nname: ensemble-release\n---\n');
+      fs.writeFileSync(entry, '../../git/skills/ensemble-release'); // resolves, but to another skill
+      const failures = validateFullCommandSkillsDirect(root);
+      expect(failures.some((m) => /ensemble-pr-merge is not a direct entry/.test(m))).toBe(true);
+      fs.writeFileSync(entry, 'not a link target\nat all, just some prose'); // not link-shaped
+      expect(validateFullCommandSkillsDirect(root).some((m) => /ensemble-pr-merge is not a direct entry/.test(m))).toBe(true);
     });
 
     test('the full, pi, codex and opencode packages are not sources', () => {
