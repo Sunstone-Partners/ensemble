@@ -60,10 +60,8 @@ describe('nothing comparable, no regression (AC-016-2)', () => {
   test.each([
     ['eval version', { evalVersion: '9'.repeat(64) }, /evalVersion differs/],
     ['model', { model: 'claude-other-9' }, /model differs/],
-    ['runtime', null, null],
     ['repeats', { repeats: 5, bar: 4, withSkill: { passes: 5, runs: 5 }, baseline: { passes: 0, runs: 5 }, uplift: 1 }, /repeats differs/],
   ])('a baseline with a different %s: not comparable, no regression claimed, exit unchanged (0), says so', (name, over, reason) => {
-    if (!over) return; // a different runtime has its own baseline directory: covered by the no-baseline case
     expect(t.run(THREE).status).toBe(0);
     // A below-bar new result against an otherwise reliable baseline must still not be called a regression.
     writeBaseline(over);
@@ -73,6 +71,26 @@ describe('nothing comparable, no regression (AC-016-2)', () => {
     expect(r.stdout).toMatch(reason);
     expect(r.stdout).toMatch(/nothing comparable with the committed baseline, no regression is claimed/);
     expect(r.stdout).not.toMatch(/REGRESSION|change in score/);
+  });
+
+  test('a baseline recorded under a different runtime (pi) is not compared to a claude run: nothing comparable, no regression claimed, exit 0 (AC-016-2)', () => {
+    expect(t.run(THREE).status).toBe(0);
+    // Move the (valid, reliable, same model and eval version) summary under baselines/pi: the claude directory is now empty.
+    const claude = readBaseline();
+    expect(claude).toMatchObject({ reliable: true, model: 'claude-stub-1', runtime: 'claude' });
+    fs.mkdirSync(t.sub('baselines', 'pi'));
+    fs.writeFileSync(t.sub('baselines', 'pi', `${SKILL}.json`), JSON.stringify({ ...claude, runtime: 'pi', granularity: 'skill' }));
+    fs.rmSync(BASELINE());
+    // A below-bar new result must not be called a regression against it either.
+    const bad = t.run([...THREE, '--refresh'], { passSeq: [true, false, false] });
+    expect(bad.status).toBe(1); // the eval itself fails; no regression against another runtime's baseline
+    expect(bad.stderr).not.toMatch(/REGRESSION/);
+    fs.rmSync(BASELINE(), { force: true });
+    const r = t.compare();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/NOTHING COMPARABLE skill ensemble-create-prd eval ensemble-create-prd \[claude\]/);
+    expect(r.stdout).toMatch(/no regression is claimed/);
+    expect(r.stdout).not.toMatch(/REGRESSION|comparable, no regression|change in score/);
   });
 
   test('a different eval version with a failing new result still claims no regression (the claim needs a like-for-like baseline)', () => {
@@ -244,6 +262,39 @@ describe('store problems exit 2 and outrank everything', () => {
     const r = t.compare(['--results', t.sub('bad-record.json')]);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/bad-record\.json records\[0\]: invalid field "run"/);
+  });
+});
+
+describe('control characters from a committed baseline or a log never reach the console', () => {
+  const ESC = '\u001b';
+  test('a baseline whose recordedAt or model carries an escape sequence is rejected naming the file (exit 2), and no escape byte is printed', () => {
+    expect(t.run(THREE).status).toBe(0);
+    const good = readBaseline();
+    for (const over of [{ recordedAt: `2020-01-01 (${ESC}]0;x\u0007)` }, { model: `claude-stub-1${ESC}[31m` }, { evalVersion: `${'a'.repeat(8)}${ESC}[2J` }]) {
+      writeBaseline({ ...good, ...over });
+      const r = t.compare();
+      expect(r.status).toBe(2);
+      expect(r.stdout).toMatch(/ERROR ensemble-create-prd \[claude\].*ensemble-create-prd\.json: invalid field "(recordedAt|model|evalVersion)"/);
+      expect(r.stdout + r.stderr).not.toContain(ESC);
+    }
+    writeBaseline(good);
+    expect(t.compare().status).toBe(0);
+  });
+
+  test('a log whose eval id contains ESC is rejected (exit 2) and prints no ESC; formatComparison also strips every printed value (defence in depth)', () => {
+    expect(t.run(THREE).status).toBe(0);
+    const doc = JSON.parse(fs.readFileSync(path.join(t.sub('results'), fs.readdirSync(t.sub('results'))[0]), 'utf8'));
+    doc.results[0].id = `${SKILL}${ESC}]0;pwned\u0007`;
+    fs.writeFileSync(t.sub('esc.json'), JSON.stringify(doc));
+    const r = t.compare(['--results', t.sub('esc.json')]);
+    expect(r.status).toBe(2);
+    expect(r.stdout + r.stderr).not.toContain(ESC);
+    const text = cmp.formatComparison({
+      storeErrors: [`x${ESC}[1m`],
+      entries: [{ skill: SKILL, evalId: `e${ESC}]0;t\u0007v`, runtime: 'claude', status: 'regression', reasons: [`model differs (committed m${ESC}[2J)`], notes: [`n${ESC}[0m`], delta: null, committedAt: `2020${ESC}` }],
+    });
+    expect(text).toContain('e]0;tv');
+    expect([...text].filter((ch) => ch !== '\n' && /\p{Cc}/u.test(ch))).toEqual([]);
   });
 });
 

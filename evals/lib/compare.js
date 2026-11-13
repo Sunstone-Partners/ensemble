@@ -53,7 +53,7 @@ function loadLog(file) {
   for (const [i, e] of doc.results.entries()) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) bad(`results[${i}] is not an object`);
     if (e.arms !== true) continue; // legacy single-arm scenarios and replays have no arms: nothing to compare
-    if (typeof e.id !== 'string' || !results.isSkillName(e.skill)) bad(`results[${i}] has no valid id and skill`);
+    if (!results.cleanId(e.id) || !results.isSkillName(e.skill)) bad(`results[${i}] has no valid id and skill`);
     results.assertRuntime(e.runtime, `results[${i}] runtime`);
     if (!Array.isArray(e.runs)) bad(`results[${i}] has no "runs" array`);
   }
@@ -117,7 +117,10 @@ const change = (c) => `${c.committed.toFixed(2)} -> ${c.current.toFixed(2)} (${c
 /** Report text: one block per eval. Not-comparable and nothing-comparable are said in words and never as a pass. */
 function formatComparison(cmp) {
   const out = [];
-  for (const e of cmp.entries) {
+  // Every value read from a log or a committed baseline is stripped of terminal control characters (and kept on one line) before it is printed.
+  const s = (v) => results.stripControl(v).replace(/[\n\t]/g, ' ');
+  for (const e0 of cmp.entries) {
+    const e = { ...e0, skill: s(e0.skill), evalId: s(e0.evalId), runtime: s(e0.runtime), reasons: e0.reasons.map(s), notes: e0.notes.map(s), committedAt: e0.committedAt == null ? e0.committedAt : s(e0.committedAt) };
     const head = `skill ${e.skill} eval ${e.evalId} [${e.runtime}]`;
     if (e.status === 'regression') out.push(`REGRESSION ${head}: ${e.reasons.join('; ')} (committed summary recorded ${e.committedAt})`);
     else if (e.status === 'ok') out.push(`${head}: comparable, no regression`);
@@ -130,7 +133,7 @@ function formatComparison(cmp) {
       out.push(`  change in uplift: ${change(e.delta.uplift)}`);
     }
   }
-  for (const m of cmp.storeErrors) out.push(`ERROR ${m}`);
+  for (const m of cmp.storeErrors) out.push(`ERROR ${s(m)}`);
   return out.join('\n');
 }
 

@@ -32,6 +32,14 @@ function createSuite() {
   const calls = () => (fs.existsSync(sub('calls.log')) ? fs.readFileSync(sub('calls.log'), 'utf8').split('\n').filter(Boolean) : []);
   const resetCalls = () => fs.rmSync(sub('calls.log'), { force: true });
   const evalJsonPath = sub('skills', SKILL, 'eval.json');
+  // Scratch copy of the skill package (EVALS_REPO_ROOT): a test can edit it and never touches packages/ in the real checkout.
+  let scratchRoot = null;
+  const pkgDirNow = () => (scratchRoot ? path.join(scratchRoot, 'packages', path.basename(PKG_DIR)) : PKG_DIR);
+  function useScratchRepo() {
+    scratchRoot = sub('repo');
+    fs.cpSync(PKG_DIR, pkgDirNow(), { recursive: true });
+    return pkgDirNow();
+  }
 
   /**
    * One run.js invocation. opts: { model (id the stub reports; null = none), pass (with-skill arm writes SUMMARY.md), leak (the baseline arm lists the
@@ -41,7 +49,7 @@ function createSuite() {
     fs.mkdirSync(sub('bin'), { recursive: true });
     fs.rmSync(sub('seq.count'), { force: true });
     const emit = (lines) => lines.map((l) => `echo '${l.replace(/'/g, "'\\''")}'`).join('\n');
-    const withLines = [initLine([QUALIFIED], [{ name: 'ensemble-product', path: PKG_DIR }], model), invokeLine(QUALIFIED), resultLine()];
+    const withLines = [initLine([QUALIFIED], [{ name: 'ensemble-product', path: pkgDirNow() }], model), invokeLine(QUALIFIED), resultLine()];
     const baseLines = [initLine(leak ? [QUALIFIED] : ['verify'], [], model), resultLine()];
     write(sub('bin/claude'), `#!/bin/sh
 case "$*" in *--plugin-dir*) echo with-skill >> '${sub('calls.log')}';; *) echo baseline >> '${sub('calls.log')}';; esac
@@ -66,7 +74,7 @@ esac
 
   const envFor = (env = {}) => ({
     ...process.env, CI: 'false', GITHUB_ACTIONS: 'false', PATH: `${sub('bin')}:${process.env.PATH}`, EVALS_WORKDIR: sub('work'),
-    EVALS_RESULTS_DIR: sub('results'), EVALS_BASELINES_DIR: sub('baselines'), EVALS_SCENARIOS_DIR: sub('scenarios'), EVALS_SKILLS_DIR: sub('skills'), ...env,
+    EVALS_RESULTS_DIR: sub('results'), EVALS_BASELINES_DIR: sub('baselines'), EVALS_SCENARIOS_DIR: sub('scenarios'), EVALS_SKILLS_DIR: sub('skills'), ...(scratchRoot && { EVALS_REPO_ROOT: scratchRoot }), ...env,
   });
 
   /** evals/compare.js with the same scratch directories. */
@@ -92,7 +100,7 @@ esac
     return fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')).sort().map((n) => ({ file: path.join(dir, n), entry: JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')) })) : [];
   };
   const cleanup = () => fs.rmSync(root, { recursive: true, force: true });
-  return { root, sub, write, run, exec, compare, calls, resetCalls, entries, cleanup, evalJsonPath };
+  return { root, sub, useScratchRepo, write, run, exec, compare, calls, resetCalls, entries, cleanup, evalJsonPath };
 }
 
 module.exports = { createSuite, REPO_ROOT, RUN, SKILL, PKG_DIR, QUALIFIED, SCRATCH };

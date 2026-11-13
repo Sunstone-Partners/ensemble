@@ -91,7 +91,7 @@ function checkStore(cacheDir, runtime) {
 const isStr = (v, max = MAX_STR) => typeof v === 'string' && v.length <= max;
 const strList = (v) => Array.isArray(v) && v.length <= MAX_LIST && v.every((x) => isStr(x, 400));
 // Terminal control characters (an escape sequence in a stored detail would be printed): dropped from reused text.
-const stripControl = (t) => t.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+const { stripControl } = results;
 
 /** The isolation evidence of a clean baseline run, as stored. */
 function isolationOf(r) {
@@ -168,7 +168,7 @@ function validateEntry(doc, inputs, key, ev) {
   if (doc.format !== FORMAT) bad('unknown format');
   if (doc.key !== key || !KEY_RE.test(String(doc.key))) bad('key does not match');
   if (stable(doc.inputs) !== stable(inputs)) bad('stored inputs differ from the requested ones');
-  if (!isStr(doc.storedAt, 40) || Number.isNaN(Date.parse(doc.storedAt))) bad('invalid storedAt');
+  if (!isStr(doc.storedAt, 40) || !results.isIsoTimestamp(doc.storedAt)) bad('invalid storedAt');
   if (doc.turns !== null && !(typeof doc.turns === 'number' && Number.isFinite(doc.turns) && doc.turns >= 0)) bad('invalid turns');
   const rec = results.validateResult(doc.record, 'record');
   const same = { runtime: inputs.runtime, evalId: inputs.evalId, skill: inputs.skill, evalVersion: inputs.evalVersion, skillHash: inputs.skillHash, arm: inputs.arm, invocationMode: inputs.invocationMode, run: inputs.run };

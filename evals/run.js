@@ -35,7 +35,23 @@ const { describeCopy } = require('./lib/results');
 const { getRunner, supportedRuntimes } = require('./lib/runners');
 const cache = require('./lib/cache');
 
-const REPO_ROOT = path.resolve(__dirname, '..');
+/**
+ * The repository the skill packages are read from. Test hook: EVALS_REPO_ROOT points at a scratch copy (it must be an existing directory that
+ * contains `packages/`); it is read once, here. Unset: this checkout.
+ */
+function resolveRepoRoot() {
+  const given = process.env.EVALS_REPO_ROOT;
+  if (given === undefined || given === '') return path.resolve(__dirname, '..');
+  const root = path.resolve(given);
+  const isDir = (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } };
+  const ok = isDir(root) && isDir(path.join(root, 'packages'));
+  if (!ok) {
+    console.error(`EVALS_REPO_ROOT must be an existing directory containing packages/: ${results.stripControl(given).slice(0, 200)}`);
+    process.exit(2);
+  }
+  return root;
+}
+const REPO_ROOT = resolveRepoRoot();
 const SCENARIOS_DIR = process.env.EVALS_SCENARIOS_DIR || path.join(__dirname, 'scenarios');
 const EVAL_SKILLS_DIR = process.env.EVALS_SKILLS_DIR || path.join(__dirname, 'skills');
 const RESULTS_DIR = process.env.EVALS_RESULTS_DIR || path.join(__dirname, 'results');
@@ -341,7 +357,7 @@ async function main(argv = process.argv.slice(2)) {
   const timeoutMsFor = (s) => 1000 * (opts.timeoutSec || Math.min(s.timeoutSec || limits.timeoutSec, limits.timeoutSec));
 
   const show = (r, label = '') => {
-    const judgedNote = r.judgedScore === null || r.judgedScore === undefined ? '' : ` judged=${r.judgedScore.toFixed(2)} (${r.judgeModel})`;
+    const judgedNote = r.judgedScore === null || r.judgedScore === undefined ? '' : ` judged=${r.judgedScore.toFixed(2)} (${results.stripControl(r.judgeModel)})`;
     const invokedNote = r.invoked === undefined ? '' : ` skill-invoked=${r.invoked ? 'yes' : 'no'}`;
     out(`  ${label}${r.outcome.toUpperCase()} turns=${r.turns} cost=${r.costUsd}${r.costEstimated ? ' (estimated)' : ''}${invokedNote}${judgedNote}`);
     for (const g of r.graders) out(`    ${g.pass ? 'ok  ' : 'FAIL'} ${g.type}${g.judged ? ' [judged]' : ''}: ${g.detail}`);
@@ -374,7 +390,7 @@ async function main(argv = process.argv.slice(2)) {
     if (aborts.has(ev.id)) return { outcome: 'aborted', graders: [], costUsd: 0, arm, run: item.run, evalId: ev.id };
     if (hits.has(item)) {
       const cached = envlib.redactDeep(hits.get(item), secrets);
-      out(`reusing stored result for ${ev.id} ${label.trim()} (stored ${cached.cachedAt}; no model call, no cost)`);
+      out(`reusing stored result for ${ev.id} ${label.trim()} (stored ${results.stripControl(cached.cachedAt)}; no model call, no cost)`);
       show(cached, label);
       return cached;
     }
@@ -573,13 +589,13 @@ async function main(argv = process.argv.slice(2)) {
       const key = `${candidate.runtime}/${candidate.skill}`;
       if (writtenBaselines.has(key)) throw new Error(`two evals in this suite name skill "${candidate.skill}" under ${candidate.runtime}; they would overwrite one baseline file`);
       const check = results.checkAgainstBaseline(BASELINES_DIR, evalResult, bctx);
-      out(`  regression check vs committed summary: ${check.status}${check.reasons.length ? ` (${check.reasons.join('; ')})` : ''}`);
-      for (const n of check.notes || []) out(`    note: ${n}`);
+      out(`  regression check vs committed summary: ${check.status}${check.reasons.length ? ` (${results.stripControl(check.reasons.join('; '))})` : ''}`);
+      for (const n of check.notes || []) out(`    note: ${results.stripControl(n)}`);
       if (check.delta) out(`    change vs committed: with-skill rate ${fmtChange(check.delta.withSkillRate)}, uplift ${fmtChange(check.delta.uplift)}`);
       cacheFresh(ev, evalResult, evalRecords, check);
       if (check.status === 'regression') {
         regressions.push(evalResult.id);
-        err(`REGRESSION ${evalResult.id} [${evalResult.runtime}]: ${check.reasons.join('; ')} (committed summary recorded ${check.committed.recordedAt})`);
+        err(`REGRESSION ${evalResult.id} [${evalResult.runtime}]: ${results.stripControl(check.reasons.join('; '))} (committed summary recorded ${results.stripControl(check.committed.recordedAt)})`);
       }
       const unknownModel = candidate.model === results.UNKNOWN_MODEL;
       const mayWrite = opts.updateBaselines || (!unknownModel && (check.status === 'no-baseline' || check.status === 'ok'));

@@ -3,6 +3,7 @@
 /** TRD-018-TEST: result cache. Every scenario runs run.js against a stub claude that logs each call; no real model. */
 
 const fs = require('fs');
+const path = require('path');
 const { spawnSync } = require('child_process');
 const cache = require('../lib/cache');
 const results = require('../lib/results');
@@ -345,5 +346,75 @@ describe('a regression is not locked in as the reusable answer', () => {
     const accepted = t.run([...MODEL_ARGS, '--refresh', '--update-baselines'], { pass: false });
     expect(accepted.status).toBe(1);
     expect(t.entries().some((e) => e.entry.record.outcome === 'fail')).toBe(true);
+  });
+});
+
+describe('an edited skill or package runs the affected eval again (TRD-018-TEST, end to end through run.js)', () => {
+  // run.js reads the packages from EVALS_REPO_ROOT: a scratch copy, so the real packages/ is never edited.
+  const SKILL_MD = (pkg) => path.join(pkg, 'skills', 'ensemble-create-prd', 'SKILL.md');
+
+  test('unchanged scratch package: still a hit (no call); editing SKILL.md: the stub is called again for every run', () => {
+    const pkg = t.useScratchRepo();
+    expect(t.run().status).toBe(0);
+    expect(t.calls()).toHaveLength(4);
+    t.resetCalls();
+    const same = t.run(MODEL_ARGS, { die: true });
+    expect(same.stdout).toMatch(/cache: 4 run\(s\) reused, 0 executed/);
+    expect(t.calls()).toEqual([]);
+    fs.appendFileSync(SKILL_MD(pkg), '\nAn edited instruction.\n');
+    t.resetCalls();
+    const edited = t.run(MODEL_ARGS);
+    expect(edited.status).toBe(0);
+    expect(edited.stdout).toMatch(/cache: 0 run\(s\) reused, 4 executed/);
+    expect(t.calls()).toHaveLength(4);
+    expect(edited.doc().records.every((r) => r.cached !== true)).toBe(true);
+  });
+
+  test('a sibling file in the package (outside skills/<skill>) re-runs the Claude eval: the package is what Claude loads', () => {
+    const pkg = t.useScratchRepo();
+    expect(t.run().status).toBe(0);
+    fs.appendFileSync(path.join(pkg, 'README.md'), '\nA sibling change.\n');
+    t.resetCalls();
+    const r = t.run(MODEL_ARGS);
+    expect(r.status).toBe(0);
+    expect(t.calls()).toHaveLength(4);
+    expect(r.stdout).toMatch(/cache: 0 run\(s\) reused, 4 executed/);
+  });
+
+  test('EVALS_REPO_ROOT must be an existing directory containing packages/', () => {
+    const missing = t.run(MODEL_ARGS, { env: { EVALS_REPO_ROOT: t.sub('nope') } });
+    expect(missing.status).toBe(2);
+    expect(missing.stderr).toMatch(/EVALS_REPO_ROOT must be an existing directory containing packages/);
+    fs.mkdirSync(t.sub('empty'));
+    expect(t.run(MODEL_ARGS, { env: { EVALS_REPO_ROOT: t.sub('empty') } }).status).toBe(2);
+    expect(t.calls()).toEqual([]);
+  });
+});
+
+describe('control characters in a stored timestamp or identifier (terminal injection)', () => {
+  test('a cache entry whose storedAt carries an escape sequence (Date.parse accepts it) is a miss with a WARNING, and no escape byte is printed', () => {
+    expect(t.run().status).toBe(0);
+    const evil = '2020-01-01 (\u001b]0;x\u0007)';
+    expect(Number.isNaN(Date.parse(evil))).toBe(false); // the premise: the old check let it through
+    for (const { file, entry } of t.entries()) fs.writeFileSync(file, JSON.stringify({ ...entry, storedAt: evil }));
+    t.resetCalls();
+    const r = t.run(MODEL_ARGS);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/WARNING cache entry .*\.json ignored \(a miss, the run executes\): invalid storedAt/);
+    expect(t.calls()).toHaveLength(4); // executed, not reused
+    expect(r.stdout + r.stderr).not.toContain('\u001b');
+    expect(r.stdout + r.stderr).not.toContain('\u0007');
+  });
+
+  test('storedAt must be an ISO-8601 UTC timestamp; a model with a control character in a stored record is a miss', () => {
+    expect(results.isIsoTimestamp(new Date().toISOString())).toBe(true);
+    expect(results.isIsoTimestamp('2020-01-01T00:00:00Z')).toBe(true);
+    for (const v of ['2020-01-01', '2020-01-01T00:00:00+02:00', '2020-13-01T00:00:00Z', 'x2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z\u001b', 5, null]) expect(results.isIsoTimestamp(v)).toBe(false);
+    expect(t.run().status).toBe(0);
+    for (const { file, entry } of t.entries()) fs.writeFileSync(file, JSON.stringify({ ...entry, record: { ...entry.record, model: 'claude\u001b[2Jstub' } }));
+    t.resetCalls();
+    const r = t.run(MODEL_ARGS);
+    expect(r.stderr).toMatch(/WARNING cache entry .*invalid field "model"/);
+    expect(t.calls()).toHaveLength(4);
   });
 });

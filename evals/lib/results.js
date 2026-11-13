@@ -179,6 +179,14 @@ function replayCommand(spec) {
 
 const present = (o, k) => Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined;
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
+// Terminal control characters (C0 except tab/newline, DEL, C1): an escape sequence in a stored value would be printed to a console.
+const CONTROL_ANY_RE = /[\u0000-\u001f\u007f-\u009f]/;
+const stripControl = (t) => String(t).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+/** A non-empty string with no control character at all (identifiers printed on a console: model, eval version, eval id, judge model). */
+const cleanId = (v) => nonEmpty(v) && !CONTROL_ANY_RE.test(v);
+/** ISO-8601 UTC timestamp as `Date#toISOString` writes it; anything else (including text Date.parse tolerates) is refused. */
+const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const isIsoTimestamp = (v) => typeof v === 'string' && ISO_UTC_RE.test(v) && !Number.isNaN(Date.parse(v));
 
 /**
  * Validate a stored per-run record. Throws ResultError naming `source` and the first missing or malformed field.
@@ -190,13 +198,13 @@ function validateResult(r, source = 'result') {
   for (const k of ['evalId', 'skill', 'skillVersion', 'skillHash', 'evalVersion', 'runtime', 'model', 'arm', 'invocationMode', 'run', 'outcome', 'invoked', 'costUsd', 'durationMs', 'graders', 'replay', 'judgeModel']) {
     if (!present(r, k)) bad(k, 'missing');
   }
-  if (!nonEmpty(r.evalId)) bad('evalId', 'invalid');
+  if (!cleanId(r.evalId)) bad('evalId', 'invalid');
   if (!isSkillName(r.skill)) bad('skill', 'invalid');
   if (r.skillVersion !== null && !nonEmpty(r.skillVersion)) bad('skillVersion', 'invalid');
   if (!nonEmpty(r.skillHash)) bad('skillHash', 'invalid');
-  if (!nonEmpty(r.evalVersion)) bad('evalVersion', 'invalid');
+  if (!cleanId(r.evalVersion)) bad('evalVersion', 'invalid');
   if (!supportedRuntimes().includes(r.runtime)) bad('runtime', 'unknown value in');
-  if (!nonEmpty(r.model)) bad('model', 'invalid');
+  if (!cleanId(r.model)) bad('model', 'invalid');
   if (!ARM_NAMES.includes(r.arm)) bad('arm', 'invalid');
   if (!INVOCATION_MODES.includes(r.invocationMode)) bad('invocationMode', 'invalid');
   if (!Number.isInteger(r.run) || r.run < 1) bad('run', 'invalid');
@@ -208,7 +216,7 @@ function validateResult(r, source = 'result') {
   if (r.replay !== null && (typeof r.replay !== 'object' || Array.isArray(r.replay))) bad('replay', 'invalid');
   if (r.replay && present(r.replay, 'command') && !(typeof r.replay.command === 'string' && r.replay.command.length <= 2000 && r.replay.command.startsWith(`${REPLAY_PREFIX} `))) bad('replay.command', 'invalid');
   if (present(r, 'cached') && typeof r.cached !== 'boolean') bad('cached', 'invalid');
-  if (r.judgeModel !== null && !nonEmpty(r.judgeModel)) bad('judgeModel', 'invalid');
+  if (r.judgeModel !== null && !cleanId(r.judgeModel)) bad('judgeModel', 'invalid');
   return r;
 }
 
@@ -307,8 +315,8 @@ function validateBaseline(b, source = 'baseline') {
   if (!isSkillName(b.skill)) bad('skill');
   if (b.skillVersion !== null && !nonEmpty(b.skillVersion)) bad('skillVersion');
   if (!nonEmpty(b.skillHash)) bad('skillHash');
-  if (!nonEmpty(b.evalVersion)) bad('evalVersion');
-  if (!nonEmpty(b.model)) bad('model');
+  if (!cleanId(b.evalVersion)) bad('evalVersion');
+  if (!cleanId(b.model)) bad('model');
   if (!supportedRuntimes().includes(b.runtime)) bad('runtime', 'unknown value in');
   if (b.granularity !== GRANULARITY[b.runtime]) bad('granularity', `granularity "${String(b.granularity)}" does not match runtime ${b.runtime} (expected ${GRANULARITY[b.runtime]}) in`);
   // packageHash: the whole package Claude loads. Required for package granularity; informational (may be absent) for skill granularity.
@@ -325,7 +333,7 @@ function validateBaseline(b, source = 'baseline') {
   if (!(typeof b.uplift === 'number' && Number.isFinite(b.uplift))) bad('uplift');
   const expected = b.withSkill.passes / b.withSkill.runs - b.baseline.passes / b.baseline.runs;
   if (Math.abs(b.uplift - expected) > 1e-9) bad('uplift', `value ${b.uplift} contradicts the arm counts (expected ${expected}) in`);
-  if (!nonEmpty(b.recordedAt) || Number.isNaN(Date.parse(b.recordedAt))) bad('recordedAt');
+  if (!isIsoTimestamp(b.recordedAt)) bad('recordedAt');
   return b;
 }
 
@@ -541,6 +549,6 @@ module.exports = {
   ResultError, BaselineError, UNKNOWN_MODEL, evalModel, MAX_BASELINE_BYTES, assertRuntime, granularityFor, sanitize,
   validateResult, buildResult, readResult, readRecords,
   baselinePath, validateBaseline, toBaselineSummary, writeBaseline, readBaseline, loadBaseline, loadAllBaselines, compareSummaries, checkAgainstBaseline,
-  checkDir, checkFile, readStoreText, atomicWrite, replayCommand, shellQuote,
+  stripControl, cleanId, isIsoTimestamp, checkDir, checkFile, readStoreText, atomicWrite, replayCommand, shellQuote,
 };
 
