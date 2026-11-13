@@ -9,7 +9,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const childProcess = require('child_process');
+
+const { spawnSync } = childProcess;
 const { createSuite, SKILL, PKG_DIR, QUALIFIED } = require('./stub-suite');
 const { loadEvalDefs, validateEvalDef, EvalDefinitionError } = require('../lib/eval-def');
 const envlib = require('../lib/env');
@@ -101,6 +103,8 @@ describe('eval env: validation', () => {
   test.each([
     ['PATH'], ['HOME'], ['LD_PRELOAD'], ['LD_LIBRARY_PATH'], ['DYLD_INSERT_LIBRARIES'], ['NODE_OPTIONS'],
     ['MY_API_KEY'], ['GH_TOKEN'], ['APP_SECRET'], ['DB_PASSWORD'], ['ANTHROPIC_API_KEY'], ['ANTHROPIC_BASE_URL'], ['GIT_SSH_COMMAND'], ['HTTPS_PROXY'], ['TMPDIR'],
+    ['OPENAI_BASE_URL'], ['OPENAI_ORG'], ['GEMINI_MODEL'], ['OPENROUTER_REGION'], ['AWS_ENDPOINT_URL'], ['AWS_REGION'], ['GOOGLE_VERTEX'], ['AZURE_OPENAI_NAME'],
+    ['MY_BASE_URL'], ['SERVICE_ENDPOINT'], ['LLM_API_BASE'], ['LLM_API_URL'], ['SOME_URL'], ['DB_HOST'], ['ENDPOINT_OVERRIDE'],
   ])('the name %s is rejected at load, naming env', (name) => {
     expect(rejectedPart({ env: { [name]: 'x' } })).toMatchObject({ part: 'env' });
     expect(rejectedPart({ env: { [name]: 'x' } }).message).toMatch(new RegExp(name));
@@ -225,6 +229,141 @@ describe('eval setup: validation', () => {
   });
 });
 
+describe('eval setup: ALLOWLIST (attacks are rejected at load)', () => {
+  const bad = (setup) => rejectedPart({ setup });
+  test.each([
+    ['node -e fetch', [['node', '-e', 'fetch("http://example.invalid")']]],
+    ['node -e reading an absolute home path', [['node', '-e', 'require("fs").readFileSync("/Users/x/.ssh/id_rsa")']]],
+    ['python3 -c', [['python3', '-c', 'import os']]],
+    ['perl', [['perl', '-e', 'system("id")']]],
+    ['ruby', [['ruby', '-e', 'puts 1']]],
+    ['npm exec', [['npm', 'exec', 'evil']]],
+    ['npm run', [['npm', 'run', 'build']]],
+    ['make', [['make']]],
+    ['awk system()', [['awk', 'BEGIN{system("id")}']]],
+    ['tar', [['tar', 'xf', 'a.tar']]],
+    ['ln', [['ln', '-s', '/etc/passwd', 'pw']]],
+    ['git -c core.hooksPath', [['git', '-c', 'core.hooksPath=/x', 'status']]],
+    ['git config core.hooksPath', [['git', 'config', 'core.hooksPath', '/x']]],
+    ['git config alias.x', [['git', 'config', 'alias.x', '!sh']]],
+    ['git config include.path', [['git', 'config', 'include.path', 'x']]],
+    ['git config credential.helper', [['git', 'config', 'credential.helper', 'x']]],
+    ['git config url.x.insteadOf', [['git', 'config', 'url.x.insteadOf', 'y']]],
+    ['git config --global', [['git', 'config', '--global', 'user.name', 'x']]],
+    ['git config --unset', [['git', 'config', '--unset', 'user.name']]],
+    ['git config reading', [['git', 'config', 'user.name']]],
+    ['git config commit.gpgsign not a boolean', [['git', 'config', 'commit.gpgsign', 'maybe']]],
+    ['git -C', [['git', '-C', '..', 'status']]],
+    ['git --git-dir', [['git', 'status', '--git-dir=/x']]],
+    ['git --work-tree', [['git', 'status', '--work-tree', '/x']]],
+    ['git --exec-path', [['git', '--exec-path=/x', 'status']]],
+    ['git --git-dir with a relative value', [['git', 'status', '--git-dir=other']]],
+    ['git --work-tree with a relative value', [['git', 'status', '--work-tree', 'sub']]],
+    ['git --exec-path with a relative value', [['git', 'status', '--exec-path=bin']]],
+    ['git rebase', [['git', 'rebase', '-i', 'HEAD~1']]],
+    ['git filter-branch', [['git', 'filter-branch']]],
+    ['git add an absolute path', [['git', 'add', '/etc/passwd']]],
+    ['git add a parent path', [['git', 'add', '../x']]],
+    ['git add under .git', [['git', 'add', '.git/config']]],
+    ['git commit -F an absolute file', [['git', 'commit', '-F', '/etc/passwd']]],
+    ['git commit --template=an absolute file', [['git', 'commit', '--template=/etc/passwd']]],
+    ['br --db elsewhere', [['br', '--db', '/x/y.db', 'list']]],
+    ['br leading option', [['br', '--db=/x', 'list']]],
+    ['br list --db=', [['br', 'list', '--db=/x']]],
+    ['br create --description-file', [['br', 'create', '--title', 't', '--description-file', 'x']]],
+    ['br create -f', [['br', 'create', '-f', 'x']]],
+    ['br upgrade (network)', [['br', 'upgrade']]],
+    ['br config', [['br', 'config', 'set', 'a', 'b']]],
+    ['br doctor', [['br', 'doctor', '--repair']]],
+    ['br with an absolute path value', [['br', 'create', '--title', '/etc/passwd']]],
+    ['br with a parent path value', [['br', 'update', 'x', '--notes', '../../x']]],
+    ['cp to an absolute path', [['cp', 'x', '/abs/path']]],
+    ['cp from an absolute path', [['cp', '/etc/passwd', 'x']]],
+    ['cp to ~', [['cp', 'x', '~/y']]],
+    ['cp with -L', [['cp', '-L', 'x', 'y']]],
+    ['cp with one operand', [['cp', 'x']]],
+    ['mkdir ../x', [['mkdir', '../x']]],
+    ['mkdir a/../../x', [['mkdir', 'a/../../x']]],
+    ['mkdir -m', [['mkdir', '-m', '777', 'x']]],
+    ['mv out of the tree', [['mv', 'x', '../x']]],
+    ['mv the project dir', [['mv', '.', 'x']]],
+    ['touch under .git/hooks', [['touch', '.git/hooks/pre-commit']]],
+    ['touch under a nested .git', [['touch', 'sub/.git/hooks/x']]],
+    ['mkdir .claude', [['mkdir', '.claude']]],
+    ['mkdir -p sub/.claude', [['mkdir', '-p', 'sub/.claude']]],
+    ['touch .mcp.json', [['touch', '.mcp.json']]],
+    ['touch .gitmodules', [['touch', '.gitmodules']]],
+    ['touch under .beads/hooks', [['touch', '.beads/hooks/pre-commit']]],
+    ['normalisation hiding .git', [['touch', 'a/./.git/hooks/x']]],
+    ['chmod with a symbolic setuid mode', [['chmod', 'u+s', 'x']]],
+    ['chmod with a 4-digit mode', [['chmod', '4755', 'x']]],
+    ['chmod -R', [['chmod', '-R', '+x', 'x']]],
+    ['chmod to an absolute path', [['chmod', '+x', '/bin/sh']]],
+    ['rm -rf .', [['rm', '-rf', '.']]],
+    ['rm -rf /', [['rm', '-rf', '/']]],
+    ['rm -rf ~', [['rm', '-rf', '~']]],
+    ['rm -rf ..', [['rm', '-rf', '..']]],
+    ['rm -rf .git', [['rm', '-rf', '.git']]],
+    ['rm with a long option', [['rm', '--no-preserve-root', 'x']]],
+    ['rm -i', [['rm', '-i', 'x']]],
+  ])('%s', (_n, setup) => {
+    expect(bad(setup)).toMatchObject({ part: 'setup' });
+  });
+
+  test('a binary off the allowlist is named as such', () => {
+    const m = rejectedPart({ setup: [['node', '-e', '1']] }).message;
+    expect(m).toMatch(/`node` is not on the setup allowlist/);
+    expect(m).toMatch(/allowed binaries: br, git, mkdir, cp, mv, touch, chmod, rm/);
+    expect(rejectedPart({ setup: [['git', 'clone', 'x']] }).message).toMatch(/`git clone` is not on the setup allowlist/);
+    expect(rejectedPart({ setup: [['br', 'upgrade']] }).message).toMatch(/`br upgrade` is not on the setup allowlist/);
+  });
+
+  test.each([
+    [['br', 'init', '--prefix', 'itb']], [['br', 'create', '--title', 'A task', '--type', 'task', '-p', '2']], [['br', 'sync', '--flush-only']],
+    [['git', 'add', '-A']], [['git', 'add', 'a/b.txt']], [['git', 'commit', '-m', 'msg']], [['git', 'commit', '-q', '--allow-empty', '-m', 'x']],
+    [['git', 'switch', '-c', 'b']], [['git', 'checkout', '-b', 'b']], [['git', 'branch', 'feature']], [['git', 'tag', 'v1']], [['git', 'status']],
+    [['git', 'mv', 'a', 'b']], [['git', 'rm', '-q', '--cached', 'a']],
+    [['git', 'config', 'user.name', 'Eval']], [['git', 'config', '--local', 'user.email', 'a@b.invalid']], [['git', 'config', 'commit.gpgsign', 'false']],
+    [['mkdir', '-p', 'a/b']], [['cp', 'a', 'b']], [['cp', '-r', 'a', 'b']], [['touch', 'f']], [['chmod', '+x', 'bin/x']], [['chmod', '755', 'x']], [['mv', 'a', 'b']], [['rm', '-rf', 'a/b']],
+  ])('%j is allowed', (argv) => {
+    expect(loadWith({ setup: [argv] }).evals).toHaveLength(1);
+  });
+});
+
+describe('eval setup: allowed forms work end to end', () => {
+  test('mkdir, cp, touch, chmod, git add/commit/switch run in order and leave the expected tree', () => {
+    const r = go({
+      setup: [['mkdir', '-p', 'a/b'], ['cp', 'seed.txt', 'a/b/s.txt'], ['touch', 'f'], ['mkdir', 'bin'], ['touch', 'bin/x'], ['chmod', '+x', 'bin/x'],
+        ['git', 'add', '-A'], ['git', 'commit', '-m', 'msg'], ['git', 'switch', '-c', 'b']],
+    }, {
+      checks: [
+        { type: 'fileExists', path: 'a/b/s.txt' }, { type: 'fileExists', path: 'f' },
+        { type: 'commandOutputMatches', command: 'test -x bin/x && echo exec', pattern: '^exec' },
+        { type: 'commandOutputMatches', command: 'git branch --show-current', pattern: '^b' },
+        { type: 'commandOutputMatches', command: 'git log -1 --format=%s', pattern: '^msg' },
+      ],
+    });
+    expect(r.status).toBe(0);
+    expect(r.doc().results[0]).toMatchObject({ pass: true });
+  });
+
+  const hasBr = spawnSync('sh', ['-c', 'command -v br']).status === 0;
+  (hasBr ? test : test.skip)('br init --prefix itb works in the sandbox', () => {
+    const r = go({ setup: [['br', 'init', '--prefix', 'itb'], ['git', 'add', '-A'], ['git', 'commit', '-m', 'beads']] }, {
+      checks: [{ type: 'fileExists', path: '.beads' }, { type: 'fileExists', path: 'SUMMARY.md' }],
+    });
+    expect(r.status).toBe(0);
+    expect(r.doc().results[0]).toMatchObject({ pass: true });
+  });
+
+  test('a command that is not allowlisted never reaches the sandbox: the eval is rejected at load (exit 2), the stub never called', () => {
+    const r = go({ setup: [['node', '-e', 'require("fs").writeFileSync("pwned", "x")']] });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/REJECTED eval ".*`node` is not on the setup allowlist/);
+    expect(callsText()).toBe('');
+  });
+});
+
 describe('eval setup: argv[0] is a bare name', () => {
   test.each([['/bin/ls'], ['./run.sh'], ['bin/tool'], ['bin\\tool'], ['../x']])('%s is refused as a path, not merely as an odd name', (bin) => {
     expect(rejectedPart({ setup: [[bin]] }).message).toMatch(/must be a bare name resolved on the safe PATH, not a path/);
@@ -249,7 +388,7 @@ describe('eval setup: run in the sandbox', () => {
   });
 
   test('the agent never starts when setup fails: an incomplete run with a named reason, never a pass, fail or skip', () => {
-    const r = go({ setup: [['true'], ['false'], ['touch', 'never']] });
+    const r = go({ setup: [['touch', 'ok'], ['git', 'checkout', 'no-such-branch'], ['touch', 'never']] });
     expect(callsText()).toBe(''); // stub never called
     const doc = r.doc();
     const runs = agentRuns(doc);
@@ -257,13 +396,16 @@ describe('eval setup: run in the sandbox', () => {
     expect(runs.length).toBeGreaterThan(0);
     for (const run of runs) {
       expect(run).toMatchObject({ outcome: 'incomplete', pass: null, costUsd: 0 });
-      expect(run.incompleteReason).toMatch(/^setup failed: setup\[1\] false: exit 1/);
+      expect(run.incompleteReason).toMatch(/^setup failed: setup\[1\] git checkout: exit \d+/);
     }
   });
 
   test('a missing binary is named', () => {
-    const r = go({ setup: [['definitely-not-a-binary-xyz']] });
-    expect(agentRuns(r.doc())[0].incompleteReason).toMatch(/setup failed: setup\[0\] definitely-not-a-binary-xyz: `definitely-not-a-binary-xyz` was not found on the safe PATH/);
+    const dir = t.sub('mb'); fs.mkdirSync(dir);
+    expect(setupLib.runSetup([['definitely-not-a-binary-xyz']], { dir, home: t.sub('mbh'), _unsafeAllowAny: true }))
+      .toMatch(/setup\[0\] definitely-not-a-binary-xyz: `definitely-not-a-binary-xyz` was not found on the safe PATH/);
+    // and without the test door the allowlist applies at run time too
+    expect(setupLib.runSetup([['definitely-not-a-binary-xyz']], { dir, home: t.sub('mbh') })).toMatch(/not on the setup allowlist/);
   });
 
   test('a setup command that fails shows the start of its error output', () => {
@@ -305,27 +447,51 @@ describe('eval setup: run in the sandbox', () => {
   test('setup runs with a bounded time: a command that outlives its limit fails the setup', () => {
     const dir = t.sub('b'); fs.mkdirSync(dir);
     const started = Date.now();
-    const failure = setupLib.runSetup([['sleep', '20']], { dir, home: t.sub('bh'), timeoutMs: 300 });
+    const failure = setupLib.runSetup([['sleep', '20']], { dir, home: t.sub('bh'), timeoutMs: 300, _unsafeAllowAny: true });
     expect(failure).toMatch(/setup\[0\] sleep: timed out/);
     expect(Date.now() - started).toBeLessThan(10000);
   });
 
   test('setup output is bounded: a command printing more than the cap fails the setup', () => {
     const dir = t.sub('o'); fs.mkdirSync(dir);
-    const failure = setupLib.runSetup([['yes']], { dir, home: t.sub('oh'), timeoutMs: 10000 });
+    const failure = setupLib.runSetup([['yes']], { dir, home: t.sub('oh'), timeoutMs: 10000, _unsafeAllowAny: true });
     expect(failure).toMatch(/setup\[0\] yes: output exceeded/);
   });
 
   test('the total time budget is enforced across commands', () => {
     const dir = t.sub('tb'); fs.mkdirSync(dir);
-    expect(setupLib.runSetup([['true']], { dir, home: t.sub('tbh'), totalMs: 0 })).toMatch(/time budget/);
+    expect(setupLib.runSetup([['true']], { dir, home: t.sub('tbh'), totalMs: 0, _unsafeAllowAny: true })).toMatch(/time budget/);
+  });
+
+  test('limits: 20 s per command and 60 s for the list; spawnSync gets the per-command timeout capped by what is left', () => {
+    expect(setupLib.COMMAND_TIMEOUT_MS).toBe(20 * 1000);
+    expect(setupLib.TOTAL_TIMEOUT_MS).toBe(60 * 1000);
+    const dir = t.sub('lim'); fs.mkdirSync(dir);
+    const spy = jest.spyOn(childProcess, 'spawnSync');
+    try {
+      expect(setupLib.runSetup([['touch', 'a'], ['touch', 'b']], { dir, home: t.sub('limh') })).toBeNull();
+      const timeouts = spy.mock.calls.map((c) => c[2].timeout);
+      expect(timeouts).toHaveLength(2);
+      expect(timeouts[0]).toBeLessThanOrEqual(20000);
+      expect(timeouts[0]).toBeGreaterThan(19000);
+      spy.mockClear();
+      setupLib.runSetup([['touch', 'c']], { dir, home: t.sub('limh'), totalMs: 5000 });
+      expect(spy.mock.calls[0][2].timeout).toBeLessThanOrEqual(5000);
+      expect(spy.mock.calls.every((c) => c[2].detached === true && c[2].shell === false)).toBe(true);
+    } finally { spy.mockRestore(); }
+  });
+
+  test('the list total is enforced across commands, not only per command', () => {
+    const dir = t.sub('tot'); fs.mkdirSync(dir);
+    const failure = setupLib.runSetup([['sleep', '0.4'], ['sleep', '5']], { dir, home: t.sub('toth'), totalMs: 700, timeoutMs: 20000, _unsafeAllowAny: true });
+    expect(failure).toMatch(/setup\[1\] sleep: timed out/);
   });
 
   test('a sandbox whose setup fails is returned with setupError and no baseline; cleanup works', () => {
     const scenarioDir = t.sub('sc'); fs.mkdirSync(path.join(scenarioDir, 'fixture'), { recursive: true });
     fs.writeFileSync(path.join(scenarioDir, 'fixture', 'a.txt'), 'a');
-    const sb = sandbox.createSandbox(scenarioDir, { setup: [['false']] }, { workdir: t.sub('work') });
-    expect(sb.setupError).toMatch(/setup\[0\] false: exit 1/);
+    const sb = sandbox.createSandbox(scenarioDir, { setup: [['git', 'checkout', 'nope']] }, { workdir: t.sub('work') });
+    expect(sb.setupError).toMatch(/setup\[0\] git checkout: exit \d+/);
     expect(sb.baseline.mainSha).toBeNull();
     sb.cleanup();
     expect(fs.existsSync(sb.root)).toBe(false);
@@ -333,12 +499,17 @@ describe('eval setup: run in the sandbox', () => {
 });
 
 describe('eval setup: the resulting tree is held to the fixture rules', () => {
-  const reason = (setup) => agentRuns(go({ setup }).doc())[0].incompleteReason;
+  // The allowlist already refuses these commands at load, so the re-scan is exercised through the sandbox with the test-only allow-override
+  // (an option of createSandbox that nothing in eval.json can reach).
+  const scenarioDir = () => { const d = t.sub('sc'); fs.mkdirSync(path.join(d, 'fixture'), { recursive: true }); fs.writeFileSync(path.join(d, 'fixture', 'a.txt'), 'a'); return d; };
+  const reason = (setup) => {
+    const sb = sandbox.createSandbox(scenarioDir(), { setup }, { workdir: t.sub('work'), _setupUnsafeAllowAny: true });
+    sb.cleanup();
+    return sb.setupError;
+  };
 
-  test('setup writing .claude/ is rejected, and the agent never starts', () => {
-    const r = go({ setup: [['mkdir', '.claude'], ['touch', '.claude/settings.json']] });
-    expect(agentRuns(r.doc())[0].incompleteReason).toMatch(/^setup failed: setup wrote rejected paths: \.claude \(/);
-    expect(callsText()).toBe('');
+  test('setup writing .claude/ is rejected', () => {
+    expect(reason([['mkdir', '.claude'], ['touch', '.claude/settings.json']])).toMatch(/^setup wrote rejected paths: \.claude \(/);
   });
 
   test('a nested .claude, .mcp.json and .gitmodules are rejected too', () => {
@@ -360,10 +531,150 @@ describe('eval setup: the resulting tree is held to the fixture rules', () => {
     expect(reason([['touch', '.git/hooks/pre-commit']])).toMatch(/setup wrote git hooks: \.git\/hooks\/pre-commit/);
   });
 
+  test('without the test-only override the same commands fail at run time on the allowlist (defence in depth)', () => {
+    const sb = sandbox.createSandbox(scenarioDir(), { setup: [['touch', '.mcp.json']] }, { workdir: t.sub('work2') });
+    sb.cleanup();
+    expect(sb.setupError).toMatch(/setup\[0\] touch: .*\.mcp\.json.*setup may not touch/);
+  });
+
   test('a clean setup passes the re-scan (the repository .git itself is not a finding)', () => {
     const dir = t.sub('clean'); fs.mkdirSync(dir);
     spawnSync('git', ['init', '-q'], { cwd: dir });
     expect(setupLib.checkAfterSetup(dir, fs.readFileSync(path.join(dir, '.git', 'config')))).toBeNull();
+  });
+});
+
+describe('eval setup: run-time path checks (symlinks)', () => {
+  const run = (cmds) => {
+    const dir = t.sub('rt'); fs.mkdirSync(dir, { recursive: true });
+    return { dir, failure: setupLib.runSetup(cmds, { dir, home: t.sub('rth') }) };
+  };
+
+  test('an operand resolving through a symlink out of the tree is refused', () => {
+    const dir = t.sub('rt'); fs.mkdirSync(dir, { recursive: true });
+    const outside = t.sub('outside'); fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(dir, 'link'));
+    expect(setupLib.runSetup([['touch', 'link/x']], { dir, home: t.sub('rth') })).toMatch(/resolves outside the project/);
+    expect(fs.existsSync(path.join(outside, 'x'))).toBe(false);
+    expect(setupLib.runSetup([['rm', '-rf', 'link']], { dir, home: t.sub('rth') })).toMatch(/resolves outside the project/);
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+
+  test('an operand resolving through a symlink to .git is refused', () => {
+    const dir = t.sub('rt'); fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+    fs.symlinkSync('.git', path.join(dir, 'g'));
+    expect(setupLib.runSetup([['touch', 'g/hooks-x']], { dir, home: t.sub('rth') })).toMatch(/resolves under \.git/);
+    expect(fs.existsSync(path.join(dir, '.git', 'hooks-x'))).toBe(false);
+  });
+
+  test('plain operands inside the tree run', () => {
+    const { dir, failure } = run([['mkdir', '-p', 'a/b'], ['touch', 'a/b/c'], ['cp', 'a/b/c', 'a/d'], ['mv', 'a/d', 'a/e'], ['chmod', '+x', 'a/e'], ['rm', '-f', 'a/b/c']]);
+    expect(failure).toBeNull();
+    expect(fs.existsSync(path.join(dir, 'a', 'e'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'a', 'b', 'c'))).toBe(false);
+  });
+});
+
+describe('eval setup: process group kill and the late re-scan', () => {
+  const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const writer = (marker, delay = 1) => `(sleep ${delay}; touch '${marker}') >/dev/null 2>&1 &`;
+
+  test('control: the same detached delayed writer DOES write when nobody kills its group', () => {
+    const marker = t.sub('control-late');
+    spawnSync('sh', ['-c', writer(marker)], { stdio: 'ignore' });
+    sleepMs(1500);
+    expect(fs.existsSync(marker)).toBe(true);
+  });
+
+  test('a background process started by a setup command is killed with its group when the command ends', () => {
+    const dir = t.sub('pg'); fs.mkdirSync(dir);
+    const marker = t.sub('pg-late');
+    expect(setupLib.runSetup([['sh', '-c', writer(marker)]], { dir, home: t.sub('pgh'), _unsafeAllowAny: true })).toBeNull();
+    sleepMs(1800);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test('on timeout the whole group dies too: the command and its background child', () => {
+    const dir = t.sub('pgt'); fs.mkdirSync(dir);
+    const marker = t.sub('pgt-late');
+    expect(setupLib.runSetup([['sh', '-c', `${writer(marker)} sleep 30`]], { dir, home: t.sub('pgth'), timeoutMs: 300, _unsafeAllowAny: true })).toMatch(/timed out/);
+    sleepMs(1800);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test('a command that starts a delayed writer INTO the project cannot plant .claude after setup returned', () => {
+    const dir = t.sub('pgw'); fs.mkdirSync(dir);
+    expect(setupLib.runSetup([['sh', '-c', '(sleep 1; mkdir .claude) >/dev/null 2>&1 &']], { dir, home: t.sub('pgwh'), _unsafeAllowAny: true })).toBeNull();
+    sleepMs(1800);
+    expect(fs.existsSync(path.join(dir, '.claude'))).toBe(false);
+  });
+
+  describe('runScenario re-runs the scan immediately before the agent starts', () => {
+    const { runScenario } = require('../run');
+    const REPO_ROOT = path.resolve(__dirname, '..', '..');
+    const attempt = async (late) => {
+      const scenarioDir = t.sub('lsc'); fs.mkdirSync(path.join(scenarioDir, 'fixture'), { recursive: true });
+      fs.writeFileSync(path.join(scenarioDir, 'fixture', 'a.txt'), 'a');
+      const orig = sandbox.createSandbox;
+      const spy = jest.spyOn(sandbox, 'createSandbox').mockImplementation((...a) => { const sb = orig(...a); late(sb); return sb; });
+      try {
+        return await runScenario({ id: 'late', type: 'cli', scenarioDir, graders: [], setup: [['touch', 'f']] }, {
+          workdir: t.sub('lwork'), credentials: [], parentEnv: { PATH: process.env.PATH }, timeoutMs: 5000, repoRoot: REPO_ROOT,
+        });
+      } finally { spy.mockRestore(); }
+    };
+
+    test('a write between the first scan and the start (.mcp.json) fails the run as incomplete with a named reason', async () => {
+      const r = await attempt((sb) => fs.writeFileSync(path.join(sb.dir, '.mcp.json'), '{}'));
+      expect(r).toMatchObject({ outcome: 'incomplete', pass: null, costUsd: 0 });
+      expect(r.incompleteReason).toMatch(/^setup failed: late re-scan before the agent started: setup wrote rejected paths: \.mcp\.json/);
+      expect(fs.readdirSync(t.sub('lwork'))).toEqual([]);
+    });
+
+    test('a late .claude, git hook and git config change are caught too', async () => {
+      expect((await attempt((sb) => fs.mkdirSync(path.join(sb.dir, '.claude')))).incompleteReason).toMatch(/late re-scan.*\.claude/);
+      expect((await attempt((sb) => fs.writeFileSync(path.join(sb.dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\n', { mode: 0o755 }))).incompleteReason).toMatch(/late re-scan.*git hooks: \.git\/hooks\/pre-commit/);
+      expect((await attempt((sb) => fs.appendFileSync(path.join(sb.dir, '.git', 'config'), '[core]\n\thooksPath = /x\n'))).incompleteReason).toMatch(/late re-scan.*changed the repository git config/);
+    });
+
+    test('control: nothing written late means the run goes on (not incomplete)', async () => {
+      const r = await attempt(() => {});
+      expect(r.outcome).not.toBe('incomplete');
+    });
+  });
+});
+
+describe('a setup failure on one run makes the eval incomplete (exit 4), like a provider error', () => {
+  test('four passing runs and one setup failure: exit 4, an INCOMPLETE note, no baseline summary', () => {
+    const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    fs.mkdirSync(t.sub('bin'), { recursive: true });
+    // The 10th setup commit (with-skill run 5; baseline runs go first in each pair) fails like a flaky index.lock.
+    t.write(t.sub('bin/git'), `#!/bin/sh
+case "$*" in *"-m setup"*) n=$(cat '${t.sub('git.count')}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '${t.sub('git.count')}'
+if [ "$n" = 10 ]; then echo 'fatal: Unable to create index.lock: File exists' >&2; exit 128; fi;; esac
+exec '${realGit}' "$@"
+`);
+    fs.chmodSync(t.sub('bin/git'), 0o755);
+    const r = go({ setup: [['git', 'commit', '-q', '--allow-empty', '-m', 'setup']] }, { args: '--repeats 5 --concurrency 1 --model claude-stub-1' });
+    const ev = r.doc().results[0];
+    expect(ev.withSkill).toMatchObject({ passes: 4, runs: 4, providerErrors: 1, setupFailures: 1 });
+    expect(ev.baseline).toMatchObject({ passes: 0, runs: 5, providerErrors: 0 });
+    expect(ev.uplift).toBeNull();
+    expect(r.stdout).toMatch(/INCOMPLETE .*1 run\(s\) failed in setup .*no baseline summary written/);
+    expect(r.stdout).toMatch(/1 with provider errors/);
+    expect(fs.existsSync(t.sub('baselines', 'claude'))).toBe(false);
+    expect(r.status).toBe(4);
+    const failed = agentRuns(r.doc()).filter((x) => x.outcome === 'incomplete');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].incompleteReason).toMatch(/^setup failed: setup\[0\] git commit: exit 128: .*index\.lock/);
+  });
+
+  test('armStats counts a setup failure with the provider errors and apart', () => {
+    const s = exec.armStats([
+      { outcome: 'incomplete', incompleteReason: 'setup failed: x' }, { outcome: 'incomplete', incompleteReason: 'provider error: 529' },
+      { outcome: 'incomplete', incompleteReason: 'something else' }, { outcome: 'pass' },
+    ], 5);
+    expect(s).toMatchObject({ providerErrors: 2, setupFailures: 1, runs: 1, passes: 1 });
   });
 });
 
@@ -434,6 +745,13 @@ describe('ceilings: maxTimeoutSec and maxRunUsd', () => {
     const f = t.sub('limits.json');
     fs.writeFileSync(f, JSON.stringify({ maxUsdPerSuite: 50 }));
     expect(exec.loadLimits(f)).toMatchObject({ timeoutSec: 900, maxTimeoutSec: 900, runReserveUsd: 5, maxRunUsd: 5 });
+    // a file's missing keys come from the built-in defaults (900 and 5), so a custom timeoutSec above 900 without maxTimeoutSec is refused
+    fs.writeFileSync(f, JSON.stringify({ timeoutSec: 1200 }));
+    expect(() => exec.loadLimits(f)).toThrow(/maxTimeoutSec/);
+    fs.writeFileSync(f, JSON.stringify({ timeoutSec: 1200, maxTimeoutSec: 1200 }));
+    expect(exec.loadLimits(f)).toMatchObject({ timeoutSec: 1200, maxTimeoutSec: 1200 });
+    fs.writeFileSync(f, JSON.stringify({ runReserveUsd: 8 }));
+    expect(() => exec.loadLimits(f)).toThrow(/maxRunUsd/);
     fs.writeFileSync(f, JSON.stringify({ maxTimeoutSec: 100 }));
     expect(() => exec.loadLimits(f)).toThrow(/maxTimeoutSec/);
     fs.writeFileSync(f, JSON.stringify({ maxRunUsd: 1 }));

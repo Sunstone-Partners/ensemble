@@ -285,7 +285,10 @@ function armStats(runs, planned) {
     runs: executed.length,
     timedOut: executed.filter((r) => r.outcome === 'timed_out').length,
     unverifiable: runs.filter((r) => r.outcome === 'unverifiable').length,
-    providerErrors: runs.filter((r) => r.outcome === 'incomplete' && typeof r.incompleteReason === 'string' && r.incompleteReason.startsWith('provider error')).length,
+    // A run that never reached the agent because `setup` failed (a flaky git lock, a late write) is as unmeasured as a provider error and is
+    // counted with it: the eval is incomplete (exit 4, no baseline summary), never a clean pass that merely ran fewer times.
+    providerErrors: runs.filter((r) => r.outcome === 'incomplete' && typeof r.incompleteReason === 'string' && (r.incompleteReason.startsWith('provider error') || r.incompleteReason.startsWith('setup failed'))).length,
+    setupFailures: runs.filter((r) => r.outcome === 'incomplete' && typeof r.incompleteReason === 'string' && r.incompleteReason.startsWith('setup failed')).length,
     notRun: Math.max(0, planned - executed.length),
   };
 }

@@ -151,7 +151,10 @@ const DENIED_ENV_NAMES = new Set([
   'NODE_OPTIONS', 'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME',
   'RUBYOPT', 'RUBYLIB', 'PERL5OPT', 'PERL5LIB', 'SSH_AUTH_SOCK', 'CLAUDE_CONFIG_DIR',
 ]);
-const DENIED_ENV_PREFIXES = ['LD_', 'DYLD_', 'GIT_', 'ANTHROPIC_', 'EVALS_', 'NPM_CONFIG_'];
+// Provider prefixes: a name here could redirect or reconfigure a provider client that holds a real key (AWS_ENDPOINT_URL, GOOGLE_API_BASE, ...).
+const DENIED_ENV_PREFIXES = ['LD_', 'DYLD_', 'GIT_', 'ANTHROPIC_', 'EVALS_', 'NPM_CONFIG_', 'OPENAI_', 'GEMINI_', 'OPENROUTER_', 'AWS_', 'GOOGLE_', 'AZURE_'];
+// Names that point a client at another server, whatever the provider (substring match, deliberately broad).
+const ENDPOINT_LIKE_RE = /BASE_URL|_ENDPOINT|ENDPOINT_|API_BASE|API_URL|_URL$|_HOST$/;
 // Credential-like names (substring match, deliberately broad).
 const CREDENTIAL_LIKE_RE = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PROXY/;
 
@@ -171,6 +174,7 @@ function deniedAgentEnvName(name, credentialNames = allKnownCredentialNames()) {
   if (DENIED_ENV_NAMES.has(name)) return 'it is a name the harness controls';
   const prefix = DENIED_ENV_PREFIXES.find((p) => name.startsWith(p));
   if (prefix) return `names starting with ${prefix} are not allowed`;
+  if (ENDPOINT_LIKE_RE.test(name)) return 'it looks like an endpoint or base URL (BASE_URL, _ENDPOINT, API_BASE, _URL, _HOST); `env` may not redirect a provider client';
   if (CREDENTIAL_LIKE_RE.test(name)) return 'it looks like a credential (KEY, TOKEN, SECRET, PASSWORD, ...); `env` holds non-secret values only';
   if (credentialNames.has(name)) return 'it is on the credential allowlist';
   return null;

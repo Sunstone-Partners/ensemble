@@ -28,6 +28,7 @@ const report = require('./lib/report');
 const { summarizeRun } = results;
 const { resolveJudge } = require('./lib/runners/judge');
 const sandbox = require('./lib/sandbox');
+const setupLib = require('./lib/setup');
 const envlib = require('./lib/env');
 const { loadLimits, reservationFor, runSuite, resolveRepeats, expandRuns } = require('./lib/exec');
 const arms = require('./lib/arms');
@@ -164,6 +165,19 @@ async function runScenario(scenario, run) {
     const checkEnv = envlib.buildEnv({ parent: parentEnv, credentials: [], home: checkHome });
     // The judge is a claude process: it never sees the runtime-scoped (Pi provider) keys.
     const judgeEnv = envlib.buildEnv({ parent: parentEnv, credentials: judgeCredentials, home: ciHome || undefined });
+    // Late re-scan, immediately before the agent starts: a setup command's detached process (killed with its group, but a late write could
+    // still have landed between the first scan and here) must not have planted .claude/, .mcp.json, a git hook or a git config change.
+    if (Array.isArray(scenario.setup) && scenario.setup.length && sb.configBefore) {
+      const late = setupLib.checkAfterSetup(sb.dir, sb.configBefore);
+      if (late) {
+        return {
+          id: scenario.id, type: scenario.type, skill: scenario.skill, runtime: scenario.type === 'agent' ? (run.runtime || 'claude') : null,
+          turns: null, claudeExitCode: null, timedOut: false,
+          pass: null, outcome: 'incomplete', verdict: null, judgedScore: null, judgeModel: null, graders: [],
+          incompleteReason: `setup failed: late re-scan before the agent started: ${envlib.shortReason(late, secrets)}`, costUsd: 0, durationMs: Date.now() - started,
+        };
+      }
+    }
     let transcript = '';
     let proc = { exitCode: 0, stderr: '', timedOut: false, transcriptTruncated: false, commands: [], commandsIncomplete: false };
     let armInfo = {};
@@ -559,7 +573,7 @@ async function main(argv = process.argv.slice(2)) {
     } else {
       const u = evalResult.uplift === null ? 'n/a' : `${evalResult.uplift >= 0 ? '+' : ''}${evalResult.uplift.toFixed(2)}`;
       out(`  with-skill ${evalResult.withSkill.passes}/${evalResult.withSkill.runs} (bar ${plan.bar} of ${plan.repeats}: ${evalResult.reliable === null ? 'undetermined' : evalResult.reliable ? 'reliable' : 'NOT reliable'}); baseline ${evalResult.baseline.passes}/${evalResult.baseline.runs}${evalResult.baseline.unverifiable ? ` (${evalResult.baseline.unverifiable} run(s) not counted: isolation unverifiable)` : ''}`);
-      out(`  uplift ${u} ${evalResult.upliftLabel}${evalResult.providerErrors > 0 ? ' (undetermined: provider error)' : ''}`);
+      out(`  uplift ${u} ${evalResult.upliftLabel}${evalResult.providerErrors > 0 ? ` (undetermined: ${evalResult.setupFailures > 0 ? 'setup failure or provider error' : 'provider error'})` : ''}`);
     }
     out(`  repeats ${plan.repeats} (${plan.repeatsSource}), bar ${plan.bar} (${plan.barSource}${plan.barSource === 'eval' ? ' override' : ''})`);
     out(`  skill invoked in ${evalResult.invokedRuns}/${evalResult.withSkill.runs} with-skill run(s)${evalResult.invokedAsExpected === false ? ` (expectInvoked ${evalResult.expectInvoked}: NOT as expected)` : ''}`);
@@ -569,7 +583,9 @@ async function main(argv = process.argv.slice(2)) {
   for (const r of incomplete.filter((x) => !x.arms && !x.replay && !x.incompleteReason)) out(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
   // Every eval with a provider error says so (INCOMPLETE note), whatever its verdict: the verdict stands when already decided, the uplift never does.
   for (const r of evalResults.filter((x) => x.arms && x.providerErrors > 0)) {
-    out(`  INCOMPLETE ${r.id}: ${r.providerErrors} run(s) hit a provider error (the model call failed) and are not counted${r.outcome === 'incomplete' ? '; verdict undetermined' : `; verdict ${r.outcome.toUpperCase()} stands (decided by the counted with-skill runs)`}, uplift undetermined, no baseline summary written; fix the provider or credentials and rerun`);
+    const sf = r.setupFailures || 0;
+    const what = [r.providerErrors - sf > 0 && `${r.providerErrors - sf} run(s) hit a provider error (the model call failed)`, sf > 0 && `${sf} run(s) failed in setup (the agent never started; see incompleteReason)`].filter(Boolean).join(' and ');
+    out(`  INCOMPLETE ${r.id}: ${what} and are not counted${r.outcome === 'incomplete' ? '; verdict undetermined' : `; verdict ${r.outcome.toUpperCase()} stands (decided by the counted with-skill runs)`}, uplift undetermined, no baseline summary written; fix the provider, credentials or setup and rerun`);
   }
   for (const r of incomplete.filter((x) => x.arms)) {
     const pe = r.providerErrors || 0;

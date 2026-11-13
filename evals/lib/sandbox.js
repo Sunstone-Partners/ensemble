@@ -56,9 +56,9 @@ function git(cwd, args) {
  * pull request needs its head branch to exist; main stays where it is).
  * With scenario.setup (argv arrays, see lib/setup.js) runs them between the fixture commit and the baseline; with scenario.remote the sandbox git
  * config also gets push.autoSetupRemote=true.
- * Returns { dir, root, baseline, skipped, setupError (null, or the named reason a setup command failed), cleanup } (`skipped`: fixture entries not copied).
+ * Returns { dir, root, baseline, skipped, setupError (null, or the named reason a setup command failed), configBefore (the git config bytes before setup, for the late re-scan; null without setup), cleanup } (`skipped`: fixture entries not copied).
  */
-function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir(), setupTimeoutMs, setupTotalMs, parentEnv = process.env } = {}) {
+function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir(), setupTimeoutMs, setupTotalMs, parentEnv = process.env, _setupUnsafeAllowAny = false } = {}) {
   fs.mkdirSync(workdir, { recursive: true });
   const root = fs.mkdtempSync(path.join(workdir, 'ensemble-eval-'));
   const dir = path.join(root, 'project');
@@ -78,6 +78,7 @@ function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir(),
     git(dir, ['add', '-A']);
     git(dir, ['commit', '-q', '--allow-empty', '-m', 'fixture']);
 
+    let configBefore = null;
     let remotePath = null;
     if (scenario.remote) {
       const bare = path.join(root, 'origin.git');
@@ -89,11 +90,11 @@ function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir(),
     // Setup runs after the fixture commit and before the baseline is taken, so a setup that commits (git add -A; git commit) moves the
     // baseline with it. A setup failure does not throw: the caller records an incomplete run with the named reason.
     if (Array.isArray(scenario.setup) && scenario.setup.length) {
-      const configBefore = fs.readFileSync(path.join(dir, '.git', 'config'));
-      let failure = setupLib.runSetup(scenario.setup, { dir, home: path.join(root, 'setup-home'), parentEnv, timeoutMs: setupTimeoutMs, totalMs: setupTotalMs });
+      configBefore = fs.readFileSync(path.join(dir, '.git', 'config'));
+      let failure = setupLib.runSetup(scenario.setup, { dir, home: path.join(root, 'setup-home'), parentEnv, timeoutMs: setupTimeoutMs, totalMs: setupTotalMs, _unsafeAllowAny: _setupUnsafeAllowAny });
       if (!failure) failure = setupLib.checkAfterSetup(dir, configBefore);
       if (failure) {
-        return { dir, root, baseline: { mainSha: null, remoteMainSha: null, remotePath }, skipped, setupError: failure, cleanup };
+        return { dir, root, baseline: { mainSha: null, remoteMainSha: null, remotePath }, skipped, setupError: failure, configBefore, cleanup };
       }
     }
 
@@ -116,6 +117,7 @@ function createSandbox(scenarioDir, scenario = {}, { workdir = resolveWorkdir(),
       baseline: { mainSha, remoteMainSha, remotePath },
       skipped,
       setupError: null,
+      configBefore,
       cleanup,
     };
   } catch (e) {
