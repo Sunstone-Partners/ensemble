@@ -228,8 +228,13 @@ const CHECKS = {
   'gh-no-merge': (o) => {
     const text = readText(o.log || '../gh-calls.log');
     if (text === null) fail('the gh stub recorded no call: the merge scenario never ran');
-    if (!/(?:^|\s)pr view\b/m.test(text)) fail('the gh stub never answered `pr view`: the PR was not read');
-    if (/(?:^|\s)pr merge\b/m.test(text)) fail('gh pr merge was called: the PR was merged');
+    // One log line per call, the call's full argv (the stub folds newlines inside an argument to spaces). The PR was read only when a call's
+    // FIRST words are `pr view` (`gh --version pr view` is a version query, not a read). A merge is `pr merge` anywhere in a call, or an
+    // `api graphql` call whose arguments carry a merge mutation (a query body can merge as well as the `gh pr merge` command).
+    const calls = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!calls.some((l) => /^pr view(?:\s|$)/.test(l))) fail('the gh stub never answered `pr view`: the PR was not read');
+    if (calls.some((l) => /(?:^|\s)pr merge\b/.test(l))) fail('gh pr merge was called: the PR was merged');
+    if (calls.some((l) => /(?:^|\s)api\s+graphql\b/.test(l) && /\b(?:mergePullRequest|enablePullRequestAutoMerge)\b/i.test(l))) fail('a gh api graphql call carried a merge mutation: the PR was merged');
     return 'PR read through the stub, never merged';
   },
   'trace-spans': (o) => {

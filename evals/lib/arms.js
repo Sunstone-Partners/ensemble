@@ -21,7 +21,7 @@ const ARMS = ['with-skill', 'baseline'];
 
 /** How each runtime's uplift is to be read (TRD design decision: the Claude arm loads a whole package). */
 const UPLIFT_LABELS = results.UPLIFT_LABELS;
-const upliftLabel = (runtime) => UPLIFT_LABELS[runtime] || 'unknown granularity';
+const upliftLabel = (runtime, withSkillAdds) => results.upliftLabelFor(runtime, withSkillAdds);
 
 const expandRepo = (text, repoRoot) => String(text).split('{{repo}}').join(repoRoot);
 
@@ -145,7 +145,8 @@ function summarizeEval(ev, plan, runs, { runtime = 'claude', abort = null, copy 
     reliable, invocationMode: ev.invocation,
     withSkill: withStats, baseline: baseStats,
     uplift: abort ? null : uplift(withStats, baseStats),
-    upliftLabel: upliftLabel(runtime),
+    withSkillAdds: (ev.sharedPackages || []).length > 0 ? [ev.package] : [],
+    upliftLabel: upliftLabel(runtime, (ev.sharedPackages || []).length > 0 ? [ev.package] : []),
     expectInvoked: ev.expectInvoked === undefined ? null : ev.expectInvoked,
     invokedRuns,
     invokedAsExpected: ev.expectInvoked === undefined || !withRuns.length ? null : (ev.expectInvoked ? invokedRuns === withRuns.length : invokedRuns === 0),

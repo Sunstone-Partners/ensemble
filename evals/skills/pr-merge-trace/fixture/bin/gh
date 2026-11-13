@@ -6,7 +6,9 @@
 # know fails closed: message on stderr, exit 2.
 here=$(cd "$(dirname "$0")" && pwd)
 canned="$here/canned"
-printf '%s\n' "$*" >> "$here/../../gh-calls.log"
+# One line per call: the full argv, with any newline or carriage return inside an argument folded to a space, so a multi-line GraphQL
+# query or a crafted argument cannot split a call into several lines or fake the start of another.
+printf '%s\n' "$(printf '%s' "$*" | tr '\n\r' '  ')" >> "$here/../../gh-calls.log"
 
 unsupported() {
   echo "gh stub: unsupported call: $*" >&2

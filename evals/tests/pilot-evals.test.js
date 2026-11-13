@@ -411,7 +411,7 @@ describe('pr-merge-trace (TRD-027)', () => {
     expect(ev.package).toBe('development');
     expect(ev.sharedPackages).toEqual(['git']);
     expect(ev.runtimes).toEqual(['claude']);
-    expect(ev.description).toMatch(/baseline lacks toolchain-cli by design/);
+    expect(ev.description).toMatch(/toolchain-cli/);
     expect(ev.branch).toBe('fix/slugify-trim');
     expect(ev.prompt).not.toMatch(/trace/i); // the same task text in both arms never names the skill's job
   });
@@ -788,5 +788,82 @@ describe('pilot-checks script', () => {
     expect(s.map((x) => x.id)).toEqual(['REQ-001', 'REQ-002']);
     expect(s[0].body).toMatch(/y/);
     expect(s[1].body).not.toMatch(/not z/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Review fixes (F-A .. F-E)
+// ---------------------------------------------------------------------------------------------------------------------
+describe('review fixes', () => {
+  const ghNoMerge = (logText) => {
+    const dir = fs.mkdtempSync(path.join(root, 'ghlog-'));
+    const log = path.join(dir, 'gh-calls.log');
+    fs.writeFileSync(log, logText);
+    return spawnSync('node', [path.join(REPO_ROOT, 'evals/checks/pilot-checks.js'), 'gh-no-merge', '--log', log], { encoding: 'utf8', cwd: dir });
+  };
+
+  test('F-D: a graphql merge mutation is a merge (either mutation name, any case), a read-only graphql call is not', () => {
+    const read = 'pr view 7 --json number\n';
+    expect(ghNoMerge(`${read}api graphql -f query=query { repository { pullRequest { reviewDecision } } }\n`).stdout).toMatch(/^PASS:/);
+    for (const q of ['mutation { mergePullRequest(input:{pullRequestId:"x"}) { clientMutationId } }', 'mutation { enablePullRequestAutoMerge(input:{pullRequestId:"x"}) { clientMutationId } }', 'mutation { MERGEPULLREQUEST(input:{}) { x } }']) {
+      const r = ghNoMerge(`${read}api graphql -f query=${q}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toMatch(/merge mutation/);
+    }
+    expect(ghNoMerge(`${read}pr merge 7 --squash\n`).stdout).toMatch(/gh pr merge was called/);
+  });
+
+  test('F-D: `gh --version pr view` does not count as reading the PR; `pr view` at the start of a call does', () => {
+    expect(ghNoMerge('--version pr view\n').stdout).toMatch(/never answered `pr view`/);
+    expect(ghNoMerge('auth status\nrepo view --json name pr view\n').stdout).toMatch(/never answered `pr view`/);
+    expect(ghNoMerge('--version\npr view 7 --json number\n').stdout).toMatch(/^PASS:/);
+  });
+
+  test('F-D: the stub logs one line per call, folding newlines inside an argument (no forged call start, no split query)', () => {
+    const ws = workspace('pr-merge-trace');
+    const q = 'mutation {\nmergePullRequest(input:{})\n{ x } }';
+    expect(gh(ws, ['api', 'graphql', '-f', `query=${q}`]).status).toBe(0);
+    gh(ws, ['--version', 'x\npr view 7']); // logged as one line
+    const lines = fs.readFileSync(path.join(ws.dir, '../gh-calls.log'), 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^api graphql -f query=mutation \{ ?mergePullRequest/);
+    expect(lines[1]).toBe('--version x pr view 7');
+    ws.sb.cleanup();
+  });
+
+  test('F-D: end to end, a graphql merge through the real stub fails the eval check even with no `pr merge`', async () => {
+    const ws = workspace('pr-merge-trace');
+    conformingRun(ws);
+    expect(gh(ws, ['api', 'graphql', '-f', 'query=mutation { mergePullRequest(input:{}) { x } }']).status).toBe(0);
+    expect(failing(await ws.grade()).join('\n')).toMatch(/merge mutation/);
+    ws.sb.cleanup();
+  });
+
+  test('F-C: create-trd is Claude-only and says why; create-prd and refine-prd stay on Pi (Claude 4 evals, Pi 2)', () => {
+    expect(evals.get('ensemble-create-trd').runtimes).toEqual(['claude']);
+    expect(evals.get('ensemble-create-trd').description).toMatch(/Pi/);
+    expect(evals.get('ensemble-create-trd').description).toMatch(/tool-path-resolution/);
+    expect(evals.get('ensemble-create-prd').runtimes).toEqual(['claude', 'pi']);
+    expect(evals.get('ensemble-refine-prd').runtimes).toEqual(['claude', 'pi']);
+    const under = (rt) => PILOT.filter((id) => evals.get(id).runtimes.includes(rt));
+    expect(under('claude')).toHaveLength(4);
+    expect(under('pi').sort()).toEqual(['ensemble-create-prd', 'ensemble-refine-prd']);
+  });
+
+  test('F-A: the pr-merge-trace definition states the baseline halt as certain, the with-skill outcome as unproven, and not skill-attributable', () => {
+    const d = evals.get('pr-merge-trace').description;
+    expect(d).toMatch(/CERTAINLY halts/);
+    expect(d).toMatch(/unproven/);
+    expect(d).toMatch(/NOT SKILL-ATTRIBUTABLE/);
+    expect(d).toMatch(/trial/);
+    expect(d).not.toMatch(/by design and cannot trace/);
+  });
+
+  test('F-A: the uplift label of an eval with sharedPackages names what the with-skill arm adds; others keep the plain label', () => {
+    const shared = evals.get('pr-merge-trace');
+    const mk = (ev) => arms.summarizeEval(ev, { repeats: 1, bar: 1, repeatsSource: 't', barSource: 't' }, { 'with-skill': [], baseline: [] }, { runtime: 'claude' });
+    expect(mk(shared).upliftLabel).toBe('package-level (with-skill adds development)');
+    expect(mk(evals.get('ensemble-create-prd')).upliftLabel).toBe('package-level (skills share a package)');
+    expect(arms.upliftLabel('pi', ['x'])).toBe('skill-level');
   });
 });

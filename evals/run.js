@@ -21,7 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGraders } = require('./lib/graders');
-const { loadEvalDefs, evalToScenario, EvalDefinitionError } = require('./lib/eval-def');
+const { loadEvalDefs, evalToScenario, EvalDefinitionError, checkSandboxPath } = require('./lib/eval-def');
 const results = require('./lib/results');
 const hash = require('./lib/hash');
 const report = require('./lib/report');
@@ -107,7 +107,12 @@ function loadScenarios(dir = SCENARIOS_DIR) {
     .map((e) => {
       const scenarioDir = path.join(dir, e.name);
       const s = JSON.parse(fs.readFileSync(path.join(scenarioDir, 'scenario.json'), 'utf8'));
-      return { ...s, id: s.id || e.name, type: s.type || 'agent', scenarioDir };
+      // `sandboxPath` goes onto the agent's PATH: held to the same rule as a skill eval's (relative, inside the fixture, an existing directory).
+      let sandboxPath = s.sandboxPath;
+      if (sandboxPath !== undefined) {
+        try { sandboxPath = checkSandboxPath(sandboxPath, path.join(scenarioDir, 'fixture')); } catch (err) { throw new Error(`scenario ${e.name}: ${err.message}`, { cause: err }); }
+      }
+      return { ...s, ...(sandboxPath !== undefined && { sandboxPath }), id: s.id || e.name, type: s.type || 'agent', scenarioDir };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
 }

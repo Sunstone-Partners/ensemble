@@ -50,6 +50,23 @@ const KNOWN_KEYS = new Set([
 ]);
 
 /** A rejected definition. `part` names what is wrong (task, workspace, skill, checks, or a field). */
+/**
+ * The one validation of `sandboxPath` (fixture directories put first on the agent's PATH), shared by skill evals and legacy scenarios:
+ * a non-empty array of relative directories that exist inside `fixtureDir` (no absolute path, `..`, backslash, colon or control
+ * character, no link). Returns the normalized entries; throws an Error with the message to show.
+ */
+function checkSandboxPath(sp, fixtureDir) {
+  if (!(Array.isArray(sp) && sp.length > 0 && sp.every(isNonEmptyString))) throw new Error('`sandboxPath` must be a non-empty array of fixture directories');
+  for (const d of sp) {
+    const norm = path.posix.normalize(d);
+    // eslint-disable-next-line no-control-regex
+    if (path.isAbsolute(d) || d.includes('\\') || /[:\x00-\x1f]/.test(d) || norm.startsWith('..') || norm === '.') throw new Error(`\`sandboxPath\` entry ${JSON.stringify(d)} must be a relative directory inside the fixture`);
+    const st = fs.lstatSync(path.join(fixtureDir, norm), { throwIfNoEntry: false });
+    if (!st || !st.isDirectory()) throw new Error(`\`sandboxPath\` entry ${JSON.stringify(d)} is not a directory in the fixture`);
+  }
+  return sp.map((d) => path.posix.normalize(d));
+}
+
 class EvalDefinitionError extends Error {
   constructor(evalId, part, message) {
     super(`eval "${evalId}": ${message}`);
@@ -180,16 +197,7 @@ function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
   // Directories of the fixture put first on the AGENT's PATH (a stub binary the scenario needs). Never on the checks' PATH.
   let sandboxPath = [];
   if (raw.sandboxPath !== undefined) {
-    const sp = raw.sandboxPath;
-    if (!(Array.isArray(sp) && sp.length > 0 && sp.every(isNonEmptyString))) fail('sandboxPath', '`sandboxPath` must be a non-empty array of fixture directories');
-    for (const d of sp) {
-      const norm = path.posix.normalize(d);
-      if (path.isAbsolute(d) || d.includes('\\') || /[:\x00-\x1f]/.test(d) || norm.startsWith('..') || norm === '.') fail('sandboxPath', `\`sandboxPath\` entry ${JSON.stringify(d)} must be a relative directory inside the fixture`);
-      const full = path.join(fixtureDir, norm);
-      const st = fs.lstatSync(full, { throwIfNoEntry: false });
-      if (!st || !st.isDirectory()) fail('sandboxPath', `\`sandboxPath\` entry ${JSON.stringify(d)} is not a directory in the fixture`);
-    }
-    sandboxPath = sp.map((d) => path.posix.normalize(d));
+    try { sandboxPath = checkSandboxPath(raw.sandboxPath, fixtureDir); } catch (e) { fail('sandboxPath', e.message); }
   }
   if (raw.remote !== undefined && typeof raw.remote !== 'boolean') fail('remote', '`remote` must be true or false');
   if (raw.branch !== undefined && !(typeof raw.branch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(raw.branch) && !raw.branch.includes('..') && raw.branch !== 'main')) {
@@ -299,5 +307,5 @@ function evalToScenario(ev) {
 
 module.exports = {
   readDefinitionFile,
-  EvalDefinitionError, validateEvalDef, loadEvalDefs, findSkillPackages, evalToScenario, isJudged, SKILLS_DIR, NON_SOURCE_PACKAGES,
+  EvalDefinitionError, validateEvalDef, checkSandboxPath, loadEvalDefs, findSkillPackages, evalToScenario, isJudged, SKILLS_DIR, NON_SOURCE_PACKAGES,
 };

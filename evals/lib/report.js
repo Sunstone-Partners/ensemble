@@ -46,7 +46,7 @@ function rowFromEval(e) {
   const granularity = results.granularityFor(e.runtime); // unknown runtime: named error
   const reasons = incompleteReasons(e);
   const base = {
-    skill: e.skill, evalId: e.id, runtime: e.runtime, granularity, label: results.GRANULARITY_LABELS[granularity],
+    skill: e.skill, evalId: e.id, runtime: e.runtime, granularity, label: results.upliftLabelFor(e.runtime, e.withSkillAdds),
     repeats: e.repeats, bar: e.bar,
     executed: { withSkill: armRow(e.withSkill), baseline: armRow(e.baseline) },
   };
@@ -64,7 +64,7 @@ function rowFromEval(e) {
 /** One report row from a committed baseline summary (always complete: an incomplete eval is never stored). */
 function rowFromBaseline(b) {
   return {
-    skill: b.skill, evalId: null, runtime: b.runtime, granularity: b.granularity, label: results.GRANULARITY_LABELS[b.granularity],
+    skill: b.skill, evalId: null, runtime: b.runtime, granularity: b.granularity, label: results.upliftLabelFor(b.runtime, b.withSkillAdds),
     repeats: b.repeats, bar: b.bar, status: 'complete', reasons: [], source: 'committed baseline', recordedAt: b.recordedAt,
     executed: { withSkill: armRow(b.withSkill), baseline: armRow(b.baseline) },
     withSkill: armRow(b.withSkill), baseline: armRow(b.baseline),
