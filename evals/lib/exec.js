@@ -52,11 +52,14 @@ const PI_REPEAT_EVENT = new RegExp(`^\\s*\\{\\s*"type"\\s*:\\s*"(${[...PI_REPEAT
 function piBlockCommands(b) {
   if (!b || typeof b !== 'object' || String(b.type).toLowerCase() !== 'toolcall') return [[], false];
   if (typeof b.name !== 'string') return [[], true]; // cannot tell whether it ran a shell
-  if (!SHELL_TOOLS.has(b.name.trim().toLowerCase())) return [[], false];
+  const shellLike = SHELL_TOOLS.has(b.name.trim().toLowerCase());
   let args = b.arguments;
-  if (typeof args === 'string') { try { args = JSON.parse(args); } catch { return [[], true]; } }
+  if (typeof args === 'string') { try { args = JSON.parse(args); } catch { return [[], shellLike]; } }
+  // Any tool whose arguments carry a string `command` is collected, whatever its name (execute_bash, powershell, an
+  // extension tool): the name list only decides when a MISSING command means the list is incomplete.
   if (args && typeof args.command === 'string') return [[args.command], false];
-  return [[], true];
+  if (!shellLike && args && typeof args === 'object' && ['cmd', 'script', 'commands'].some((k) => k in args)) return [[], true];
+  return [[], shellLike];
 }
 
 /**

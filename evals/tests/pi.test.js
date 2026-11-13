@@ -503,6 +503,17 @@ describe('R3 loaded skills come only from the system message', () => {
     expect(pi.analyzeTranscript(roleLast).loadedSkills).toEqual([]);
   });
 
+  test('an unparseable agent_end whose system sections nest arrays of objects before skills is still read whole', () => {
+    // a structural `},{"` inside the system object must not end the slice before `skills`
+    const sections = `{"preamble":"p","tools":[{"name":"read"},{"name":"bash"}],"skills":${JSON.stringify(skillsSection(['leaked']))},"cwd":"/w"}`;
+    const broken = `{"type":"agent_end","messages":[{"role":"system","content":"","sections":${sections}},{"role":"user","content":[]}, undefined,`;
+    expect(() => JSON.parse(broken)).toThrow();
+    expect(pi.analyzeTranscript(broken)).toMatchObject({ loadedSkills: ['leaked'], loadedSource: 'system-prompt' });
+    // and a nested-array system object with NO skills block is a verified-empty list, not a leak
+    const none = `{"type":"agent_end","messages":[{"role":"system","content":"","sections":{"tools":[{"name":"read"},{"name":"bash"}],"cwd":"/w"}},${JSON.stringify(toolResult)}, undefined,`;
+    expect(pi.analyzeTranscript(none)).toMatchObject({ loadedSkills: [], loadedSource: 'system-prompt' });
+  });
+
   test('a line with no locatable system message is not evidence of a system prompt', () => {
     const noSystem = agentEnd([{ role: 'user', content: [], sections: {} }, toolResult]);
     expect(pi.analyzeTranscript(noSystem)).toMatchObject({ loadedSkills: [], loadedSource: 'transcript-scan' });
@@ -594,5 +605,17 @@ describe('nits: @ prompts, dropped tool limits, Pi HOME', () => {
     fs.rmSync(sub('rec'), { recursive: true, force: true });
     runEvals({}, s, ['--runtime', 'claude', '--repeats', '1']);
     for (const c of calls('claude')) expect(c.home).toBe(process.env.HOME);
+  });
+});
+
+describe('R2 follow-up: a command in any tool name is collected', () => {
+  const { scanLine } = require('../lib/exec');
+  const call = (name, args) => JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'toolCall', name, arguments: args }] } });
+  test.each(['execute_bash', 'run_shell_command', 'powershell', 'zsh', 'mcp__x__exec'])('tool %s with a string command is collected', (name) => {
+    expect(scanLine(call(name, { command: 'git push origin main' }))).toEqual({ commands: ['git push origin main'], incomplete: false });
+  });
+  test('an unknown tool with a command-like key that is not `command` fails closed', () => {
+    expect(scanLine(call('weird_tool', { cmd: 'git push' })).incomplete).toBe(true);
+    expect(scanLine(call('weird_tool', { path: '/x' }))).toEqual({ commands: [], incomplete: false });
   });
 });

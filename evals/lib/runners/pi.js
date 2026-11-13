@@ -89,9 +89,22 @@ function namesFromText(text) {
  * The skills listing of the SYSTEM message in one event line, never text from any other message:
  * { seen, names }. `seen` is false when no system message could be located (unverifiable).
  * Parseable line: the role=system message(s) among `message` / `messages`, text of `sections.skills`.
- * Unparseable line (the real `agent_end` is cut): the slice from the system object up to the next message boundary
- * (`"role":"` of another message, or a structural `},{"`; quotes inside strings are escaped, so neither can occur in text).
+ * Unparseable line (the real `agent_end` is cut): the system object itself, found by brace depth with string and
+ * escape state, so nested arrays of objects inside `sections` cannot end it early.
  */
+/** Index just past the object that starts at `from` (brace depth, string and escape aware); the line end when it never closes. */
+function objectEnd(line, from) {
+  let depth = 0, inStr = false;
+  for (let i = from; i < line.length; i++) {
+    const c = line[i];
+    if (inStr) { if (c === '\\') i++; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return i + 1;
+  }
+  return line.length;
+}
+
 function systemSkills(line) {
   let o = null;
   try { o = JSON.parse(line); } catch { /* sliced below */ }
@@ -105,8 +118,7 @@ function systemSkills(line) {
   if (at === -1) return { seen: false, names: [] };
   const from = Math.max(0, line.lastIndexOf('{', at));
   const after = at + SYSTEM.length;
-  const bounds = [line.indexOf('"role":"', after), line.indexOf('},{"', after)].filter((i) => i !== -1);
-  const slice = line.slice(from, bounds.length ? Math.min(...bounds) : line.length);
+  const slice = line.slice(from, objectEnd(line, from));
   return { seen: slice.includes('"sections"'), names: namesFromText(slice) };
 }
 
