@@ -1,6 +1,6 @@
-# Skills eval: arms, repeats and the Claude Code adapter
+# Skills eval: arms, repeats and the Claude Code and Pi adapters
 
-How `node evals/run.js --skill <skill> --runtime claude` measures a skill: each eval runs with the skill and without it, repeated, and reports reliability, uplift and whether the skill was actually invoked. General harness usage is in `evals/README.md`; this guide records how the Claude Code adapter loads and detects skills and what the numbers mean.
+How `node evals/run.js --skill <skill> --runtime claude` measures a skill: each eval runs with the skill and without it, repeated, and reports reliability, uplift and whether the skill was actually invoked. General harness usage is in `evals/README.md`; this guide records how the Claude Code and Pi adapters load and detect skills and what the numbers mean.
 
 ## Arms
 
@@ -71,4 +71,32 @@ Each eval result and the console state the evaluated copy: the package path load
 
 ## Runner interface
 
-`evals/lib/runners/index.js` registers runners by runtime name; `claude.js` is the only one so far (Pi comes later). `run(job)` resolves `{ transcript, exitCode, timedOut, costUsd, loadedSkills, runtime }` plus `invokedSkills`, `loadedPlugins`, `loadedSource`, `stderr`, `transcriptTruncated`, `commands`, `commandsIncomplete`. A job is `{ evalId, skill, arm, runtime, model, prompt, workspace, env, timeoutMs, maxUsd, pluginDirs[] | skillPaths[], maxTurns, allowedTools }`. `costUsd` is `null` when the stream reported none, and the scheduler then charges the run's full reservation.
+`evals/lib/runners/index.js` registers runners by runtime name; `claude.js` and `pi.js` are registered (a runtime other than `claude` or `pi` is rejected with exit 2 and nothing runs). Each module also exports `RUNTIME`, `BIN_NAME`, `BIN_ENV` and `find()`. `run(job)` resolves `{ transcript, exitCode, timedOut, costUsd, loadedSkills, runtime }` plus `invokedSkills`, `loadedPlugins`, `loadedSource`, `stderr`, `transcriptTruncated`, `commands`, `commandsIncomplete`. A job is `{ evalId, skill, arm, runtime, model, prompt, workspace, env, timeoutMs, maxUsd, pluginDirs[] | skillPaths[], maxTurns, allowedTools }`. `costUsd` is `null` when the stream reported none, and the scheduler then charges the run's full reservation.
+
+## Pi runtime
+
+`node evals/run.js --skill <skill> --runtime pi [--model provider/id]` runs the same evals through headless Pi (`pi --print --mode json --no-session`, stdout is the JSON event stream; startup chatter such as hook and model-select notices goes to stderr). The binary is found on `PATH`, or via `EVALS_PI_BIN`. An eval runs under Pi only when its `runtimes` lists `pi` (default `["claude"]`); otherwise it is skipped with a `SKIP` line. Legacy single-arm scenarios are Claude-only. Judged checks still call the `claude` CLI (the judge is not a runtime), so `--runtime pi` with judged checks needs `claude` too; the judge model is compared to the model under test after stripping Pi's `provider/` prefix and `:thinking` suffix.
+
+### Spike findings (TRD-012; Pi 1.5.2, run 2026-11-13)
+
+1. **Loaded skills are readable from the output.** The system prompt travels in the message events and in `agent_end`; its skills section holds `<available_skills><skill><name>..</name><description>..</description><location>..</location></skill>...`. The harness reads the `<name>` values with a regex over the raw line (the `agent_end` line is not always strictly parseable with `JSON.parse`) and dedupes them, because the text repeats across events. Only text inside an `<available_skills>` block of a system-role line counts; `<name>` in a user message or a tool result does not.
+2. **`--skill <path>` alone does not isolate.** With only `--skill`, 145 unique skills were listed (the user-level `~/.pi/agent/skills` plus the one passed).
+3. **`--no-skills` alone yields zero skills.** With it the system prompt has no skills section at all (its `sections` object lists preamble, tools, rules, docs, cwd and mcp_servers, not `skills`).
+4. **`--no-skills --skill <dir>` loads exactly that one skill.** So the with-skill arm is `--no-skills --skill <skillDir>` and the baseline is `--no-skills`. A `--skill` path that does not exist loads nothing, silently; the adapter therefore refuses a skill path that is not an absolute directory holding `SKILL.md`.
+5. **Cost is reported.** Assistant messages carry `usage.cost.total` (USD) next to `usage.{input,output,cacheRead,cacheWrite,totalTokens}`; streaming `message_update` events carry running or zero values. Per-message usage is per model call, so the adapter sums `usage.cost.total` over the assistant `message_end` events of a run. A model without prices reports `total: 0` (seen with a local router model); that is unknown, not free.
+6. **Isolation flags.** Both arms also get `--no-context-files --no-extensions --no-mcp --no-approve --no-prompt-templates --no-themes --no-session --offline` (all probed together with `--no-skills --skill` and a real model call), and `--model` when one is given. The prompt is the final positional argument.
+
+### How the adapter uses them
+
+- **Arms.** Pi has no package-level loading, so the unit is the single skill: with-skill passes `--no-skills --skill packages/<pkg>/skills/<skill>` (the shipped directory, never a copy), baseline passes `--no-skills`. Pi uplift is therefore labelled **skill-level** (Claude stays "package-level (skills share a package)"); the two are not comparable.
+- **Leak check.** The baseline's loaded-skills list must be empty (any skill, not only the one under test, since the baseline runs under `--no-skills`). The skills list is *readable* when the stream shows a system prompt (`loadedSource: system-prompt`): a system prompt without a skills block is then a verified empty list. If a baseline that completed normally (exit 0, no timeout) never showed a system prompt, the eval aborts as `baseline isolation unverifiable`; a baseline that crashed or timed out first is not counted. The invocation check also applies: a baseline that reads `<skill>/SKILL.md` or expands `/skill:<name>` is a leak.
+- **Invocation.** A with-skill run counts as invoked when the stream shows a `/skill:<name>` expansion (a user message starting `<skill name="..." location=...>`) or a `read` tool call on `<name>/SKILL.md`. `invocation: explicit` prefixes `/skill:<name>` on the with-skill prompt under Pi (Claude's `command` is a package slash command, which Pi does not have).
+- **Cost.** The reported sum is used when positive. Absent or zero cost, or a timed-out run, is unknown: the run is charged the per-run ceiling (`runReserveUsd` in `evals/limits.json`, `--run-usd`), flagged `costEstimated`, and counted against the suite cap like any other unknown cost. Pi has no budget flag, so the ceiling is accounting only; it does not stop a run (the timeout does).
+- **Credentials.** Pi's provider keys are named under `runtimes.pi` in `evals/env-allowlist.json` (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`); they reach Pi runs only. Pi may also read its own login under the real `HOME` locally; in CI a per-run `HOME` means keys must come from the environment.
+- **Commands.** `bash` tool calls in assistant messages are collected as commands, so forbidden-command checks work on Pi runs.
+
+### Known limits (Pi)
+
+- **Hidden skills are not listed.** A skill with `disable-model-invocation: true` (for example `ensemble-create-prd`) is loaded by `--skill` but omitted from the system prompt's skills block, so `loadedSkills` does not show it. The with-skill arm does not require it to be listed, and the baseline cannot load it under `--no-skills`, but the leak check cannot see such a skill in the list; it can still see it invoked.
+- **Tools and turns.** `allowedTools` (Claude tool names) and `maxTurns` are not passed to Pi (it has neither flag in the form used here), so Pi runs with its default tools; the arms still match each other.
+- **Unverified.** The `/skill:<name>` expansion was probed with one skill and one model; a Pi `read` of `SKILL.md` was not seen end to end (the probe model did not use the tool as asked), so that invocation shape is taken from the tool-call schema in the stream. A Pi `toolCall` line that is not valid JSON would not yield its command (no incomplete flag is raised).

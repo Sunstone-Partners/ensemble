@@ -9,6 +9,8 @@ const { runProcess } = require('../exec');
 
 /** Compare-form of a model name: `sonnet`, `claude-sonnet-5-5` and `claude-sonnet-4-20250514` all become `sonnet`. */
 const norm = (m) => String(m || '').trim().toLowerCase()
+  .replace(/^[^/]*\//, '') // Pi's provider/id form
+  .replace(/:[a-z]+$/, '') // Pi's :thinking suffix
   .replace(/\[.*\]$/, '')
   .replace(/^claude-/, '')
   .replace(/^(\d+-)+/, '')

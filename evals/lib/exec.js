@@ -42,8 +42,18 @@ function killTree(child) {
 const OUTPUT_KEEP = 1024 * 1024; // bytes of stdout kept in memory (tail); the last `result` line is always kept
 const MAX_COMMANDS = 5000; // Bash commands kept from tool_use lines, independent of the stdout cap
 
-/** Bash commands in one stream-json line (tool_use blocks); [] for anything else. */
+/** Bash commands in one Pi `message_end` line: `toolCall` blocks named bash (case-insensitive) with `arguments.command`. */
+function piCommands(line) {
+  let obj;
+  try { obj = JSON.parse(line); } catch { return []; }
+  const m = obj && obj.message;
+  const content = m && m.role === 'assistant' && Array.isArray(m.content) ? m.content : [];
+  return content.filter((b) => b && b.type === 'toolCall' && String(b.name).toLowerCase() === 'bash' && b.arguments && typeof b.arguments.command === 'string').map((b) => b.arguments.command);
+}
+
+/** Bash commands in one stream-json line (Claude `tool_use`, or a Pi `toolCall` message) (tool_use blocks); [] for anything else. */
 function commandsFromLine(line) {
+  if (line.startsWith('{"type":"message_end"') && line.includes('"toolCall"')) return piCommands(line);
   if (!line.includes('"tool_use"')) return [];
   let obj;
   try { obj = JSON.parse(line); } catch { return []; }
