@@ -57,6 +57,8 @@ function stubs({ piWith, piBase, claudeLines, piWithExit = 0, piBaseExit = 0, pa
 R=$(mktemp -d "${rec}/${name}-XXXXXX")
 printf '%s\\n' "$@" > "$R/argv"
 echo "\${OPENAI_API_KEY:-unset}" > "$R/oa"
+echo "OA=\${OPENAI_API_KEY:-unset} GE=\${GEMINI_API_KEY:-unset} OR=\${OPENROUTER_API_KEY:-unset} EX=\${EXTRA_JUDGE_VAR:-unset}" > "$R/keys"
+echo "$HOME" > "$R/home"
 `;
   fs.writeFileSync(path.join(bin, 'pi'), `#!/bin/sh
 ${common('pi')}case "$*" in *--skill*) ARM=with;; *) ARM=base;; esac
@@ -84,7 +86,7 @@ function calls(runtime) {
   if (!fs.existsSync(rec)) return [];
   return fs.readdirSync(rec).filter((d) => d.startsWith(`${runtime}-`)).sort().map((d) => {
     const r = (f) => fs.readFileSync(path.join(rec, d, f), 'utf8');
-    return { argv: r('argv').split('\n').slice(0, -1), arm: r('arm').trim(), openai: r('oa').trim() };
+    return { argv: r('argv').split('\n').slice(0, -1), arm: r('arm').trim(), openai: r('oa').trim(), keys: r('keys').trim(), home: r('home').trim() };
   });
 }
 
@@ -361,5 +363,236 @@ describe('TRD-013 Pi run() interface', () => {
     expect(envlib.loadCredentialNames({ file, runtime: 'claude' })).toEqual(['A_KEY']);
     fs.writeFileSync(file, JSON.stringify({ credentials: [], runtimes: { pi: ['bad name'] } }));
     expect(() => envlib.loadCredentialNames({ file, runtime: 'pi' })).toThrow(/invalid environment variable name/);
+  });
+});
+
+// ---- review fixes -----------------------------------------------------------------------------------------------
+const { norm, resolveJudge, runJudge } = require('../lib/runners/judge');
+const { noForbiddenCommand } = require('../lib/graders');
+const { runProcess } = require('../lib/exec');
+
+describe('R1 the claude judge never receives the runtime-scoped Pi provider keys', () => {
+  const keys = { OPENAI_API_KEY: 'sk-openai-judge-aaaa', GEMINI_API_KEY: 'gm-judge-bbbb', OPENROUTER_API_KEY: 'or-judge-cccc', EXTRA_JUDGE_VAR: 'extra-dddd' };
+  const judged = { checks: [{ type: 'fileExists', path: 'SUMMARY.md' }, { type: 'judge', rubric: 'rubric' }] };
+
+  test('a Pi run: the judge subprocess env lacks the Pi keys but has the base credential and --allow-env names; Pi itself has the keys', () => {
+    const s = piOk();
+    const r = runEvals(judged, s, ['--runtime', 'pi', '--repeats', '1', '--model', 'openai/gpt-5-mini', '--judge-model', 'opus', '--allow-env', 'EXTRA_JUDGE_VAR'], keys);
+    expect(r.status).not.toBe(null);
+    const judgeCalls = calls('claude');
+    expect(judgeCalls.length).toBeGreaterThan(0);
+    for (const c of judgeCalls) expect(c.keys).toBe('OA=unset GE=unset OR=unset EX=extra-dddd');
+    for (const c of calls('pi')) expect(c.keys).toBe('OA=sk-openai-judge-aaaa GE=gm-judge-bbbb OR=or-judge-cccc EX=extra-dddd');
+  });
+
+  test('judge stderr carrying a Pi key is redacted (secrets are passed to the judge process)', async () => {
+    fs.mkdirSync(sub('bin'));
+    fs.writeFileSync(sub('bin/claude'), '#!/bin/sh\necho "auth failed for sk-openai-judge-aaaa" >&2\nexit 1\n', { mode: 0o755 });
+    const r = await runJudge(sub('bin/claude'), { model: 'opus', rubric: 'r', transcript: 't', cwd: root, env: { PATH: process.env.PATH }, secrets: ['sk-openai-judge-aaaa'] });
+    expect(r.error).toMatch(/judge call failed: exit 1/);
+    expect(r.error).not.toContain('sk-openai-judge-aaaa');
+    expect(r.error).toContain('[REDACTED]');
+    // end to end: the stored report never carries the key either
+    const s = piOk();
+    fs.writeFileSync(path.join(s.bin, 'claude'), '#!/bin/sh\necho "auth failed for sk-openai-judge-aaaa" >&2\nexit 1\n', { mode: 0o755 });
+    const e = runEvals(judged, s, ['--runtime', 'pi', '--repeats', '1', '--model', 'openai/gpt-5-mini', '--judge-model', 'opus'], keys);
+    expect(JSON.stringify(e.report)).not.toContain('sk-openai-judge-aaaa');
+    expect(e.stdout + e.stderr).not.toContain('sk-openai-judge-aaaa');
+  });
+});
+
+describe('R1 runScenario wiring', () => {
+  test('the judge process gets the redaction secrets and the judge-only env, before any later redaction layer', async () => {
+    const { runScenario } = require('../run');
+    fs.mkdirSync(sub('bin'));
+    fs.mkdirSync(sub('sc'));
+    fs.writeFileSync(sub('bin/claude'), '#!/bin/sh\necho "auth failed for sk-openai-judge-aaaa key=<$OPENAI_API_KEY>" >&2\nexit 1\n', { mode: 0o755 });
+    const key = 'sk-openai-judge-aaaa';
+    const r = await runScenario({ id: 'x', type: 'cli', scenarioDir: sub('sc'), graders: [{ type: 'judge', rubric: 'r' }] }, {
+      bin: sub('bin/claude'), judgeBin: sub('bin/claude'), judge: { model: 'opus', refusal: null }, workdir: sub('work'), repoRoot: REPO_ROOT, timeoutMs: 10000,
+      credentials: ['PATH_UNUSED', 'OPENAI_API_KEY'], judgeCredentials: [], secrets: [key], parentEnv: { PATH: process.env.PATH, OPENAI_API_KEY: key },
+    });
+    expect(r.graders[0].detail).toMatch(/judge call failed: exit 1/);
+    expect(r.graders[0].detail).not.toContain(key); // redacted at the judge process layer
+    expect(r.graders[0].detail).toContain('key=<>'); // and the judge env never carried it (a carried key would show key=<[REDACTED]>)
+  });
+});
+
+describe('R2 Pi command collection fails closed', () => {
+  const call = (name, args) => ({ type: 'toolCall', id: 'c', name, arguments: args });
+  const msg = (blocks) => JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: blocks } });
+  const feed = async (lines, { trailingNewline = true } = {}) => {
+    fs.mkdirSync(sub('bin'), { recursive: true });
+    fs.writeFileSync(sub('bin/p'), `#!/bin/sh\nprintf '%s${trailingNewline ? '\\n' : ''}' ${shq(lines.join('\n'))}\n`, { mode: 0o755 });
+    return runProcess(sub('bin/p'), [], { cwd: root, env: { PATH: process.env.PATH }, timeoutMs: 10000 });
+  };
+
+  test('leading whitespace and a different key order are still parsed', () => {
+    const line = ` ${JSON.stringify({ message: { content: [call('bash', { command: 'git push origin main' })], role: 'assistant' }, type: 'message_end' })}`;
+    expect(commandsFromLine(line)).toEqual(['git push origin main']);
+  });
+
+  test('a shell-like tool that is not called bash is collected (case-insensitive)', () => {
+    for (const name of ['shell', 'Shell', 'sh', 'exec', 'terminal', 'run_command', 'BASH']) {
+      expect(commandsFromLine(msg([call(name, { command: 'rm -rf x' })]))).toEqual(['rm -rf x']);
+    }
+    expect(commandsFromLine(msg([call('read', { path: '/x' })]))).toEqual([]);
+  });
+
+  test('a shell-like call with a non-string command, or a toolCall line that does not parse, sets commandsIncomplete', async () => {
+    const bad = await feed([msg([call('shell', { command: ['git', 'push'] })])]);
+    expect(bad.commandsIncomplete).toBe(true);
+    const noArgs = await feed([msg([call('bash', undefined)])]);
+    expect(noArgs.commandsIncomplete).toBe(true);
+    const broken = await feed([`{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash","arguments":{"command":"git pu`]);
+    expect(broken.commandsIncomplete).toBe(true);
+    const fine = await feed([msg([call('bash', { command: 'ls' })]), msg([call('read', { path: '/x' })])]);
+    expect(fine.commandsIncomplete).toBe(false);
+    expect(fine.commands).toEqual(['ls']);
+  });
+
+  test('an unterminated final line (no trailing newline) is still scanned', async () => {
+    const r = await feed([msg([call('bash', { command: 'git push origin main' })])], { trailingNewline: false });
+    expect(r.commands).toEqual(['git push origin main']);
+    const cut = await feed(['{"type":"turn_end"}', `{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash"`], { trailingNewline: false });
+    expect(cut.commandsIncomplete).toBe(true);
+  });
+
+  test('a duplicate agent_end that does not parse does not by itself fail the run closed', async () => {
+    const r = await feed([msg([call('bash', { command: 'ls' })]), brokenAgentEnd(['a']).replace('"role":"user"', '"role":"assistant","x":"toolCall"')]);
+    expect(r.commands).toEqual(['ls']);
+    expect(r.commandsIncomplete).toBe(false);
+  });
+
+  test('noForbiddenCommand then fails closed on an incomplete Pi command list', async () => {
+    const r = await feed([`{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash","arguments":{"command":"git push origin main`]);
+    const res = noForbiddenCommand({ commands: r.commands, commandsIncomplete: r.commandsIncomplete, transcript: '' }, { patterns: ['git push'] });
+    expect(res.pass).toBe(false);
+    expect(res.detail).toMatch(/cannot prove/);
+  });
+
+  test('Claude tool_use collection is unchanged', () => {
+    const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls -la' } }, { type: 'text', text: 'a "toolCall" mention' }] } });
+    expect(commandsFromLine(line)).toEqual(['ls -la']);
+    expect(commandsFromLine('{"type":"assistant","message":{"content":[]}}')).toEqual([]);
+  });
+});
+
+describe('R3 loaded skills come only from the system message', () => {
+  const decoyBlock = skillsSection(['decoy']);
+  const toolResult = { role: 'toolResult', content: [{ type: 'text', text: decoyBlock }] };
+  const assistant = { role: 'assistant', content: [{ type: 'text', text: decoyBlock }] };
+  const system = (names) => ({ role: 'system', content: '', sections: { preamble: 'p', ...(names && { skills: skillsSection(names) }), cwd: '/w' } });
+  const agentEnd = (messages) => JSON.stringify({ type: 'agent_end', messages });
+
+  test('a decoy <available_skills> block in a later toolResult or assistant message of the same agent_end line adds no names', () => {
+    const line = agentEnd([system(null), { role: 'user', content: [] }, toolResult, assistant]);
+    expect(pi.analyzeTranscript(line)).toMatchObject({ loadedSkills: [], loadedSource: 'system-prompt' });
+    expect(pi.analyzeTranscript(agentEnd([system(['real']), toolResult, assistant])).loadedSkills).toEqual(['real']);
+  });
+
+  test('an unparseable agent_end: names are cut at the next message boundary', () => {
+    const head = `{"type":"agent_end","messages":[{"role":"system","content":"","sections":{"preamble":"p","cwd":"/w"}},`;
+    const broken = `${head}${JSON.stringify(toolResult)},${JSON.stringify(assistant)}, undefined,`;
+    expect(() => JSON.parse(broken)).toThrow();
+    expect(pi.analyzeTranscript(broken)).toMatchObject({ loadedSkills: [], loadedSource: 'system-prompt' });
+    const real = `{"type":"agent_end","messages":[${JSON.stringify(system(['real']))},${JSON.stringify(toolResult)}, undefined,`;
+    expect(pi.analyzeTranscript(real).loadedSkills).toEqual(['real']);
+    // role last in the following message: the structural `},{"` boundary still stops the scan
+    const roleLast = `{"type":"agent_end","messages":[{"role":"system","content":"","sections":{"cwd":"/w"}},{"content":[{"type":"text","text":${JSON.stringify(decoyBlock)}}],"role":"toolResult"}, undefined,`;
+    expect(pi.analyzeTranscript(roleLast).loadedSkills).toEqual([]);
+  });
+
+  test('a line with no locatable system message is not evidence of a system prompt', () => {
+    const noSystem = agentEnd([{ role: 'user', content: [], sections: {} }, toolResult]);
+    expect(pi.analyzeTranscript(noSystem)).toMatchObject({ loadedSkills: [], loadedSource: 'transcript-scan' });
+    expect(pi.systemSkills('{"type":"agent_end","messages":[ undefined, "sections" "role":"sys')).toEqual({ seen: false, names: [] });
+  });
+});
+
+describe('R4 the runtimes filter never silently empties a run', () => {
+  test('--skill selection emptied by the runtime filter: exit 2 naming the runtime and the eval', () => {
+    const s = piOk();
+    const r = runEvals({ runtimes: ['claude'] }, s, ['--runtime', 'pi', '--repeats', '1']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(new RegExp(`${SKILL}.*not run under --runtime pi`));
+    expect(calls('pi')).toHaveLength(0);
+  });
+
+  test('--scenario selection emptied by the runtime filter: exit 2', () => {
+    const s = piOk();
+    const r = runEvals({ id: 'only-claude', runtimes: ['claude'] }, s, ['--scenario', 'only-claude', '--runtime', 'pi']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/only-claude.*not run under --runtime pi/);
+  });
+
+  test('an unfiltered run that executes zero evals reports it and exits 4, never 0', () => {
+    const s = piOk();
+    const dir = path.join(sub('skills'), SKILL);
+    fs.mkdirSync(path.join(dir, 'fixture'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'eval.json'), JSON.stringify({ skill: SKILL, prompt: 'p', runtimes: ['claude'], checks: [{ type: 'fileExists', path: 'x' }] }));
+    fs.mkdirSync(sub('scenarios'), { recursive: true });
+    const env = { ...process.env, CI: 'false', GITHUB_ACTIONS: 'false', PATH: `${s.bin}:${process.env.PATH}`, EVALS_WORKDIR: sub('work'), EVALS_RESULTS_DIR: sub('results'), EVALS_SCENARIOS_DIR: sub('scenarios'), EVALS_SKILLS_DIR: sub('skills'), EVALS_PI_BIN: path.join(s.bin, 'pi'), EVALS_CLAUDE_BIN: path.join(s.bin, 'claude') };
+    const r = spawnSync('node', [RUN, '--runtime', 'pi'], { encoding: 'utf8', env });
+    expect(r.status).toBe(4);
+    expect(r.stdout).toMatch(/0 evals ran under runtime pi/);
+  });
+});
+
+describe('R5 judge model comparison strips every provider segment and the thinking suffix', () => {
+  test('norm', () => {
+    expect(norm('openrouter/anthropic/claude-sonnet-4')).toBe('sonnet');
+    expect(norm('anthropic/claude-sonnet-4:high')).toBe('sonnet');
+    expect(norm('openai/gpt-5:high')).toBe('gpt');
+    expect(norm('openai/gpt-5')).toBe(norm('gpt-5'));
+    for (const n of ['sonnet', 'claude-sonnet-5-5', 'claude-sonnet-4-20250514', 'opus', 'claude-opus-4[1m]']) expect(norm(n)).toBe(n.startsWith('opus') || n.endsWith('[1m]') ? 'opus' : 'sonnet');
+  });
+
+  test('the judge is refused when it is the model under test, whatever the Pi form', () => {
+    const refused = (model, judgeModel) => resolveJudge({ judgeModel, model, env: {} }).refusal;
+    expect(refused('openrouter/anthropic/claude-sonnet-4', 'sonnet')).toMatch(/is the model under test/);
+    expect(refused('anthropic/claude-sonnet-4:high', 'claude-sonnet-5-5')).toMatch(/is the model under test/);
+    expect(refused('openai/gpt-5:high', 'gpt-5')).toMatch(/is the model under test/);
+    expect(refused('openrouter/anthropic/claude-sonnet-4', 'opus')).toBeNull();
+    expect(refused('sonnet', 'claude-opus-4')).toBeNull();
+  });
+});
+
+describe('nits: @ prompts, dropped tool limits, Pi HOME', () => {
+  test('buildArgs refuses a prompt starting with @; the eval definition refuses it too', async () => {
+    expect(() => pi.buildArgs({ prompt: '@/etc/passwd explain' })).toThrow(/must not start with "@"/);
+    expect(() => pi.buildArgs({ prompt: '  @file' })).toThrow(/must not start with "@"/);
+    expect(pi.buildArgs({ prompt: 'mail me @ noon' }).pop()).toBe('mail me @ noon');
+    const s = piOk();
+    const r = runEvals({ prompt: '@secrets.txt summarise' }, s, ['--runtime', 'pi']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/prompt must not begin with "@"/);
+  });
+
+  test('a Pi run that drops allowedTools or maxTurns warns once per eval; a claude run does not', () => {
+    const s = piOk();
+    const p = runEvals({ allowedTools: ['Read'], maxTurns: 3 }, s, ['--runtime', 'pi', '--repeats', '1']);
+    expect(p.stderr.match(/not applied under --runtime pi/g)).toHaveLength(1);
+    expect(p.stderr).toMatch(/`allowedTools` and `maxTurns` not applied under --runtime pi/);
+    fs.rmSync(sub('results'), { recursive: true, force: true });
+    expect(runEvals({}, s, ['--runtime', 'pi', '--repeats', '1']).stderr).not.toMatch(/not applied under --runtime pi/);
+    fs.rmSync(sub('results'), { recursive: true, force: true });
+    expect(runEvals({ allowedTools: ['Read'], maxTurns: 3 }, s, ['--runtime', 'claude', '--repeats', '1']).stderr).not.toMatch(/not applied under --runtime/);
+  });
+
+  test('Pi runs get a throwaway empty HOME (removed afterwards); claude runs keep the passthrough HOME', () => {
+    const s = piOk();
+    const p = runEvals({}, s, ['--runtime', 'pi', '--repeats', '1']);
+    const homes = calls('pi').map((c) => c.home);
+    expect(homes).toHaveLength(2);
+    for (const h of homes) {
+      expect(h).not.toBe(process.env.HOME);
+      expect(h.startsWith(sub('work'))).toBe(true);
+      expect(fs.existsSync(h)).toBe(false);
+    }
+    expect(p.report.env.homeMode).toBe('ci-temp');
+    fs.rmSync(sub('rec'), { recursive: true, force: true });
+    runEvals({}, s, ['--runtime', 'claude', '--repeats', '1']);
+    for (const c of calls('claude')) expect(c.home).toBe(process.env.HOME);
   });
 });

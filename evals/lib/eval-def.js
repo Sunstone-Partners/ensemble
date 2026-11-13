@@ -106,6 +106,7 @@ function validateEvalDef(raw, dir, { repoRoot = REPO_ROOT } = {}) {
   const invocation = raw.invocation === undefined ? 'plain' : raw.invocation;
   if (!INVOCATIONS.includes(invocation)) fail('invocation', `invocation must be one of ${INVOCATIONS.join(', ')}`);
   if (/^\s*-/.test(raw.prompt)) fail('prompt', 'prompt must not begin with "-": it would be read as a command-line option');
+  if (/^\s*@/.test(raw.prompt)) fail('prompt', 'prompt must not begin with "@": Pi may read it as a file include');
   if (invocation === 'plain' && raw.prompt.trim().startsWith('/')) {
     fail('prompt', 'prompt must be plain language, not a slash command; use `invocation: "explicit"` with `command`');
   }

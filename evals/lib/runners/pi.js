@@ -51,6 +51,7 @@ const BASE_FLAGS = ['--print', '--mode', 'json', '--no-session', '--no-context-f
 function buildArgs(job) {
   const prompt = String(job.prompt === undefined ? '' : job.prompt);
   if (prompt.startsWith('-')) throw new Error('pi runner: the prompt must not start with "-" (it would be parsed as an option)');
+  if (/^\s*@/.test(prompt)) throw new Error('pi runner: the prompt must not start with "@" (Pi may read it as a file include)');
   const args = [...BASE_FLAGS];
   for (const p of job.skillPaths || []) {
     if (typeof p !== 'string' || !path.isAbsolute(p) || !fs.existsSync(path.join(p, 'SKILL.md'))) {
@@ -84,6 +85,31 @@ function namesFromText(text) {
   return names;
 }
 
+/**
+ * The skills listing of the SYSTEM message in one event line, never text from any other message:
+ * { seen, names }. `seen` is false when no system message could be located (unverifiable).
+ * Parseable line: the role=system message(s) among `message` / `messages`, text of `sections.skills`.
+ * Unparseable line (the real `agent_end` is cut): the slice from the system object up to the next message boundary
+ * (`"role":"` of another message, or a structural `},{"`; quotes inside strings are escaped, so neither can occur in text).
+ */
+function systemSkills(line) {
+  let o = null;
+  try { o = JSON.parse(line); } catch { /* sliced below */ }
+  if (o && typeof o === 'object') {
+    const msgs = [...(o.message ? [o.message] : []), ...(Array.isArray(o.messages) ? o.messages : [])];
+    const sys = msgs.filter((m) => m && typeof m === 'object' && m.role === 'system' && m.sections && typeof m.sections === 'object');
+    if (!sys.length) return { seen: false, names: [] };
+    return { seen: true, names: sys.flatMap((m) => (typeof m.sections.skills === 'string' ? namesFromText(m.sections.skills) : [])) };
+  }
+  const at = line.indexOf(SYSTEM);
+  if (at === -1) return { seen: false, names: [] };
+  const from = Math.max(0, line.lastIndexOf('{', at));
+  const after = at + SYSTEM.length;
+  const bounds = [line.indexOf('"role":"', after), line.indexOf('},{"', after)].filter((i) => i !== -1);
+  const slice = line.slice(from, bounds.length ? Math.min(...bounds) : line.length);
+  return { seen: slice.includes('"sections"'), names: namesFromText(slice) };
+}
+
 /** Skill directory name from a path that ends in `<name>/SKILL.md`, else null. */
 function skillFromPath(p) {
   const m = typeof p === 'string' ? /([^/\\]+)[/\\]SKILL\.md$/.exec(p) : null;
@@ -111,8 +137,9 @@ function createStreamScanner() {
       const type = MESSAGE_LINE.exec(line);
       if (!type) return;
       if (line.includes(SYSTEM) && line.includes('"sections"')) {
-        systemSeen = true;
-        for (const n of namesFromText(line)) if (names.size < MAX_NAMES) names.add(n);
+        const sys = systemSkills(line);
+        if (sys.seen) systemSeen = true;
+        for (const n of sys.names) if (names.size < MAX_NAMES) names.add(n);
       }
       if (type[1] !== 'message_end') return;
       let o;
@@ -192,4 +219,4 @@ async function run(job, opts = {}) {
   };
 }
 
-module.exports = { RUNTIME, BIN_NAME, BIN_ENV, find: findPi, findPi, buildArgs, createStreamScanner, analyzeTranscript, namesFromText, run };
+module.exports = { RUNTIME, BIN_NAME, BIN_ENV, find: findPi, findPi, buildArgs, createStreamScanner, analyzeTranscript, namesFromText, systemSkills, run };

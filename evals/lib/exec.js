@@ -42,23 +42,57 @@ function killTree(child) {
 const OUTPUT_KEEP = 1024 * 1024; // bytes of stdout kept in memory (tail); the last `result` line is always kept
 const MAX_COMMANDS = 5000; // Bash commands kept from tool_use lines, independent of the stdout cap
 
-/** Bash commands in one Pi `message_end` line: `toolCall` blocks named bash (case-insensitive) with `arguments.command`. */
-function piCommands(line) {
-  let obj;
-  try { obj = JSON.parse(line); } catch { return []; }
-  const m = obj && obj.message;
-  const content = m && m.role === 'assistant' && Array.isArray(m.content) ? m.content : [];
-  return content.filter((b) => b && b.type === 'toolCall' && String(b.name).toLowerCase() === 'bash' && b.arguments && typeof b.arguments.command === 'string').map((b) => b.arguments.command);
+const SHELL_TOOLS = new Set(['bash', 'shell', 'sh', 'exec', 'terminal', 'run_command']);
+const TOOLCALL_KEY = /"toolcall"/i; // any key order, any leading whitespace, any case
+// Pi events that repeat what the per-message `message_end` events already carry; an unparseable one loses nothing.
+const PI_REPEAT_TYPES = new Set(['agent_end', 'message_update', 'message_start', 'turn_end', 'turn_start', 'agent_start']);
+const PI_REPEAT_EVENT = new RegExp(`^\\s*\\{\\s*"type"\\s*:\\s*"(${[...PI_REPEAT_TYPES].join('|')})"`);
+
+/** Commands in one Pi tool-call block: [commands, incomplete]. A shell-like tool without a string command is incomplete. */
+function piBlockCommands(b) {
+  if (!b || typeof b !== 'object' || String(b.type).toLowerCase() !== 'toolcall') return [[], false];
+  if (typeof b.name !== 'string') return [[], true]; // cannot tell whether it ran a shell
+  if (!SHELL_TOOLS.has(b.name.trim().toLowerCase())) return [[], false];
+  let args = b.arguments;
+  if (typeof args === 'string') { try { args = JSON.parse(args); } catch { return [[], true]; } }
+  if (args && typeof args.command === 'string') return [[args.command], false];
+  return [[], true];
 }
 
-/** Bash commands in one stream-json line (Claude `tool_use`, or a Pi `toolCall` message) (tool_use blocks); [] for anything else. */
-function commandsFromLine(line) {
-  if (line.startsWith('{"type":"message_end"') && line.includes('"toolCall"')) return piCommands(line);
-  if (!line.includes('"tool_use"')) return [];
+/**
+ * Commands in one stream-json line: { commands, incomplete }. Claude `tool_use` blocks, and Pi `toolCall` blocks of a
+ * shell-like tool in an assistant `message_end`. `incomplete` (fail closed) when a line mentioning `toolCall` cannot be
+ * parsed (unless it is an event that only repeats message_end content), or a shell-like tool call has no string command.
+ */
+function scanLine(line) {
+  const pi = TOOLCALL_KEY.test(line);
+  const claude = line.includes('"tool_use"');
+  if (!pi && !claude) return { commands: [], incomplete: false };
   let obj;
-  try { obj = JSON.parse(line); } catch { return []; }
-  const content = obj && obj.message && Array.isArray(obj.message.content) ? obj.message.content : [];
-  return content.filter((b) => b && b.type === 'tool_use' && b.input && typeof b.input.command === 'string').map((b) => b.input.command);
+  try { obj = JSON.parse(line); } catch { return { commands: [], incomplete: pi && !PI_REPEAT_EVENT.test(line) }; }
+  const commands = [];
+  let incomplete = false;
+  const m = obj && obj.message;
+  const content = m && Array.isArray(m.content) ? m.content : [];
+  if (claude) {
+    for (const b of content) if (b && b.type === 'tool_use' && b.input && typeof b.input.command === 'string') commands.push(b.input.command);
+  }
+  if (pi && !(obj && PI_REPEAT_TYPES.has(obj.type))) {
+    if (m && m.role === 'assistant') {
+      if (!Array.isArray(m.content)) incomplete = true; // a toolCall mention in an assistant message we cannot walk
+      for (const b of content) {
+        const [c, inc] = piBlockCommands(b);
+        commands.push(...c);
+        if (inc) incomplete = true;
+      }
+    }
+  }
+  return { commands, incomplete };
+}
+
+/** Bash commands in one stream-json line (Claude `tool_use`, or Pi `toolCall`); [] for anything else. */
+function commandsFromLine(line) {
+  return scanLine(line).commands;
 }
 
 const KILL_GRACE_MS = 1000; // after a timeout kill, wait this long for 'close' before resolving anyway
@@ -90,6 +124,13 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine, secrets = [
     let timedOut = false;
     let settled = false;
     let graceTimer = null;
+    const collect = (l) => {
+      const r = scanLine(l);
+      if (r.incomplete) commandsIncomplete = true;
+      for (const c of r.commands) {
+        if (commands.length < MAX_COMMANDS) commands.push(c); else commandsIncomplete = true;
+      }
+    };
     const child = spawn(bin, args, { cwd, env, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], detached: true });
     const finish = (exitCode) => {
       if (settled) return;
@@ -98,6 +139,7 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine, secrets = [
       clearTimeout(graceTimer);
       killTree(child); // reap stragglers still in the group
       if (pending && !timedOut) tap(pending);
+      if (pending) collect(pending); // an unterminated last line is still a line
       const tail = out + scrub(pending);
       const transcript = lastResult && !tail.includes(lastResult) ? `${tail}\n${lastResult}` : tail;
       resolve({ transcript, stderr: scrub(err).slice(-2000), exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete });
@@ -118,9 +160,7 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine, secrets = [
         tap(l);
         const clean = scrub(l); // before the tail cut below
         if (clean.startsWith('{"type":"result"')) lastResult = clean;
-        for (const c of commandsFromLine(l)) {
-          if (commands.length < MAX_COMMANDS) commands.push(c); else commandsIncomplete = true;
-        }
+        collect(l);
         kept.push(clean);
       }
       out += kept.length ? `${kept.join('\n')}\n` : '';
@@ -250,4 +290,4 @@ function reliability(stats, bar, planned) {
   return null;
 }
 
-module.exports = { resolveRepeats, expandRuns, armStats, reliability, loadLimits, runProcess, commandsFromLine, MAX_COMMANDS, reservationFor, runSuite, killTree, LIMITS_FILE };
+module.exports = { resolveRepeats, expandRuns, armStats, reliability, loadLimits, runProcess, commandsFromLine, scanLine, MAX_COMMANDS, reservationFor, runSuite, killTree, LIMITS_FILE };
