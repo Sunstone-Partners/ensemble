@@ -9,6 +9,10 @@ date: 2026-11-12
 design_readiness_score: 4.3
 test_approach: standard
 Constitution compliance: passed
+ensemble_implement_trd_beads:
+  branch_name: feature/trd-2026-24fac9e9-skills-eval-harness-pr-1
+  use_proposed: true
+  stacked_prs: true
 ---
 
 # TRD-2026-24fac9e9: Skills Evaluation Harness
