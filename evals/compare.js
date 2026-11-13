@@ -36,7 +36,7 @@ function main(argv = process.argv.slice(2), env = {}) {
   const resultsDir = env.resultsDir || RESULTS_DIR;
   const baselinesDir = env.baselinesDir || BASELINES_DIR;
   let opts;
-  try { opts = parse(argv); } catch (e) { console.error(e.message); return 2; }
+  try { opts = parse(argv); } catch (e) { console.error(results.stripControl(e.message)); return 2; }
   let doc;
   let file;
   try {
@@ -44,19 +44,19 @@ function main(argv = process.argv.slice(2), env = {}) {
     doc = cmp.loadLog(file);
   } catch (e) {
     if (!(e instanceof cmp.CompareError || e instanceof results.ResultError)) throw e;
-    console.error(e.message);
+    console.error(results.stripControl(e.message));
     return 2;
   }
   const result = cmp.compareLog(doc, { baselinesDir: opts.baselines ? path.resolve(opts.baselines) : baselinesDir, skill: opts.skill });
   console.log(opts.json ? JSON.stringify({ log: path.basename(file), ...result, exit: cmp.exitCode(result) }, null, 2) : `comparing ${path.basename(file)} with the committed baselines\n${cmp.formatComparison(result)}`);
   const code = cmp.exitCode(result);
-  if (code === 1) console.error(`${result.entries.filter((e) => e.status === 'regression').length} regression(s): ${result.entries.filter((e) => e.status === 'regression').map((e) => `${e.skill}/${e.evalId}`).join(', ')}`);
+  if (code === 1) console.error(results.stripControl(`${result.entries.filter((e) => e.status === 'regression').length} regression(s): ${result.entries.filter((e) => e.status === 'regression').map((e) => `${e.skill}/${e.evalId}`).join(', ')}`));
   if (code === 4 && !result.entries.length) console.error('nothing was compared: the log has no skill eval (or --skill matched none)');
   return code;
 }
 
 if (require.main === module) {
-  try { process.exitCode = main(); } catch (e) { console.error(e.message); process.exitCode = 2; }
+  try { process.exitCode = main(); } catch (e) { console.error(results.stripControl(e.message)); process.exitCode = 2; }
 }
 
 module.exports = { main, parse };

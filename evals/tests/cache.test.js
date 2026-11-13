@@ -406,6 +406,18 @@ describe('control characters in a stored timestamp or identifier (terminal injec
     expect(r.stdout + r.stderr).not.toContain('\u0007');
   });
 
+  test('a cache entry that is not JSON (the parser error quotes the input) is a miss and prints no escape byte', () => {
+    expect(t.run().status).toBe(0);
+    for (const { file } of t.entries()) fs.writeFileSync(file, '\u001b]0;PWN\u0007 {');
+    t.resetCalls();
+    const r = t.run(MODEL_ARGS);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/WARNING cache entry .*not valid JSON/);
+    expect(t.calls()).toHaveLength(4);
+    expect(r.stdout + r.stderr).not.toContain('\u001b');
+    expect(r.stdout + r.stderr).not.toContain('\u0007');
+  });
+
   test('storedAt must be an ISO-8601 UTC timestamp; a model with a control character in a stored record is a miss', () => {
     expect(results.isIsoTimestamp(new Date().toISOString())).toBe(true);
     expect(results.isIsoTimestamp('2020-01-01T00:00:00Z')).toBe(true);

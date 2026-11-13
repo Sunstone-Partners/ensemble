@@ -281,6 +281,15 @@ describe('control characters from a committed baseline or a log never reach the 
     expect(t.compare().status).toBe(0);
   });
 
+  test('a log or baseline that is not JSON (the parser error quotes the input) prints no escape byte', () => {
+    expect(t.run(THREE).status).toBe(0);
+    fs.writeFileSync(t.sub('notjson.json'), `${ESC}]0;PWN\u0007 {`);
+    const r = t.compare(['--results', t.sub('notjson.json')]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/not valid JSON/);
+    expect(r.stdout + r.stderr).not.toContain(ESC);
+  });
+
   test('a log whose eval id contains ESC is rejected (exit 2) and prints no ESC; formatComparison also strips every printed value (defence in depth)', () => {
     expect(t.run(THREE).status).toBe(0);
     const doc = JSON.parse(fs.readFileSync(path.join(t.sub('results'), fs.readdirSync(t.sub('results'))[0]), 'utf8'));

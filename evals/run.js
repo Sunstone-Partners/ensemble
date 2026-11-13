@@ -202,7 +202,7 @@ async function runScenario(scenario, run) {
       durationMs: Date.now() - started,
     };
   } finally {
-    if (keepWorkspace) console.log(envlib.redactText(`workspace kept: ${sb.dir}`, secrets));
+    if (keepWorkspace) console.log(results.stripControl(envlib.redactText(`workspace kept: ${sb.dir}`, secrets)));
     else sb.cleanup();
     if (ciHome) fs.rmSync(ciHome, { recursive: true, force: true });
     if (checkHome && checkHome !== ciHome) fs.rmSync(checkHome, { recursive: true, force: true });
@@ -233,8 +233,8 @@ async function main(argv = process.argv.slice(2)) {
   const judgeCredentials = envlib.loadCredentialNames({ file: opts.envAllowlist || undefined, extra: opts.allowEnv });
   const secrets = envlib.secretValues(process.env, credentials);
   activeSecrets = secrets;
-  const out = (text) => console.log(envlib.redactText(text, secrets));
-  const err = (text) => console.error(envlib.redactText(text, secrets));
+  const out = (text) => console.log(results.stripControl(envlib.redactText(text, secrets)));
+  const err = (text) => console.error(results.stripControl(envlib.redactText(text, secrets)));
   if (!supportedRuntimes().includes(opts.runtime)) {
     err(`unsupported --runtime "${String(opts.runtime).slice(0, 80)}": not supported in this release (supported: ${supportedRuntimes().join(', ')}); nothing was run`);
     return 2;
@@ -671,7 +671,7 @@ async function main(argv = process.argv.slice(2)) {
 if (require.main === module) {
   main().then((code) => { process.exitCode = code; }, (e) => {
     const known = [...new Set([...activeSecrets, ...envlib.secretValues(process.env, envlib.DEFAULT_CREDENTIALS)])];
-    console.error(envlib.redactText(e.message, known));
+    console.error(results.stripControl(envlib.redactText(e.message, known)));
     process.exitCode = 2;
   });
 }
