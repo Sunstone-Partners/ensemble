@@ -142,3 +142,15 @@ How a maintainer spends nothing on unchanged work, checks a result against the c
 ### Replay
 
 A failing run prints a command (see `evals/README.md`) that reruns exactly that run: same eval, arm, runtime, requested model, repeat index and settings. It is single-quoted throughout, built from validated fields, and carries no secret or machine path. `--arm`/`--run-index` run only that run, fresh, without cache or baseline effects. Credentials must be present in the environment as for the original run; `--allow-env` and `--env-allowlist` are deliberately not part of the command.
+
+## CI, credential guard and proof the gate can fail (PR 7)
+
+**Local and CI parity.** The workflow `.github/workflows/evals.yml` calls the same npm scripts a maintainer runs: `npm run evals -- --runtime <runtime> --model <model> --max-usd <usd> [--skill <skill>]`, `npm run evals:coverage` and `npm run evals:compare [-- --skill <skill>]`. They produce the same report and comparison locally and in CI; the run log and report are uploaded as the `eval-results` artifact.
+
+**On demand only.** The workflow is `workflow_dispatch` with the inputs `skill` (blank runs the full suite), `runtime` (`claude` or `pi`), `model` and `max_usd`. It has no `push`, `pull_request` or `schedule` trigger: changing a skill or an eval does not run it unless a maintainer triggers it. The `pi` runtime needs the Pi CLI on the runner; the workflow installs only the Claude Code CLI.
+
+**Advisory, not required.** The regression check is advisory. When a committed reliable eval is no longer reliable the `Regression check` step fails and names the skill and eval, but the evals workflow is not a required status check on any protected branch and does not block merging. Do not make it one: it needs credentials and a model, which a required check on a pull request must never have.
+
+**Credential guard.** Dispatch inputs are passed to the shell only as environment variables and quoted arguments (never expanded inside a `run:` script). The job and the step that uses `secrets.ANTHROPIC_API_KEY` run only when `github.repository` is this repository and `github.ref` starts with `refs/heads/`, so a fork's dispatch, a tag or a pull ref receives no secrets. `.github/CODEOWNERS` lists `/evals/` explicitly so a contributor's eval or fixture change is reviewed like code before it runs with any credential. The workflow has `contents: read` permissions only.
+
+**Proof the gate can fail.** `evals/tests/regression-gate.test.js` copies the `ensemble-create-prd` package into a scratch directory (`EVALS_REPO_ROOT`), runs a content-sensitive stub (it passes only when the skill still contains a required instruction) and records a reliable baseline. With one instruction broken, `run.js` and `compare.js` exit 1 naming the skill and eval; with the defect removed they pass. The inverse proofs (a stub that ignores the content, no baseline, an unreliable baseline) show the failure comes from the defect and that the check does not claim a regression without a reliable like-for-like baseline.
