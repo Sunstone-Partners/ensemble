@@ -12,7 +12,14 @@
 
 const results = require('./results');
 
-const pct = (passes, runs) => `${Math.round((100 * passes) / runs)}%`;
+/** passes/runs as a fraction; an arm with no executed run has no rate: a named error, never NaN. */
+function rate(a, what) {
+  if (!a || !Number.isInteger(a.passes) || !Number.isInteger(a.runs) || a.runs < 1 || a.passes < 0 || a.passes > a.runs) {
+    throw new results.ResultError(`report: ${what} has no valid rate (passes ${a && a.passes}, runs ${a && a.runs}): cannot compute a percentage`);
+  }
+  return a.passes / a.runs;
+}
+const pct = (passes, runs) => `${Math.round(100 * rate({ passes, runs }, 'an arm'))}%`;
 const signed = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
 
 function armRow(a) {
@@ -49,7 +56,7 @@ function rowFromEval(e) {
   return {
     ...base, status: 'complete', reasons: [],
     withSkill: armRow(e.withSkill), baseline: armRow(e.baseline),
-    uplift: e.withSkill.passes / e.withSkill.runs - e.baseline.passes / e.baseline.runs,
+    uplift: rate(e.withSkill, `eval ${e.id} with-skill`) - rate(e.baseline, `eval ${e.id} baseline`),
     reliable: e.reliable,
   };
 }
@@ -57,16 +64,17 @@ function rowFromEval(e) {
 /** One report row from a committed baseline summary (always complete: an incomplete eval is never stored). */
 function rowFromBaseline(b) {
   return {
-    skill: b.skill, evalId: b.skill, runtime: b.runtime, granularity: b.granularity, label: results.GRANULARITY_LABELS[b.granularity],
+    skill: b.skill, evalId: null, runtime: b.runtime, granularity: b.granularity, label: results.GRANULARITY_LABELS[b.granularity],
     repeats: b.repeats, bar: b.bar, status: 'complete', reasons: [], source: 'committed baseline', recordedAt: b.recordedAt,
     executed: { withSkill: armRow(b.withSkill), baseline: armRow(b.baseline) },
     withSkill: armRow(b.withSkill), baseline: armRow(b.baseline),
-    uplift: b.withSkill.passes / b.withSkill.runs - b.baseline.passes / b.baseline.runs,
+    uplift: rate(b.withSkill, `baseline ${b.skill} with-skill`) - rate(b.baseline, `baseline ${b.skill} baseline`),
     reliable: b.reliable,
   };
 }
 
-const byKey = (a, b) => (a.skill + a.runtime + a.evalId < b.skill + b.runtime + b.evalId ? -1 : 1);
+const key = (r) => `${r.skill}\0${r.runtime}\0${r.evalId || ''}`;
+const byKey = (a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
 
 /** `{ rows }` from eval-level results (only skill evals with arms; legacy single-arm results have no uplift). */
 function buildReport(evalResults) {

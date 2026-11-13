@@ -8,6 +8,7 @@
  *     a file with a NUL byte is binary and hashed as bytes;
  *   - symlinks are never followed: a symlink hashes as its target resolved to a path relative to the hashed tree;
  *     one whose target leaves the tree (or does not exist) is a named error, not silently hashed or followed;
+ *   - a directory is hashed only through the files and symlinks under it (an empty directory contributes nothing);
  *   - the only entries ignored are OS junk files listed in IGNORED_NAMES (`.DS_Store`); every other file counts.
  * A missing or unreadable directory throws HashError naming it; there is no "empty hash" fallback.
  *
@@ -65,7 +66,8 @@ function walk(h, top, rel) {
       }
       update(h, 'link', posix(r), Buffer.from(posix(relTarget) || '.'));
     } else if (e.isDirectory()) {
-      update(h, 'dir', posix(r));
+      // A directory enters the hash only through the files it contains: git does not store an empty one, so a fresh clone
+      // would otherwise hash differently from a working tree that has one.
       walk(h, top, r);
     } else if (e.isFile()) {
       let buf;
@@ -92,6 +94,24 @@ function hashTree(dir) {
   return h.digest('hex');
 }
 
+/** Bytes of a regular file, null when it does not exist; a symlink or any other special file is a named error (symlinks are never followed). */
+function readRegular(file, what) {
+  let st;
+  try { st = fs.lstatSync(file); } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw new HashError(`cannot inspect ${what}: ${e.code || e.message}`);
+  }
+  if (st.isSymbolicLink()) throw new HashError(`${what} is a symlink; symlinks are never followed`);
+  if (!st.isFile()) throw new HashError(`${what} is not a regular file`);
+  try { return fs.readFileSync(file); } catch (e) { throw new HashError(`cannot read ${what}: ${e.code || e.message}`); }
+}
+
+/** Content hash of a whole package directory (every file, `.DS_Store` aside: Claude loads the whole package). */
+function packageHash(packageDir) {
+  requireDir(packageDir, 'package directory');
+  return hashTree(packageDir);
+}
+
 /** Content hash of a skill directory. */
 function skillHash(skillDir) {
   requireDir(skillDir, 'skill directory');
@@ -102,11 +122,11 @@ function skillHash(skillDir) {
 function evalHash(evalDir) {
   requireDir(evalDir, 'eval directory');
   const h = crypto.createHash('sha256');
-  const evalJson = path.join(evalDir, 'eval.json');
-  if (!fs.existsSync(evalJson)) throw new HashError(`eval.json not found in eval directory ${path.basename(evalDir)}`);
-  update(h, 'file', 'eval.json', normalised(fs.readFileSync(evalJson)));
-  const rubric = path.join(evalDir, 'rubric.md');
-  if (fs.existsSync(rubric)) update(h, 'file', 'rubric.md', normalised(fs.readFileSync(rubric)));
+  const evalJson = readRegular(path.join(evalDir, 'eval.json'), 'eval.json');
+  if (evalJson === null) throw new HashError(`eval.json not found in eval directory ${path.basename(evalDir)}`);
+  update(h, 'file', 'eval.json', normalised(evalJson));
+  const rubric = readRegular(path.join(evalDir, 'rubric.md'), 'rubric.md');
+  if (rubric !== null) update(h, 'file', 'rubric.md', normalised(rubric));
   else update(h, 'absent', 'rubric.md');
   const fixture = path.join(evalDir, 'fixture');
   requireDir(fixture, 'fixture directory');
@@ -123,4 +143,4 @@ function skillVersion(skillDir) {
   return v ? v[1] : null;
 }
 
-module.exports = { hashTree, skillHash, evalHash, skillVersion, HashError, IGNORED_NAMES };
+module.exports = { hashTree, skillHash, packageHash, evalHash, skillVersion, HashError, IGNORED_NAMES };

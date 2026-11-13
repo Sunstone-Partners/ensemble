@@ -32,7 +32,7 @@ const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: tr
 
 // ---- stub suite ------------------------------------------------------------------------------------------------
 
-const initLine = (skills, plugins) => JSON.stringify({ type: 'system', subtype: 'init', skills, plugins: plugins || [] });
+const initLine = (skills, plugins, model = 'claude-stub-1') => JSON.stringify({ type: 'system', subtype: 'init', skills, plugins: plugins || [], ...(model && { model }) });
 const invokeLine = (name) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Skill', input: { skill: name } }] } });
 const resultLine = () => JSON.stringify({ type: 'result', num_turns: 1, total_cost_usd: 0.01 });
 const WITH = [initLine([QUALIFIED], [{ name: 'ensemble-product', path: PKG_DIR }]), invokeLine(QUALIFIED), resultLine()];
@@ -69,7 +69,7 @@ function evalResult(runtime, withOutcomes, baseOutcomes, { repeats = withOutcome
   return arms.summarizeEval({ id, skill: SKILL, invocation: 'plain' }, { repeats, bar, repeatsSource: 'test', barSource: 'test' },
     { 'with-skill': mk('with-skill', withOutcomes), baseline: mk('baseline', baseOutcomes) }, { runtime });
 }
-const CTX = { skillHash: 'a'.repeat(64), skillVersion: '1.2.3', evalVersion: 'b'.repeat(64), model: 'm', recordedAt: '2026-11-13T00:00:00.000Z' };
+const CTX = { skillHash: 'a'.repeat(64), packageHash: 'd'.repeat(64), skillVersion: '1.2.3', evalVersion: 'b'.repeat(64), model: 'm', recordedAt: '2026-11-13T00:00:00.000Z' };
 
 // ---- TRD-014-TEST ----------------------------------------------------------------------------------------------
 
@@ -149,7 +149,7 @@ describe('TRD-014 result schema', () => {
     expect(records).toHaveLength(4); // 2 arms x 2 repeats
     const w = records.find((x) => x.arm === 'with-skill');
     expect(w).toMatchObject({
-      evalId: SKILL, skill: SKILL, runtime: 'claude', model: 'default', arm: 'with-skill', invocationMode: 'plain', run: 1, outcome: 'pass', invoked: true, judgeModel: null,
+      evalId: SKILL, skill: SKILL, runtime: 'claude', model: 'claude-stub-1', arm: 'with-skill', invocationMode: 'plain', run: 1, outcome: 'pass', invoked: true, judgeModel: null,
     });
     expect(w.costUsd).toBe(0.01);
     expect(w.skillHash).toBe(hash.skillHash(path.join(PKG_DIR, 'skills', SKILL)));
@@ -226,7 +226,7 @@ describe('TRD-015 baseline summaries', () => {
     const file = sub('baselines', 'claude', `${SKILL}.json`);
     expect(fs.existsSync(file)).toBe(true);
     const summary = results.readBaseline(file);
-    expect(summary).toMatchObject({ skill: SKILL, runtime: 'claude', model: 'default', repeats: 2, withSkill: { passes: 2, runs: 2 }, baseline: { passes: 0, runs: 2 }, uplift: 1 });
+    expect(summary).toMatchObject({ skill: SKILL, runtime: 'claude', model: 'claude-stub-1', repeats: 2, withSkill: { passes: 2, runs: 2 }, baseline: { passes: 0, runs: 2 }, uplift: 1 });
     // the summary is small: no per-run logs
     expect(Object.keys(summary)).not.toEqual(expect.arrayContaining(['runs', 'records', 'graders', 'transcript']));
     // full logs exist only under results/, and results/ is gitignored
@@ -253,7 +253,7 @@ describe('TRD-015 baseline summaries', () => {
     expect(reg.status).toBe('regression');
     // editing the committed file changes the answer: the comparison reads that file
     const file = sub('baselines/claude', `${SKILL}.json`);
-    fs.writeFileSync(file, JSON.stringify({ ...committed, reliable: false, withSkill: { passes: 0, runs: 3 } }));
+    fs.writeFileSync(file, JSON.stringify({ ...committed, reliable: false, uplift: 0, withSkill: { passes: 0, runs: 3 } }));
     expect(results.checkAgainstBaseline(dir, bad, CTX).status).toBe('ok');
     fs.writeFileSync(file, JSON.stringify({ ...committed, evalVersion: 'c'.repeat(64) }));
     expect(results.checkAgainstBaseline(dir, good, CTX)).toMatchObject({ status: 'not-comparable', reasons: [expect.stringContaining('evalVersion')] });

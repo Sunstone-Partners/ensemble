@@ -19,6 +19,8 @@ const { loadEvalDefs, NON_SOURCE_PACKAGES } = require('./eval-def');
 const { isSkillName } = require('./results');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
+// Placeholders git or the OS leave in skills/ that are not skills.
+const SKILLS_DIR_JUNK = new Set(['.gitkeep', '.DS_Store']);
 const EXEMPTIONS_FILE = path.join(__dirname, '..', 'exemptions.json');
 
 class CoverageError extends Error {
@@ -69,14 +71,23 @@ function listShippedSkills(repoRoot = REPO_ROOT) {
   if (!fs.existsSync(packagesDir)) throw new CoverageError('packages/ directory not found: nothing to cover');
   const skills = new Map();
   const errors = [];
-  for (const pkg of fs.readdirSync(packagesDir, { withFileTypes: true }).filter((e) => e.isDirectory() && !NON_SOURCE_PACKAGES.has(e.name)).map((e) => e.name).sort()) {
+  for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : 1))) {
+    const pkg = entry.name;
+    if (NON_SOURCE_PACKAGES.has(pkg)) continue;
+    if (entry.isSymbolicLink()) { errors.push(`packages/${pkg} is a symlink: a source package must be a real directory`); continue; }
+    if (!entry.isDirectory()) continue;
     const skillsRoot = path.join(packagesDir, pkg, 'skills');
-    if (!fs.existsSync(skillsRoot) || !fs.lstatSync(skillsRoot).isDirectory()) continue;
+    let rootStat = null;
+    try { rootStat = fs.lstatSync(skillsRoot); } catch (e) { if (e.code !== 'ENOENT') errors.push(`packages/${pkg}/skills cannot be inspected (${e.code || e.message})`); }
+    if (!rootStat) continue;
+    if (rootStat.isSymbolicLink()) { errors.push(`packages/${pkg}/skills is a symlink: a source package must hold a real skills directory`); continue; }
+    if (!rootStat.isDirectory()) { errors.push(`packages/${pkg}/skills is not a directory`); continue; }
     for (const name of fs.readdirSync(skillsRoot).sort()) {
+      if (SKILLS_DIR_JUNK.has(name)) continue;
       const dir = path.join(skillsRoot, name);
       const st = fs.lstatSync(dir);
       if (st.isSymbolicLink()) { errors.push(`packages/${pkg}/skills/${name} is a symlink: a source package must hold real skill directories`); continue; }
-      if (!st.isDirectory()) continue;
+      if (!st.isDirectory()) { errors.push(`packages/${pkg}/skills/${name} is a stray non-directory entry: skills/ holds skill directories only`); continue; }
       if (!isSkillName(name)) { errors.push(`packages/${pkg}/skills/${name}: invalid skill name (letters, digits, ".", "_" and "-" only)`); continue; }
       if (!fs.existsSync(path.join(dir, 'SKILL.md'))) { errors.push(`packages/${pkg}/skills/${name} has no SKILL.md`); continue; }
       skills.set(name, [...(skills.get(name) || []), pkg]);
@@ -86,6 +97,16 @@ function listShippedSkills(repoRoot = REPO_ROOT) {
     if (pkgs.length > 1) errors.push(`skill "${name}" is shipped by more than one source package (${pkgs.join(', ')}): a skill must appear once`);
   }
   return { skills, errors };
+}
+
+/** An exemption reason as printed: ANSI escape sequences and every other control character removed (line breaks and tabs become a space). */
+function cleanReason(text) {
+  return String(text)
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, '')
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/[\r\n\t]/g, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
+    .trim();
 }
 
 /**
@@ -100,6 +121,9 @@ function computeCoverage({ repoRoot = REPO_ROOT, skillsDir = path.join(__dirname
   for (const ev of defs.evals) evalsBySkill.set(ev.skill, [...(evalsBySkill.get(ev.skill) || []), ev]);
   const rejectedBySkill = new Map(defs.rejected.map((r) => [path.basename(r.dir), r.error.message]));
   const { map: exemptions, duplicates } = loadExemptions(exemptionsFile);
+  // An eval that names a skill nobody ships is an error, not silently ignored (a rejected one is judged by its directory name).
+  for (const ev of defs.evals) if (!skills.has(ev.skill)) errors.push(`eval "${ev.id}" names skill "${ev.skill}", which no source package ships`);
+  for (const r of defs.rejected) if (!skills.has(path.basename(r.dir))) errors.push(`evals/skills/${path.basename(r.dir)} was rejected and names no shipped skill: ${r.error.message}`);
 
   for (const d of duplicates) errors.push(`exemptions.json: duplicate exemption for "${d}"`);
   for (const [name, reason] of Object.entries(exemptions)) {
@@ -114,7 +138,9 @@ function computeCoverage({ repoRoot = REPO_ROOT, skillsDir = path.join(__dirname
     const evs = evalsBySkill.get(skill);
     if (evs) return { skill, packages, status: 'evaluated', evalId: evs.map((e) => e.id).join(', '), runtimes: [...new Set(evs.flatMap((e) => e.runtimes))].sort() };
     const reason = Object.prototype.hasOwnProperty.call(exemptions, skill) ? exemptions[skill] : undefined;
-    if (typeof reason === 'string' && reason.trim() !== '') return { skill, packages, status: 'exempt', reason: reason.trim() };
+    if (typeof reason === 'string' && cleanReason(reason) !== '') {
+      return { skill, packages, status: 'exempt', reason: cleanReason(reason), ...(rejectedBySkill.has(skill) && { rejection: rejectedBySkill.get(skill) }) };
+    }
     const note = rejectedBySkill.has(skill) ? `its eval was rejected: ${rejectedBySkill.get(skill)}`
       : Object.prototype.hasOwnProperty.call(exemptions, skill) ? 'exempt but no reason is given' : 'no eval and no exemption';
     return { skill, packages, status: 'missing', note };
@@ -133,6 +159,7 @@ function formatCoverage(c) {
     for (const r of rows) {
       const detail = status === 'evaluated' ? `eval ${r.evalId} [${r.runtimes.join(', ')}]` : status === 'exempt' ? `reason: ${r.reason}` : r.note;
       out.push(`  ${r.skill} (${r.packages.join(', ')}): ${detail}`);
+      if (r.rejection) out.push(`    REJECTED eval (the exemption does not hide it): ${r.rejection}`);
     }
   }
   out.push(`total ${c.counts.total}: ${c.counts.evaluated} evaluated, ${c.counts.exempt} exempt, ${c.counts.missing} missing`);
@@ -140,4 +167,4 @@ function formatCoverage(c) {
   return out.join('\n');
 }
 
-module.exports = { computeCoverage, formatCoverage, listShippedSkills, loadExemptions, parseExemptions, CoverageError, EXEMPTIONS_FILE };
+module.exports = { cleanReason, computeCoverage, formatCoverage, listShippedSkills, loadExemptions, parseExemptions, CoverageError, EXEMPTIONS_FILE };

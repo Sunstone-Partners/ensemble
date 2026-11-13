@@ -79,7 +79,7 @@ describe('TRD-016 per-skill report', () => {
   test('report from committed baselines: rows carry the stored granularity; a corrupt file is an error', () => {
     const dir = fs.mkdtempSync(path.join(os.homedir(), '.omp', 'trd-skills-eval', 'rep-'));
     try {
-      const ctx = { skillHash: 'a'.repeat(64), skillVersion: null, evalVersion: 'b'.repeat(64), model: 'm' };
+      const ctx = { skillHash: 'a'.repeat(64), packageHash: 'd'.repeat(64), skillVersion: null, evalVersion: 'b'.repeat(64), model: 'm' };
       const done = (rt) => ev('alpha', rt, [P, P, P, P, P], [F, F, F, F, F]);
       for (const rt of ['claude', 'pi']) results.writeBaseline(dir, results.toBaselineSummary(done(rt), ctx));
       const rep = report.buildReportFromBaselines(dir);
