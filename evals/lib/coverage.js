@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { loadEvalDefs, NON_SOURCE_PACKAGES } = require('./eval-def');
+const { loadEvalDefs, readDefinitionFile, NON_SOURCE_PACKAGES } = require('./eval-def');
 const { isSkillName } = require('./results');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -57,9 +57,9 @@ function parseExemptions(text, name = 'exemptions.json') {
 
 /** The exemptions file at `file`; a missing file is an empty map, an unreadable or malformed one throws. */
 function loadExemptions(file = EXEMPTIONS_FILE) {
-  if (!fs.existsSync(file)) return { map: {}, duplicates: [] };
+  try { fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT') return { map: {}, duplicates: [] }; }
   let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { throw new CoverageError(`${path.basename(file)}: cannot read (${e.code || e.message})`); }
+  try { text = readDefinitionFile(file, path.basename(file)); } catch (e) { throw new CoverageError(`${path.basename(file)}: ${e.message}`); }
   return parseExemptions(text, path.basename(file));
 }
 

@@ -491,3 +491,30 @@ describe('coverage nits', () => {
     expect(printed.includes('\u001b') || printed.includes('\u0007')).toBe(false);
   });
 });
+
+describe('delta review: identifiers survive sanitize; definition files are never followed', () => {
+  test('a user or host name equal to a token of a skill or model name leaves the identifier intact', () => {
+    jest.spyOn(os, 'userInfo').mockReturnValue({ username: 'runner' });
+    const out = results.sanitize({ skill: 'test-runner', model: 'claude-runner-1', note: 'ran as runner in /x' }, { repoRoot: '/x/y' });
+    expect(out.skill).toBe('test-runner');
+    expect(out.model).toBe('claude-runner-1');
+    expect(out.note).toBe('ran as <user> in /x');
+  });
+
+  test('exemptions.json as a symlink or FIFO is an error that does not quote the target', () => {
+    write(sub('outside.json'), '{"secret-key": "secret value"}');
+    fs.symlinkSync(sub('outside.json'), sub('exemptions.json'));
+    expect(() => coverage.loadExemptions(sub('exemptions.json'))).toThrow(/symlink/);
+    try { coverage.loadExemptions(sub('exemptions.json')); } catch (e) { expect(e.message).not.toMatch(/secret/); }
+  });
+
+  test('a symlinked eval.json is rejected and a symlinked rubric.md fails its eval', () => {
+    const { loadEvalDefs } = require('../lib/eval-def');
+    write(sub('outside.json'), '{"prompt":"x"}');
+    fs.mkdirSync(sub('skills', 'a'), { recursive: true });
+    fs.symlinkSync(sub('outside.json'), sub('skills', 'a', 'eval.json'));
+    const r = loadEvalDefs({ skillsDir: sub('skills'), repoRoot: REPO_ROOT });
+    expect(r.evals).toEqual([]);
+    expect(String(r.rejected[0].error)).toMatch(/eval\.json is a symlink/);
+  });
+});

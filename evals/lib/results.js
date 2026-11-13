@@ -101,6 +101,8 @@ function granularityFor(runtime) {
 
 const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
+
 /**
  * Remove what must not be stored: credential values (redactDeep) and the author's machine identity. The repository root
  * (as given and as its realpath) becomes `<repo>`, a home directory (as given and realpath) `~`; `/Users/<name>`,
@@ -121,14 +123,16 @@ function sanitize(value, { secrets = [], repoRoot } = {}) {
     const h = os.hostname();
     for (const n of new Set([h, String(h).split('.')[0]])) if (typeof n === 'string' && n.length >= 4) words.push([n, '<host>']);
   } catch { /* no host name */ }
-  const wordRes = words.map(([w, label]) => [new RegExp(`(?<![A-Za-z0-9])${escapeRe(w)}(?![A-Za-z0-9])`, 'g'), label]);
+  const wordRes = words.map(([w, label]) => [new RegExp(`(?<![\\w.-])${escapeRe(w)}(?![\\w.-])`, 'g'), label]);
   const scrub = (str) => {
     let t = str;
     for (const [r, label] of roots) t = t.split(r).join(label);
     t = t.replace(/[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"']+/gi, '~')
       .replace(/\/(?:Users|home)\/[^/\s"'\\]+/g, '~')
       .replace(/(?<![\w.-])\/root(?=[/\s"'\\]|$)/g, '~');
-    for (const [re, label] of wordRes) t = t.replace(re, label);
+    // An identifier (skill, eval id, model, hash) is never reworded: a user or host name that equals a token of it
+    // (`runner` in `test-runner`) would corrupt a name the store must read back.
+    if (!IDENTIFIER.test(t)) for (const [re, label] of wordRes) t = t.replace(re, label);
     return t;
   };
   const walk = (v) => {
