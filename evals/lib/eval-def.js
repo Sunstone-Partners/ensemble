@@ -17,7 +17,7 @@ const SKILLS_DIR = path.join(__dirname, '../skills');
 // Generated or aggregate packages hold copies or symlinks of skills; the source package is the one evaluated.
 const NON_SOURCE_PACKAGES = new Set(['full', 'pi', 'codex', 'opencode']);
 // Validated and documented, but not yet acted on by the runner (later PRs).
-const UNACTED_FIELDS = ['runtimes', 'repeats', 'bar', 'expectInvoked'];
+const UNACTED_FIELDS = ['runtimes'];
 const INVOCATIONS = ['plain', 'explicit'];
 const KNOWN_KEYS = new Set([
   'id', 'skill', 'description', 'runtimes', 'prompt', 'invocation', 'command', 'allowedTools',

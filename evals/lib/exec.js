@@ -11,7 +11,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const LIMITS_FILE = path.join(__dirname, '..', 'limits.json');
-const FALLBACK_LIMITS = { maxUsdPerSuite: 50, timeoutSec: 900, runReserveUsd: 5, judgeReserveUsd: 0.5, concurrency: 4 };
+const FALLBACK_LIMITS = { maxUsdPerSuite: 50, timeoutSec: 900, runReserveUsd: 5, judgeReserveUsd: 0.5, concurrency: 4, repeats: 5, bar: 4 };
 const EPS = 1e-9;
 
 /** Defaults from limits.json (fallback constants when the file is absent). */
@@ -26,6 +26,10 @@ function loadLimits(file = LIMITS_FILE) {
   if (!(limits.maxUsdPerSuite > 0) || !(limits.timeoutSec > 0) || !(limits.concurrency >= 1)) {
     throw new Error(`limits file ${file}: maxUsdPerSuite, timeoutSec and concurrency must be positive`);
   }
+  for (const k of ['repeats', 'bar']) {
+    if (!Number.isInteger(limits[k]) || limits[k] < 1) throw new Error(`limits file ${file}: "${k}" must be a positive integer`);
+  }
+  if (limits.bar > limits.repeats) throw new Error(`limits file ${file}: "bar" cannot exceed "repeats"`);
   return limits;
 }
 
@@ -56,9 +60,11 @@ const KILL_GRACE_MS = 1000; // after a timeout kill, wait this long for 'close' 
  * `result` line; stderr keeps its last 2000 characters.
  * Every complete stdout line is also scanned for tool_use Bash commands, kept (up to MAX_COMMANDS) apart from the
  * capped transcript, so early commands survive truncation.
+ * `onLine(line)` (optional) sees every complete stdout line, even when the capped transcript later drops it.
  * Resolves { transcript, stderr, exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete }; never rejects.
  */
-function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
+function runProcess(bin, args, { cwd, env, timeoutMs, input, onLine }) {
+  const tap = (line) => { if (onLine) { try { onLine(line); } catch { /* a faulty observer must not break the run */ } } };
   return new Promise((resolve) => {
     let out = '';
     let pending = ''; // incomplete trailing line of stdout
@@ -77,6 +83,7 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
       clearTimeout(timer);
       clearTimeout(graceTimer);
       killTree(child); // reap stragglers still in the group
+      if (pending && !timedOut) tap(pending);
       const tail = out + pending;
       const transcript = lastResult && !tail.includes(lastResult) ? `${tail}\n${lastResult}` : tail;
       resolve({ transcript, stderr: err.slice(-2000), exitCode, timedOut, transcriptTruncated, commands, commandsIncomplete });
@@ -93,6 +100,7 @@ function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
       pending = lines.pop();
       if (pending.length > OUTPUT_KEEP) { pending = pending.slice(-OUTPUT_KEEP); transcriptTruncated = true; commandsIncomplete = true; }
       for (const l of lines) {
+        tap(l);
         if (l.startsWith('{"type":"result"')) lastResult = l;
         for (const c of commandsFromLine(l)) {
           if (commands.length < MAX_COMMANDS) commands.push(c); else commandsIncomplete = true;
@@ -177,4 +185,51 @@ async function runSuite(items, { concurrency, capUsd, reserve, run, onSettle }) 
   return { done, unstarted: queue, spent, peakCommitted };
 }
 
-module.exports = { loadLimits, runProcess, commandsFromLine, MAX_COMMANDS, reservationFor, runSuite, killTree, LIMITS_FILE };
+/**
+ * Repeats and bar for an eval: `--repeats` (flag) over the eval's `repeats` over the limits.json default; `bar`
+ * from the eval, else the default bar (limits.json) scaled to the repeat count when that differs from the default
+ * (4 of 5 becomes 3 of 3, 8 of 10). Sources are reported: 'flag' | 'eval' | 'default' | 'scaled'.
+ * Throws a message naming the eval when the bar cannot be met.
+ */
+function resolveRepeats(ev, { flagRepeats, limits }) {
+  const repeats = flagRepeats || ev.repeats || limits.repeats;
+  const repeatsSource = flagRepeats ? 'flag' : ev.repeats ? 'eval' : 'default';
+  let bar = ev.bar;
+  let barSource = 'eval';
+  if (bar === undefined) {
+    bar = repeats === limits.repeats ? limits.bar : Math.ceil((limits.bar / limits.repeats) * repeats);
+    barSource = repeats === limits.repeats ? 'default' : 'scaled';
+  }
+  if (bar > repeats) throw new Error(`eval "${ev.id}": bar ${bar} (${barSource}) exceeds repeats ${repeats} (${repeatsSource})`);
+  return { repeats, bar, repeatsSource, barSource };
+}
+
+/**
+ * Run items for one eval: `repeats` runs per arm, baseline first in each pair so a leaked baseline is found before
+ * most of the budget is spent. An item is { ev, arm, run } with run counting from 1.
+ */
+function expandRuns(ev, repeats) {
+  const items = [];
+  for (let run = 1; run <= repeats; run++) for (const arm of ['baseline', 'with-skill']) items.push({ ev, arm, run });
+  return items;
+}
+
+/** Counts for one arm. `planned` is the repeat count; runs that never started are `notRun`. */
+function armStats(runs, planned) {
+  const executed = runs.filter((r) => r.outcome !== 'incomplete' && r.outcome !== 'aborted');
+  return {
+    passes: executed.filter((r) => r.outcome === 'pass').length,
+    runs: executed.length,
+    timedOut: executed.filter((r) => r.outcome === 'timed_out').length,
+    notRun: Math.max(0, planned - executed.length),
+  };
+}
+
+/** Reliable when passes reach the bar; false when the bar can no longer be reached; null while undetermined. */
+function reliability(stats, bar, planned) {
+  if (stats.passes >= bar) return true;
+  if (stats.passes + Math.max(0, planned - stats.runs) < bar) return false;
+  return null;
+}
+
+module.exports = { resolveRepeats, expandRuns, armStats, reliability, loadLimits, runProcess, commandsFromLine, MAX_COMMANDS, reservationFor, runSuite, killTree, LIMITS_FILE };

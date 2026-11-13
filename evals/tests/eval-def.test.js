@@ -61,8 +61,8 @@ describe('review fixes', () => {
     const r = runDry([]);
     const lines = r.stderr.split('\n').filter((l) => /^WARNING eval "demo-skill"/.test(l));
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/`runtimes`, `repeats`, `bar`.*not yet acted on/);
-    expect(r.stderr).not.toMatch(/expectInvoked/);
+    expect(lines[0]).toMatch(/`runtimes` accepted but not yet acted on/);
+    expect(lines[0]).not.toMatch(/repeats|bar|expectInvoked/); // acted on since PR 3
     expect(r.status).toBe(0);
   });
 
