@@ -15,10 +15,17 @@ const ALLOWLIST_FILE = path.join(__dirname, '..', 'env-allowlist.json');
 const REDACTED = '[REDACTED]';
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Credential names from the allowlist file (falls back to the default when the file is absent) plus `extra`. */
-function loadCredentialNames({ file = ALLOWLIST_FILE, extra = [] } = {}) {
+/**
+ * Credential names from the allowlist file plus `extra`. Only the default file may be absent (then the built-in
+ * default applies); a `file` that was asked for explicitly must exist.
+ */
+function loadCredentialNames({ file, extra = [] } = {}) {
   let names = DEFAULT_CREDENTIALS;
-  if (fs.existsSync(file)) {
+  const explicit = file !== undefined && file !== null;
+  const target = explicit ? file : ALLOWLIST_FILE;
+  if (explicit && !fs.existsSync(target)) throw new Error(`env allowlist ${target} does not exist`);
+  if (fs.existsSync(target)) {
+    file = target;
     let parsed;
     try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new Error(`env allowlist ${file} is not valid JSON: ${e.message}`); }
     if (!parsed || !Array.isArray(parsed.credentials)) throw new Error(`env allowlist ${file} must be { "credentials": [names] }`);
@@ -47,6 +54,22 @@ function buildEnv({ parent = process.env, credentials = DEFAULT_CREDENTIALS, hom
   return env;
 }
 
+/** Arguments placed before every git subcommand the harness runs: no repo-config-driven code execution. */
+const GIT_HARDEN = ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.ext.allow=never',
+  '-c', 'core.pager=cat'];
+
+/**
+ * Environment for the harness's own git calls: no GIT_* from the parent (GIT_DIR, GIT_WORK_TREE, GIT_SSH_COMMAND...),
+ * no system or global config, no prompts, and only PATH and a HOME that holds no config. GIT_SSH_COMMAND is pinned
+ * to `false` so a workspace `core.sshCommand` cannot run (the environment variable outranks the config key).
+ */
+function gitEnv(parent = process.env) {
+  return {
+    PATH: parent.PATH || '/usr/bin:/bin', HOME: '/nonexistent', LC_ALL: 'C',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'false',
+  };
+}
+
 /** Create the per-run HOME directory used in hosted CI, under `workdir`. Caller removes it. */
 function makeCiHome(workdir) {
   fs.mkdirSync(workdir, { recursive: true });
@@ -59,14 +82,24 @@ function secretValues(env, credentials) {
     .sort((a, b) => b.length - a.length);
 }
 
-/** Replace every secret value (raw and JSON-escaped form) in `text` by [REDACTED]. */
+/** Every form of `secret` that must not survive: raw, JSON-escaped, URL-encoded, and base64 (standard, URL-safe, unpadded). */
+function secretForms(secret) {
+  const b64 = Buffer.from(secret, 'utf8').toString('base64');
+  return [
+    secret,
+    JSON.stringify(secret).slice(1, -1),
+    encodeURIComponent(secret),
+    b64,
+    b64.replace(/=+$/, ''),
+    b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  ];
+}
+
+/** Replace every secret value (raw, JSON-escaped, URL-encoded and base64 forms) in `text` by [REDACTED]. */
 function redactText(text, secrets) {
   let out = String(text);
-  for (const s of secrets) {
-    out = out.split(s).join(REDACTED);
-    const escaped = JSON.stringify(s).slice(1, -1);
-    if (escaped !== s) out = out.split(escaped).join(REDACTED);
-  }
+  const forms = [...new Set(secrets.flatMap(secretForms))].filter((f) => f.length > 0).sort((a, b) => b.length - a.length);
+  for (const f of forms) out = out.split(f).join(REDACTED);
   return out;
 }
 
@@ -82,5 +115,5 @@ function redactDeep(value, secrets) {
 
 module.exports = {
   BASE_NAMES, DEFAULT_CREDENTIALS, ALLOWLIST_FILE, REDACTED,
-  loadCredentialNames, isCI, buildEnv, makeCiHome, secretValues, redactText, redactDeep,
+  loadCredentialNames, isCI, buildEnv, makeCiHome, GIT_HARDEN, gitEnv, secretValues, redactText, redactDeep,
 };

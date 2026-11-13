@@ -4,26 +4,42 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const envlib = require('./env');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_WORKDIR = path.join(os.homedir(), '.omp', 'evals-work');
-const FORBIDDEN_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp'];
+const FORBIDDEN_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp', '/var/folders', '/private/var/folders'];
 
 const within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
 
+/** realpath of the longest existing ancestor of `p`, with the missing remainder re-appended (so symlinks cannot hide a target). */
+function realish(p) {
+  const rest = [];
+  let cur = path.resolve(p);
+  for (;;) {
+    try { return path.join(fs.realpathSync(cur), ...rest.reverse()); } catch { /* climb */ }
+    const up = path.dirname(cur);
+    if (up === cur) return path.join(cur, ...rest.reverse());
+    rest.push(path.basename(cur));
+    cur = up;
+  }
+}
+
 /**
  * Directory under which every workspace and per-run CI HOME is created: EVALS_WORKDIR, default ~/.omp/evals-work/.
- * Refuses /tmp (wiped on reboot) and anything inside the repository.
+ * Symlinks are resolved first. Refuses /tmp, /var/tmp, /var/folders and $TMPDIR (wiped on reboot) and anything
+ * inside the repository.
  */
 function resolveWorkdir(env = process.env, repoRoot = REPO_ROOT) {
-  const dir = path.resolve(env.EVALS_WORKDIR || DEFAULT_WORKDIR);
-  if (FORBIDDEN_ROOTS.some((r) => within(dir, r))) throw new Error(`EVALS_WORKDIR must not be under /tmp: ${dir}`);
-  if (within(dir, path.resolve(repoRoot))) throw new Error(`EVALS_WORKDIR must be outside the repository: ${dir}`);
+  const dir = realish(env.EVALS_WORKDIR || DEFAULT_WORKDIR);
+  const temps = [...FORBIDDEN_ROOTS, os.tmpdir(), env.TMPDIR].filter(Boolean).flatMap((r) => [path.resolve(r), realish(r)]);
+  if (temps.some((r) => within(dir, r))) throw new Error(`EVALS_WORKDIR must not be under /tmp or the temp directory: ${dir}`);
+  if (within(dir, realish(repoRoot))) throw new Error(`EVALS_WORKDIR must be outside the repository: ${dir}`);
   return dir;
 }
 
 function git(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const r = spawnSync('git', [...envlib.GIT_HARDEN, ...args], { cwd, encoding: 'utf8', env: envlib.gitEnv() });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout.trim();
 }

@@ -25,6 +25,8 @@ const SCENARIOS_DIR = process.env.EVALS_SCENARIOS_DIR || path.join(__dirname, 's
 const EVAL_SKILLS_DIR = process.env.EVALS_SKILLS_DIR || path.join(__dirname, 'skills');
 const RESULTS_DIR = process.env.EVALS_RESULTS_DIR || path.join(__dirname, 'results');
 
+let activeSecrets = []; // credential values in play; the top-level error handler redacts with these
+
 function parseArgs(argv) {
   const o = {
     scenario: null, skill: null, model: null, judgeModel: null, dryRun: false, maxUsd: null,
@@ -67,24 +69,32 @@ function loadScenarios(dir = SCENARIOS_DIR) {
 }
 
 /**
- * Run one eval in a fresh workspace under `workdir` with the allowlisted environment.
- * run: { bin, model, runUsd, timeoutMs, repoRoot, judge, workdir, credentials, parentEnv, keepWorkspace }
+ * Run one eval in a fresh workspace under `workdir`.
+ * Only the agent and the judge get the allowlisted credentials; checks that execute agent-written code
+ * (testsPass, commandOutputMatches, trdParses) get an environment with none. The transcript is redacted before
+ * it reaches checks or the judge prompt.
+ * run: { bin, model, runUsd, judgeUsd, timeoutMs, repoRoot, judge, workdir, credentials, secrets, parentEnv, keepWorkspace }
  */
 async function runScenario(scenario, run) {
-  const { bin, model, runUsd, timeoutMs, repoRoot, judge, workdir, credentials, parentEnv = process.env, keepWorkspace } = run;
+  const { bin, model, runUsd, judgeUsd = 0, timeoutMs, repoRoot, judge, workdir, credentials, secrets = [], parentEnv = process.env, keepWorkspace } = run;
   const sb = sandbox.createSandbox(scenario.scenarioDir, scenario, { workdir });
-  const ciHome = envlib.isCI(parentEnv) ? envlib.makeCiHome(workdir) : null;
-  const env = envlib.buildEnv({ parent: parentEnv, credentials, home: ciHome || undefined });
+  let ciHome = null;
   const started = Date.now();
   try {
+    if (envlib.isCI(parentEnv)) ciHome = envlib.makeCiHome(workdir);
+    const env = envlib.buildEnv({ parent: parentEnv, credentials, home: ciHome || undefined });
+    const checkEnv = envlib.buildEnv({ parent: parentEnv, credentials: [], home: ciHome || undefined });
     let transcript = '';
     let proc = { exitCode: 0, stderr: '', timedOut: false };
     if (scenario.type === 'agent') {
       const args = sandbox.buildClaudeArgs(scenario, { repoRoot, model, maxUsd: runUsd });
       proc = await runProcess(bin, args, { cwd: sb.dir, env, timeoutMs });
-      transcript = proc.transcript;
+      transcript = envlib.redactText(proc.transcript, secrets);
     }
     const summary = sandbox.summarizeTranscript(transcript);
+    // An agent run with no reported cost (timeout, crash) is charged its full per-run budget, flagged costEstimated.
+    const agentUnknown = scenario.type === 'agent' && summary.costUsd === null;
+    const agentCost = agentUnknown ? runUsd : summary.costUsd;
     const base = {
       id: scenario.id, type: scenario.type, skill: scenario.skill,
       turns: summary.turns, claudeExitCode: proc.exitCode, timedOut: proc.timedOut, stderr: proc.stderr || undefined,
@@ -92,14 +102,18 @@ async function runScenario(scenario, run) {
     if (proc.timedOut) {
       return {
         ...base, pass: false, outcome: 'timed_out', verdict: 'fail', judgedScore: null, judgeModel: null, graders: [],
-        costUsd: summary.costUsd, claudeResult: `timed out after ${Math.round(timeoutMs / 1000)}s; run and child processes killed`,
+        costUsd: agentCost, ...(agentUnknown && { costEstimated: true }),
+        claudeResult: `timed out after ${Math.round(timeoutMs / 1000)}s; run and child processes killed`,
         durationMs: Date.now() - started,
       };
     }
-    const ctx = { dir: sb.dir, repoRoot, baseline: sb.baseline, transcript, env, judge: judge ? { ...judge, bin } : undefined };
-    const graders = runGraders(scenario.graders || [], ctx);
+    const ctx = { dir: sb.dir, repoRoot, baseline: sb.baseline, transcript, env: checkEnv, judgeEnv: env, judge: judge ? { ...judge, bin } : undefined };
+    const graders = await runGraders(scenario.graders || [], ctx);
     const outcome = summarizeRun(graders);
-    const judgeCost = graders.reduce((sum, g) => sum + (g.costUsd || 0), 0);
+    // A judge call that ran but reported no cost (failed or timed out) is charged the judge allowance.
+    const judgeUnknown = graders.filter((g) => g.judged && !g.refused && (g.costUsd === null || g.costUsd === undefined)).length;
+    const judgeCost = graders.reduce((sum, g) => sum + (g.costUsd || 0), 0) + judgeUnknown * judgeUsd;
+    const known = agentCost !== null || judgeCost > 0;
     return {
       ...base,
       pass: outcome.pass,
@@ -108,12 +122,13 @@ async function runScenario(scenario, run) {
       judgedScore: outcome.judgedScore,
       judgeModel: outcome.judgeModel,
       graders,
-      costUsd: summary.costUsd === null && !judgeCost ? null : (summary.costUsd || 0) + judgeCost,
+      costUsd: known ? (agentCost || 0) + judgeCost : null,
+      ...((agentUnknown || (judgeUnknown && judgeUsd > 0)) && { costEstimated: true }),
       claudeResult: summary.resultText || (proc.exitCode ? transcript.slice(-500) : undefined),
       durationMs: Date.now() - started,
     };
   } finally {
-    if (keepWorkspace) console.log(`workspace kept: ${sb.dir}`);
+    if (keepWorkspace) console.log(envlib.redactText(`workspace kept: ${sb.dir}`, secrets));
     else sb.cleanup();
     if (ciHome) fs.rmSync(ciHome, { recursive: true, force: true });
   }
@@ -121,6 +136,11 @@ async function runScenario(scenario, run) {
 
 async function main(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
+  const credentials = envlib.loadCredentialNames({ file: opts.envAllowlist || undefined, extra: opts.allowEnv });
+  const secrets = envlib.secretValues(process.env, credentials);
+  activeSecrets = secrets;
+  const out = (text) => console.log(envlib.redactText(text, secrets));
+  const err = (text) => console.error(envlib.redactText(text, secrets));
   const defs = loadEvalDefs({ skillsDir: EVAL_SKILLS_DIR, repoRoot: REPO_ROOT });
   const legacy = loadScenarios();
   const legacyIds = new Set(legacy.map((s) => s.id));
@@ -135,7 +155,7 @@ async function main(argv = process.argv.slice(2)) {
     scenarios = scenarios.filter((s) => s.id === opts.scenario);
     rejected = rejected.filter((r) => r.id === opts.scenario);
     if (scenarios.length === 0 && rejected.length === 0) {
-      console.error(`unknown scenario: ${opts.scenario}`);
+      err(`unknown scenario: ${opts.scenario}`);
       return 2;
     }
   }
@@ -143,14 +163,14 @@ async function main(argv = process.argv.slice(2)) {
     scenarios = scenarios.filter((s) => s.skill === opts.skill);
     rejected = rejected.filter((r) => path.basename(r.dir) === opts.skill || r.id === opts.skill);
     if (scenarios.length === 0 && rejected.length === 0) {
-      console.error(`no eval for skill: ${opts.skill}`);
+      err(`no eval for skill: ${opts.skill}`);
       return 2;
     }
   }
-  for (const r of rejected) console.error(`REJECTED ${r.error.message}`);
+  for (const r of rejected) err(`REJECTED ${r.error.message}`);
   for (const ev of skillEvals) {
     if (!scenarios.some((s) => s.id === ev.id && s.skill === ev.skill) || !ev.unactedFields.length) continue;
-    console.error(`WARNING eval "${ev.id}": ${ev.unactedFields.map((f) => `\`${f}\``).join(', ')} accepted but not yet acted on (lands in a later PR)`);
+    err(`WARNING eval "${ev.id}": ${ev.unactedFields.map((f) => `\`${f}\``).join(', ')} accepted but not yet acted on (lands in a later PR)`);
   }
   const bin = sandbox.findClaude();
   const needsClaude = scenarios.some((s) => s.type === 'agent');
@@ -159,28 +179,30 @@ async function main(argv = process.argv.slice(2)) {
   const judge = resolveJudge({ judgeModel: opts.judgeModel, model: opts.model });
   const judgedIds = scenarios.filter((s) => (s.graders || []).some((g) => g.type === 'judge')).map((s) => s.id);
   if (judgedIds.length && judge.refusal) {
-    console.error(`REFUSED judged checks (${judgedIds.join(', ')}): ${judge.refusal}; deterministic checks still run`);
+    err(`REFUSED judged checks (${judgedIds.join(', ')}): ${judge.refusal}; deterministic checks still run`);
   }
 
   if (opts.dryRun) {
-    console.log(`${scenarios.length} eval(s)${rejected.length ? `, ${rejected.length} rejected` : ''}:`);
+    out(`${scenarios.length} eval(s)${rejected.length ? `, ${rejected.length} rejected` : ''}:`);
     for (const s of scenarios) {
-      console.log(`  ${s.id} [${s.skill ? `skill: ${s.skill}` : s.type}] graders: ${(s.graders || []).map((g) => g.type).join(', ')}`);
-      console.log(`      ${s.description || ''}`);
+      out(`  ${s.id} [${s.skill ? `skill: ${s.skill}` : s.type}] graders: ${(s.graders || []).map((g) => g.type).join(', ')}`);
+      out(`      ${s.description || ''}`);
     }
-    if (needsClaude && !bin) console.log('SKIP: `claude` CLI not found on PATH; agent scenarios would not run.');
+    if (needsClaude && !bin) out('SKIP: `claude` CLI not found on PATH; agent scenarios would not run.');
     return rejected.length ? 2 : 0;
   }
   if (needsClaude && !bin) {
-    console.error('SKIP: `claude` CLI not found on PATH (set EVALS_CLAUDE_BIN to override); cannot run agent scenarios.');
+    err('SKIP: `claude` CLI not found on PATH (set EVALS_CLAUDE_BIN to override); cannot run agent scenarios.');
     return 3;
   }
 
   const limits = loadLimits();
+  if (opts.timeoutSec && opts.timeoutSec > limits.timeoutSec) {
+    err(`--timeout ${opts.timeoutSec} exceeds the limit of ${limits.timeoutSec}s in evals/limits.json`);
+    return 2;
+  }
   const capUsd = opts.maxUsd || limits.maxUsdPerSuite;
   const concurrency = opts.concurrency || limits.concurrency;
-  const credentials = envlib.loadCredentialNames({ file: opts.envAllowlist || undefined, extra: opts.allowEnv });
-  const secrets = envlib.secretValues(process.env, credentials);
   const workdir = sandbox.resolveWorkdir();
   const judgeActive = Boolean(judge && !judge.refusal);
   const reservationOf = (s) => reservationFor(
@@ -192,16 +214,16 @@ async function main(argv = process.argv.slice(2)) {
 
   const show = (r) => {
     const judgedNote = r.judgedScore === null || r.judgedScore === undefined ? '' : ` judged=${r.judgedScore.toFixed(2)} (${r.judgeModel})`;
-    console.log(`  ${r.outcome.toUpperCase()} turns=${r.turns} cost=${r.costUsd}${judgedNote}`);
-    for (const g of r.graders) console.log(`    ${g.pass ? 'ok  ' : 'FAIL'} ${g.type}${g.judged ? ' [judged]' : ''}: ${g.detail}`);
+    out(`  ${r.outcome.toUpperCase()} turns=${r.turns} cost=${r.costUsd}${r.costEstimated ? ' (estimated)' : ''}${judgedNote}`);
+    for (const g of r.graders) out(`    ${g.pass ? 'ok  ' : 'FAIL'} ${g.type}${g.judged ? ' [judged]' : ''}: ${g.detail}`);
   };
   const exec = async (s) => {
-    console.log(`running ${s.id} ...`);
+    out(`running ${s.id} ...`);
     let r;
     try {
       r = await runScenario(s, {
-        bin, model: opts.model, runUsd: runUsdFor(), timeoutMs: timeoutMsFor(s), repoRoot: REPO_ROOT, judge,
-        workdir, credentials, keepWorkspace: opts.keepWorkspace,
+        bin, model: opts.model, runUsd: runUsdFor(), judgeUsd: Math.min(opts.judgeUsd || limits.judgeReserveUsd, capUsd), timeoutMs: timeoutMsFor(s), repoRoot: REPO_ROOT, judge,
+        workdir, credentials, secrets, keepWorkspace: opts.keepWorkspace,
       });
     } catch (e) {
       r = { id: s.id, type: s.type, skill: s.skill, pass: false, outcome: 'fail', verdict: 'fail', graders: [], costUsd: null, claudeResult: `runner error: ${e.message}` };
@@ -217,7 +239,7 @@ async function main(argv = process.argv.slice(2)) {
     id: s.id, type: s.type, skill: s.skill, pass: null, outcome: 'incomplete', skipped: 'budget exhausted', graders: [],
   });
   const incomplete = results.filter((r) => r.outcome === 'incomplete');
-  for (const r of incomplete) console.log(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
+  for (const r of incomplete) out(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const modelTag = (opts.model || 'default').replace(/[^A-Za-z0-9._-]/g, '_');
@@ -239,7 +261,7 @@ async function main(argv = process.argv.slice(2)) {
     results,
   };
   fs.writeFileSync(file, envlib.redactText(JSON.stringify(report, null, 2), secrets));
-  console.log(`results: ${path.relative(process.cwd(), file)} (${report.passed}/${report.total} passed${report.incomplete ? `, ${report.incomplete} incomplete` : ''})`);
+  out(`results: ${path.relative(process.cwd(), file)} (${report.passed}/${report.total} passed${report.incomplete ? `, ${report.incomplete} incomplete` : ''})`);
   if (rejected.length) return 2;
   if (report.failed) return 1;
   return report.incomplete ? 4 : 0;
@@ -247,7 +269,8 @@ async function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) {
   main().then((code) => { process.exitCode = code; }, (e) => {
-    console.error(e.message);
+    const known = [...new Set([...activeSecrets, ...envlib.secretValues(process.env, envlib.DEFAULT_CREDENTIALS)])];
+    console.error(envlib.redactText(e.message, known));
     process.exitCode = 2;
   });
 }

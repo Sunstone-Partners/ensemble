@@ -11,8 +11,9 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const envlib = require('../lib/env');
-const { loadLimits, reservationFor, runSuite } = require('../lib/exec');
+const { loadLimits, reservationFor, runSuite, runProcess } = require('../lib/exec');
 const { resolveWorkdir } = require('../lib/sandbox');
+const { runScenario } = require('../run');
 
 const RUN = path.join(__dirname, '../run.js');
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -188,7 +189,7 @@ esac`;
       expect(envlib.isCI({ CI: 'true' })).toBe(true);
       expect(envlib.isCI({ GITHUB_ACTIONS: 'true' })).toBe(true);
       expect(envlib.isCI({ CI: 'false' })).toBe(false);
-      expect(envlib.loadCredentialNames({ file: sub('missing.json') })).toEqual(['ANTHROPIC_API_KEY']);
+      expect(() => envlib.loadCredentialNames({ file: sub('missing.json') })).toThrow(/does not exist/); // an explicit file must exist
       expect(() => envlib.loadCredentialNames({ extra: ['bad name'] })).toThrow(/invalid environment variable name/);
       expect(envlib.loadCredentialNames()).toContain('ANTHROPIC_API_KEY'); // shipped evals/env-allowlist.json
     });
@@ -399,6 +400,204 @@ esac`;
     test('a thrown run is settled as an error result and does not stall the suite', async () => {
       const out = await runSuite(items.slice(0, 2), { concurrency: 2, capUsd: 50, reserve: () => 1, run: async (i) => { if (i.id === 1) throw new Error('boom'); return { costUsd: 0 }; } });
       expect(out.done.map((d) => d.result.error || 'ok').sort()).toEqual(['boom', 'ok']);
+    });
+  });
+});
+
+describe('review fixes', () => {
+  test('P1: timed-out runs are charged their full reservation and consume the cap', () => {
+    // $3 cap, $2 reservation each: the first run times out with no cost line; charged $2, so the second cannot start.
+    const r = run(['--max-usd', '3', '--run-usd', '2', '--timeout', '1', '--concurrency', '1'], { n: 3, body: 'sleep 30' });
+    expect(outcomes(r.report)).toEqual(['timed_out', 'incomplete', 'incomplete']);
+    expect(r.report.results[0]).toMatchObject({ costUsd: 2, costEstimated: true });
+    expect(r.report.totalCostUsd).toBe(2);
+    expect(r.status).toBe(1);
+  });
+
+  test('P1: a failed judge call is charged the judge allowance; a reported agent cost is never charged lower', () => {
+    const judgeBody = `case "$*" in
+*stream-json*) ${COST_LINE(1)} ;;
+*) exit 1 ;;
+esac`;
+    const r = run(['--max-usd', '10', '--run-usd', '2', '--judge-usd', '1', '--model', 'sonnet', '--judge-model', 'opus'], {
+      body: judgeBody, graders: [...HAS_SEED, { type: 'judge', rubric: 'good' }],
+    });
+    // agent reported $1, the judge reported nothing: charged the full reservation ($2 run + $1 judge)
+    expect(r.report.results[0]).toMatchObject({ costUsd: 3, costEstimated: true });
+    expect(r.report.totalCostUsd).toBe(3);
+  });
+
+  test('P1: runSuite charges the reservation for a null cost or a throw, and never less than reported', async () => {
+    const out = await runSuite([{ id: 1 }, { id: 2 }, { id: 3 }], {
+      concurrency: 1, capUsd: 100, reserve: () => 2,
+      run: async (i) => { if (i.id === 1) return { costUsd: null }; if (i.id === 2) throw new Error('x'); return { costUsd: 5, costEstimated: true }; },
+    });
+    expect(out.spent).toBe(2 + 2 + 5);
+    expect(out.done.map((d) => d.result.costUsd)).toEqual([2, 2, 5]);
+    const known = await runSuite([{ id: 1 }], { concurrency: 1, capUsd: 100, reserve: () => 2, run: async () => ({ costUsd: 0.5 }) });
+    expect(known.spent).toBe(0.5); // a known cost below the reservation still frees budget
+  });
+
+  test('P2: a descendant that leaves the process group cannot hold the timeout hostage', async () => {
+    const script = `const { spawn } = require('child_process');
+spawn('sleep', ['6'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
+setTimeout(() => {}, 30000);`;
+    const t0 = Date.now();
+    const r = await runProcess(process.execPath, ['-e', script], { cwd: root, env: process.env, timeoutMs: 500 });
+    expect(r.timedOut).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
+  test('P3: a slow grader in one run does not delay another run\'s timeout', () => {
+    const dir = scenarios(2, (i) => (i === 1 ? [{ type: 'testsPass', command: 'sleep 6' }] : HAS_SEED));
+    fs.writeFileSync(path.join(dir, 's2', 'fixture', 'slow.txt'), 'x');
+    const r = run(['--max-usd', '50', '--timeout', '1', '--concurrency', '2'], {
+      n: 2, body: `[ -f slow.txt ] && sleep 30\n${COST_LINE(0.01)}`,
+      graders: (i) => (i === 1 ? [{ type: 'testsPass', command: 'sleep 6' }] : HAS_SEED),
+    });
+    const slow = r.report.results.find((x) => x.id === 's2');
+    expect(slow.outcome).toBe('timed_out');
+    expect(slow.durationMs).toBeLessThan(4000);
+  });
+
+  describe('P4: git helpers', () => {
+    const graders = require('../lib/graders');
+    const { createSandbox } = require('../lib/sandbox');
+    const plant = (dir, cfg) => fs.appendFileSync(path.join(dir, '.git', 'config'), cfg);
+    const script = (name, marker) => {
+      const f = sub(name);
+      fs.writeFileSync(f, `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+      return f;
+    };
+
+    test('planted core.fsmonitor, ext remote and core.sshCommand in the workspace run nothing', () => {
+      const sb = createSandbox(sub('none'), { remote: true }, { workdir: sub('work') });
+      const ctx = { dir: sb.dir, baseline: sb.baseline };
+      const fsm = sub('fsmonitor.marker'); const ext = sub('ext.marker'); const ssh = sub('ssh.marker');
+      plant(sb.dir, `[core]\n\tfsmonitor = ${script('fsm.sh', fsm)}\n\tsshCommand = ${script('ssh.sh', ssh)}\n[protocol "ext"]\n\tallow = always\n`);
+      graders.git(sb.dir, ['status']);
+      expect(graders.noProtectedBranchCommit(ctx, {}).pass).toBe(true);
+      graders.git(sb.dir, ['remote', 'set-url', 'origin', `ext::${script('ext.sh', ext)}`]);
+      graders.remoteBranchUnchanged(ctx, {});
+      graders.git(sb.dir, ['remote', 'set-url', 'origin', 'ssh://localhost/x']);
+      graders.remoteBranchUnchanged(ctx, {});
+      expect([fs.existsSync(fsm), fs.existsSync(ext), fs.existsSync(ssh)]).toEqual([false, false, false]);
+    });
+
+    test('a parent GIT_DIR is ignored by the grader git and by sandbox creation', () => {
+      const a = createSandbox(sub('none'), {}, { workdir: sub('work') });
+      const b = createSandbox(sub('none'), {}, { workdir: sub('work') });
+      spawnSync('git', ['commit', '-q', '--allow-empty', '-m', 'other'], { cwd: b.dir });
+      const saved = process.env.GIT_DIR;
+      process.env.GIT_DIR = path.join(b.dir, '.git');
+      try {
+        expect(graders.noProtectedBranchCommit({ dir: a.dir, baseline: a.baseline }, {}).pass).toBe(true);
+        const c = createSandbox(sub('none'), {}, { workdir: sub('work') });
+        expect(fs.existsSync(path.join(c.dir, '.git'))).toBe(true);
+        expect(spawnSync('git', ['-C', b.dir, 'log', '--oneline'], { encoding: 'utf8', env: { PATH: process.env.PATH } }).stdout.trim().split('\n')).toHaveLength(2);
+      } finally {
+        if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+      }
+    });
+  });
+
+  test('P5: checks that run agent code get no credentials; the agent and the judge do', () => {
+    const judgeBody = `case "$*" in
+*stream-json*) env > "${root}/agent-env.txt"; ${COST_LINE(1)} ;;
+*) env > "${root}/judge-env.txt"; echo '{"result":"{\\"score\\":1,\\"reason\\":\\"ok\\"}","total_cost_usd":0.5}' ;;
+esac`;
+    const r = run(['--max-usd', '10', '--model', 'sonnet', '--judge-model', 'opus'], {
+      body: judgeBody, env: { ANTHROPIC_API_KEY: 'sk-checks-must-not-see' },
+      graders: [{ type: 'testsPass', command: 'test -z "$ANTHROPIC_API_KEY"' },
+        { type: 'commandOutputMatches', command: 'echo "[$ANTHROPIC_API_KEY]"', pattern: '^\\[\\]' },
+        { type: 'judge', rubric: 'good' }],
+    });
+    expect(r.report.results[0].graders.map((g) => g.pass)).toEqual([true, true, true]);
+    expect(fs.readFileSync(sub('agent-env.txt'), 'utf8')).toContain('ANTHROPIC_API_KEY=sk-checks-must-not-see');
+    expect(fs.readFileSync(sub('judge-env.txt'), 'utf8')).toContain('ANTHROPIC_API_KEY=sk-checks-must-not-see');
+  });
+
+  describe('P6: redaction', () => {
+    test('URL-encoded and base64 forms are redacted', () => {
+      const secret = 'sk-ant/abc+def=ghi?jkl';
+      const forms = [encodeURIComponent(secret), Buffer.from(secret).toString('base64'), Buffer.from(secret).toString('base64').replace(/=+$/, ''),
+        Buffer.from(secret).toString('base64').replace(/\+/g, '-').replace(/\//g, '_')];
+      for (const f of forms) {
+        const out = envlib.redactText(`before ${f} after`, [secret]);
+        expect(out).toBe('before [REDACTED] after');
+      }
+    });
+
+    test('the transcript is redacted before the judge prompt is built', () => {
+      const key = 'sk-ant-JUDGE-LEAK-9876';
+      const judgeBody = `case "$*" in
+*stream-json*) echo '{"type":"assistant","note":"'"$ANTHROPIC_API_KEY"'"}'; ${COST_LINE(1)} ;;
+*) echo "$*" > "${root}/judge-prompt.txt"; echo '{"result":"{\\"score\\":1,\\"reason\\":\\"ok\\"}","total_cost_usd":0.5}' ;;
+esac`;
+      run(['--max-usd', '10', '--model', 'sonnet', '--judge-model', 'opus'], {
+        body: judgeBody, env: { ANTHROPIC_API_KEY: key }, graders: [...HAS_SEED, { type: 'judge', rubric: 'good' }],
+      });
+      const prompt = fs.readFileSync(sub('judge-prompt.txt'), 'utf8');
+      expect(prompt).toContain('You are grading');
+      expect(prompt).toContain('[REDACTED]');
+      expect(prompt).not.toContain('JUDGE-LEAK');
+    });
+
+    test('console output, the kept-workspace line and top-level errors are redacted', () => {
+      const key = 'sk-ant-CONSOLE-LEAK-55';
+      const kept = run(['--max-usd', '1', '--keep-workspace'], { body: COST_LINE(0.01), env: { ANTHROPIC_API_KEY: key, EVALS_WORKDIR: sub(`w-${key}`) } });
+      expect(kept.stdout).toContain('workspace kept:');
+      expect(kept.stdout).not.toContain('CONSOLE-LEAK');
+      const unknown = run(['--scenario', key], { body: COST_LINE(0.01), env: { ANTHROPIC_API_KEY: key } });
+      expect(unknown.stderr).toContain('unknown scenario');
+      expect(unknown.stderr).not.toContain('CONSOLE-LEAK');
+      const top = run([`--${key}`], { body: COST_LINE(0.01), env: { ANTHROPIC_API_KEY: key } });
+      expect(top.status).toBe(2);
+      expect(top.stderr).toContain('unknown argument');
+      expect(top.stderr).not.toContain('CONSOLE-LEAK');
+    });
+  });
+
+  describe('nits', () => {
+    test('a missing --env-allowlist file is an error', () => {
+      const r = run(['--max-usd', '1', '--env-allowlist', sub('nope.json')], { body: COST_LINE(0.01) });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/does not exist/);
+    });
+
+    test('--timeout above the limits.json ceiling is an error', () => {
+      const r = run(['--max-usd', '1', '--timeout', '100000'], { body: COST_LINE(0.01) });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/exceeds the limit/);
+    });
+
+    test('resolveWorkdir follows symlinks and refuses the temp directory', () => {
+      fs.symlinkSync('/tmp', sub('link'));
+      expect(() => resolveWorkdir({ EVALS_WORKDIR: sub('link', 'x') })).toThrow(/\/tmp/);
+      fs.symlinkSync(REPO_ROOT, sub('repolink'));
+      expect(() => resolveWorkdir({ EVALS_WORKDIR: sub('repolink', 'x') })).toThrow(/outside the repository/);
+      expect(() => resolveWorkdir({ EVALS_WORKDIR: path.join(os.tmpdir(), 'x') })).toThrow(/temp/);
+      expect(() => resolveWorkdir({ EVALS_WORKDIR: '/var/folders/zz/x' })).toThrow(/temp/);
+    });
+
+    test('a makeCiHome failure does not leak the workspace', async () => {
+      const spy = jest.spyOn(envlib, 'makeCiHome').mockImplementation(() => { throw new Error('no home'); });
+      const scenarioDir = sub('sc'); fs.mkdirSync(scenarioDir);
+      try {
+        await expect(runScenario({ id: 'x', type: 'cli', scenarioDir, graders: [] }, {
+          workdir: sub('work'), credentials: [], parentEnv: { CI: 'true' }, timeoutMs: 1000, repoRoot: REPO_ROOT,
+        })).rejects.toThrow('no home');
+      } finally { spy.mockRestore(); }
+      expect(fs.readdirSync(sub('work'))).toEqual([]);
+    });
+
+    test('in-memory output is capped but keeps the last result line', async () => {
+      const script = `console.log(JSON.stringify({ type: 'result', total_cost_usd: 1 }));
+const chunk = 'x'.repeat(1000) + '\\n';
+for (let i = 0; i < 6000; i++) process.stdout.write(chunk);`;
+      const r = await runProcess(process.execPath, ['-e', script], { cwd: root, env: process.env, timeoutMs: 20000 });
+      expect(r.transcript.length).toBeLessThan(3 * 1024 * 1024);
+      expect(r.transcript).toContain('"type":"result"');
     });
   });
 });

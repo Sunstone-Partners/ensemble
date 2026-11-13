@@ -34,27 +34,58 @@ function killTree(child) {
   try { child.kill('SIGKILL'); } catch { /* already gone */ }
 }
 
+const OUTPUT_KEEP = 1024 * 1024; // bytes of stdout kept in memory (tail); the last `result` line is always kept
+const KILL_GRACE_MS = 1000; // after a timeout kill, wait this long for 'close' before resolving anyway
+
 /**
- * Run a command in its own process group. On timeout the whole group (the process and its children) is killed.
+ * Run a command in its own process group. On timeout the whole group (the process and its children) is killed,
+ * the pipes are destroyed, and the promise resolves after a short grace even if 'close' never arrives (a
+ * descendant that left the group, e.g. via setsid, can hold the pipes open for as long as it likes).
+ * `input` (string) is written to stdin. Memory is bounded: stdout keeps its tail plus the last stream-json
+ * `result` line; stderr keeps its last 2000 characters.
  * Resolves { transcript, stderr, exitCode, timedOut }; never rejects.
  */
-function runProcess(bin, args, { cwd, env, timeoutMs }) {
+function runProcess(bin, args, { cwd, env, timeoutMs, input }) {
   return new Promise((resolve) => {
     let out = '';
+    let pending = ''; // incomplete trailing line of stdout
+    let lastResult = null;
     let err = '';
     let timedOut = false;
     let settled = false;
-    const child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    let graceTimer = null;
+    const child = spawn(bin, args, { cwd, env, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], detached: true });
     const finish = (exitCode) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(graceTimer);
       killTree(child); // reap stragglers still in the group
-      resolve({ transcript: out, stderr: err.slice(-2000), exitCode, timedOut });
+      const tail = out + pending;
+      const transcript = lastResult && !tail.includes(lastResult) ? `${tail}\n${lastResult}` : tail;
+      resolve({ transcript, stderr: err.slice(-2000), exitCode, timedOut });
     };
-    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs);
-    child.stdout.setEncoding('utf8').on('data', (d) => { out += d; });
-    child.stderr.setEncoding('utf8').on('data', (d) => { err += d; });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      graceTimer = setTimeout(() => finish(null), KILL_GRACE_MS);
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8').on('data', (d) => {
+      const lines = (pending + d).split('\n');
+      pending = lines.pop().slice(-OUTPUT_KEEP);
+      for (const l of lines) if (l.startsWith('{"type":"result"')) lastResult = l;
+      out += lines.length ? `${lines.join('\n')}\n` : '';
+      if (out.length > 2 * OUTPUT_KEEP) out = out.slice(-OUTPUT_KEEP);
+    });
+    child.stderr.setEncoding('utf8').on('data', (d) => { err = (err + d).slice(-4000); });
+    child.stdout.on('error', () => {});
+    child.stderr.on('error', () => {});
+    if (input !== undefined) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
+    }
     child.on('error', (e) => { err += e.message; finish(null); });
     child.on('close', (code) => finish(code));
   });
@@ -74,7 +105,8 @@ function reservationFor({ model = true, judged = false }, { runReserveUsd, judge
  * + its own reservation fit under `capUsd`; the first item that does not fit stops all starts (later items are
  * not reordered around it). When nothing is in flight and the next still does not fit, the rest are unstarted.
  *
- * `reserve(item)` -> USD, `run(item)` -> Promise of a result with `costUsd` (null counts as 0).
+ * `reserve(item)` -> USD, `run(item)` -> Promise of a result with `costUsd`. A null/missing `costUsd` (or `costEstimated: true`) is charged
+ * at the item's full reservation, so timed-out and crashed runs consume the cap.
  * Returns { done: [{ item, result }], unstarted: [item], spent, peakCommitted }.
  */
 async function runSuite(items, { concurrency, capUsd, reserve, run, onSettle }) {
@@ -97,11 +129,17 @@ async function runSuite(items, { concurrency, capUsd, reserve, run, onSettle }) 
     const settle = (result) => {
       active.delete(item);
       reserved -= r;
-      spent += (result && result.costUsd) || 0;
+      // Unknown cost (no reported figure: timeout, crash, error) is charged at the full reservation, never $0.
+      // An estimated result is never charged below what it reported.
+      const reported = (result && result.costUsd) || 0;
+      const unknown = !result || result.costUsd === null || result.costUsd === undefined || result.costEstimated;
+      const charge = unknown && r > 0 ? Math.max(reported, r) : reported;
+      if (unknown && r > 0) result = { ...result, costUsd: charge, costEstimated: true };
+      spent += charge;
       done.push({ item, result });
       if (onSettle) onSettle(item, result, spent);
     };
-    const p = Promise.resolve().then(() => run(item)).then(settle, (e) => settle({ error: e && e.message ? e.message : String(e), costUsd: 0 }));
+    const p = Promise.resolve().then(() => run(item)).then(settle, (e) => settle({ error: e && e.message ? e.message : String(e), costUsd: null }));
     const tracked = p.then(() => inflight.delete(tracked));
     inflight.add(tracked);
     return true;
