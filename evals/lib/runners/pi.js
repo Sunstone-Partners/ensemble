@@ -23,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const { runProcess } = require('../exec');
 const envlib = require('../env');
+const { isProviderErrorText } = require('./provider-error');
 
 const RUNTIME = 'pi';
 const BIN_NAME = 'pi';
@@ -142,8 +143,9 @@ function createStreamScanner() {
   let turns = 0;
   let cost = 0;
   let assistantMessages = 0;
-  let firstError = null; // errorMessage (or stopReason) of the first assistant message with stopReason "error"
+  let lastError = null; // errorMessage (or stopReason) of the latest assistant message with stopReason "error"
   let lastWasError = false;
+  let progress = false; // a successful assistant message, a tool call or output tokens: the run got past its first call
   let model = null; // `provider/model` (or the model alone) of the first assistant message that names one
   const addInvoked = (n) => { if (typeof n === 'string' && n && invoked.length < MAX_INVOKED) invoked.push(n); };
   return {
@@ -166,16 +168,19 @@ function createStreamScanner() {
         assistantMessages += 1;
         if (m.stopReason === 'error') {
           lastWasError = true;
-          if (firstError === null) firstError = typeof m.errorMessage === 'string' && m.errorMessage ? m.errorMessage : 'stopReason error';
+          lastError = typeof m.errorMessage === 'string' && m.errorMessage ? m.errorMessage : 'stopReason error';
         } else {
           lastWasError = false;
+          progress = true;
         }
+        if (m.usage && typeof m.usage.output === 'number' && m.usage.output > 0) progress = true;
         if (model === null && typeof m.model === 'string' && m.model.trim() && m.model.length <= 200) {
           model = typeof m.provider === 'string' && m.provider.trim() && !m.model.includes('/') ? `${m.provider.trim()}/${m.model.trim()}` : m.model.trim();
         }
         const total = m.usage && m.usage.cost && m.usage.cost.total;
         if (typeof total === 'number' && Number.isFinite(total) && total > 0) cost += total;
         for (const b of content) {
+          if (b && b.type === 'toolCall') progress = true;
           if (b && b.type === 'toolCall' && String(b.name).toLowerCase() === 'read' && b.arguments) {
             addInvoked(skillFromPath(b.arguments.path || b.arguments.file_path || b.arguments.filePath));
           }
@@ -199,7 +204,9 @@ function createStreamScanner() {
         // 0 means unpriced (Pi reports total 0 for a model without prices), which is unknown, not free.
         // Infrastructure-error rule: an assistant message ended with stopReason "error" and the last assistant message is an error
         // too (an error with no success before it, or after the work): a retry that recovered is not one. Raw text: run() redacts it.
-        providerErrorText: firstError !== null && lastWasError ? firstError : null,
+        // Only an authentication, payment, rate-limit or server-side failure counts (see provider-error.js); a rejected request or unplaceable text is a fail.
+        providerErrorText: lastError !== null && lastWasError && isProviderErrorText(lastError) ? lastError : null,
+        madeProgress: progress,
         reportedCostUsd: assistantMessages > 0 && cost > 0 ? cost : null,
       };
     },
@@ -232,13 +239,14 @@ async function run(job, opts = {}) {
   const scanner = createStreamScanner();
   const proc = await runProcess(bin, args, { cwd: job.workspace, env: job.env, timeoutMs: job.timeoutMs, secrets, onLine: (l) => scanner.feed(l) });
   const transcript = envlib.redactText(proc.transcript, secrets);
-  const { reportedCostUsd, providerErrorText, ...scanned } = scanner.result();
+  const { reportedCostUsd, providerErrorText, madeProgress, ...scanned } = scanner.result();
   return {
     transcript,
     exitCode: proc.exitCode,
     timedOut: proc.timedOut,
     costUsd: proc.timedOut ? null : reportedCostUsd,
     providerError: !proc.timedOut && providerErrorText !== null ? (envlib.shortReason(providerErrorText, secrets) || 'API error') : null,
+    providerProgress: madeProgress,
     ...scanned,
     runtime: RUNTIME,
     stderr: envlib.redactText(proc.stderr, secrets),

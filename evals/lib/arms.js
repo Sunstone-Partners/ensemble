@@ -137,16 +137,19 @@ function summarizeEval(ev, plan, runs, { runtime = 'claude', abort = null, copy 
   const cost = all.reduce((sum, r) => sum + (r.costUsd || 0), 0);
   const invokedRuns = withRuns.filter((r) => r.invoked).length;
   const judged = withRuns.map((r) => r.judgedScore).filter((x) => typeof x === 'number');
-  // A provider error leaves a run unmeasured: the eval cannot be called a pass or a fail whatever the other runs say.
+  // A provider error leaves a run unmeasured and never counts. The verdict derives from with-skill reliability alone: already decided
+  // (reached the bar, or can no longer reach it) it stands; only an undecided one is `incomplete`. A baseline-arm error never changes it.
+  // Whatever the verdict, the arms did not both run `repeats` times: no baseline summary, and the uplift is undetermined.
   const providerErrors = withStats.providerErrors + (baseStats ? baseStats.providerErrors : 0);
-  const outcome = providerErrors > 0 ? 'incomplete' : reliable === true ? 'pass' : reliable === false ? 'fail' : 'incomplete';
+  const outcome = reliable === true ? 'pass' : reliable === false ? 'fail' : 'incomplete';
   return {
     id: ev.id, type: 'agent', skill: ev.skill, runtime, arms: true,
     outcome, pass: outcome === 'incomplete' ? null : reliable, verdict: outcome === 'incomplete' ? null : reliable ? 'pass' : 'fail',
     repeats: plan.repeats, repeatsSource: plan.repeatsSource, bar: plan.bar, barSource: plan.barSource,
     reliable, invocationMode: ev.invocation,
     withSkill: withStats, baseline: baseStats,
-    uplift: abort ? null : uplift(withStats, baseStats),
+    providerErrors,
+    uplift: abort || providerErrors > 0 ? null : uplift(withStats, baseStats),
     withSkillAdds: (ev.sharedPackages || []).length > 0 ? [ev.package] : [],
     upliftLabel: upliftLabel(runtime, (ev.sharedPackages || []).length > 0 ? [ev.package] : []),
     expectInvoked: ev.expectInvoked === undefined ? null : ev.expectInvoked,

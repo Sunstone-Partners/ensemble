@@ -382,6 +382,7 @@ function toBaselineSummary(evalResult, ctx) {
   if (e.abort) why('its baseline arm aborted');
   if (!e.withSkill || !e.baseline) why('an arm has no result');
   if (e.outcome === 'incomplete' || e.reliable === null) why('the eval is incomplete');
+  if (e.providerErrors > 0) why(`${e.providerErrors} run(s) hit a provider error, so the arms did not both run ${e.repeats} times`);
   if (e.withSkill.notRun > 0 || e.baseline.notRun > 0) why('not every planned run executed');
   if (e.baseline.unverifiable > 0 || e.withSkill.unverifiable > 0) why('a run was unverifiable and is not counted');
   if (typeof e.uplift !== 'number') why('uplift could not be computed');
@@ -404,6 +405,23 @@ function toBaselineSummary(evalResult, ctx) {
     uplift: e.uplift,
     recordedAt: ctx.recordedAt || new Date().toISOString(),
   }, `eval "${e.id}" baseline`);
+}
+
+/**
+ * What the regression check compares when a provider error means no baseline summary can exist: only a with-skill arm that is
+ * already decidedly unreliable (a determined fail) has something to compare, and it is never written. The uplift is undetermined (null).
+ */
+function toRegressionProbe(e, ctx) {
+  const why = (m) => { throw new BaselineError(`eval "${e.id}": no regression check: ${m}`); };
+  if (e.abort || !e.withSkill) why('its baseline arm aborted or an arm has no result');
+  if (e.reliable !== false) why(`${e.providerErrors} run(s) hit a provider error and the with-skill verdict is not a determined fail`);
+  if (!(e.withSkill.runs > 0)) why('no with-skill run executed');
+  return {
+    skill: e.skill, skillVersion: ctx.skillVersion === undefined ? null : ctx.skillVersion, skillHash: ctx.skillHash,
+    ...(ctx.packageHash !== undefined && { packageHash: ctx.packageHash }),
+    evalVersion: ctx.evalVersion, model: ctx.model, runtime: e.runtime, granularity: granularityFor(e.runtime),
+    repeats: e.repeats, bar: e.bar, withSkill: { passes: e.withSkill.passes, runs: e.withSkill.runs }, reliable: false, uplift: null,
+  };
 }
 
 const MAX_BASELINE_BYTES = 1024 * 1024;
@@ -544,7 +562,7 @@ function compareSummaries(committed, current) {
   const wr = (b) => b.withSkill.passes / b.withSkill.runs;
   const delta = {
     withSkillRate: { committed: wr(committed), current: wr(current), change: wr(current) - wr(committed) },
-    uplift: { committed: committed.uplift, current: current.uplift, change: current.uplift - committed.uplift },
+    uplift: { committed: committed.uplift, current: current.uplift, change: typeof current.uplift === 'number' ? current.uplift - committed.uplift : null },
   };
   if (committed.reliable && !current.reliable) {
     return { status: 'regression', reasons: [`was reliable (${committed.withSkill.passes}/${committed.withSkill.runs}, bar ${committed.bar}), now ${current.withSkill.passes}/${current.withSkill.runs}`], notes, delta };
@@ -560,7 +578,7 @@ function checkAgainstBaseline(baselinesDir, evalResult, ctx) {
   const committed = loadBaseline(baselinesDir, evalResult.runtime, evalResult.skill);
   if (!committed) return { status: 'no-baseline', reasons: ['no committed summary'] };
   let current;
-  try { current = toBaselineSummary(evalResult, ctx); } catch (e) {
+  try { current = evalResult.providerErrors > 0 ? toRegressionProbe(evalResult, ctx) : toBaselineSummary(evalResult, ctx); } catch (e) {
     if (!(e instanceof BaselineError)) throw e;
     return { status: 'incomplete', reasons: [e.message] };
   }

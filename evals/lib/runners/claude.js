@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { runProcess } = require('../exec');
 const envlib = require('../env');
+const { isProviderErrorText } = require('./provider-error');
 
 const RUNTIME = 'claude';
 const BIN_NAME = 'claude';
@@ -68,8 +69,6 @@ function summarizeTranscript(transcript) {
   return summary;
 }
 
-// Text of a failed API call or login (the CLI's own wording or the provider's status): the model never ran.
-const PROVIDER_ERROR_RE = /API Error|Failed to authenticate|Not logged in|authentication_error|invalid x-api-key|overloaded|Unauthorized|\b(?:401|403|429|5\d\d)\b/i;
 // A result that stopped the agent on purpose (turn or budget limit, or the run crashing mid-work) is an agent outcome, never a provider error.
 const AGENT_STOP_SUBTYPE_RE = /max_turns|max_budget|during_execution/;
 
@@ -88,8 +87,24 @@ function providerErrorOf(transcript, secrets = []) {
   if (!last || typeof last.result !== 'string') return null;
   const failed = last.is_error === true || (typeof last.subtype === 'string' && last.subtype.startsWith('error'));
   if (!failed || AGENT_STOP_SUBTYPE_RE.test(String(last.subtype || ''))) return null;
-  if (!PROVIDER_ERROR_RE.test(last.result)) return null;
+  if (!isProviderErrorText(last.result)) return null;
   return envlib.shortReason(last.result, secrets) || 'API error';
+}
+
+/**
+ * Whether a run got as far as paid work: a final `num_turns` above 1, or an assistant tool call. A first call that failed
+ * (a 401) made none, so its zero cost is right; a failure after several turns with no reported figure is unknown spend.
+ */
+function providerProgressOf(transcript) {
+  for (const line of String(transcript).split('\n')) {
+    if (!line.startsWith('{')) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (!o) continue;
+    if (o.type === 'result' && typeof o.num_turns === 'number' && o.num_turns > 1) return true;
+    if (o.type === 'assistant' && o.message && Array.isArray(o.message.content) && o.message.content.some((b) => b && b.type === 'tool_use')) return true;
+  }
+  return false;
 }
 
 const MAX_INVOKED = 500;
@@ -172,6 +187,7 @@ async function run(job, opts = {}) {
     timedOut: proc.timedOut,
     costUsd: summarizeTranscript(transcript).costUsd,
     providerError: proc.timedOut ? null : providerErrorOf(transcript, secrets),
+    providerProgress: providerProgressOf(transcript),
     ...scanner.result(),
     runtime: RUNTIME,
     stderr: envlib.redactText(proc.stderr, secrets),
@@ -181,4 +197,4 @@ async function run(job, opts = {}) {
   };
 }
 
-module.exports = { RUNTIME, BIN_NAME, BIN_ENV, find: findClaude, findClaude, buildArgs, summarizeTranscript, providerErrorOf, createStreamScanner, analyzeTranscript, run };
+module.exports = { RUNTIME, BIN_NAME, BIN_ENV, find: findClaude, findClaude, buildArgs, summarizeTranscript, providerErrorOf, providerProgressOf, createStreamScanner, analyzeTranscript, run };

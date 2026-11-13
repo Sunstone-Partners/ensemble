@@ -106,7 +106,7 @@ describe('Claude: a failed API call is incomplete, not a skill failure', () => {
     expect(r.stdout).not.toMatch(/^ {2}baseline summary: /m);
   });
 
-  test('the incomplete run is not counted: 1 pass + 1 provider error under bar 1 of 2 is an incomplete eval, no baseline, the pass is not lost', () => {
+  test('the incomplete run is not counted: 1 pass + 1 provider error under bar 2 of 2 is an undetermined (incomplete) eval, no baseline, the pass is not lost', () => {
     install({
       claudeWithSeq: [
         { write: true, lines: [init([`ensemble-product:${SKILL}`]), result({})] },
@@ -126,7 +126,9 @@ describe('Claude: a failed API call is incomplete, not a skill failure', () => {
     install({ claudeWith: [init([`ensemble-product:${SKILL}`]), result({})], claudeBase: [result(AUTH)] });
     const r = runEvals(['--runtime', 'claude', '--repeats', '1']);
     expect(r.status).toBe(4);
+    expect(r.ev.outcome).toBe('pass'); // the with-skill verdict is decided; the baseline error only leaves the uplift undetermined
     expect(r.ev.baseline).toMatchObject({ runs: 0, providerErrors: 1, unverifiable: 0 });
+    expect(r.ev.uplift).toBeNull();
     expect(records(r, 'baseline')[0].incompleteReason).toMatch(/^provider error:/);
     expect(r.baselines).toEqual([]);
   });
@@ -210,7 +212,7 @@ describe('stream rule units', () => {
     expect(feed([assistant(PI402), assistant()])).toBeNull();
     expect(feed([assistant()])).toBeNull();
     expect(feed([assistant({ stopReason: 'aborted' })])).toBeNull();
-    expect(feed([assistant({ stopReason: 'error' })])).toBe('stopReason error');
+    expect(feed([assistant({ stopReason: 'error' })])).toBeNull(); // no status, no text: unplaceable, so a fail
   });
 
   test('Claude: error text needs a failed final result and is not a deliberate stop', () => {
@@ -245,5 +247,155 @@ describe('stream rule units', () => {
     const s = envlib.shortReason(`a\u001b[0m\u0000b\n\tc sk-SECRET${'y'.repeat(500)}`, ['sk-SECRET']);
     expect(s).toBe(`a [0m b c [REDACTED]${'y'.repeat(500)}`.slice(0, envlib.MAX_REASON - 3) + '...');
     expect(envlib.shortReason('x'.repeat(1000)).length).toBe(envlib.MAX_REASON);
+  });
+});
+
+// ---- F1: the verdict derives from the with-skill arm; only an undecided one is incomplete -----------------------
+const E529 = { is_error: true, num_turns: 1, total_cost_usd: 0, result: 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}' };
+const okRun = { write: true, lines: [init([`ensemble-product:${SKILL}`]), result({})] };
+const badRun = { write: false, lines: [init([`ensemble-product:${SKILL}`]), result({})] };
+const errRun = { write: false, lines: [init([`ensemble-product:${SKILL}`]), result(E529)] };
+
+describe('a provider error does not override a decided verdict', () => {
+  const resetRun = () => { fs.rmSync(sub('results'), { recursive: true, force: true }); fs.rmSync(sub('n'), { force: true }); };
+
+  test('bar 4 of 5, two real fails then a 529: already unreliable -> FAIL exit 1, regression still detected, nothing written or cached', () => {
+    install({ claudeWithSeq: [okRun, okRun, okRun, okRun, okRun] });
+    const first = runEvals(['--runtime', 'claude', '--repeats', '5']);
+    expect(first.status).toBe(0);
+    const committed = fs.readFileSync(sub('baselines/claude', `${SKILL}.json`), 'utf8');
+    expect(JSON.parse(committed)).toMatchObject({ reliable: true, withSkill: { passes: 5, runs: 5 } });
+    resetRun();
+    install({ claudeWithSeq: [badRun, badRun, errRun, okRun, okRun] });
+    const r = runEvals(['--runtime', 'claude', '--repeats', '5', '--refresh']);
+    expect(r.ev.outcome).toBe('fail');
+    expect(r.ev.withSkill).toMatchObject({ passes: 2, runs: 4, providerErrors: 1 });
+    expect(r.ev.uplift).toBeNull();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/eval .*: FAIL/);
+    expect(r.stdout).toMatch(/INCOMPLETE .*1 run\(s\) hit a provider error.*verdict FAIL stands/);
+    expect(r.stdout).toMatch(/regression check vs committed summary: regression/);
+    expect(r.stderr).toMatch(/REGRESSION/);
+    expect(r.stdout).toMatch(/baseline summary not written/);
+    expect(fs.readFileSync(sub('baselines/claude', `${SKILL}.json`), 'utf8')).toBe(committed);
+    expect(withRuns(r).filter((x) => x.outcome === 'incomplete')).toHaveLength(1);
+    expect(r.report.failed).toBe(1);
+    expect(r.report.incomplete).toBe(0);
+  });
+
+  test('a decided fail with an error and no committed baseline: exit 1, no baseline written', () => {
+    install({ claudeWithSeq: [badRun, badRun, errRun, badRun, badRun] });
+    const r = runEvals(['--runtime', 'claude', '--repeats', '5']);
+    expect(r.status).toBe(1);
+    expect(r.ev.outcome).toBe('fail');
+    expect(r.baselines).toEqual([]);
+    expect(r.stdout).toMatch(/regression check vs committed summary: no-baseline/);
+  });
+
+  test('with-skill reached the bar, one baseline run hit a provider error: PASS stands, uplift undetermined, no baseline, exit 4 with the note', () => {
+    install({ claudeWithSeq: [okRun, okRun, okRun, okRun, okRun], claudeBase: [result(E529)] });
+    const r = runEvals(['--runtime', 'claude', '--repeats', '5']);
+    expect(r.ev.outcome).toBe('pass');
+    expect(r.ev.withSkill).toMatchObject({ passes: 5, runs: 5, providerErrors: 0 });
+    expect(r.ev.baseline.providerErrors).toBe(5);
+    expect(r.ev.uplift).toBeNull();
+    expect(r.stdout).toMatch(/eval .*: PASS/);
+    expect(r.stdout).toMatch(/INCOMPLETE .*5 run\(s\) hit a provider error.*verdict PASS stands/);
+    expect(r.stdout).toMatch(/uplift n\/a .*undetermined: provider error/);
+    expect(r.baselines).toEqual([]);
+    expect(r.stdout).not.toMatch(/^ {2}baseline summary: /m);
+    expect(r.report).toMatchObject({ passed: 1, failed: 0, incomplete: 0, providerErrored: 1 });
+    expect(r.status).toBe(4);
+    expect(r.cached.every((f) => !/baseline/.test(f))).toBe(true);
+  });
+
+  test('a with-skill error that leaves the bar undecided is incomplete, exit 4, no baseline, and not cached', () => {
+    install({ claudeWithSeq: [okRun, okRun, errRun, okRun, badRun] });
+    const r = runEvals(['--runtime', 'claude', '--repeats', '5']);
+    expect(r.ev.withSkill).toMatchObject({ passes: 3, runs: 4, providerErrors: 1 }); // 3 + 1 unrun = 4 = bar: undetermined
+    expect(r.ev.outcome).toBe('incomplete');
+    expect(r.status).toBe(4);
+    expect(r.baselines).toEqual([]);
+    expect(r.stdout).toMatch(/verdict undetermined/);
+    expect(records(r, 'with-skill').find((x) => x.outcome === 'incomplete')).toBeTruthy();
+  });
+});
+
+// ---- F2: only authentication, payment, rate-limit and server-side failures count ------------------------------
+describe('classification: what is and is not a provider error', () => {
+  const claudeErr = (text) => claude.providerErrorOf(result({ is_error: true, result: text }));
+  const piErr = (text) => { const s = pi.createStreamScanner(); s.feed(assistant({ content: [], stopReason: 'error', errorMessage: text })); return s.result().providerErrorText; };
+  const COUNT = [
+    'Failed to authenticate. API Error: 401 {"error":{"type":"authentication_error"}}', 'API Error: 403 forbidden', 'Not logged in · Please run /login', 'invalid x-api-key',
+    '402: {"message":"Insufficient credits"}', 'Insufficient credits', 'API Error: 429 {"error":{"type":"rate_limit_error"}}', 'rate_limit_error',
+    'API Error: 500 internal', 'API Error: 502 bad gateway', '503 Service Unavailable', 'API Error: 504', 'API Error: 529 overloaded_error', 'overloaded_error', 'overloaded',
+  ];
+  const NOT = [
+    'API Error: 400 {"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}', 'API Error: 413 request too large', 'API Error: 422 unprocessable',
+    'prompt is too long', 'context length exceeded', 'invalid_request_error: max_tokens must be positive', 'API Error: 400 {"message":"overloaded"}',
+    'API Error: 404 not found', 'API Error: 501 not implemented', 'something else broke', 'API Error', 'invalid_request_error: server overloaded',
+  ];
+  test.each(COUNT)('counts on Claude and Pi: %s', (text) => {
+    expect(claudeErr(text)).not.toBeNull();
+    expect(piErr(text)).not.toBeNull();
+  });
+  test.each(NOT)('stays a fail on Claude and Pi: %s', (text) => {
+    expect(claudeErr(text)).toBeNull();
+    expect(piErr(text)).toBeNull();
+  });
+
+  test('end to end: a rejected request (400 prompt too long) is an ordinary fail on both runtimes, exit 1', () => {
+    install({ claudeWith: [init([`ensemble-product:${SKILL}`]), result({ is_error: true, result: 'API Error: 400 {"type":"invalid_request_error","message":"prompt is too long"}' })], write: false });
+    const c = runEvals(['--runtime', 'claude', '--repeats', '1']);
+    expect(c.status).toBe(1);
+    expect(withRuns(c)[0].outcome).toBe('fail');
+    expect(c.ev.withSkill.providerErrors).toBe(0);
+    fs.rmSync(sub('results'), { recursive: true, force: true });
+    install({ piWith: [systemEvent([SKILL]), assistant({ content: [], stopReason: 'error', errorMessage: '400 prompt is too long' }), turnEnd], write: false });
+    const p = runEvals(['--runtime', 'pi', '--repeats', '1']);
+    expect(p.status).toBe(1);
+    expect(withRuns(p)[0].outcome).toBe('fail');
+  });
+});
+
+// ---- F3: cost of a provider-failed run ------------------------------------------------------------------------
+describe('cost of a provider-failed run', () => {
+  test('Claude: a 401 on the first call costs 0', () => {
+    install({ claudeWith: [init([`ensemble-product:${SKILL}`]), result({ ...AUTH, total_cost_usd: undefined })] });
+    const rec = records(runEvals(['--runtime', 'claude', '--repeats', '1']), 'with-skill')[0];
+    expect(rec).toMatchObject({ outcome: 'incomplete', costUsd: 0 });
+    expect(rec.costEstimated).toBeUndefined();
+  });
+
+  test('Claude: a failure after several turns with no reported cost is charged the reservation and flagged estimated', () => {
+    install({ claudeWith: [init([`ensemble-product:${SKILL}`]), result({ ...E529, num_turns: 7, total_cost_usd: undefined })] });
+    const r = runEvals(['--runtime', 'claude', '--repeats', '1']);
+    const rec = records(r, 'with-skill')[0];
+    expect(rec.outcome).toBe('incomplete');
+    expect(rec.costUsd).toBeGreaterThan(0);
+    expect(rec.costEstimated).toBe(true);
+    expect(r.report.totalCostUsd).toBeGreaterThanOrEqual(rec.costUsd);
+  });
+
+  test('Claude: a reported cost is charged as reported even after several turns', () => {
+    install({ claudeWith: [init([`ensemble-product:${SKILL}`]), result({ ...E529, num_turns: 7, total_cost_usd: 0.37 })] });
+    const rec = records(runEvals(['--runtime', 'claude', '--repeats', '1']), 'with-skill')[0];
+    expect(rec.costUsd).toBeCloseTo(0.37);
+    expect(rec.costEstimated).toBeUndefined();
+  });
+
+  test('Pi: an unpriced model (cost 0) that did work before failing is charged the reservation; a failed first call costs 0', () => {
+    const work = assistant({ content: [{ type: 'toolCall', name: 'bash', arguments: { command: 'ls' } }], usage: { cost: { total: 0 }, output: 40 } });
+    const fail = assistant({ content: [], stopReason: 'error', errorMessage: '503 service unavailable', usage: { cost: { total: 0 } } });
+    install({ piWith: [systemEvent([SKILL]), work, turnEnd, fail, turnEnd] });
+    const rec = records(runEvals(['--runtime', 'pi', '--repeats', '1']), 'with-skill')[0];
+    expect(rec.outcome).toBe('incomplete');
+    expect(rec.costUsd).toBeGreaterThan(0);
+    expect(rec.costEstimated).toBe(true);
+    fs.rmSync(sub('results'), { recursive: true, force: true });
+    install({ piWith: [systemEvent([SKILL]), fail, turnEnd] });
+    const first = records(runEvals(['--runtime', 'pi', '--repeats', '1']), 'with-skill')[0];
+    expect(first).toMatchObject({ outcome: 'incomplete', costUsd: 0 });
+    expect(first.costEstimated).toBeUndefined();
   });
 });

@@ -189,12 +189,15 @@ async function runScenario(scenario, run) {
       };
     }
     // Infrastructure error: the runtime's own stream says the API call failed (no login, bad key, no credits, overload), so the model
-    // never judged this skill. Not a pass or a fail and never counted: recorded `incomplete` (the call itself is free, so it is charged what it reported).
+    // never judged this skill. Not a pass or a fail and never counted: recorded `incomplete`. Cost: what the runtime reported; with no figure,
+    // $0 when the run made no model progress (a first call that failed), else the reservation (paid turns happened), flagged costEstimated.
     if (proc.providerError) {
+      const costUnknown = summary.costUsd === null && proc.providerProgress === true;
       return {
         ...base, pass: null, outcome: 'incomplete', verdict: null, judgedScore: null, judgeModel: null, graders: [],
         incompleteReason: `provider error: ${proc.providerError}`,
-        costUsd: summary.costUsd === null ? 0 : summary.costUsd,
+        costUsd: costUnknown ? runUsd : summary.costUsd === null ? 0 : summary.costUsd,
+        ...(costUnknown && { costEstimated: true }),
         durationMs: Date.now() - started,
       };
     }
@@ -230,7 +233,7 @@ async function runScenario(scenario, run) {
   }
 }
 
-const fmtChange = (c) => `${c.committed.toFixed(2)} -> ${c.current.toFixed(2)} (${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)})`;
+const fmtChange = (c) => (typeof c.current === 'number' && typeof c.change === 'number' ? `${c.committed.toFixed(2)} -> ${c.current.toFixed(2)} (${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)})` : `${c.committed.toFixed(2)} -> n/a`);
 
 /**
  * Outcome of a replayed single run, in the eval-level vocabulary. A with-skill run is its own verdict. A baseline run has none
@@ -532,7 +535,7 @@ async function main(argv = process.argv.slice(2)) {
     } else {
       const u = evalResult.uplift === null ? 'n/a' : `${evalResult.uplift >= 0 ? '+' : ''}${evalResult.uplift.toFixed(2)}`;
       out(`  with-skill ${evalResult.withSkill.passes}/${evalResult.withSkill.runs} (bar ${plan.bar} of ${plan.repeats}: ${evalResult.reliable === null ? 'undetermined' : evalResult.reliable ? 'reliable' : 'NOT reliable'}); baseline ${evalResult.baseline.passes}/${evalResult.baseline.runs}${evalResult.baseline.unverifiable ? ` (${evalResult.baseline.unverifiable} run(s) not counted: isolation unverifiable)` : ''}`);
-      out(`  uplift ${u} ${evalResult.upliftLabel}`);
+      out(`  uplift ${u} ${evalResult.upliftLabel}${evalResult.providerErrors > 0 ? ' (undetermined: provider error)' : ''}`);
     }
     out(`  repeats ${plan.repeats} (${plan.repeatsSource}), bar ${plan.bar} (${plan.barSource}${plan.barSource === 'eval' ? ' override' : ''})`);
     out(`  skill invoked in ${evalResult.invokedRuns}/${evalResult.withSkill.runs} with-skill run(s)${evalResult.invokedAsExpected === false ? ` (expectInvoked ${evalResult.expectInvoked}: NOT as expected)` : ''}`);
@@ -540,9 +543,12 @@ async function main(argv = process.argv.slice(2)) {
   }
   const incomplete = evalResults.filter((r) => r.outcome === 'incomplete');
   for (const r of incomplete.filter((x) => !x.arms && !x.replay && !x.incompleteReason)) out(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
+  // Every eval with a provider error says so (INCOMPLETE note), whatever its verdict: the verdict stands when already decided, the uplift never does.
+  for (const r of evalResults.filter((x) => x.arms && x.providerErrors > 0)) {
+    out(`  INCOMPLETE ${r.id}: ${r.providerErrors} run(s) hit a provider error (the model call failed) and are not counted${r.outcome === 'incomplete' ? '; verdict undetermined' : `; verdict ${r.outcome.toUpperCase()} stands (decided by the counted with-skill runs)`}, uplift undetermined, no baseline summary written; fix the provider or credentials and rerun`);
+  }
   for (const r of incomplete.filter((x) => x.arms)) {
-    const pe = (r.withSkill ? r.withSkill.providerErrors : 0) + (r.baseline ? r.baseline.providerErrors : 0);
-    if (pe > 0) out(`  INCOMPLETE ${r.id}: ${pe} run(s) hit a provider error (the model call failed) and are not counted; fix the provider or credentials and rerun`);
+    const pe = r.providerErrors || 0;
     const notRun = (r.withSkill ? r.withSkill.notRun : 0) + (r.baseline ? r.baseline.notRun : 0) - pe;
     if (pe === 0 || notRun > 0) out(`  INCOMPLETE ${r.id}: cost cap $${capUsd} reached before every run started (spend plus in-flight reservations)`);
   }
@@ -610,7 +616,18 @@ async function main(argv = process.argv.slice(2)) {
       try { candidate = results.toBaselineSummary(evalResult, bctx); } catch (e) {
         if (!(e instanceof results.BaselineError)) throw e;
         out(`  baseline summary not written: ${e.message}`);
-        cacheFresh(ev, evalResult, evalRecords, null);
+        // A determined with-skill fail still meets the regression check (a broken skill plus one flaky call must not dodge it); never a write.
+        let probe = null;
+        if (evalResult.providerErrors > 0 && evalResult.reliable === false && !evalResult.abort) {
+          probe = results.checkAgainstBaseline(BASELINES_DIR, evalResult, bctx);
+          out(`  regression check vs committed summary: ${probe.status}${probe.reasons.length ? ` (${results.stripControl(probe.reasons.join('; '))})` : ''}`);
+          if (probe.delta) out(`    change vs committed: with-skill rate ${fmtChange(probe.delta.withSkillRate)}`);
+          if (probe.status === 'regression') {
+            regressions.push(evalResult.id);
+            err(`REGRESSION ${evalResult.id} [${evalResult.runtime}]: ${results.stripControl(probe.reasons.join('; '))} (committed summary recorded ${results.stripControl(probe.committed.recordedAt)})`);
+          }
+        }
+        cacheFresh(ev, evalResult, evalRecords, probe);
         continue;
       }
       const key = `${candidate.runtime}/${candidate.skill}`;
@@ -677,6 +694,7 @@ async function main(argv = process.argv.slice(2)) {
     passed: evalResults.filter((r) => r.outcome === 'pass').length,
     failed: evalResults.filter((r) => r.outcome === 'fail' || r.outcome === 'timed_out').length,
     incomplete: incomplete.length,
+    providerErrored: evalResults.filter((r) => r.arms && r.outcome !== 'incomplete' && r.providerErrors > 0).length,
     total: evalResults.length,
     results: evalResults,
     records,
@@ -684,7 +702,7 @@ async function main(argv = process.argv.slice(2)) {
   // The whole log (results, claudeResult, stderr, changedFiles, records) is scrubbed of credentials and machine identity, not only the records.
   const logged = results.sanitize(summary, { secrets, repoRoot: REPO_ROOT });
   fs.writeFileSync(file, envlib.redactText(JSON.stringify(logged, null, 2), secrets));
-  out(`results: ${path.relative(process.cwd(), file)} (${summary.passed}/${summary.total} passed${summary.incomplete ? `, ${summary.incomplete} incomplete` : ''})`);
+  out(`results: ${path.relative(process.cwd(), file)} (${summary.passed}/${summary.total} passed${summary.incomplete ? `, ${summary.incomplete} incomplete` : ''}${summary.providerErrored ? `, ${summary.providerErrored} with provider errors` : ''})`);
   if (regressions.length) err(`${regressions.length} regression(s) against a committed reliable baseline: ${regressions.join(', ')}`);
   // 2 (rejected definition, result or baseline not stored or read) outranks 1 (failing eval, regression), which outranks 4.
   if (rejected.length || storeErrors.length) {
@@ -692,7 +710,9 @@ async function main(argv = process.argv.slice(2)) {
     return 2;
   }
   if (summary.failed || regressions.length) return 1;
-  return summary.incomplete ? 4 : 0;
+  // Exit 4: an eval is undetermined, or has a determined PASS but a provider error (no baseline summary or uplift came out of the run: not a clean pass).
+  // A determined fail or regression is still 1. A provider error never turns a fail into 4 nor hides a pass: the note and the exit code say it.
+  return summary.incomplete || summary.providerErrored ? 4 : 0;
 }
 
 if (require.main === module) {
