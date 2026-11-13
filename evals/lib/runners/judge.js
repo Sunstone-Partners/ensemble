@@ -9,10 +9,10 @@ const { spawnSync } = require('child_process');
 
 /** Compare-form of a model name: `sonnet`, `claude-sonnet-5-5` and `claude-sonnet-4-20250514` all become `sonnet`. */
 const norm = (m) => String(m || '').trim().toLowerCase()
+  .replace(/\[.*\]$/, '')
   .replace(/^claude-/, '')
   .replace(/^(\d+-)+/, '')
-  .replace(/(-\d[\d.]*)+$/, '')
-  .replace(/\[.*\]$/, '');
+  .replace(/(-\d[\d.]*)+$/, '');
 
 /**
  * Decide whether judged checks may run. `judgeModel` comes from --judge-model, else EVALS_JUDGE_MODEL.

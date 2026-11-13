@@ -231,6 +231,7 @@ A rejected definition runs nothing for that eval and names the eval and the fiel
     - [ ] Scenario: reservation under concurrency -- Given `--concurrency 4`, a slow stub reporting $2 per run and a $5 cap, When a suite of at least 5 runs executes, Then at no moment does spend plus in-flight reservations exceed $5, no run starts once the reservations would exceed the cap, and unstarted evals are `incomplete`
     - [ ] Scenario: failure outranks incomplete -- Given a suite with one failing eval and one cap-stopped eval, When it ends, Then the exit status is 1
     - [ ] Scenario: defaults -- Given no flags, When limits are read, Then the cap is 50 and the run timeout is 900 s
+    - [ ] Scenario: judge cost counts toward cap and reservation -- Given a stub run costing $1.00 and a judge call costing $0.50 with a $5 cap, When the suite totals spend, Then the eval's cost is 1.50 and the reservation for the next run includes the judge allowance
 
 ### PR 3: With-skill and baseline arms, repeats, Claude Code adapter
 
@@ -240,7 +241,7 @@ A rejected definition runs nothing for that eval and names the eval and the fiel
   - Validates PRD ACs: AC-012-1
   - Implementation AC:
     - [ ] Given the interface `run(job)`, when the Claude adapter runs, then it returns `{ transcript, exitCode, timedOut, costUsd, loadedSkills, runtime }` and existing scenarios behave as before
-    - [ ] Given a skill shipped in a package, when its with-skill arm runs, then the adapter loads that package directory as the plugin (`--plugin-dir packages/<pkg>`), never a private copy
+    - [ ] Given a skill shipped in a package, when its with-skill arm runs, then the adapter loads each package in the job's `pluginDirs` (for one skill, its own package: `--plugin-dir packages/<pkg>`) as the plugin, never a private copy
     - [ ] Given any arm, when the adapter builds arguments, then `--setting-sources project` is passed so user-level and synced plugins are not loaded
     - [ ] Given one short real Claude run with a plugin loaded and one without, when the stream-json startup events are inspected, then whether they list loaded skills is recorded in `docs/guides/skills-eval.md` with the event shape
     - [ ] Given the startup events do not list loaded skills, when `loadedSkills` is built, then it is derived from the transcript's skill-invocation events and the leak check uses that scan instead
@@ -347,6 +348,7 @@ A rejected definition runs nothing for that eval and names the eval and the fiel
   - Test AC:
     - [ ] Scenario: summary written, logs kept out of the repo -- Given a finished stub suite, When results are stored, Then a baseline summary exists under `evals/baselines/` and full logs exist only under the gitignored `evals/results/`
     - [ ] Scenario: check reads the committed summary -- Given a committed summary and a new result, When the regression check runs, Then it compares against the committed file
+    - [ ] Scenario: granularity recorded -- Given stub Claude and Pi results, When baseline summaries are written, Then the Claude summary records `granularity: package` and the Pi summary `granularity: skill`
 
 - [ ] **TRD-016** Per-skill report (`evals/lib/report.js`) [satisfies REQ-014] [depends: TRD-014] (4h)
   - Validates PRD ACs: AC-014-1, AC-014-2, AC-014-3

@@ -65,6 +65,7 @@ describe('resolveJudge', () => {
     expect(resolveJudge({ judgeModel: 'sonnet', model: 'claude-sonnet-5-5', env: {} }).refusal).toMatch(/is the model under test/);
     expect(resolveJudge({ judgeModel: 'claude-sonnet-4-20250514', model: 'sonnet', env: {} }).refusal).toMatch(/is the model under test/);
     expect(resolveJudge({ judgeModel: 'claude-opus-4-1', model: 'claude-sonnet-5-5', env: {} }).refusal).toBeNull();
+    expect(resolveJudge({ judgeModel: 'opus', model: 'claude-opus-4-1[1m]', env: {} }).refusal).toMatch(/is the model under test/);
   });
   test('parseScore handles braces in the reason and picks a later valid object', () => {
     expect(parseScore('{"score": 0.7, "reason": "uses {x} and }"}')).toEqual({ score: 0.7, reason: 'uses {x} and }' });
