@@ -142,6 +142,8 @@ function createStreamScanner() {
   let turns = 0;
   let cost = 0;
   let assistantMessages = 0;
+  let firstError = null; // errorMessage (or stopReason) of the first assistant message with stopReason "error"
+  let lastWasError = false;
   let model = null; // `provider/model` (or the model alone) of the first assistant message that names one
   const addInvoked = (n) => { if (typeof n === 'string' && n && invoked.length < MAX_INVOKED) invoked.push(n); };
   return {
@@ -162,6 +164,12 @@ function createStreamScanner() {
       const content = Array.isArray(m.content) ? m.content : [];
       if (m.role === 'assistant') {
         assistantMessages += 1;
+        if (m.stopReason === 'error') {
+          lastWasError = true;
+          if (firstError === null) firstError = typeof m.errorMessage === 'string' && m.errorMessage ? m.errorMessage : 'stopReason error';
+        } else {
+          lastWasError = false;
+        }
         if (model === null && typeof m.model === 'string' && m.model.trim() && m.model.length <= 200) {
           model = typeof m.provider === 'string' && m.provider.trim() && !m.model.includes('/') ? `${m.provider.trim()}/${m.model.trim()}` : m.model.trim();
         }
@@ -189,6 +197,9 @@ function createStreamScanner() {
         turns,
         model,
         // 0 means unpriced (Pi reports total 0 for a model without prices), which is unknown, not free.
+        // Infrastructure-error rule: an assistant message ended with stopReason "error" and the last assistant message is an error
+        // too (an error with no success before it, or after the work): a retry that recovered is not one. Raw text: run() redacts it.
+        providerErrorText: firstError !== null && lastWasError ? firstError : null,
         reportedCostUsd: assistantMessages > 0 && cost > 0 ? cost : null,
       };
     },
@@ -221,12 +232,13 @@ async function run(job, opts = {}) {
   const scanner = createStreamScanner();
   const proc = await runProcess(bin, args, { cwd: job.workspace, env: job.env, timeoutMs: job.timeoutMs, secrets, onLine: (l) => scanner.feed(l) });
   const transcript = envlib.redactText(proc.transcript, secrets);
-  const { reportedCostUsd, ...scanned } = scanner.result();
+  const { reportedCostUsd, providerErrorText, ...scanned } = scanner.result();
   return {
     transcript,
     exitCode: proc.exitCode,
     timedOut: proc.timedOut,
     costUsd: proc.timedOut ? null : reportedCostUsd,
+    providerError: !proc.timedOut && providerErrorText !== null ? (envlib.shortReason(providerErrorText, secrets) || 'API error') : null,
     ...scanned,
     runtime: RUNTIME,
     stderr: envlib.redactText(proc.stderr, secrets),

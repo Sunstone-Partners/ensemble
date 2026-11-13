@@ -137,10 +137,12 @@ function summarizeEval(ev, plan, runs, { runtime = 'claude', abort = null, copy 
   const cost = all.reduce((sum, r) => sum + (r.costUsd || 0), 0);
   const invokedRuns = withRuns.filter((r) => r.invoked).length;
   const judged = withRuns.map((r) => r.judgedScore).filter((x) => typeof x === 'number');
-  const outcome = reliable === true ? 'pass' : reliable === false ? 'fail' : 'incomplete';
+  // A provider error leaves a run unmeasured: the eval cannot be called a pass or a fail whatever the other runs say.
+  const providerErrors = withStats.providerErrors + (baseStats ? baseStats.providerErrors : 0);
+  const outcome = providerErrors > 0 ? 'incomplete' : reliable === true ? 'pass' : reliable === false ? 'fail' : 'incomplete';
   return {
     id: ev.id, type: 'agent', skill: ev.skill, runtime, arms: true,
-    outcome, pass: reliable === null ? null : reliable, verdict: reliable === true ? 'pass' : reliable === false ? 'fail' : null,
+    outcome, pass: outcome === 'incomplete' ? null : reliable, verdict: outcome === 'incomplete' ? null : reliable ? 'pass' : 'fail',
     repeats: plan.repeats, repeatsSource: plan.repeatsSource, bar: plan.bar, barSource: plan.barSource,
     reliable, invocationMode: ev.invocation,
     withSkill: withStats, baseline: baseStats,

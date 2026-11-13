@@ -265,7 +265,7 @@ function buildResult(run, ctx) {
     invocationMode: run.invocationMode,
     run: run.run,
     outcome,
-    ...(outcome === 'incomplete' && { incompleteReason: run.outcome === 'incomplete' ? (run.skipped || 'not run') : run.outcome }),
+    ...(outcome === 'incomplete' && { incompleteReason: run.outcome === 'incomplete' ? (run.incompleteReason || run.skipped || 'not run') : run.outcome }),
     invoked: typeof run.invoked === 'boolean' ? run.invoked : null,
     costUsd: typeof run.costUsd === 'number' ? run.costUsd : null,
     ...(run.costEstimated && { costEstimated: true }),

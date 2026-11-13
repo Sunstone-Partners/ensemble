@@ -188,6 +188,16 @@ async function runScenario(scenario, run) {
         durationMs: Date.now() - started,
       };
     }
+    // Infrastructure error: the runtime's own stream says the API call failed (no login, bad key, no credits, overload), so the model
+    // never judged this skill. Not a pass or a fail and never counted: recorded `incomplete` (the call itself is free, so it is charged what it reported).
+    if (proc.providerError) {
+      return {
+        ...base, pass: null, outcome: 'incomplete', verdict: null, judgedScore: null, judgeModel: null, graders: [],
+        incompleteReason: `provider error: ${proc.providerError}`,
+        costUsd: summary.costUsd === null ? 0 : summary.costUsd,
+        durationMs: Date.now() - started,
+      };
+    }
     const commands = Array.isArray(proc.commands) ? proc.commands.map((c) => envlib.redactText(c, secrets)) : undefined;
     const ctx = { dir: sb.dir, repoRoot, baseline: sb.baseline, transcript, transcriptTruncated: proc.transcriptTruncated, commands, commandsIncomplete: proc.commandsIncomplete, env: checkEnv, judgeEnv, secrets, judge: judge ? { ...judge, bin: judgeBin } : undefined };
     // Judged checks read only the with-skill arm (judgedScore), so the baseline arm skips them: no judge spend is wasted.
@@ -369,7 +379,7 @@ async function main(argv = process.argv.slice(2)) {
   const show = (r, label = '') => {
     const judgedNote = r.judgedScore === null || r.judgedScore === undefined ? '' : ` judged=${r.judgedScore.toFixed(2)} (${results.stripControl(r.judgeModel)})`;
     const invokedNote = r.invoked === undefined ? '' : ` skill-invoked=${r.invoked ? 'yes' : 'no'}`;
-    out(`  ${label}${r.outcome.toUpperCase()} turns=${r.turns} cost=${r.costUsd}${r.costEstimated ? ' (estimated)' : ''}${invokedNote}${judgedNote}`);
+    out(`  ${label}${r.outcome.toUpperCase()}${r.outcome === 'incomplete' && r.incompleteReason ? ` (${results.stripControl(r.incompleteReason)})` : ''} turns=${r.turns} cost=${r.costUsd}${r.costEstimated ? ' (estimated)' : ''}${invokedNote}${judgedNote}`);
     for (const g of r.graders) out(`    ${g.pass ? 'ok  ' : 'FAIL'} ${g.type}${g.judged ? ' [judged]' : ''}: ${g.detail}`);
   };
   const runOpts = (s) => ({
@@ -416,7 +426,9 @@ async function main(argv = process.argv.slice(2)) {
     r = { ...rest, evalId: ev.id, arm, run: item.run, runtime: opts.runtime, model: reportedModel || results.UNKNOWN_MODEL, invocationMode: ev.invocation };
     if (arm === 'baseline') {
       const check = arms.checkBaseline(ev, r, { repoRoot: REPO_ROOT });
-      if (check && check.kind === 'unverifiable-run') {
+      if (r.outcome === 'incomplete' && r.incompleteReason && (!check || check.kind !== 'leak')) {
+        // A provider error is its own incomplete run: no startup event is expected from a call that never happened (only a real leak still aborts).
+      } else if (check && check.kind === 'unverifiable-run') {
         // Crashed or timed out before any startup event: cannot be called clean, so it is not counted in the baseline score.
         r = { ...r, outcome: 'unverifiable', pass: null, verdict: null, unverifiable: check.message };
       } else if (check) {
@@ -527,8 +539,13 @@ async function main(argv = process.argv.slice(2)) {
     if (copy) out(`  evaluated copy: ${describeCopy(copy)}`);
   }
   const incomplete = evalResults.filter((r) => r.outcome === 'incomplete');
-  for (const r of incomplete.filter((x) => !x.arms && !x.replay)) out(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
-  for (const r of incomplete.filter((x) => x.arms)) out(`  INCOMPLETE ${r.id}: cost cap $${capUsd} reached before every run started (spend plus in-flight reservations)`);
+  for (const r of incomplete.filter((x) => !x.arms && !x.replay && !x.incompleteReason)) out(`running ${r.id} ...\n  INCOMPLETE not started: cost cap $${capUsd} reached (spend plus in-flight reservations)`);
+  for (const r of incomplete.filter((x) => x.arms)) {
+    const pe = (r.withSkill ? r.withSkill.providerErrors : 0) + (r.baseline ? r.baseline.providerErrors : 0);
+    if (pe > 0) out(`  INCOMPLETE ${r.id}: ${pe} run(s) hit a provider error (the model call failed) and are not counted; fix the provider or credentials and rerun`);
+    const notRun = (r.withSkill ? r.withSkill.notRun : 0) + (r.baseline ? r.baseline.notRun : 0) - pe;
+    if (pe === 0 || notRun > 0) out(`  INCOMPLETE ${r.id}: cost cap $${capUsd} reached before every run started (spend plus in-flight reservations)`);
+  }
 
   // Stored records and committed baseline summaries (TRD-014/015). Every record is schema-validated, redacted and relativized
   // before it is written; missing evidence is a named error, never a silent skip.
