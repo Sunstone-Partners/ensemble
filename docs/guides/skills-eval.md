@@ -120,3 +120,25 @@ Each eval result and the console state the evaluated copy: the package path load
 **Report.** Per skill: with-skill rate, baseline rate, uplift (the difference, a number only) and the reliability verdict of the with-skill arm against its bar. Claude uplift is labelled `package-level (skills share a package)` and Pi uplift `skill-level`; when a report holds both it says they are different quantities. An eval with a run that did not execute, a baseline run whose isolation could not be verified, or an aborted baseline is marked INCOMPLETE (or ABORTED) with the reasons and shows no rate, uplift or verdict.
 
 **Coverage.** `node evals/coverage.js` reports each shipped skill once as evaluated, exempt (reason shown) or missing. `evals/exemptions.json` is a plain `{ "<skill>": "<reason>" }` map; it starts with the 17 `adapter-*` skills, which a toolchain resolver loads and nobody invokes by name. Only `missing` counts against coverage. The report is not trusted (exit 2) when the file is unreadable, repeats a key, exempts a skill that does not exist or already has an eval, a source package is a symlink or holds a symlinked `skills/` directory, a symlinked, nameless or duplicated skill, or a stray non-directory entry in `skills/` (`.gitkeep` and `.DS_Store` aside), or an eval names a skill no source package ships. An exemption for a skill whose eval was rejected still shows the rejection; control characters and ANSI sequences are stripped from exemption reasons before they are printed.
+
+## Cache, comparison and replay (PR 6)
+
+How a maintainer spends nothing on unchanged work, checks a result against the committed baseline, and reruns a failure. Reference for the flags: `evals/README.md`.
+
+### Result cache
+
+`node evals/run.js --skill <skill> --model <id>` reuses a stored per-run result when the skill hash (Claude: the package hash, because the whole package is loaded; Pi: the skill hash), the eval version, the requested model, the runtime, the arm, the invocation mode, the repeat index and the run settings (`maxTurns`, `allowedTools`, timeout, per-run budget, judge model) are all the same. Reuse makes no model call and costs nothing against the suite cap. A stored result of any age is reused; `--refresh` forces fresh runs. Decisions the design leaves open, as taken:
+
+- **The model in the key is the requested `--model`.** The model a runtime reports exists only after the call, so the key cannot hold it; a stored result is reused only when the model it reported is known. With no `--model` the cache is bypassed (read and write) and the run says so, because a default model can change without any input changing.
+- **The per-run budget and timeout are in the key.** `--max-usd` can lower the per-run budget, so a very low cap is a different key. Raising a timeout reruns; that is the price of never reusing a result produced under different limits.
+- **Isolation evidence is stored with a baseline-arm entry and checked again on read**; missing evidence is a miss (a stored result has no startup event to re-verify, so absence is never read as clean).
+- **A regression is not stored** (unless `--update-baselines`): a failing result is not locked in as the reusable answer. Per-run entries are otherwise written as the runs finish, including for a not-comparable result (that is a different key space: model, eval version and so on differ).
+- **The cache is a store.** Same rules as the baselines: symlinked root, runtime directory or entry refused, FIFOs never opened, size cap, write through a temp file and rename. Read-back entries are untrusted: validated field by field, a bad one is a miss.
+
+### Comparison and regression
+
+`npm run evals:compare` reads the newest results log and prints, per eval, one of: the change in with-skill rate and uplift (comparable), a regression (exit 1, naming skill and eval), `NOT COMPARABLE` or `NOTHING COMPARABLE` (no regression claimed), or `INCOMPLETE` (exit 4). The comparable key is **runtime, model, eval version and repeats**, as the TRD says. This reverses an earlier PR 5 decision that also treated a changed Claude package hash as not comparable: with the cache keyed on that hash, a comparable result would almost always have been a cache hit, so the check could only see its own numbers and a deliberately broken skill would have read as not comparable, a gate that cannot fail (Constitution rule 7). A changed skill or package hash is now a printed note. The PRD's AC-016-1 says "skill version"; the TRD's like-for-like list (runtime, model, eval version) was followed, and a changed `metadata.version` is also a note.
+
+### Replay
+
+A failing run prints a command (see `evals/README.md`) that reruns exactly that run: same eval, arm, runtime, requested model, repeat index and settings. It is single-quoted throughout, built from validated fields, and carries no secret or machine path. `--arm`/`--run-index` run only that run, fresh, without cache or baseline effects. Credentials must be present in the environment as for the original run; `--allow-env` and `--env-allowlist` are deliberately not part of the command.
