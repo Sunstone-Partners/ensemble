@@ -452,6 +452,7 @@ Refinement pass (`/ensemble:refine-prd`). Readiness 4.6 → 4.7. Requirements un
 - **Heading repaired:** `## Approvals Decision Ownership` → `## Approvals and Decision Ownership`, restoring the conjunction every cross-reference in the document already uses.
 - Readiness re-scored: Completeness 4.5 → 4.8, Testability 4.7 → 4.8, Clarity 4.5 → 4.7, Feasibility unchanged at 4.6; overall 4.6 → 4.7.
 
+- **Line-number citations from `TRD-2026-6995dc96` replaced with quoted anchors:** the *Approvals and Decision Ownership* row, *Technical Constraints* bullet and Notes bullets added by the local-daemon scope decision inserted one line above the *Technical Constraints and Dependencies* bullet about contract-version bumps, shifting it and every later line down by one. `TRD-2026-6995dc96` cited this PRD by line number in eight places, so the cited passages moved — and two of the eight, at PRD lines 271 and 278 in Goals and Non-Goals, happened to sit *above* the insertion and stayed correct, which is exactly how this failure mode hides: the numbers keep looking plausible while pointing at the wrong sentence. No validator checks a prose `PRD line NNN` reference, so nothing fails. Each citation now names a quoted phrase from its passage, chosen to fit entirely within a single PRD line so that no future insertion can split the anchor itself.
 ### v1.1.0 — 2026-11-13
 
 Refinement pass (`/ensemble:refine-prd`). Readiness 4.4 → 4.6. Requirements 15 → 18; ACs 48 → 58; ambiguity markers 2 → 0.
