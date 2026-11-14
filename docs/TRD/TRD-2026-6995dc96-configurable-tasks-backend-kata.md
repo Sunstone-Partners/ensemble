@@ -820,10 +820,13 @@ that data. Each AC is listed under the requirement its identifier names (`AC-NNN
 - **Tasks:** 30 implementation + 29 test, across 6 PRs
 - **Estimates:** implementation 124h (max 6h), test 80h (max 4h)
 
-`TRD-027` (the documentation and prose sweep) satisfies `ARCH` rather than a PRD requirement:
-it is the documentation consequence of the rename owned by `TRD-020` and the neutralization
-owned by `TRD-024`, and is reached through their dependency edges. It is the only task that
-maps to no `REQ-NNN`, so requirement coverage is 18/18 across the other 29 implementation tasks.
+`TRD-027` (the documentation and prose sweep) is the single unpaired implementation task: it is
+the documentation consequence of the rename owned by `TRD-020` and the neutralization owned by
+`TRD-024`, it is reached through their dependency edges, and it satisfies `ARCH` rather than a PRD
+requirement. It carries no `-TEST` task because a prose sweep has no behaviour to assert — its
+completion criterion is that the named PRD passages read correctly, which `TRD-027`'s own acceptance
+criteria state directly. It is also the only task mapping to no `REQ-NNN`, so requirement coverage
+is 18/18 across the remaining 29 implementation tasks, of which all 29 are test-paired.
 
 Reuse is a machinery boundary, not a per-requirement flag. The toolchain engine, contract
 loader, resolver, preflight, runner and beads adapter are consumed unchanged and own no task;
@@ -1092,7 +1095,8 @@ What would move the score most:
 8. **Kata timeout values (REQ-017, TRD-028).** The PRD leaves seconds to the TRD, but no task sets kata's short or long defaults. Who sets them, and from what measured latency (TRD-001's fixtures are read-only)?
 9. **Ordering oracle (AC-007-1).** `kata ready` orders by most-recently-updated, so a sequence changes under unrelated edits. Is that acceptable as the oracle for "stable"?
 
-## Open Questions for the PRD
+10. **Remote-gateway authentication is not covered by any requirement.** The PRD's 18 requirements stop at "a Kata project" and never mention a gateway, yet the adapter `env` block names `KATA_SERVER` and `KATA_AUTH_TOKEN`, and TRD-023 / AC-016-5 assume an auth-failure envelope. A live probe against a gateway showed the remote path is refused outright without a valid session token (`web_session_required`, `kind: internal`, `exit_code: 1`), plus a second refusal mode (`origin_forbidden`, from an `Origin` header the CLI controls) that no design mentions. Both fall outside the 2/3/4/5/7 exit-code taxonomy the error mapping assumes. Add a requirement covering remote-gateway auth and its failure envelope, or scope this TRD to locally-spawned daemons and say so in the PRD.
 
 _Merged from the architecture review and the readiness gate; numbering is per source._
+
 
