@@ -340,7 +340,7 @@ describe('parseTRD — PR format (real fixture)', () => {
 
   it('extracts target files', () => {
     expect(result.tasksById['TRD-002'].targetFiles).toContain(
-      'packages/development/commands/implement-trd-tasks.yaml'
+      'packages/development/commands/implement-trd-beads.yaml'
     );
   });
 
