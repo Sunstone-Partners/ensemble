@@ -253,14 +253,14 @@ describe('TRD-001-TEST: contract capabilities are fully stated', () => {
  * 'work-graph-links-fallback' fallback.
  */
 describe('TRD-023: tracker and work-graph contracts v1', () => {
-  test('AC1: tracker.yaml is schema-valid at version 1.0 with exactly the expected side-effecting capabilities', () => {
+  test('AC1: tracker.yaml is schema-valid at version 1.1 with exactly the expected side-effecting capabilities', () => {
     const contracts = loadContracts(CATEGORIES_DIR);
     const contract = contracts['tracker.yaml'];
     expect(contract).toBeDefined();
 
     const result = validateContract(contract, 'tracker.yaml');
     expect(result).toEqual({ valid: true, errors: [] });
-    expect(contract.version).toBe('1.0');
+    expect(contract.version).toBe('1.1');
 
     const expectedSideEffecting = [
       'tracker.create',
@@ -275,7 +275,10 @@ describe('TRD-023: tracker and work-graph contracts v1', () => {
       // Findings-as-beads capabilities (kata yfbg); tracker.find-by-key is read-only.
       'tracker.create-detailed',
       'tracker.update-detailed',
-      'tracker.close-with-reason'
+      'tracker.close-with-reason',
+      // tracker.label-one splits single-item labelling out of tracker.label (PRD-2026-6995dc96
+      // v1.3.0, contract 1.1). It writes, so it belongs in this set.
+      'tracker.label-one'
     ].sort();
 
     const actualSideEffecting = Object.entries(contract.capabilities)
