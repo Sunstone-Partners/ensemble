@@ -2,7 +2,7 @@
  * Unit tests for the deterministic TRD parser (lib/trd-parser.js).
  *
  * The parser ports the "Scaffold Pass 1-7 + 4b/4c" prose logic from
- * implement-trd-beads.yaml into a pure, testable function. These tests pin
+ * implement-trd-tasks.yaml into a pure, testable function. These tests pin
  * the ParsedTRD contract that downstream modules depend on.
  */
 
@@ -340,7 +340,7 @@ describe('parseTRD — PR format (real fixture)', () => {
 
   it('extracts target files', () => {
     expect(result.tasksById['TRD-002'].targetFiles).toContain(
-      'packages/development/commands/implement-trd-beads.yaml'
+      'packages/development/commands/implement-trd-tasks.yaml'
     );
   });
 

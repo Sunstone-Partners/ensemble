@@ -3,14 +3,14 @@ const path = require('path');
 const yaml = require('js-yaml');
 const { readDevelopmentSkill, parseWorkflow, parseParameters } = require('./helpers/skill-workflow');
 
-// implement-trd-beads is a thin orchestrator: these tests pin the machine contracts it
+// implement-trd-tasks is a thin orchestrator: these tests pin the machine contracts it
 // shares with other components (flags, CLI invocations, gate ordering, fail-closed gates),
 // not its wording. Branch/PR/workstream/resume detail lives in the
-// implement-trd-beads-reference skill.
+// implement-trd-tasks-reference skill.
 
-const YAML_PATH = path.join(__dirname, '../commands/implement-trd-beads.yaml');
-const REF_PATH = path.join(__dirname, '../skills/implement-trd-beads-reference/SKILL.md');
-// implement-trd-beads is a skill-backed command: the YAML is a manifest (metadata + skill) and
+const YAML_PATH = path.join(__dirname, '../commands/implement-trd-tasks.yaml');
+const REF_PATH = path.join(__dirname, '../skills/implement-trd-tasks-reference/SKILL.md');
+// implement-trd-tasks is a skill-backed command: the YAML is a manifest (metadata + skill) and
 // the prompt is its skill -- SKILL.md plus the phase files under references/.
 const manifest = yaml.load(fs.readFileSync(YAML_PATH, 'utf8'));
 const skill = readDevelopmentSkill(manifest.skill);
@@ -40,7 +40,7 @@ const allActions = doc.workflow.phases.flatMap((p) => p.steps.flatMap((s) => s.a
 // Every literal the RAW skill field `localPhase` is compared with. A gate must key on the one good value.
 const rawPhaseComparisons = (s) => [...s.matchAll(/\blocalPhase\s*==\s*'([A-Z_]+)'/g)].map((m) => m[1]);
 
-describe('implement-trd-beads delegation to beads-build', () => {
+describe('implement-trd-tasks delegation to beads-build', () => {
   test('passes the scoping flags and --defer-completion; this command owns closure', () => {
     const delegate = actions('Execute', 'Delegate to beads-build');
     expect(delegate).toMatch(
@@ -61,7 +61,7 @@ describe('implement-trd-beads delegation to beads-build', () => {
   });
 });
 
-describe('implement-trd-beads scaffold executes the scaffold-plan PLAN', () => {
+describe('implement-trd-tasks scaffold executes the scaffold-plan PLAN', () => {
   test('uses trd-cli parse and scaffold-plan, never a hand parse', () => {
     const scaffold = actions('Scaffold', 'Plan and create beads');
     expect(scaffold).toContain('node "$TRD_CLI" parse');
@@ -81,7 +81,7 @@ describe('implement-trd-beads scaffold executes the scaffold-plan PLAN', () => {
   });
 });
 
-describe('implement-trd-beads Preflight contracts', () => {
+describe('implement-trd-tasks Preflight contracts', () => {
   test('--plan and --execute are mutually exclusive; --branch and --use-current-branch are mutually exclusive', () => {
     const args = actions('Preflight', 'Arguments and early exits');
     expect(args).toContain('--plan` with `--execute');
@@ -128,7 +128,7 @@ describe('implement-trd-beads Preflight contracts', () => {
   });
 });
 
-describe('implement-trd-beads --workstream / --generate-only', () => {
+describe('implement-trd-tasks --workstream / --generate-only', () => {
   const pre = actions('Preflight', 'Arguments and early exits');
   const lines = step('Preflight', 'Arguments and early exits').actions;
   const idx = (needle) => lines.findIndex((a) => a.includes(needle));
@@ -146,14 +146,14 @@ describe('implement-trd-beads --workstream / --generate-only', () => {
   });
 
   test('multiple TRDs without --workstream/--legacy-multi HALT and point at the flag form', () => {
-    expect(pre).toContain('/ensemble:implement-trd-beads --workstream --generate-only <trd1> <trd2>');
+    expect(pre).toContain('/ensemble:implement-trd-tasks --workstream --generate-only <trd1> <trd2>');
     expect(pre).not.toContain('/ensemble:create-workstream-trd');
   });
 
   test('--generate-only rejects other modes before anything else and exits before side effects', () => {
     const guard = idx('cannot be combined with --plan, --execute, --status, --reset-task, --list, --branch or --use-current-branch');
     const gen = idx('create-workstream-trd');
-    const report = idx('next step `/ensemble:implement-trd-beads <generated-path>`');
+    const report = idx('next step `/ensemble:implement-trd-tasks <generated-path>`');
     const status = idx('`--status`: single TRD');
     expect(guard).toBe(Math.min(...[guard, gen, report, status].filter((n) => n >= 0)));
     expect(report).toBeGreaterThan(gen);
@@ -177,7 +177,7 @@ describe('implement-trd-beads --workstream / --generate-only', () => {
   });
 });
 
-describe('implement-trd-beads reference skill contracts', () => {
+describe('implement-trd-tasks reference skill contracts', () => {
   test('branch creation goes through workflow.branch-create; the git-town stacked append is a documented gap', () => {
     expect(ref).toContain('run workflow.branch-create --arg name=<b> --arg baseBranch=<base>');
     expect(ref).toContain('run workflow.branch-create --arg name=<NEXT_BRANCH>');
@@ -211,7 +211,7 @@ describe('implement-trd-beads reference skill contracts', () => {
   });
 });
 
-describe('implement-trd-beads Quality Gate and Completion ordering', () => {
+describe('implement-trd-tasks Quality Gate and Completion ordering', () => {
   test('Completion step order: verification, then PR review completion check, then epic closure', () => {
     const titles = phase('Completion').steps.map((s) => s.title);
     expect(titles.indexOf('Completion verification')).toBe(0);
@@ -266,7 +266,7 @@ describe('implement-trd-beads Quality Gate and Completion ordering', () => {
   });
 });
 
-describe('implement-trd-beads fail-closed gates are positive-only', () => {
+describe('implement-trd-tasks fail-closed gates are positive-only', () => {
   const check = actions('Completion', 'PR review completion check');
   const closure = actions('Completion', 'Epic closure and TRD checkboxes');
 
@@ -310,7 +310,7 @@ describe('implement-trd-beads fail-closed gates are positive-only', () => {
   });
 });
 
-describe('implement-trd-beads completion', () => {
+describe('implement-trd-tasks completion', () => {
   test('stages only this TRD beads (no broad git add) and checkbox sync stages the TRD file', () => {
     expect(text).not.toMatch(/git add \.beads/);
     expect(text).not.toMatch(/git commit -a/);
@@ -334,7 +334,7 @@ describe('implement-trd-beads completion', () => {
   });
 });
 
-describe('implement-trd-beads bead references contract', () => {
+describe('implement-trd-tasks bead references contract', () => {
   test('scaffold folds the plan entry externalRef into the tracker.create description (tracker.create has no externalRef field)', () => {
     const scaffold = actions('Scaffold', 'Plan and create beads');
     expect(scaffold).toContain('externalRef folds into description');
@@ -363,7 +363,7 @@ describe('implement-trd-beads bead references contract', () => {
   });
 });
 
-describe('implement-trd-beads source shape', () => {
+describe('implement-trd-tasks source shape', () => {
   test('the dead executionContract/comment-spec prose is gone and the YAML stays thin', () => {
     expect(text).not.toContain('executionContract');
     const words = text.split(/\s+/).filter(Boolean).length;

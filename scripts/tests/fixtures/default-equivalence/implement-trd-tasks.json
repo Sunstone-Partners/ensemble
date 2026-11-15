@@ -1,6 +1,6 @@
 {
-  "command": "implement-trd-beads",
-  "path": "packages/development/commands/implement-trd-beads.yaml",
+  "command": "implement-trd-tasks",
+  "path": "packages/development/commands/implement-trd-tasks.yaml",
   "baseRef": "881381c6119176c48d44e0fc91c90d5cec8d02b1",
   "refactoredBy": "TRD-031/TRD-045",
   "sequence": [

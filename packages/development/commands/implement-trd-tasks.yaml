@@ -1,10 +1,10 @@
 metadata:
-  name: ensemble:implement-trd-beads
+  name: ensemble:implement-trd-tasks
   description: Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via toolchain-cli tracker/work-graph capabilities, and cross-session resumability
   version: 3.2.0
   lastUpdated: "2026-10-21"
   category: implementation
-  output_path: ensemble/implement-trd-beads.md
+  output_path: ensemble/implement-trd-tasks.md
   source: sunstone
   model: medium
   capabilities:
@@ -34,6 +34,6 @@ metadata:
     - Glob
     - Task
 
-# Skill-backed command: the prompt is packages/development/skills/ensemble-implement-trd-beads/SKILL.md,
+# Skill-backed command: the prompt is packages/development/skills/ensemble-implement-trd-tasks/SKILL.md,
 # the single source of truth. Edit the skill, not this manifest.
-skill: ensemble-implement-trd-beads
+skill: ensemble-implement-trd-tasks

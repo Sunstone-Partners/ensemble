@@ -1,9 +1,9 @@
 ---
-name: implement-trd-beads-reference
-description: On-demand reference for /ensemble:implement-trd-beads — branch intent and stacked-PR branch handling, PR creation per backend, combined-workstream mode, resume and failure recovery. Read only the section the command points you at; not a standalone workflow.
+name: implement-trd-tasks-reference
+description: On-demand reference for /ensemble:implement-trd-tasks — branch intent and stacked-PR branch handling, PR creation per backend, combined-workstream mode, resume and failure recovery. Read only the section the command points you at; not a standalone workflow.
 ---
 
-# implement-trd-beads reference
+# implement-trd-tasks reference
 
 Variable names are the command's; every `node "$TOOLCHAIN_CLI" run` below passes `--run-id "$RUN_ID"` and `--json`.
 
@@ -61,7 +61,7 @@ Two or more TRD paths without either flag HALT before side effects, pointing at 
 ## 5. Resume and recovery
 
 - Resume = an open epic titled `[trd:<TRD_SLUG>]` exists. Dirty tree: fresh run HALTs (`ERROR: working directory is dirty. Commit, stash or revert before starting a new build.` + `WORKTREE_STATUS`); a resume prints a NOTE and continues. Never stash, commit, checkout or clean the user's paths to satisfy a gate.
-- `--execute` with no existing epic: `ERROR: --execute requires an existing bead scaffold. Run /ensemble:implement-trd-beads --plan first.` and EXIT.
+- `--execute` with no existing epic: `ERROR: --execute requires an existing bead scaffold. Run /ensemble:implement-trd-tasks --plan first.` and EXIT.
 - Re-running Quality Gate resumes at the blocked phase's review step; re-running Completion runs a FRESH review.
 - Scaffold is idempotent via title prefixes: `[trd:<slug>]` epic, `[trd:<slug>:pr:<N>]` or `[trd:<slug>:phase:<N>]` story, `[trd:<slug>:task:<ID>]` task.
 - Stale inter-phase edges from older scaffolds: for phase N>=2, `node "$TOOLCHAIN_CLI" run tracker.dep-remove --arg id=<first task bead of N> --arg dependsOnId=<last task bead of N-1> --run-id "$RUN_ID" --json` (ignore an edge-not-found failure).
