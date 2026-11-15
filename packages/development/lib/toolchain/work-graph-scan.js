@@ -49,18 +49,18 @@
  * wanting "closed blocker is fine" semantics must keep closed items in the array (the fallback
  * does exactly that today).
  *
- * Duplicate ids in the input are one vertex; the first occurrence is the one carried into the
- * output. A self-dependency (`X` depends on `X`) is a cycle of length one, reported as a
+ * Duplicate ids in the input are one vertex, and the FIRST occurrence is the one carried into
+ * `ordered`; self-dependency (`X` depends on `X`) is a cycle of length one, reported as a
  * `cycle` finding -- not ignored, not "already satisfied".
  *
  * ## Result shape (stable; downstream consumers depend on it)
  *
  * ```
  * scanWorkGraph(items) -> {
- *   ordered: object[],   // dependency-first, see ORDERING below; EMPTY if any finding exists
+ *   ordered: object[],   // dependency-first, see ORDERING below; EMPTY on any cycle finding
  *   findings: Finding[], // see FINDINGS below; [] when the graph is clean
  *   clean: boolean,      // findings.length === 0
- *   ids: string[],       // in-scope ids, input order, first occurrence, duplicates removed
+ *   ids: string[],       // in-scope ids, SORTED ascending, duplicates removed (see DETERMINISM)
  * }
  *
  * Finding = {
@@ -73,24 +73,69 @@
  * isGraphHealthy(result) -> { status: 'healthy'|'unhealthy', findings: Finding[] }
  * ```
  *
- * ## ORDERING -- deterministic, and blocked graphs get no order at all
+ * ## ORDERING -- cycle-only suppression
  *
- * A clean scan uses Kahn's algorithm with a FIFO frontier seeded in **input order** and each
- * item's edges considered in input order, so `ordered` is a stable topological order: every
- * item appears after every item it depends on (AC-007-2), and the same input always produces
- * the byte-identical same array (AC-007-1's "two consecutive listings ... identical sequence"
- * requirement applies to the plan path too).
+ * A scan with NO findings returns a stable topological order of every in-scope item: Kahn's
+ * algorithm with a FIFO frontier seeded in **input order** and each item's edges considered in
+ * input order, so every item appears after every item it depends on (AC-007-2) and the same
+ * input always produces the byte-identical same array (AC-007-1's "two consecutive listings
+ * ... identical sequence" requirement applies to the plan path too).
  *
- * A scan that produced ANY finding returns `ordered: []`. AC-007-3 is explicit that a cycle
- * must be reported "rather than a plan silently ordering the cycle anyway", and a partial
- * order that happens to place some cycle members early is precisely that silent ordering --
- * it looks plausible and hides the cycle. Dangling edges are treated the same way for the same
- * reason: a link to an id the scope never returned cannot be honored, so any order produced
- * alongside it silently violates AC-007-2. Callers wanting "best effort" output still have the
- * full `findings` list plus `ids` to triage from; nobody gets a trustworthy-looking order for
- * an untrustworthy graph.
+ * A scan with AT LEAST ONE `cycle` finding returns `ordered: []`. AC-007-3 is explicit that a
+ * cycle must be reported "rather than a plan silently ordering the cycle anyway", and a partial
+ * order that happens to place some cycle members early is precisely that silent ordering -- it
+ * looks plausible and hides the cycle. TRD-019's Test AC for `work-graph.plan` matches: on a
+ * cycle, "the cycle is a finding and the plan output lists the cycle members as unordered".
  *
- * ## FINDINGS -- vocabulary and determinism
+ * Every OTHER finding type (`dangling-edge`, `malformed-dependency`, `missing-id`) still gets an
+ * order alongside its findings. AC-007-5 asks only that a dangling edge "is reported as a
+ * finding", and the contract's `work-graph.plan` outputs `[items, orderingSource,
+ * dependencyAware]` with NO findings field -- findings reach a caller only through
+ * `work-graph.graph-health`. Emptying `ordered` for a dangling edge would therefore make
+ * `plan` silently return zero items while surfacing the reason nowhere, which is a worse
+ * failure than the one AC-007-3 guards against. TRD-019's dangling-edge Test AC asks only that
+ * "it is listed as a finding" and says nothing about the order, so it is compatible either way;
+ * the cycle rule is scoped to cycles because that is the only suppression any AC asks for.
+ *
+ * Which items are then EXCLUDED from `ordered` (the AC-007-2 guarantee must not be broken by
+ * the items that survive): an item is ordered only when its position is determinable, i.e. it
+ * is a well-formed vertex and every dependency link it declares resolves, directly or
+ * transitively, to other well-formed in-scope vertices. Concretely, the scan seeds an exclusion
+ * set with the items named by `dangling-edge` and `malformed-dependency` findings (plus every
+ * item with no usable `id`, which is not a vertex at all), then cascades: any item still
+ * declaring a link to an excluded item becomes excluded too, repeatedly, until the remaining
+ * subgraph is closed under "depends on". Only that subgraph is topologically ordered, so no
+ * item is ever placed as though an unsatisfiable or malformed blocker were already satisfied --
+ * that would claim readiness the graph does not support. Excluded items are not lost: each is
+ * named in `findings` and present in `ids`.
+ *
+ * ## DETERMINISM -- what is and is not input-order independent
+ *
+ * Two guarantees hold, and fixtures should rely on these, not on a stronger one:
+ *
+ * 1. SAME INPUT, SAME OUTPUT. Every field is a pure function of the input array: no clock, no
+ *    randomness, no iteration-order-dependent-in-practice behaviour. Two scans of an unchanged
+ *    item set produce byte-identical results (AC-007-1's "two consecutive listings ... return
+ *    an identical sequence", applied to the plan path).
+ * 2. `findings` AND `ids` ARE PERMUTATION-INVARIANT. `findings` are grouped by `type` in the
+ *    fixed order `cycle`, `dangling-edge`, `malformed-dependency`, `missing-id`, then sorted by
+ *    `dependency` (when present) then `items.join(',')`, with every `items` array sorted
+ *    ascending; `ids` is sorted ascending. So neither depends on which item the scanner reached
+ *    first.
+ *
+ * `ordered` is NOT permutation-invariant, and deliberately so: it is seeded in input order, so
+ * items that are genuinely unordered relative to each other (no path between them) keep the
+ * caller's listing order -- which is what AC-007-1 asks a tracker's ready-listing to preserve.
+ * Concretely, for `A`, `B` independent and `C` depending on both, input `[A,B,C]` yields
+ * `A,B,C` while input `[B,A,C]` yields `B,A,C`; `C` is last in both, because that is the part
+ * AC-007-2 actually constrains. A golden fixture that must be permutation-invariant should
+ * compare `findings` and `ids` directly, or feed a graph with no unrelated ties (a single chain,
+ * as TRD-018-TEST's fixed graphs are), rather than stringifying the whole result of an arbitrary
+ * item set. Do not "fix" this by sorting `ordered`: dependency-first order and id order are
+ * different orders, and sorting would break AC-007-2's intent of honouring the tracker's order
+ * among unblocked peers.
+ *
+ * ## FINDINGS -- vocabulary
  *
  * Finding `type` values are a closed set, named after what was found:
  * - `'cycle'` -- a strongly-connected component of size > 1, or a self-edge. `items` are the
@@ -101,16 +146,9 @@
  *   One finding per distinct absent id, aggregating every in-scope item that points at it.
  * - `'malformed-dependency'` -- a `dependencies` entry that is neither `{id}` nor a bare
  *   string. `items` names the declaring item(s), `dependency` is `undefined`.
- * - `'missing-id'` -- an array element with no usable `id`. `items` is empty (the item has no
- *   id to name); `detail` gives its zero-based index in the input array.
- *
- * Ordering of `findings` is deterministic and independent of input order for the two
- * structural cases that matter to golden fixtures: findings are grouped by `type` in the fixed
- * order `cycle`, `dangling-edge`, `malformed-dependency`, `missing-id`, and within a type
- * sorted by `dependency` (when present) then by `items.join(',')`. Every `items` array is
- * sorted ascending with `Array.prototype.sort`'s default (UTF-16 code-unit) comparison. So
- * byte-for-byte fixture comparisons downstream (TRD-018-TEST, TRD-019-TEST, TRD-026-TEST) do
- * not depend on which item the scanner happened to reach first.
+ * - `'missing-id'` -- an array element with no usable `id`. `items` is empty (there is no id to
+ *   name), one finding per such element, and `detail` gives its zero-based index in the input
+ *   array. Such an element is excluded from `ordered` -- there is no item object to place.
  *
  * `detail` is a fixed, generated sentence per type, not free-form:
  * - cycle: `` `dependency cycle among: ${items.join(', ')}` ``
@@ -263,12 +301,14 @@ function cycleFindings(ids, edges, selfDependent) {
  * Dependency-first ordering of a scanned item set, plus structural findings.
  *
  * Pure: same input always yields the same output, and the input array and its items are never
- * mutated. See the module header for the input contract, the result shape, the ordering rule,
- * and why a graph with any finding gets `ordered: []`.
+ * mutated. See the module header for the input contract, the result shape, the cycle-only
+ * suppression rule (ORDERING) and which items are excluded when a non-cycle finding is present.
  *
  * @param {unknown[]} items scanned scope: work items with a string `id` and optional
  *   `dependencies` of `{id}` objects or bare id strings
- * @returns {{ordered: object[], findings: object[], clean: boolean, ids: string[]}}
+ * @returns {{ordered: object[], findings: object[], clean: boolean, ids: string[]}} `ordered`
+ *   is emptied ONLY by a `cycle` finding; `ids` is sorted ascending; `clean` is exactly
+ *   `findings.length === 0`.
  */
 function scanWorkGraph(items) {
   const list = Array.isArray(items) ? items : [];
@@ -299,6 +339,8 @@ function scanWorkGraph(items) {
   const dangling = new Map();
   /** malformed dependency -> in-scope items declaring it */
   const malformed = new Map();
+  /** In-scope dependency ids of `id`, deduplicated: one link can decrement once only. */
+  const inScopeDeps = (id) => [...new Set(blocking.get(id).filter((depId) => byId.has(depId)))];
 
   for (const id of ids) {
     const deps = byId.get(id).dependencies;
@@ -324,8 +366,11 @@ function scanWorkGraph(items) {
         dangling.get(depId).push(id);
         continue;
       }
-      if (!edges.has(depId)) edges.set(depId, []);
-      edges.get(depId).push(id);
+      // One link per (depender, dependent) pair: a repeated `{id: 'A'}` entry must not make
+      // A's successor decrement twice and go negative.
+      const adjacency = edges.get(depId) ?? [];
+      if (!adjacency.includes(id)) adjacency.push(id);
+      edges.set(depId, adjacency);
     }
   }
 
@@ -356,35 +401,69 @@ function scanWorkGraph(items) {
 
   findings.push(...cycleFindings(ids, edges, selfDependent));
 
-  if (findings.length > 0) {
-    return {
-      ordered: [],
-      findings: findings.sort(compareFindings),
-      clean: false,
-      ids,
-    };
+  findings.sort(compareFindings);
+  const idsSorted = sortIds(ids);
+
+  // Cycle suppression (AC-007-3): one cycle finding empties `ordered`. A clean graph falls
+  // through to the ordering below with an empty exclusion set, so there is one ordering path.
+  if (findings.some((finding) => finding.type === 'cycle')) {
+    return { ordered: [], findings, clean: false, ids: idsSorted };
   }
 
-  // Clean graph: Kahn's algorithm, FIFO frontier seeded in input order, successors in input
-  // order. Every in-scope id is reachable or has no in-scope dependency, so the drain below
-  // always consumes all of them (any residue would itself be a cycle, already caught).
-  const inDegree = new Map();
-  for (const id of ids) {
-    inDegree.set(id, blocking.get(id).filter((depId) => byId.has(depId)).length);
-  }
-  const frontier = ids.filter((id) => inDegree.get(id) === 0);
-  const ordered = [];
-  for (let i = 0; i < frontier.length; i += 1) {
-    const id = frontier[i];
-    ordered.push(byId.get(id));
-    for (const dependent of edges.get(id) ?? []) {
-      const remaining = inDegree.get(dependent) - 1;
-      inDegree.set(dependent, remaining);
-      if (remaining === 0) frontier.push(dependent);
+  // AC-007-5: a dangling edge is REPORTED, not honored -- its blocking link is dropped, and
+  // so is every link reachable from it, because an item gated on an unsatisfiable blocker
+  // has no determinable position relative to that absent id. Dropping only the one link
+  // would order that item as if its blocker were already satisfied, which is a false claim
+  // that the item is ready. So: seed the prune with the in-scope declarants of dangling ids
+  // (read back from the findings, the single source of truth) and cascade -- any item still
+  // depending on an excluded item becomes excluded too, transitively. `missing-id` and
+  // `malformed-dependency` items are excluded the same way: they are named in `findings` but
+  // are not well-formed vertices, so they never reach `ordered`.
+  const excluded = new Set(
+    findings.flatMap((finding) =>
+      finding.type === 'dangling-edge' || finding.type === 'malformed-dependency'
+        ? finding.items
+        : []
+    )
+  );
+
+  // Transitive closure: an item that declares a link to an excluded item has its own position
+  // made indeterminate by the same unsatisfiable blocker, so it is excluded too. Repeat until
+  // the surviving subgraph is closed under "depends on"; each pass can only move items into
+  // `excluded`, so this terminates in at most |ids| passes.
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const id of ids) {
+      if (excluded.has(id)) continue;
+      if (inScopeDeps(id).some((depId) => excluded.has(depId))) {
+        excluded.add(id);
+        grew = true;
+      }
     }
   }
 
-  return { ordered, findings: [], clean: true, ids };
+  // Kahn's algorithm over the surviving subgraph, whose every edge is now inside it: FIFO
+  // frontier seeded in input order, successors visited in input order, so the same item set
+  // always yields the byte-identical same array.
+  const survivors = ids.filter((id) => !excluded.has(id));
+  const remaining = new Map(survivors.map((id) => [id, inScopeDeps(id).length]));
+  const orderedIds = survivors.filter((id) => remaining.get(id) === 0);
+  for (let i = 0; i < orderedIds.length; i += 1) {
+    for (const dependent of edges.get(orderedIds[i]) ?? []) {
+      if (excluded.has(dependent)) continue;
+      const left = remaining.get(dependent) - 1;
+      remaining.set(dependent, left);
+      if (left === 0) orderedIds.push(dependent);
+    }
+  }
+
+  return {
+    ordered: orderedIds.map((id) => byId.get(id)),
+    findings,
+    clean: findings.length === 0,
+    ids: idsSorted,
+  };
 }
 
 /**
