@@ -1,5 +1,5 @@
 ---
-name: ensemble-implement-trd-beads
+name: ensemble-implement-trd-tasks
 description: "Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via toolchain-cli tracker/work-graph capabilities, and cross-session resumability"
 disable-model-invocation: true
 metadata:
@@ -22,7 +22,7 @@ Rules:
 - FULL_TEST_COMMAND = `node "$TOOLCHAIN_CLI" run package-runner.run-script --arg script=test --run-id "$RUN_ID" $NON_INTERACTIVE_ARGS --json` (full suite): the Pre-PR test gate (non-ok or non-zero fails) and the pr-review-cycle TEST_COMMAND.
 - In every `tracker.list` result the issue list is `data` parsed as JSON if it is an array, otherwise its `.issues` array.
 - Scaffold work is delegated only to @beads-scaffold-specialist (never backend-developer); no product code is written during Scaffold.
-- Branch intent, PR creation, workstream mode and resume/recovery detail: `implement-trd-beads-reference` skill; read only the section a step points at.
+- Branch intent, PR creation, workstream mode and resume/recovery detail: `implement-trd-tasks-reference` skill; read only the section a step points at.
 
 Terminal states: HALT (error printed, nothing further runs), EXIT (early-exit mode
 finished), COMPLETE (epic closed, report printed).

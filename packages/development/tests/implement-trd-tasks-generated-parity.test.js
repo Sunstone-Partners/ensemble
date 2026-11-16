@@ -1,7 +1,7 @@
 /**
- * TRD-015-TEST: implement-trd-beads generated parity
+ * TRD-015-TEST: implement-trd-tasks generated parity
  *
- * Proves that regenerating implement-trd-beads (a skill-backed command: the YAML is a
+ * Proves that regenerating implement-trd-tasks (a skill-backed command: the YAML is a
  * manifest and the prompt is the skill, SKILL.md + references/) carries the same
  * PR-review-gate structure into every runtime's copy of the skill (Pi skill, Codex skill)
  * and that the Claude Code command and Pi prompt are stubs pointing at it, as the source: the stacked-phase PR Review Gate
@@ -28,27 +28,27 @@ const { readSkillProse } = require('../../../scripts/lib/skill-backed-command');
 const { readDevelopmentSkill, parseWorkflow } = require('./helpers/skill-workflow');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const SOURCE_PATH = path.join(__dirname, '../commands/implement-trd-beads.yaml');
+const SOURCE_PATH = path.join(__dirname, '../commands/implement-trd-tasks.yaml');
 
 // Entry points that are stubs pointing at the skill (no prompt text of their own).
 const STUB_FILES = {
-  'Claude/OMP markdown': path.join(__dirname, '../commands/ensemble/implement-trd-beads.md'),
-  'Pi prompt': path.join(__dirname, '../../pi/prompts/ensemble-implement-trd-beads.md'),
+  'Claude/OMP markdown': path.join(__dirname, '../commands/ensemble/implement-trd-tasks.md'),
+  'Pi prompt': path.join(__dirname, '../../pi/prompts/ensemble-implement-trd-tasks.md'),
 };
 
 // Every copy of the skill: SKILL.md plus its references/*.md, read as one prose.
 const GENERATED_FILES = {
-  'Skill source': path.join(__dirname, '../skills/ensemble-implement-trd-beads/SKILL.md'),
-  'Pi skill': path.join(__dirname, '../../pi/skills/ensemble-implement-trd-beads/SKILL.md'),
+  'Skill source': path.join(__dirname, '../skills/ensemble-implement-trd-tasks/SKILL.md'),
+  'Pi skill': path.join(__dirname, '../../pi/skills/ensemble-implement-trd-tasks/SKILL.md'),
   'Codex skill': path.join(
     __dirname,
-    '../../codex/.codex/skills/commands/ensemble-implement-trd-beads/SKILL.md'
+    '../../codex/.codex/skills/commands/ensemble-implement-trd-tasks/SKILL.md'
   ),
 };
 
 const SKILL_PATH_PATTERN = 'packages/development/skills/pr-review-cycle/SKILL.md (via tool-path-resolution)';
 
-describe('implement-trd-beads generated parity (TRD-015-TEST)', () => {
+describe('implement-trd-tasks generated parity (TRD-015-TEST)', () => {
   let sourceYaml;
   let generated;
 
@@ -66,10 +66,10 @@ describe('implement-trd-beads generated parity (TRD-015-TEST)', () => {
   });
 
   test.each(Object.entries(STUB_FILES))(
-    '%s: is a stub that points at the ensemble-implement-trd-beads skill',
+    '%s: is a stub that points at the ensemble-implement-trd-tasks skill',
     (label, filePath) => {
       const text = fs.readFileSync(filePath, 'utf-8');
-      expect(text).toContain('ensemble-implement-trd-beads');
+      expect(text).toContain('ensemble-implement-trd-tasks');
       expect(text).toMatch(/skill/i);
       expect(text).toContain('$ARGUMENTS');
     }
