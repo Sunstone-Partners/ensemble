@@ -15,7 +15,7 @@ messaging and require an explicit user override before proceeding.
 
 ## Motivation
 
-A TRD was reported "complete" via `/ensemble-implement-trd-beads`, but manual
+A TRD was reported "complete" via `/ensemble-implement-trd-tasks`, but manual
 inspection found large swaths of missing functionality. The root cause: the
 existing completion logic trusts *self-reported* state — bead status set by
 whichever agent closed a task, checkbox ticks, and `req-verified:` comment
@@ -50,7 +50,7 @@ gates the *end* of implementation on independently-verified completion.
 ### Step 1 — Deterministic Task Inventory
 
 Resolve `$TRD_CLI` using the same resolution chain already established in
-`implement-trd-beads.yaml` (Preflight step 3, Tool Availability Check): first
+`implement-trd-tasks.yaml` (Preflight step 3, Tool Availability Check): first
 try the canonical monorepo root via `git rev-parse --show-toplevel 2>/dev/null`
 + `/packages/development/lib/trd-cli.js`; if that fails, fall back to the
 legacy CWD-relative `packages/development/lib/trd-cli.js` for backward
@@ -118,7 +118,7 @@ For every non-TEST task id in the inventory (`isTest == false`):
 ```
 IF TRACKING_MODE == 'beads':
     bead_id = TRD_TO_BEAD_MAP[task.id]
-    run: br show <bead_id> --json           # live query — never trust a cached status
+    run: node "$TOOLCHAIN_CLI" run tracker.show --run-id "$RUN_ID" --arg id=<bead_id> --json   # live query — never trust a cached status
     require: status == 'closed'
 
 IF TRACKING_MODE == 'checkbox':
@@ -231,7 +231,7 @@ durable audit trail, not just a failure notice.
 
 | ID | Description | Status | Evidence |
 |----|--------------|--------|----------|
-| TRD-001 | <description> | closed / open | br show TRD-001 bead → closed |
+| TRD-001 | <description> | closed / open | tracker.show TRD-001 work item → closed |
 | TRD-001-TEST | <description> | closed / open | TRD file checkbox `- [x]` |
 | ... | | | |
 

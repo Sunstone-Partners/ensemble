@@ -19,7 +19,8 @@
  * parse = {
  *   format: 'json' | 'lines' | 'text',
  *   root?: string,                    // dotted path, json format only; default '$'
- *   map?: { <outKey>: <dottedPath> }, // field projection against the (root-projected) value
+ *   emptyWhen?: string,               // dotted path to an optional list, json format only (below)
+ *   map?: { <outKey>: <dottedPath> | <fieldSpec> }, // field projection against the (root-projected) value
  *   trimPrefix?: { <outKey>: <prefix> }, // TRD-040: strip a literal prefix off a map-built field
  *   statusMap?: { <rawValue>: <normalizedValue> }, // translates result.status, else result.state
  *   arrayMap?: {                      // TRD-033: per-item array filter + reshape (see below)
@@ -31,6 +32,13 @@
  *   }
  * }
  * ```
+ *
+ * `emptyWhen` (json only) declares that `<path>` names a LIST that a tool legitimately leaves
+ * empty, null or absent (bv's `plan.tracks` is `[]` for an epic with nothing actionable). When
+ * its final named property is an empty array, `null` or missing from its parent object, the
+ * root-projected value is `[]` and `root` is not resolved, so a `map` of `"$"` yields `[]`. The
+ * parent must still resolve to a plain object and a present non-empty value still goes through
+ * `root`, so a malformed document stays `BAD_OUTPUT`.
  *
  * ## Format handling
  *
@@ -60,6 +68,18 @@
  * to a present value or `mapOutput` throws a `BAD_OUTPUT`-coded error naming the path and the
  * first segment that could not be found — there is no "resolve to undefined and move on"
  * behavior, matching this module's fail-closed requirement.
+ *
+ * ## `map` field specs (TRD-2026-6995dc96 TRD-007)
+ *
+ * A `map` value may be an object instead of a bare path, for sources whose raw value is not
+ * already in the normalized shape. `{path, default?, optional?, asString?}`:
+ * - `path` (required, dotted path) is resolved like a bare-path entry. When it does NOT resolve
+ *   (a missing property, or a `null` value) and `default` is supplied, the default is used;
+ *   when it does not resolve and `optional: true` is set, `outKey` is OMITTED from the result;
+ *   with neither, the usual `BAD_OUTPUT` fail-closed error applies.
+ * - `asString: true` stringifies a resolved number (the normalized `priority` is a string while
+ *   kata reports an integer). Any other resolved type is `BAD_OUTPUT`, never silently coerced.
+ * A bare-path entry behaves exactly as before.
  *
  * ## `arrayMap` per-item array filter + reshape (TRD-2026-8d825f54 TRD-033)
  *
@@ -451,6 +471,73 @@ function applyArrayMapEntry(baseValue, outKey, spec) {
 }
 
 /**
+ * Resolve one object-form `parse.map` entry (see "`map` field specs" in the module header).
+ *
+ * @param {unknown} baseValue the root-projected base value
+ * @param {string} outKey the `map` key, for error messages
+ * @param {unknown} spec the entry value
+ * @returns {{present: boolean, value?: unknown}}
+ */
+function resolveFieldSpec(baseValue, outKey, spec) {
+  if (spec === null || typeof spec !== 'object' || Array.isArray(spec) || typeof spec.path !== 'string') {
+    throw badOutputError(
+      `mapOutput: parse.map['${outKey}'] must be a dotted-path string or an object with a string 'path', got ${describeType(spec)}`
+    );
+  }
+  let value;
+  let found = true;
+  try {
+    value = resolvePath(baseValue, spec.path);
+    if (value === null) {
+      found = false;
+    }
+  } catch (err) {
+    if (spec.default === undefined && spec.optional !== true) {
+      throw err;
+    }
+    found = false;
+  }
+  if (!found) {
+    if (spec.default !== undefined) {
+      return { present: true, value: JSON.parse(JSON.stringify(spec.default)) };
+    }
+    if (spec.optional === true) {
+      return { present: false };
+    }
+    throw badOutputError(`mapOutput: parse.map['${outKey}'] path '${spec.path}' resolved to null`);
+  }
+  if (spec.asString === true) {
+    if (typeof value !== 'number' && typeof value !== 'string') {
+      throw badOutputError(
+        `mapOutput: parse.map['${outKey}'] asString expects a number or string at '${spec.path}', found ${describeType(value)}`
+      );
+    }
+    value = String(value);
+  }
+  return { present: true, value };
+}
+
+/**
+ * Whether the optional list at `listPath` (`$.<parent...>.<name>`) is empty, null or absent.
+ * The parent must resolve to a plain object (else `BAD_OUTPUT` via `resolvePath`/here).
+ *
+ * @param {unknown} parsed the parsed JSON document
+ * @param {string} listPath validated `emptyWhen` path
+ * @returns {boolean}
+ */
+function isEmptyList(parsed, listPath) {
+  const cut = listPath.lastIndexOf('.');
+  const parentPath = listPath.slice(0, cut);
+  const name = listPath.slice(cut + 1);
+  const parent = resolvePath(parsed, parentPath);
+  if (parent === null || typeof parent !== 'object' || Array.isArray(parent)) {
+    throw badOutputError(`mapOutput: '${parentPath}' is ${describeType(parent)}, not an object holding '${name}'`);
+  }
+  const value = Object.prototype.hasOwnProperty.call(parent, name) ? parent[name] : undefined;
+  return value === undefined || value === null || (Array.isArray(value) && value.length === 0);
+}
+
+/**
  * Map one tool invocation's raw stdout into a plain value, per `parse` (see module header).
  *
  * @param {string} stdout raw stdout captured from the executed tool
@@ -465,12 +552,15 @@ function mapOutput(stdout, parse) {
   if (!parse || typeof parse !== 'object') {
     throw badOutputError(`mapOutput: 'parse' must be an object, got ${describeType(parse)}`);
   }
-  const { format, root, map, statusMap, arrayMap, trimPrefix } = parse;
+  const { format, root, emptyWhen, map, statusMap, arrayMap, trimPrefix } = parse;
   if (format !== 'json' && format !== 'lines' && format !== 'text') {
     throw badOutputError(`mapOutput: parse.format must be one of 'json'|'lines'|'text', got ${JSON.stringify(format)}`);
   }
   if (root !== undefined && typeof root !== 'string') {
     throw badOutputError(`mapOutput: parse.root must be a string when present, got ${describeType(root)}`);
+  }
+  if (emptyWhen !== undefined && (typeof emptyWhen !== 'string' || !/^\$\.(?:[^.[\]|]+\.)*[^.[\]|]+$/.test(emptyWhen))) {
+    throw badOutputError(`mapOutput: parse.emptyWhen must be a dotted path to a named property ('$.a.b'), got ${JSON.stringify(emptyWhen)}`);
   }
   if (map !== undefined && (typeof map !== 'object' || map === null || Array.isArray(map))) {
     throw badOutputError(`mapOutput: parse.map must be an object when present, got ${describeType(map)}`);
@@ -496,7 +586,9 @@ function mapOutput(stdout, parse) {
     } catch (err) {
       throw badOutputError(`mapOutput: malformed JSON stdout (${err.message})`);
     }
-    baseValue = resolvePath(parsed, root === undefined ? '$' : root);
+    baseValue = emptyWhen !== undefined && isEmptyList(parsed, emptyWhen)
+      ? []
+      : resolvePath(parsed, root === undefined ? '$' : root);
   } else if (format === 'lines') {
     const rawLines = String(stdout).split('\n');
     if (rawLines.length > 0 && rawLines[rawLines.length - 1] === '') {
@@ -510,11 +602,15 @@ function mapOutput(stdout, parse) {
   let result;
   if (map) {
     result = {};
-    for (const [outKey, dottedPath] of Object.entries(map)) {
-      if (typeof dottedPath !== 'string') {
-        throw badOutputError(`mapOutput: parse.map['${outKey}'] must be a dotted-path string, got ${describeType(dottedPath)}`);
+    for (const [outKey, spec] of Object.entries(map)) {
+      if (typeof spec === 'string') {
+        result[outKey] = resolvePath(baseValue, spec);
+        continue;
       }
-      result[outKey] = resolvePath(baseValue, dottedPath);
+      const resolved = resolveFieldSpec(baseValue, outKey, spec);
+      if (resolved.present) {
+        result[outKey] = resolved.value;
+      }
     }
   } else if (baseValue !== null && typeof baseValue === 'object' && !Array.isArray(baseValue)) {
     result = { ...baseValue };
