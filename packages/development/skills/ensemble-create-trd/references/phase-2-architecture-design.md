@@ -22,8 +22,8 @@ Reuse existing foundational work instead of duplicating it (dedup-by-reference)
 Present architecture options for selection when the choice is genuinely open
 
 - For a greenfield or ambiguous PRD, present 2-3 options (simplest; most scalable; best fit for the existing codebase or balanced) with pros, cons, complexity and risk, and ask the user to choose or combine. If the PRD or codebase already dictates the approach, state it and skip the options.
-- --foreman: auto-select Option C (best fit / balanced) and print `Foreman mode: auto-selected Option C (<summary>)`.
-- If $ARGUMENTS contains '--parser-tables' and does NOT contain '--foreman': skip the ask -- choose the best balanced option automatically unless the caller explicitly requested an interactive architecture review.
+- In Foreman mode (FOREMAN == true): auto-select Option C (best fit / balanced) and print `Foreman mode: auto-selected Option C (<summary>)`.
+- If $ARGUMENTS contains '--parser-tables' AND FOREMAN is not true: skip the ask -- choose the best balanced option automatically unless the caller explicitly requested an interactive architecture review.
 
 #### Step 2.4: System Architecture Design
 

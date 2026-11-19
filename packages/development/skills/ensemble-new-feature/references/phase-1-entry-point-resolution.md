@@ -9,7 +9,7 @@ Start, resume, report, or reject from `idea`/`path`/`status`; produces ACTIVE_RU
 - Invocation arguments: $ARGUMENTS -- read `idea`, `path`, `status` and flags such as `--foreman` from it.
 - If the invocation includes `--skip-refine` or any equivalent flag that would bypass prd_refine or trd_refine: reject with 'Both PRD and TRD refinement are mandatory in new-feature's fixed stage order; to skip orchestration but not refinement, run the standalone /ensemble:refine-prd or /ensemble:refine-trd commands (unmodified by new-feature).' and HALT. No run is created or mutated.
 - This workflow is the internal implementation behind the canonical front door `/ensemble:feature`; direct invocation behaves identically.
-- Foreman mode: FOREMAN = true when `--foreman` is present, else false. `--foreman` is a supported flag, never a `--skip-refine` equivalent (it bypasses no refinement stage). Nothing infers FOREMAN from the environment.
+- Foreman mode: FOREMAN = true when `--foreman` is present **or** the environment variable `FOREMAN_TASK_TITLE` is set to a non-empty value; else false. Record FOREMAN_SOURCE = `flag` when `--foreman` is present (even if `FOREMAN_TASK_TITLE` is also set), `env` when FOREMAN is true from `FOREMAN_TASK_TITLE` alone, and `none` when FOREMAN is false. `--foreman` is a supported flag, never a `--skip-refine` equivalent (it bypasses no refinement stage), and the environment path grants exactly what the flag grants -- nothing more. Nothing else infers FOREMAN from the environment: `CI=true` and `ENSEMBLE_NON_INTERACTIVE=1` mean non-interactive, not a Foreman dispatch, and an empty `FOREMAN_TASK_TITLE` is not a dispatch. FOREMAN_SOURCE is recorded so every grant made under FOREMAN names the path it entered by (see Execute Stage).
 
 #### Step 1.2: Idea Input -- Start a New Run
 
@@ -50,7 +50,7 @@ Applies only to invocations from a configured event delivery (.ensemble/new-feat
 - Call EventMappingConfig.loadEventMapping(projectRoot) (packages/agent-core/src/new-feature/event-mapping.ts). If it returns null: default-deny -- no run starts and the run index is not touched. Stop; this is the normal state for a project that has not opted in.
 - Otherwise call validateEventPayload(mapping, event) BEFORE any run-index call. Rejected (`ok: false`): create no PRD, advance no run, report the exact `reason` as the pending step, and stop.
 - Accepted: present the event source and full payload to the user via AskUserQuestion for explicit review BEFORE any PRD-stage work (the payload's `summary` only seeds the normal PRD elicitation). On decline create no PRD, advance no run, and stop. On approval proceed as Step 2 with `event.summary` as the `idea`.
-- Foreman mode: when FOREMAN == true an accepted payload is NOT auto-approved (untrusted input, no reviewer): create no PRD and no run, and report the pending step as 'human review of the event payload is required; --foreman cannot approve an untrusted event payload'. Stop.
+- Foreman mode: when FOREMAN == true an accepted payload is NOT auto-approved (untrusted input, no reviewer): create no PRD and no run, and report the pending step as 'human review of the event payload is required; Foreman mode cannot approve an untrusted event payload'. Stop.
 
 #### Step 1.6: Abandon Confirmation Gate
 
@@ -59,5 +59,5 @@ Checked before Step 4; when `abandon` is provided, Step 4's resume/status branch
 - If `abandon` is provided (empty string counts; only an omitted parameter skips this step): call RUN_INDEX_CLI find-active.
 - Not found: print 'No active run exists for this project; nothing to abandon.' and stop -- no mutate/abandon call is made, no state is touched.
 - Found: ask the user for explicit confirmation (AskUserQuestion), naming the run's identifier and current stage, before calling RUN_INDEX_CLI abandon. Declined or no response: make no mutate/abandon call; the run is left untouched.
-- Foreman mode: when FOREMAN == true do not ask for confirmation (no question, no prompt) -- `--abandon` with `--foreman` is the explicit instruction: call RUN_INDEX_CLI abandon with runId and reason directly and print the run's identifier and the stage it was abandoned at.
+- Foreman mode: when FOREMAN == true do not ask for confirmation (no question, no prompt) -- `--abandon` under Foreman mode is the explicit instruction: call RUN_INDEX_CLI abandon with runId and reason directly and print the run's identifier and the stage it was abandoned at.
 - On explicit confirmation: call RUN_INDEX_CLI abandon with runId and reason, where `reason` is the `abandon` parameter's text (empty string if none). This sets status to "abandoned" and releases active.lock; artifacts and history are retained for a later `--status`.

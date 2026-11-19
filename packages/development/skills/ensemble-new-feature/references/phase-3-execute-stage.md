@@ -8,7 +8,7 @@ Each document-producing stage wraps an unmodified standalone skill.
 
 - Dispatch ELIGIBLE_STAGE to its skill in-session, as it runs standalone: prd_create -> ensemble-create-prd, input = the run's `idea`; prd_refine -> ensemble-refine-prd, input = the PRD artifacts[] entry `prd_create` (or the latest `prd_refine`) recorded; trd_create -> ensemble-create-trd, input = the PRD artifacts[] entry `prd_refine` recorded; trd_refine -> ensemble-refine-trd, input = the TRD artifacts[] entry `trd_create` recorded; beads_plan -> ensemble-implement-trd-tasks --plan, input = the TRD artifacts[] entry `trd_refine` recorded.
 - Always pass the exact `path` from the named artifacts[] entry, never a globbed or recalled path. `--plan` is load-bearing: it stops after the beads-build Scaffold phase, since implementation is not yet approved.
-- Foreman mode: when FOREMAN == true, append `--foreman` to the dispatched skill: ensemble-create-prd --foreman, ensemble-refine-prd --foreman, ensemble-create-trd --foreman, ensemble-refine-trd --foreman, ensemble-implement-trd-tasks --plan --foreman. This command does not set or reinterpret FOREMAN_* environment variables (FOREMAN_TASK_TITLE, FOREMAN_ARTIFACT_PATH, ...); each stage skill keeps its own contract. When FOREMAN is not true, no `--foreman` is added.
+- Foreman mode: when FOREMAN == true, append `--foreman` to the dispatched skill: ensemble-create-prd --foreman, ensemble-refine-prd --foreman, ensemble-create-trd --foreman, ensemble-refine-trd --foreman, ensemble-implement-trd-tasks --plan --foreman. Append it whichever way FOREMAN was entered, including FOREMAN_SOURCE = `env`, so each stage skill sees the same mode as an explicit argument. This command does not set or reinterpret FOREMAN_* environment variables (FOREMAN_TASK_TITLE, FOREMAN_ARTIFACT_PATH, ...); each stage skill keeps its own contract. When FOREMAN is not true, no `--foreman` is added.
 
 #### Step 3.2: Record the Stage Outcome
 
@@ -39,7 +39,7 @@ Human checkpoint; nothing past it runs without a recorded approval timestamp.
 - Present the accepted PRD/TRD references (artifacts[] from prd_refine/trd_refine) and the bead plan (beadRefs[]) via AskUserQuestion, exactly as recorded in the run, and wait for explicit approval.
 - On explicit approval: call RUN_INDEX_CLI mutate with patch [setImplementationApprovedAt now, setStage implementation] in the same call.
 - On absent or declined approval: make no mutate call -- the run stays parked at implementation_approval with implementationApprovedAt null.
-- Foreman mode: when FOREMAN == true, ask nothing (no question, no prompt) -- the Foreman dispatch is the approval. Grant it in a single mutate call with patch [setImplementationApprovedAt now, setStage implementation, setStageOutcome kind approval_wait, detail "implementation approval granted by --foreman policy (no human present)"].
+- Foreman mode: when FOREMAN == true, ask nothing (no question, no prompt) -- the Foreman dispatch is the approval. Grant it in a single mutate call with patch [setImplementationApprovedAt now, setStage implementation, setStageOutcome kind approval_wait, detail <GRANT_DETAIL>], where <GRANT_DETAIL> is "implementation approval granted by Foreman dispatch (FOREMAN_TASK_TITLE set; no human present)" when FOREMAN_SOURCE is `env` and "implementation approval granted by --foreman policy (no human present)" when FOREMAN_SOURCE is `flag`, so the audit trail names the path the dispatch entered by.
 
 #### Step 3.6: PR Approval Checkpoint
 
@@ -50,7 +50,7 @@ Optional; requires an approval distinct from implementation_approval's.
 - If isAvailable() === true: present the target repo/branch/title/body (repo/branch from the run's recorded references, title/body proposed from the accepted PRD/TRD) via AskUserQuestion and require a separate, immediate explicit approval before createPullRequest().
 - On absent/declined approval: create no PR and advance stage to "done".
 - On explicit approval: call RUN_INDEX_CLI mutate with patch [setPrApprovedAt now, setStage pr_create] immediately before the create call -- never in the same mutate call as setImplementationApprovedAt.
-- Foreman mode: when FOREMAN == true, do not ask for the opt-in or present repo/branch/title/body (no question, no prompt) -- treat the opt-in as yes. Call RUN_INDEX_CLI mutate with patch [setPrApprovedAt now, setStage pr_create, setStageOutcome detail "PR approval granted by --foreman policy (no human present)"] -- never in the same mutate call as setImplementationApprovedAt.
+- Foreman mode: when FOREMAN == true, do not ask for the opt-in or present repo/branch/title/body (no question, no prompt) -- treat the opt-in as yes. Call RUN_INDEX_CLI mutate with patch [setPrApprovedAt now, setStage pr_create, setStageOutcome detail <GRANT_DETAIL>] -- never in the same mutate call as setImplementationApprovedAt. <GRANT_DETAIL> is "PR approval granted by Foreman dispatch (FOREMAN_TASK_TITLE set; no human present)" when FOREMAN_SOURCE is `env` and "PR approval granted by --foreman policy (no human present)" when FOREMAN_SOURCE is `flag`.
 - Foreman mode: when FOREMAN == true and isAvailable() is false, the rule above applies unchanged: no PR, detail "no PR provider available", stage "done".
 
 #### Step 3.7: Execute Stage: PR Creation

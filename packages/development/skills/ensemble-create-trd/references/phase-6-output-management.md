@@ -28,7 +28,7 @@ Save the TRD and suggest the follow-up
 
 - If $ARGUMENTS contains '--parser-tables': skip this step.
 - Save the TRD and companions only after the Constitution Gate passes. Print the file path, task count, design readiness score, TRD_MICRO_UUID, and `Companion artifacts generated:` with each path (or exactly `No companion artifacts generated.`).
-- --foreman with FOREMAN_ARTIFACT_PATH set: the phase report lists the TRD path and every companion path (or `No companion artifacts generated.`).
+- In Foreman mode (FOREMAN == true) with FOREMAN_ARTIFACT_PATH set: the phase report lists the TRD path and every companion path (or `No companion artifacts generated.`).
 - Suggest: '/ensemble:refine-trd docs/TRD/TRD-YYYY-<TRD_MICRO_UUID>-slug.md' only after constitution compliance passes. This is the ONLY next step printed: a fresh TRD has not been reviewed, and refine-trd is the review.
 - Do NOT print /ensemble:implement-trd-tasks, /ensemble:implement-trd or /ensemble:configure-team as a next step; implementation is offered by refine-trd's closing go/no-go.
 - If --team was passed, run /ensemble:configure-team on the saved TRD path after the save.
@@ -58,5 +58,5 @@ Save the TRD and print the Foreman next step
 
 - Runs only when $ARGUMENTS contains '--parser-tables'. If it is absent, skip this step. It replaces File Save and Next Steps.
 - Create docs/TRD/ if absent and save the TRD only after constitution compliance passes. Print: file path, task count, design readiness score, TRD_MICRO_UUID, and the explicit next step `foreman sling prd <original-prd-path>` only after constitution compliance passes. It is the only next step; suggest no beads-specific implementation commands. Then stop for user approval.
-- If --foreman is also present and FOREMAN_ARTIFACT_PATH is set and non-empty, the --foreman artifact contract applies unchanged: also write the phase report, listing the TRD path, to that exact path (creating parent directories).
+- If FOREMAN mode is also entered (FOREMAN == true) and FOREMAN_ARTIFACT_PATH is set and non-empty, the Foreman artifact contract applies unchanged: also write the phase report, listing the TRD path, to that exact path (creating parent directories).
 - --team does not apply in this mode: do not auto-run /ensemble:configure-team.

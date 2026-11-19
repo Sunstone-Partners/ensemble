@@ -11,7 +11,7 @@ Read the run's stage and stageOutcome from the run index.
 - Else ("approval_wait", "decline", or "failure"): ELIGIBLE_STAGE is ACTIVE_RUN.stage itself -- the current stage has not completed, so it (and only it) is what runs next, regardless of what files already exist on disk with plausible names for a later stage.
 - Never consult the filesystem (glob, ls) to decide ELIGIBLE_STAGE; the only input is the run index.
 - Plan-change staleness check: if ELIGIBLE_STAGE is "implementation" and ACTIVE_RUN.implementationApprovedAt is non-null, compare it with the recordedAt of every artifacts[] entry whose producingStage is "trd_refine" or "beads_plan". If any is later, the approved plan has changed since approval: call RUN_INDEX_CLI mutate with patch [setImplementationApprovedAt null, setStage implementation_approval], then re-run this step, so ELIGIBLE_STAGE becomes "implementation_approval", never "implementation" on a stale approval. Otherwise approval is still current.
-- Foreman mode: when FOREMAN == true and the staleness check returns to "implementation_approval", Execute Stage step 5 re-grants approval through its recorded --foreman path, so the run record shows the new grant.
+- Foreman mode: when FOREMAN == true and the staleness check returns to "implementation_approval", Execute Stage step 5 re-grants approval through its recorded Foreman-mode path (FOREMAN_SOURCE = `flag` or `env`), so the run record shows the new grant and names the entry path.
 
 #### Step 2.2: Dispatch to the Eligible Stage
 
