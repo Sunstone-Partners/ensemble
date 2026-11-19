@@ -66,7 +66,9 @@ constraints:
     artifact reference is recorded through it, and active.lock enforces a
     single active run per project.
   - >-
-    `--foreman` (FOREMAN == true) never bypasses RUN_ALREADY_ACTIVE, never
+    Foreman mode (FOREMAN == true, from either entry path -- the `--foreman`
+    argument or a non-empty FOREMAN_TASK_TITLE) never bypasses
+    RUN_ALREADY_ACTIVE, never
     makes `--status` anything but a read-only report, and never retries a
     failed stage more than once per invocation (Foreman owns any further
     retry). It replaces this command's own user prompts with recorded
@@ -94,7 +96,7 @@ workflow:
             - "Invocation arguments: $ARGUMENTS -- read `idea`, `path`, `status` and flags such as `--foreman` from it."
             - "If the invocation includes `--skip-refine` or any equivalent flag that would bypass prd_refine or trd_refine: reject with 'Both PRD and TRD refinement are mandatory in new-feature's fixed stage order; to skip orchestration but not refinement, run the standalone /ensemble:refine-prd or /ensemble:refine-trd commands (unmodified by new-feature).' and HALT. No run is created or mutated."
             - "This workflow is the internal implementation behind the canonical front door `/ensemble:feature` (keywords `new`/`resume`/`status`/`abandon`); direct invocation behaves identically."
-            - "Foreman mode: FOREMAN = true when `--foreman` is present, else false. `--foreman` is a supported flag, never a `--skip-refine` equivalent (it bypasses no refinement stage). Nothing infers FOREMAN from the environment."
+            - "Foreman mode -- the single rule that sets FOREMAN for this whole command; every Foreman branch below keys on this flag and never re-tests the argument: FOREMAN = true when EITHER `--foreman` is present in the arguments (FOREMAN_SOURCE = `flag`) OR the environment variable FOREMAN_TASK_TITLE is set to a non-empty value (FOREMAN_SOURCE = `env`; a Foreman dispatch runs this workflow without the flag, so the environment is the other supported entry path, and it grants exactly what the flag grants and nothing more), else FOREMAN = false with FOREMAN_SOURCE unset. `--foreman` is a supported flag, never a `--skip-refine` equivalent (it bypasses no refinement stage). Nothing else infers FOREMAN from the environment: `CI=true` and `ENSEMBLE_NON_INTERACTIVE=1` mean non-interactive, not Foreman mode, and grant no approval."
 
         - order: 2
           title: Idea Input -- Start a New Run
@@ -144,7 +146,7 @@ workflow:
             - "If `abandon` is provided (empty string counts; only an omitted parameter skips this step): call RunIndexStore.findActive(projectRoot)."
             - "Not found: print 'No active run exists for this project; nothing to abandon.' and stop -- no mutate()/abandon() call is made, no state is touched."
             - "Found: ask the user for explicit confirmation (AskUserQuestion), naming the run's identifier and current stage, before calling RunIndexStore.abandon(). Declined or no response: make no mutate()/abandon() call; the run is left untouched."
-            - "Foreman mode: when FOREMAN == true do not ask for confirmation (no question, no prompt) -- `--abandon` with `--foreman` is the explicit instruction: call RunIndexStore.abandon(projectRoot, runId, reason) directly and print the run's identifier and the stage it was abandoned at."
+            - "Foreman mode: when FOREMAN == true do not ask for confirmation (no question, no prompt) -- `--abandon` under Foreman mode is the explicit instruction: call RunIndexStore.abandon(projectRoot, runId, reason) directly and print the run's identifier and the stage it was abandoned at."
             - "On explicit confirmation: call RunIndexStore.abandon(projectRoot, runId, reason), where `reason` is the `abandon` parameter's text (empty string if none). This sets status to \"abandoned\" and releases active.lock; artifacts and history are retained for a later `--status`."
 
     - name: Stage Resolution
@@ -160,7 +162,7 @@ workflow:
             - "Else (\"approval_wait\", \"decline\", or \"failure\"): ELIGIBLE_STAGE is ACTIVE_RUN.stage itself -- the current stage has not completed, so it (and only it) is what runs next, regardless of what files already exist on disk with plausible names for a later stage."
             - "Never consult the filesystem (glob, ls) to decide ELIGIBLE_STAGE; the only input is RunIndexStore."
             - "Plan-change staleness check: if ELIGIBLE_STAGE is \"implementation\" and ACTIVE_RUN.implementationApprovedAt is non-null, compare it with the recordedAt of every artifacts[] entry whose producingStage is \"trd_refine\" or \"beads_plan\". If any is later, the approved plan has changed since approval: call RunIndexStore.mutate() setting implementationApprovedAt = null and stage = \"implementation_approval\" in one call, then re-run this step, so ELIGIBLE_STAGE becomes \"implementation_approval\", never \"implementation\" on a stale approval. Otherwise approval is still current."
-            - "Foreman mode: when FOREMAN == true and the staleness check returns to \"implementation_approval\", Execute Stage step 5 re-grants approval through its recorded --foreman path, so the run record shows the new grant."
+            - "Foreman mode: when FOREMAN == true and the staleness check returns to \"implementation_approval\", Execute Stage step 5 re-grants approval through its recorded Foreman path (the entry path it recorded), so the run record shows the new grant."
 
         - order: 2
           title: Dispatch to the Eligible Stage
@@ -179,7 +181,7 @@ workflow:
           actions:
             - "Dispatch ELIGIBLE_STAGE to its skill in-session, as it runs standalone: prd_create -> ensemble-create-prd, input = the run's `idea`; prd_refine -> ensemble-refine-prd, input = the PRD artifacts[] entry `prd_create` (or the latest `prd_refine`) recorded; trd_create -> ensemble-create-trd, input = the PRD artifacts[] entry `prd_refine` recorded; trd_refine -> ensemble-refine-trd, input = the TRD artifacts[] entry `trd_create` recorded; beads_plan -> ensemble-implement-trd-beads --plan, input = the TRD artifacts[] entry `trd_refine` recorded."
             - "Always pass the exact `path` from the named artifacts[] entry, never a globbed or recalled path. `--plan` is load-bearing: it stops after the beads-build Scaffold phase, since implementation is not yet approved."
-            - "Foreman mode: when FOREMAN == true, append `--foreman` to the dispatched skill: ensemble-create-prd --foreman, ensemble-refine-prd --foreman, ensemble-create-trd --foreman, ensemble-refine-trd --foreman, ensemble-implement-trd-beads --plan --foreman. This command does not set or reinterpret FOREMAN_* environment variables (FOREMAN_TASK_TITLE, FOREMAN_ARTIFACT_PATH, ...); each stage skill keeps its own contract. When FOREMAN is not true, no `--foreman` is added."
+            - "Foreman mode: when FOREMAN == true, append `--foreman` to the dispatched skill: ensemble-create-prd --foreman, ensemble-refine-prd --foreman, ensemble-create-trd --foreman, ensemble-refine-trd --foreman, ensemble-implement-trd-beads --plan --foreman. This command does not set or reinterpret any other FOREMAN_* environment variable (FOREMAN_TASK_TITLE, FOREMAN_ARTIFACT_PATH, ...); each stage skill keeps its own contract, and each keeps its own Foreman-mode rule. When FOREMAN is not true, no `--foreman` is added."
 
         - order: 2
           title: Record the Stage Outcome
@@ -210,7 +212,7 @@ workflow:
             - "Present the accepted PRD/TRD references (artifacts[] from prd_refine/trd_refine) and the bead plan (beadRefs[]) via AskUserQuestion, exactly as recorded in the run, and wait for explicit approval."
             - "On explicit approval: call RunIndexStore.mutate() setting implementationApprovedAt = now() and advancing stage to \"implementation\" in the same call."
             - "On absent or declined approval: make no mutate() call -- the run stays parked at implementation_approval with implementationApprovedAt null."
-            - "Foreman mode: when FOREMAN == true, ask nothing (no question, no prompt) -- the Foreman dispatch is the approval. Grant it in a single mutate() call setting implementationApprovedAt = now(), advancing stage to \"implementation\", and setting stageOutcome to { kind: \"approval_wait\", detail: \"implementation approval granted by --foreman policy (no human present)\", recordedAt: now() }. `--status` prints that detail, so an auto-grant is never mistaken for a human approval."
+            - "Foreman mode: when FOREMAN == true, ask nothing (no question, no prompt) -- the Foreman dispatch is the approval. Grant it in a single mutate() call setting implementationApprovedAt = now(), advancing stage to \"implementation\", and setting stageOutcome to { kind: \"approval_wait\", recordedAt: now() } with detail taken from how Foreman mode was entered -- when FOREMAN_SOURCE is `flag`, detail \"implementation approval granted by --foreman policy (no human present)\"; when FOREMAN_SOURCE is `env`, detail \"implementation approval granted by Foreman dispatch (FOREMAN_TASK_TITLE set; no human present)\". `--status` prints that detail, so an auto-grant is never mistaken for a human approval and the audit trail names the entry path."
 
         - order: 6
           title: PR Approval Checkpoint
@@ -221,7 +223,7 @@ workflow:
             - "If isAvailable() === true: present the target repo/branch/title/body (repo/branch from the run's recorded references, title/body proposed from the accepted PRD/TRD) via AskUserQuestion and require a separate, immediate explicit approval before createPullRequest()."
             - "On absent/declined approval: create no PR and advance stage to \"done\"."
             - "On explicit approval: call RunIndexStore.mutate() setting prApprovedAt = now() and advancing stage to \"pr_create\" immediately before the create call -- never in the same mutate() call as implementationApprovedAt."
-            - "Foreman mode: when FOREMAN == true, do not ask for the opt-in or present repo/branch/title/body (no question, no prompt) -- treat the opt-in as yes. Call RunIndexStore.mutate() setting prApprovedAt = now(), advancing stage to \"pr_create\", and setting stageOutcome detail to \"PR approval granted by --foreman policy (no human present)\" -- never in the same mutate() call as implementationApprovedAt."
+            - "Foreman mode: when FOREMAN == true, do not ask for the opt-in or present repo/branch/title/body (no question, no prompt) -- treat the opt-in as yes. Call RunIndexStore.mutate() setting prApprovedAt = now(), advancing stage to \"pr_create\", and setting stageOutcome detail to the entry path -- when FOREMAN_SOURCE is `flag`, \"PR approval granted by --foreman policy (no human present)\"; when FOREMAN_SOURCE is `env`, \"PR approval granted by Foreman dispatch (FOREMAN_TASK_TITLE set; no human present)\" -- never in the same mutate() call as implementationApprovedAt."
             - "Foreman mode: when FOREMAN == true and isAvailable() is false, the rule above applies unchanged: create no PR, record stageOutcome detail \"no PR provider available\", and advance stage to \"done\"."
 
         - order: 7
