@@ -159,7 +159,7 @@ async function handleMcpTool(toolName) {
     const pattern = findDeniedMcpPattern(toolName, denylist);
     debugLog(`MCP ON DENYLIST: ${toolName} - denying`);
     outputDecision(DECISION.buildDeny(
-      `Permitter blocked MCP tool ${truncateForMessage(toolName)} (matched deny rule ${pattern}).`
+      `Permitter blocked MCP tool ${truncateForMessage(toolName)} (matched deny rule ${truncateForMessage(pattern)}).`
     ));
     return;
   }
@@ -257,7 +257,7 @@ async function main(hookData) {
       const pattern = findDeniedPattern(cmdStr, denylist);
       debugLog(`ON DENYLIST: ${cmdStr} - denying`);
       outputDecision(DECISION.buildDeny(
-        `Permitter blocked "${truncateForMessage(cmdStr)}" (matched deny rule ${pattern}).`
+        `Permitter blocked "${truncateForMessage(cmdStr)}" (matched deny rule ${truncateForMessage(pattern)}).`
       ));
       return;
     }

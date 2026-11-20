@@ -227,6 +227,25 @@ describe('deny decisions carry a reason', () => {
     expect(decision.message).toContain('truncated');
   });
 
+  test('deny message stays bounded for a very long deny pattern (Bash)', () => {
+    const longArg = 'a'.repeat(5000);
+    const cwd = makeSandbox({ deny: [`Bash(rm ${longArg}:*)`] });
+    const res = runHook({ tool_name: 'Bash', tool_input: { command: `rm ${longArg}` } }, { cwd });
+    const decision = decisionOf(res.stdout);
+    expect(decision?.behavior).toBe('deny');
+    // Both the echoed command and the echoed rule are capped at 200 characters.
+    expect(decision.message.length).toBeLessThan(700);
+  });
+
+  test('deny message stays bounded for a very long deny pattern (MCP)', () => {
+    const longTool = `mcp__srv__${'a'.repeat(5000)}`;
+    const cwd = makeSandbox({ deny: [longTool] });
+    const res = runHook({ tool_name: longTool, tool_input: {} }, { cwd });
+    const decision = decisionOf(res.stdout);
+    expect(decision?.behavior).toBe('deny');
+    expect(decision.message.length).toBeLessThan(700);
+  });
+
   test('deny decision has exactly the shape Claude Code accepts', () => {
     const cwd = makeSandbox({ deny: ['Bash(rm:*)'] });
     const res = runHook({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }, { cwd });

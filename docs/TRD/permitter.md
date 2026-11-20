@@ -447,7 +447,7 @@ process.stdin.on('end', async () => {
 |----------|---------|-------------|
 | \`ENSEMBLE_PERMITTER_DISABLE\` | \`"0"\` | Set to \`"1"\` to disable the hook |
 | \`PERMITTER_DEBUG\` | \`"0"\` | Enable debug logging |
-| \`PERMITTER_STRICT\` | \`"1"\` | Reserved; not read |
+| \`PERMITTER_STRICT\` | \`"1"\` | Not implemented; no code reads it |
 
 ### 4.2 command-parser.js
 
@@ -971,12 +971,12 @@ When \`PERMITTER_DEBUG=1\`:
 
 **Deliverables:**
 - Installable plugin package
-- Working hook that passes through (disabled by default)
+- Working hook that passes through when disabled (\`ENSEMBLE_PERMITTER_DISABLE=1\`); enabled by default
 - Basic documentation
 
 **Exit Criteria:**
 - \`claude plugin install ./packages/permitter\` succeeds
-- Hook executes without error when PERMITTER_ENABLED=1
+- Hook executes without error when \`ENSEMBLE_PERMITTER_DISABLE\` is unset
 - All unit tests pass
 
 ### 6.3 Sprint 2: Command Parsing
@@ -1041,7 +1041,7 @@ When \`PERMITTER_DEBUG=1\`:
 
 | AC ID | Acceptance Criteria | Implementing Tasks |
 |-------|--------------------|--------------------|
-| AC1 | Disabled by default | PERM-P1-CORE-006 |
+| AC1 | Enabled by default; disabled only when `ENSEMBLE_PERMITTER_DISABLE` is exactly `1` | PERM-P1-CORE-006 |
 | AC2 | Exit 0 always; allow on match, no output otherwise | PERM-P1-CORE-008 |
 | AC3 | Load from all settings files | PERM-P3-ALLOW-001 through PERM-P3-ALLOW-006 |
 | AC4 | Parse env prefixes, chains, wrappers | PERM-P2-PARSE-005 through PERM-P2-PARSE-012 |
@@ -1053,7 +1053,7 @@ When \`PERMITTER_DEBUG=1\`:
 
 | AC | Test Type | Test Location | Pass Criteria |
 |----|-----------|---------------|---------------|
-| AC1 | Unit | permitter.test.js::test disabled by default | Exit 0 when PERMITTER_ENABLED unset |
+| AC1 | Unit | hook-contract.test.js::disabled hook defers silently instead of asking | Exit 0 with empty stdout when ENSEMBLE_PERMITTER_DISABLE=1 |
 | AC2 | Integration | hook-contract.test.js::allow-path behavior is unchanged | Exit 0 with an allow or deny decision, or empty stdout |
 | AC3 | Unit | allowlist-loader.test.js::test merge | All three settings files loaded |
 | AC4 | Unit | command-parser.test.js::test normalization | All construct types handled |

@@ -199,8 +199,8 @@ behaviours the hook can emit.
 | `{"hookSpecificOutput":{..."behavior":"deny","message":"..."}}` | 0 | Block execution, show message (denylist hit) |
 | (empty) | 0 | No decision - defer to Claude Code's normal permission prompt |
 
-The `deny` message names the rule that matched. The echoed command text in it is truncated at 200
-characters (the rule name is always kept), so a very long command cannot produce an unbounded message.
+The `deny` message names the rule that matched. The echoed command text and the echoed rule are each
+truncated at 200 characters, so a very long command or rule cannot produce an unbounded message.
 
 ### Fail-Closed Design
 

