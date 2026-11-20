@@ -224,37 +224,59 @@ function repoRoot() {
 }
 
 /**
- * Does this repo hold a .NET project? Any `*.csproj` or `*.sln` at the repo root or one
- * directory below it counts. Synchronous and glob-free on purpose: `resolve-bdd` is a
- * short, cheap call both commands make, and `packages/core/lib/detect-framework.js` is
- * async and glob-based, which this CLI cannot await.
+ * Does this repo hold a .NET project? Any `*.csproj` or `*.sln` anywhere below the repo
+ * root counts, so the common `src/App/App.csproj` layout is found without a solution file.
+ * Depth-bounded, glob-free and synchronous on purpose: `resolve-bdd` is a short, cheap
+ * call both commands make, `packages/core/lib/detect-framework.js` is async and glob-based
+ * (which this CLI cannot await), and an unbounded walk would descend `node_modules` and
+ * build output, where a checked-in or restored `.csproj` would turn BDD on in a non-.NET
+ * repo. Depth stops short of the deepest layouts on purpose: going deeper would pick up
+ * vendored or fixture project files (this repo's own `evals/skills/*/fixture/*.csproj`) and
+ * report a non-.NET repo as .NET. Read the result as "found", never as "absent".
  * @param {string} root repo root
  * @returns {boolean} true when a .NET project file is there
  */
+const DOTNET_SCAN_MAX_DEPTH = 4;
+const DOTNET_SCAN_SKIP = new Set([
+  'node_modules',
+  'bower_components',
+  'vendor',
+  'packages',
+  'bin',
+  'obj',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  'fixtures',
+  'fixture',
+  'evals',
+]);
+
 function hasDotnetProject(root) {
   if (!root) return false;
-  const isDotnetFile = (name) => /\.(csproj|sln)$/i.test(name);
-  let entries;
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return false;
+  const isDotnetFile = (name) => /\.(csproj|sln|fsproj)$/i.test(name);
+  const dirs = [root];
+  for (let depth = 0; depth < DOTNET_SCAN_MAX_DEPTH && dirs.length; depth += 1) {
+    const next = [];
+    for (const dir of dirs) {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) {
+        if (e.isFile() && isDotnetFile(e.name)) return true;
+        if (!e.isDirectory()) continue;
+        if (e.name.startsWith('.') || DOTNET_SCAN_SKIP.has(e.name.toLowerCase())) continue;
+        next.push(path.join(dir, e.name));
+      }
+    }
+    dirs.length = 0;
+    dirs.push(...next);
   }
-  if (entries.some((e) => e.isFile() && isDotnetFile(e.name))) return true;
-  return entries.some(
-    (e) =>
-      e.isDirectory() &&
-      !e.name.startsWith('.') &&
-      (() => {
-        try {
-          return fs
-            .readdirSync(path.join(root, e.name), { withFileTypes: true })
-            .some((c) => c.isFile() && isDotnetFile(c.name));
-        } catch {
-          return false;
-        }
-      })()
-  );
+  return false;
 }
 
 /** Repo-root-relative forward-slash form of `p`; stays absolute if `p` lies outside the repo. */

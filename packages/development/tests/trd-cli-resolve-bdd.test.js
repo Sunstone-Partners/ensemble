@@ -120,6 +120,16 @@ describe('runResolveBdd (handler)', () => {
     });
   });
 
+  test('a .NET project below the first directory still counts as a .NET repo', () => {
+    const root = repoDir();
+    fs.mkdirSync(path.join(root, 'src', 'App'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'App', 'App.csproj'), '<Project />');
+    expect(inRepo(root, () => runResolveBdd([], {}))).toMatchObject({
+      enabled: true,
+      source: 'default',
+    });
+  });
+
   test('--trd feeds the TRD stamp into the resolution, so an opt-out recorded by create-trd is honoured', () => {
     expect(runResolveBdd(['--trd', trdWith('standard')], {})).toMatchObject({ enabled: false, source: 'trd' });
     expect(runResolveBdd(['--trd', trdWith('bdd-reqnroll')], {})).toMatchObject({ enabled: true, source: 'trd' });
