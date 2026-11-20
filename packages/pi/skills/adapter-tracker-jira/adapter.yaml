@@ -30,10 +30,35 @@ allowlist:
       - comments
       - "--version"
 
+# The `jira` command this adapter invokes ships with the `full` bundle
+# (`packages/full/bin/jira`): a dependency-free Node script (node builtins plus
+# global `fetch`) implementing exactly the subcommands, flags and JSON shapes
+# below, so an installed plugin needs no globally installed `jira` CLI.
+# Authentication is Jira Cloud REST v3 basic auth through these environment
+# variables; the manifest's `env:` list is what
+# `packages/development/lib/toolchain/runner.js#buildChildEnv` forwards to the
+# child process, so a name missing here never reaches the binary.
+#
+# The legacy `ATLASSIAN_*` names are kept alongside the `JIRA_*` ones so a setup
+# that already exported them (they were this adapter's only declared names
+# before) keeps reaching a user-provided `jira` CLI instead of silently losing
+# its credentials. The bundled `packages/full/bin/jira` reads them as fallbacks
+# for `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`.
 env:
-  - ATLASSIAN_CLOUD_ID
-  - ATLASSIAN_AUTH_TOKEN
+  # Jira Cloud site, e.g. https://your-site.atlassian.net
+  - JIRA_BASE_URL
+  # Account e-mail used as the basic-auth user
+  - JIRA_EMAIL
+  # Atlassian API token (https://id.atlassian.com/manage-profile/security/api-tokens)
+  - JIRA_API_TOKEN
+  # Default project key for `jira issues create` (`tracker.create` declares no
+  # `project` input, so the project comes from the environment)
+  - JIRA_PROJECT_KEY
+  # Legacy aliases, still forwarded for a user-provided `jira` CLI
   - ATLASSIAN_SITE_URL
+  - ATLASSIAN_EMAIL
+  - ATLASSIAN_AUTH_TOKEN
+  - ATLASSIAN_CLOUD_ID
 
 health:
   - id: jira-installed
@@ -44,6 +69,27 @@ health:
     timeoutMs: 10000
 
 detect: []
+
+# Status vocabulary
+# ---------------
+# The `statusMap` blocks below are Jira Cloud's default "Simplified Workflow"
+# vocabulary. A repository whose workflow uses other status names ("Code
+# Review", "QA Testing", ...) extends this adapter from its own
+# `.ensemble/toolchain.yaml` instead of duplicating the whole adapter:
+#
+#   adapters:
+#     jira:
+#       statusMap:    # read direction: provider status name -> normalized status
+#         "Code Review": in_progress
+#       statusNames:  # write direction: normalized status -> provider status name
+#         open: Backlog
+#
+# `statusMap` extends the read side; a provider status with no entry still
+# fails `BAD_OUTPUT`, and the error names the `adapters.jira.statusMap` key to
+# set. `statusNames` replaces the provider status name this adapter writes for
+# a normalized status (the defaults below stay in place when it is absent).
+# See `packages/development/lib/toolchain/status-overrides.js` and
+# `packages/development/lib/toolchain/config.js#resolveAdapterOverrides`.
 
 capabilities:
   # jira issues read <KEY>: `packages/infrastructure/skills/jira/SKILL.md`'s own jq examples
