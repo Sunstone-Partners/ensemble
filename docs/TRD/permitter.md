@@ -207,7 +207,7 @@ Format: \`PERM-<PHASE>-<CATEGORY>-<NUMBER>\`
 |   |  | ALLOW   | exit 0 ----------------------+---> Command Executes        |
 |   |  +---------+                             |                              |
 |   |  +---------+                             |                              |
-|   |  | DEFER   | exit 1 ----------------------+---> Normal Permission Flow  |
+|   |  | DEFER   | exit 0 (no output) ---------+---> Normal Permission Flow  |
 |   |  +---------+                             |                              |
 |   +------------------------------------------+                              |
 |                                                                              |
@@ -272,9 +272,9 @@ Format: \`PERM-<PHASE>-<CATEGORY>-<NUMBER>\`
 |   Denylist:  ["Bash(rm -rf:*)"]                             |
 |                                                              |
 |   For each command:                                         |
-|     1. Check denylist (exit 1 if match)                     |
+|     1. Check denylist (deny decision if match)              |
 |     2. Check allowlist (continue if match)                  |
-|     3. No match -> exit 1 (defer to normal flow)            |
+|     3. No match -> exit 0, no output (defer to normal flow) |
 |                                                              |
 |   All commands matched -> exit 0 (ALLOW)                    |
 |                                                              |
@@ -344,7 +344,7 @@ function debugLog(msg) {
 /**
  * Main hook logic.
  * @param {Object} hookData - Hook data from stdin
- * @returns {number} Exit code (0 = allow, 1 = defer)
+ * @returns {number} Exit code (0 always; stdout carries the decision or is empty)
  */
 async function main(hookData) {
   // 1. Check if enabled
@@ -424,7 +424,7 @@ process.stdin.on('end', async () => {
 |----------|---------|-------------|
 | \`PERMITTER_ENABLED\` | \`"0"\` | Master enable switch |
 | \`PERMITTER_DEBUG\` | \`"0"\` | Enable debug logging |
-| \`PERMITTER_STRICT\` | \`"1"\` | Exit 1 on any parse error |
+| \`PERMITTER_STRICT\` | \`"1"\` | Reserved; not read |
 
 ### 4.2 command-parser.js
 
@@ -1011,7 +1011,7 @@ When \`PERMITTER_DEBUG=1\`:
 | AC ID | Acceptance Criteria | Implementing Tasks |
 |-------|--------------------|--------------------|
 | AC1 | Disabled by default | PERM-P1-CORE-006 |
-| AC2 | Exit 0 on match, exit 1 otherwise | PERM-P1-CORE-008 |
+| AC2 | Exit 0 always; allow on match, no output otherwise | PERM-P1-CORE-008 |
 | AC3 | Load from all settings files | PERM-P3-ALLOW-001 through PERM-P3-ALLOW-006 |
 | AC4 | Parse env prefixes, chains, wrappers | PERM-P2-PARSE-005 through PERM-P2-PARSE-012 |
 | AC5 | P99 latency <100ms | PERM-P4-SEC-007 |
@@ -1027,7 +1027,7 @@ When \`PERMITTER_DEBUG=1\`:
 | AC3 | Unit | allowlist-loader.test.js::test merge | All three settings files loaded |
 | AC4 | Unit | command-parser.test.js::test normalization | All construct types handled |
 | AC5 | Performance | performance.test.js::test p99 latency | P99 < 100ms over 1000 runs |
-| AC6 | Unit | permitter.test.js::test fail closed | Exit 1 on any error |
+| AC6 | Unit | permitter.test.js::test fail closed | No output on any error |
 | AC7 | Unit | permitter.test.js::test debug output | Debug messages on stderr |
 
 ---
@@ -1251,7 +1251,7 @@ Input (stdin):
 
 Output:
 - Exit code 0: Allow tool execution
-- Exit code 1: Block/defer to normal permission flow
+- Exit code 0: Hook completed successfully (stdout = decision, or empty to defer)
 - stdout: Ignored
 - stderr: Debug output (optional)
 \`\`\`
@@ -1296,7 +1296,7 @@ packages/permitter/
         "hooks": [
           {
             "type": "command",
-            "command": "\${CLAUDE_PLUGIN_ROOT}/hooks/permitter.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/permitter.js\""
           }
         ]
       }

@@ -208,4 +208,63 @@ describe('deny decisions carry a reason', () => {
     expect(typeof decision.message).toBe('string');
     expect(decision.message.length).toBeGreaterThan(0);
   });
+
+  test('deny message stays bounded for a very long command', () => {
+    const cwd = makeSandbox({ deny: ['Bash(rm:*)'] });
+    const longArg = 'a'.repeat(5000);
+    const res = runHook({ tool_name: 'Bash', tool_input: { command: `rm ${longArg}` } }, { cwd });
+    const decision = decisionOf(res.stdout);
+    expect(decision?.behavior).toBe('deny');
+    expect(decision.message.length).toBeLessThan(400);
+    expect(decision.message).toContain('truncated');
+  });
+
+  test('deny decision has exactly the shape Claude Code accepts', () => {
+    const cwd = makeSandbox({ deny: ['Bash(rm:*)'] });
+    const res = runHook({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }, { cwd });
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.hookSpecificOutput.hookEventName).toBe('PermissionRequest');
+    expect(parsed.hookSpecificOutput.decision.behavior).toBe('deny');
+    expect(typeof parsed.hookSpecificOutput.decision.message).toBe('string');
+    expect(parsed.hookSpecificOutput.decision).not.toHaveProperty('ask');
+    expect(res.stdout.trim().split('\n')).toHaveLength(1);
+  });
+});
+
+describe('deny rules win over allow rules', () => {
+  test('a denied command in a compound command is denied even when the first command is allowlisted', () => {
+    const cwd = makeSandbox({ allow: ['Bash(ls:*)'], deny: ['Bash(rm:*)'] });
+    const res = runHook(
+      { tool_name: 'Bash', tool_input: { command: 'ls && rm -rf build' } },
+      { cwd }
+    );
+    expect(res.stdout).not.toContain('"behavior":"ask"');
+    expect(res.status).toBe(0);
+    expect(decisionOf(res.stdout)).toMatchObject({ behavior: 'deny' });
+  });
+
+  test('an MCP tool on both the allowlist and the denylist is denied', () => {
+    const cwd = makeSandbox({ allow: ['mcp__playwright__*'], deny: ['mcp__playwright__*'] });
+    const res = runHook(
+      { tool_name: 'mcp__playwright__navigate', tool_input: {} },
+      { cwd }
+    );
+    expect(res.stdout).not.toContain('"behavior":"ask"');
+    expect(res.status).toBe(0);
+    expect(decisionOf(res.stdout)).toMatchObject({ behavior: 'deny' });
+  });
+
+  // A deny rule must win over an allowlist miss on an earlier command, otherwise
+  // `unknowncmd && rm -rf build` only reaches the user's prompt and the denied
+  // command is never blocked.
+  test('a denied command is denied even when an earlier command is not allowlisted', () => {
+    const cwd = makeSandbox({ allow: ['Bash(ls:*)'], deny: ['Bash(rm:*)'] });
+    const res = runHook(
+      { tool_name: 'Bash', tool_input: { command: 'unknowncmd && rm -rf build' } },
+      { cwd }
+    );
+    expect(res.stdout).not.toContain('"behavior":"ask"');
+    expect(res.status).toBe(0);
+    expect(decisionOf(res.stdout)).toMatchObject({ behavior: 'deny' });
+  });
 });
