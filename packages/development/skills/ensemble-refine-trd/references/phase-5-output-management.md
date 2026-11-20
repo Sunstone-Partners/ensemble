@@ -20,4 +20,4 @@ Close the refinement with an explicit go/no-go decision on implementing the TRD
 - Do NOT print any implement command before this question is answered, and print it only on the GO branch.
 - Prefer implement-trd-tasks over implement-trd. They are separate commands, not a flag: implement-trd makes no beads calls and tracks progress in the TRD's own checkboxes, so it cannot resume across sessions. Name plain implement-trd only when the whole TRD lands as one PR in one sitting.
 - Ask genuine open questions ONLY. Anything the TRD or the constitution already contains a rule for is a finding, and findings were applied during Synthesis, not asked about here.
-- In Foreman mode (FOREMAN == true), skip the question, record GO, and log the decision.
+- If --foreman is set, skip the question, record GO, and log the decision.

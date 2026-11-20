@@ -1,6 +1,6 @@
 ### Phase 1: Collaborative Review
 
-Runs only with `--collab` or `--long-lived`; otherwise skip to TRD Review. Apply the Foreman-mode HALT constraint first (FOREMAN == true: the `--foreman` argument present, or `FOREMAN_TASK_TITLE` set non-empty).
+Runs only with `--collab` or `--long-lived`; otherwise skip to TRD Review. Apply the --foreman HALT constraint first.
 
 #### Step 1.1: Session Bootstrap
 

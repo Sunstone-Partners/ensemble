@@ -13,8 +13,7 @@ Resumable and checkpointed: a run's stage and outcome are recorded via ISSUE_RUN
 ## Constraints
 
 - GitHub only (no GitLab/Bitbucket); GitHub CLI (gh) must be installed and authenticated
-- Foreman mode: FOREMAN = true when the `--foreman` argument is present **or** the environment variable `FOREMAN_TASK_TITLE` is set to a non-empty value; else false. Record FOREMAN_SOURCE = `flag` when `--foreman` is present, `env` when `FOREMAN_TASK_TITLE` set it alone, `none` otherwise. The environment path grants exactly what the `--foreman` path grants -- nothing more. `CI=true` and `ENSEMBLE_NON_INTERACTIVE=1` mean non-interactive, not a Foreman dispatch, and never imply Foreman mode.
-- Interview limited to 5 questions, one at a time, and never in Foreman mode (see Constraints below)
+- Foreman mode: FOREMAN = true when `--foreman` is present or env FOREMAN_TASK_TITLE is non-empty (FOREMAN_SOURCE = flag|env, flag wins); same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it; `--foreman` below means it.
 
 ## Capabilities
 
@@ -32,7 +31,7 @@ Resolve ISSUE_RUN_INDEX_CLI (RELATIVE_PATH packages/development/lib/issue-run-in
 - **`skip-tests`** (boolean, optional, default: `false`): Skip test validation (not recommended)
 - **`draft-pr`** (boolean, optional, default: `false`): Create draft PR instead of ready-for-review
 - **`interactive`** (boolean, optional, default: `false`): Enable detailed user interviews during planning
-- **`foreman`** (boolean, optional, default: `false`): Foreman-native non-interactive mode -- skip the user interview and always auto-commit + create the PR without pausing for confirmation. Entered by the `--foreman` argument or, when the argument is absent, by a non-empty `FOREMAN_TASK_TITLE` in the environment (a Foreman dispatch has no human to pass the flag); see Constraints for how FOREMAN and FOREMAN_SOURCE are decided. When Foreman mode is active and FOREMAN_ARTIFACT_PATH is set and non-empty, write the phase report to that exact path (creating parent directories) in addition to any repo-local report. Never invent or alter the path; an unset FOREMAN_ARTIFACT_PATH is not an error.
+- **`foreman`** (boolean, optional, default: `false`): Foreman-native non-interactive mode -- skip the user interview and always auto-commit + create the PR without pausing for confirmation. With FOREMAN_ARTIFACT_PATH set and non-empty, also write the phase report to that exact path (creating parent directories); never invent or alter it; an unset path is not an error.
 - **`status`** (boolean, optional, default: `false`): Show the active/most-recent issue run's stage, outcome, and references without advancing it.
 - **`abandon`** (boolean, optional, default: `false`): Abandon the project's active/paused issue run after explicit confirmation.
 

@@ -24,6 +24,6 @@ Skipped when IS_RESUME or EXECUTE_ONLY. The scaffold-plan PLAN is authoritative;
 Optional graph planning, optional Foreman tagging, then stop if PLAN_ONLY.
 
 - Run work-graph.plan (tracks) and work-graph.graph-health (cycle/stale-blocker findings) via node "$TOOLCHAIN_CLI" run <capability>; both optional. {unavailable:true} on either -> warn and skip it (no triage-style capability; its summary folds into graph-health's `findings`). {ok:true} -> print tracks, recommendations, findings. Non-empty `findings` HALT before execution until fixed (or /ensemble:refine-beads); unexpected blockers or priority/order mismatches ask continue / refine-beads / abort (non-interactive: continue).
-- Foreman mode (FOREMAN == true) only: tag task beads for dispatch per reference section 6.
+- `--foreman` only: tag task beads for dispatch per reference section 6.
 - PLAN_ONLY: print 'Plan complete. Bead hierarchy created. Run /ensemble:implement-trd-tasks --execute to begin implementation.' and EXIT. `/ensemble:beads-build <ROOT_EPIC_ID> --plan` regenerates the analysis anytime.
 

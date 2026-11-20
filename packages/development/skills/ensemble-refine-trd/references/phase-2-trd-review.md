@@ -14,13 +14,13 @@ Skipped with --collab/--long-lived (SELECTED_ITEMS already populated). Otherwise
 
 Present findings through AskUserQuestion: "Based on my review of <TRD filename>, here are the areas I suggest improving: 1. ... N. ... Which would you like to address? Reply with: all, a comma-separated list of numbers, or skip to exit without changes." Store the reply as SELECTED_ITEMS; `skip` exits with no changes. If there are no real findings, say so and go to the closing step.
 
-In Foreman mode (FOREMAN == true): still produce the list, skip the question, select every finding, and log "Foreman mode: auto-applying <N> findings:" with the list.
+--foreman: still produce the list, skip the question, select every finding, and log "Foreman mode: auto-applying <N> findings:" with the list.
 
 #### Step 2.3: Interview (skip when --collab or --long-lived in $ARGUMENTS)
 
 Skipped with --collab/--long-lived. Otherwise interview ONLY about SELECTED_ITEMS, one AskUserQuestion at a time, asking targeted questions (which REQ a task satisfies, which ACs a test task validates, desired behavior or targets, split boundaries for oversized tasks, parallelism for long chains, what a user gains when a PR merges, whether to move a task across a forward dependency, whether to convert legacy headings to `### PR N:`).
 
-In Foreman mode (FOREMAN == true): skip the interview. For each selected finding apply a best-effort default inferred from the TRD context; where none can be inferred insert an inline `[NEEDS CLARIFICATION: <question>]` marker at the relevant location. Log one line per finding ("Foreman default applied: <finding> -> <default>" or "Foreman: inserted [NEEDS CLARIFICATION: ...] for <finding>").
+--foreman: skip the interview. For each selected finding apply a best-effort default inferred from the TRD context; where none can be inferred insert an inline `[NEEDS CLARIFICATION: <question>]` marker at the relevant location. Log one line per finding ("Foreman default applied: <finding> -> <default>" or "Foreman: inserted [NEEDS CLARIFICATION: ...] for <finding>").
 
 #### Step 2.4: Feedback Integration (artifact when --collab or --long-lived in $ARGUMENTS)
 
