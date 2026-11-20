@@ -880,3 +880,114 @@ describe('br-0hat: allowlist bypass via unsplit separators and redirects', () =>
     expect(autoAllowed(cmd)).toBe(true);
   });
 });
+
+// =============================================================================
+// ensemble-pdf-f6b2: tokenizer comment handling and wrapper/assignment hardening
+// =============================================================================
+describe('Security: comment and wrapper hardening (pdf-f6b2)', () => {
+  const allowlist = ['Bash(git:*)', 'Bash(npm test:*)', 'Bash(npm run build:*)', 'Bash(ls:*)', 'Bash(echo:*)'];
+
+  // Mirrors hooks/permitter.js: allow only if parse succeeds and every segment matches.
+  function autoAllowed(cmd) {
+    let cmds;
+    try {
+      cmds = parseCommand(cmd);
+    } catch {
+      return false;
+    }
+    return cmds.length > 0 && cmds.every(c => matchesAny(c, allowlist));
+  }
+
+  describe('Parser must not allow (throw or classify honestly)', () => {
+    const rejectCommands = [
+      // 1: '#' comment; apostrophe inside comment previously opened a quote run
+      ["comment with apostrophe hides tail", "git status # don't run rm -rf /"],
+      ["comment with unbalanced quote", "git status # it's fine"],
+      ["trailing unmatched single quote", "git status --pretty='%h"],
+      ["trailing unmatched double quote", 'git status --pretty="mixed "quote"'],
+      // 2: wrapper options are not parsed safely
+      ["env -C changes directory", "env -C /tmp git status"],
+      ["env -C with equals form", "env -C=/tmp git status"],
+      ["env -S splits a string", "env -S 'git status'"],
+      ["env -S with equals form", "env -S='git status'"],
+      ["env -0 NUL delimited", "env -0 git status"],
+      ["env -v verbose runs a command", "env -v git status"],
+      ["env unrecognized long option", "env --unset=PATH git status"],
+      ["env option-looking var value", "env -PATH=/evil git status"],
+      ["env -- with following option", "env -- -C /tmp git status"],
+      // 3: dangerous leading assignments
+      ["PATH=/evil prefix", "PATH=/evil git status"],
+      ["LD_PRELOAD=/evil.so prefix", "LD_PRELOAD=/evil.so git status"],
+      ["LD_LIBRARY_PATH prefix", "LD_LIBRARY_PATH=/evil git status"],
+      ["DYLD_INSERT_LIBRARIES prefix", "DYLD_INSERT_LIBRARIES=/evil.dylib git status"],
+      ["DYLD_* other prefix", "DYLD_LIBRARY_PATH=/evil git status"],
+      ["IFS prefix", "IFS=: git status"],
+      ["PATH via env wrapper", "env PATH=/evil git status"],
+      ["LD_PRELOAD via env wrapper", "env LD_PRELOAD=/evil.so git status"],
+      ["PATH second assignment", "FOO=bar PATH=/evil git status"],
+      ["PATH with quoted value", "PATH='/evil dir' git status"],
+      ["PATH with split quoted value", "PATH=/evil\\ path git status"],
+      // 4: variable-valued IFS= assignment is not recognised as one assignment
+      ["IFS=$x unquoted", "IFS=$x git status"],
+      ["IFS with unquoted brace split", "IFS=${a}b git status"],
+      ["IFS split-brain quoted prefix", "IFS=' '$ git status"],
+      ["IFS split-brain via env", "env IFS=$x git status"],
+      ["PATH split-brain", "PATH=$x git status"]
+    ];
+
+    test.each(rejectCommands)('not auto-allowed: %s', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test.each([
+      ["comment with apostrophe", "git status # don't run rm -rf /"],
+      ["trailing unmatched quote", "git status --pretty='%h"]
+    ])('comment/quote case yields a parse error or an executable that is not git: %s', (_name, cmd) => {
+      let cmds;
+      try {
+        cmds = parseCommand(cmd);
+      } catch {
+        return;
+      }
+      expect(cmds.length).toBeGreaterThan(0);
+      expect(cmds[0].executable).not.toBe('git');
+    });
+  });
+
+  describe('Allow path stays useful', () => {
+    test.each([
+      'git status',
+      'ls -la',
+      'npm test',
+      'npm run build',
+      'echo hello',
+      "npm test # verify",
+      'npm test # commit message: fix it',
+      "echo 'a; b # c'",
+      'echo "a # b"',
+      'echo path/to/file#anchor',
+      'NODE_ENV=production npm test',
+      'FOO=bar BAZ=qux npm test',
+      'env FOO=bar npm test',
+      'env -u SOME_VAR npm test',
+      'env -i npm test',
+      "env -u LC_ALL FOO='bar baz' npm test",
+      'timeout 30 npm test',
+      'nohup npm test'
+    ])('still auto-allowed: %s', (cmd) => {
+      expect(autoAllowed(cmd)).toBe(true);
+    });
+
+    test('dangerous assignment is reported, not silently dropped', () => {
+      expect(() => parseCommand('PATH=/evil git status')).toThrow(/dangerous variable assignment/i);
+    });
+
+    test('unparseable env option is reported, not silently dropped', () => {
+      expect(() => parseCommand('env -C /tmp git status')).toThrow(/env option/i);
+    });
+
+    test('comment truncated at end of line only', () => {
+      expect(parseCommand('npm test # trailing')).toEqual([{ executable: 'npm', args: 'test' }]);
+    });
+  });
+});

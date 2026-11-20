@@ -19,6 +19,16 @@ const WRAPPER_COMMANDS = new Set(['timeout', 'time', 'nice', 'nohup', 'env']);
 // Commands that are skipped entirely
 const SKIP_COMMANDS = new Set(['export', 'set', 'unset', 'local', 'declare', 'typeset']);
 
+// Commands whose options cannot be parsed safely. They are refused outright
+// instead of being classified as if the wrapper were not present.
+const REFUSED_COMMANDS = new Set(['sudo', 'command']);
+
+// Environment variables that change how a program resolves other programs or
+// how the shell splits words. An assignment to one of these must never be
+// silently dropped, otherwise the command is classified as if the assignment
+// were absent.
+const DANGEROUS_ASSIGNMENT_VARS = /^(PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]*|IFS)$/;
+
 // Operators that split commands
 // '&' (background) and '|&' (pipe stdout+stderr) also start a new command.
 const OPERATORS = new Set(['&&', '||', ';', '|', '&', '|&']);
@@ -84,6 +94,17 @@ function tokenize(command) {
             inQuotedSection = false;
           }
           tokens.push(';');
+        } else if (char === '#' && (i === 0 || /\s/.test(command[i - 1]))) {
+          // '#' starts a comment when it begins a word: the rest of the line is
+          // dropped. Without this an apostrophe inside a comment ("# don't run")
+          // would open a single-quote run and swallow the remainder of the command.
+          // The comment text is not part of the command, so it is not represented
+          // in the token stream at all; the loop stops at the end of the line.
+          if (current) {
+            tokens.push(current);
+            current = '';
+          }
+          break;
         } else if (char === '(' || char === ')') {
           // Subshell, grouping, arithmetic, function definitions
           throw new Error('Subshell/grouping not supported');
