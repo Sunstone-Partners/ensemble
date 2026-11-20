@@ -80,7 +80,6 @@ Add to your shell profile (`.bashrc`, `.zshrc`, etc.) for persistent enablement:
 |----------|---------|-------------|
 | `ENSEMBLE_PERMITTER_DISABLE` | `"0"` | Master enable switch. Set to `"1"` to disable. |
 | `PERMITTER_DEBUG` | `"0"` | Enable debug logging to stderr. Set to `"1"` to see detailed matching info. |
-| `PERMITTER_STRICT` | `"1"` | Reserved for strict parse-error handling. Not read by the hook today: parse errors always defer to the permission prompt. |
 
 ### Allowlist Configuration
 

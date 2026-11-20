@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin manifest (plugin.json)
 - Hook configuration (hooks.json)
 - Main hook entrypoint (permitter.js)
-- Environment variable configuration (ENSEMBLE_PERMITTER_DISABLE, PERMITTER_DEBUG, PERMITTER_STRICT)
+- Environment variable configuration (ENSEMBLE_PERMITTER_DISABLE, PERMITTER_DEBUG)
 - Stdin JSON parsing for hook data
-- Exit code protocol (0 = allow, 1 = defer)
+- Decision and exit protocol (exit `0` always; the decision rides on stdout as `allow`, `deny`, or empty to defer)
 - Debug logging to stderr
 - Stub modules for command-parser, allowlist-loader, and matcher
 - README.md documentation

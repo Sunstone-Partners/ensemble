@@ -10,9 +10,6 @@
  * Environment Variables:
  *   ENSEMBLE_PERMITTER_DISABLE - Set to "1" to disable (default: enabled)
  *   PERMITTER_DEBUG   - Enable debug logging to stderr (default: "0")
- *   PERMITTER_STRICT  - Reserved for strict parse-error handling; not read by
- *                        the hook today (parse errors always defer to Claude
- *                        Code's permission prompt)
  *
  * Hook Type: PermissionRequest
  *   - Fires when user would see a permission dialog
@@ -57,12 +54,6 @@ const DECISION = {
     hookSpecificOutput: {
       hookEventName: 'PermissionRequest',
       decision: { behavior: 'allow' }
-    }
-  },
-  DENY: {
-    hookSpecificOutput: {
-      hookEventName: 'PermissionRequest',
-      decision: { behavior: 'deny' }
     }
   },
   /**
@@ -139,11 +130,10 @@ function deferToPermissionPrompt() {
 /**
  * Output a decision and exit.
  * @param {Object} decision - The decision object to output
- * @param {number} exitCode - Exit code (the hook always exits 0)
  */
-function outputDecision(decision, exitCode = 0) {
+function outputDecision(decision) {
   console.log(JSON.stringify(decision));
-  process.exit(exitCode);
+  process.exit(0);
 }
 
 /**
