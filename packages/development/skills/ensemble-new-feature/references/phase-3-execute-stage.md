@@ -4,15 +4,13 @@ Run the eligible stage's skill in-session, then checkpoint through RUN_INDEX_CLI
 
 #### Step 3.1: Load and Execute the Stage's Existing Skill Body
 
-Each document-producing stage wraps an unmodified standalone skill.
-
 - Dispatch ELIGIBLE_STAGE to its skill in-session, as it runs standalone: prd_create -> ensemble-create-prd, input = the run's `idea`; prd_refine -> ensemble-refine-prd, input = the PRD artifacts[] entry `prd_create` (or the latest `prd_refine`) recorded; trd_create -> ensemble-create-trd, input = the PRD artifacts[] entry `prd_refine` recorded; trd_refine -> ensemble-refine-trd, input = the TRD artifacts[] entry `trd_create` recorded; beads_plan -> ensemble-implement-trd-tasks --plan, input = the TRD artifacts[] entry `trd_refine` recorded.
-- Always pass the exact `path` from the named artifacts[] entry, never a globbed or recalled path. `--plan` is load-bearing: it stops after the beads-build Scaffold phase, since implementation is not yet approved.
+- Always pass the exact `path` from the named artifacts[] entry, never a globbed or recalled path. `--plan` is load-bearing: it stops after the beads-build Scaffold phase.
 - Foreman mode: when FOREMAN == true, append `--foreman` to the dispatched skill: ensemble-create-prd --foreman, ensemble-refine-prd --foreman, ensemble-create-trd --foreman, ensemble-refine-trd --foreman, ensemble-implement-trd-tasks --plan --foreman. This command does not set or reinterpret FOREMAN_* environment variables (FOREMAN_TASK_TITLE, FOREMAN_ARTIFACT_PATH, ...); each stage skill keeps its own contract. When FOREMAN is not true, no `--foreman` is added.
 
 #### Step 3.2: Record the Stage Outcome
 
-Checkpoint success, decline, or failure as soon as the stage returns, through RUN_INDEX_CLI.
+Checkpoint success, decline, or failure as soon as the stage returns.
 
 - Skill completed with a real, saved output artifact (PRD/TRD file, or a scaffolded bead epic for beads_plan): call RUN_INDEX_CLI mutate once with patch [appendArtifact setStageOutcome kind success, setStage <next STAGE_ORDER entry>].
 - User declines the output: mutate with setStageOutcome kind decline, detail <reason>; stage does not advance; artifacts[] unchanged. Ask the user for the correction needed; do not silently retry with no new input.
@@ -21,10 +19,10 @@ Checkpoint success, decline, or failure as soon as the stage returns, through RU
 
 #### Step 3.3: Handle Stage Failure
 
-A failure pauses the run at the failed stage; no auto-retry within the invocation.
+A failure pauses the run at the failed stage.
 
 - If the stage throws or reports a failure: call RUN_INDEX_CLI mutate with setStageOutcome kind failure, detail <error message>, at the CURRENT stage (do not advance `stage`); leave artifacts[] as it was before this invocation. Print the error and stage.
-- Do not advance, do not retry, do not re-dispatch any stage within this invocation -- the run ends here. Entry Point Resolution step 4 defines what an explicit retry looks like.
+- Do not advance, do not retry, do not re-dispatch any stage within this invocation -- the run ends here. A later bare invocation leaves stage/stageOutcome/revision unchanged; Entry Point Resolution step 4 defines what an explicit retry looks like.
 
 #### Step 3.4: Explicit-Retry-Only Resume of a Failed Stage
 

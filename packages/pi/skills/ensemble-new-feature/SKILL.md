@@ -16,7 +16,7 @@ executes in-session, never as a subprocess.
 
 ## Constraints
 
-- Stage order is fixed: prd_create -> prd_refine -> trd_create -> trd_refine -> beads_plan -> implementation_approval -> implementation -> pr_approval -> pr_create -> done. pr_approval/pr_create are only entered if a PR was requested; completion without a PR request is a valid terminal state.
+- Stage order is fixed, never reordered at runtime: prd_create -> prd_refine -> trd_create -> trd_refine -> beads_plan -> implementation_approval -> implementation -> pr_approval -> pr_create -> done. pr_approval/pr_create are only entered if a PR was requested; completion without a PR request is a valid terminal state.
 - Only the stage recorded as RunRecord.stage, with stageOutcome.kind not "success", is eligible to run. The checkpoint lives in the run index: every transition and artifact reference is recorded through RUN_INDEX_CLI, and active.lock enforces a single active run per project.
 - `--foreman` (FOREMAN == true) never bypasses RUN_ALREADY_ACTIVE, never makes `--status` anything but a read-only report, and never retries a failed stage more than once per invocation (Foreman owns any further retry).
 
