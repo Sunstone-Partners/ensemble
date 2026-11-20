@@ -54,18 +54,47 @@ function validateFrontmatter() {
 }
 
 /**
+ * Files whose packages/full mirror is owned by a package other than
+ * development.
+ *
+ * packages/full/lib/prd-cli.js is the product's CLI: it serves the development
+ * registry commands (list, status, migrate-frontmatter) and the feature
+ * pipeline commands (parse, generate-features, check-drift) behind one entry
+ * point. The bundle is a flat namespace, so two files cannot both be
+ * lib/prd-cli.js, and the shipped skills call both halves through that one
+ * path. The product copy carries the registry half (packages/product/lib/
+ * prd-registry.js) so the superset holds in the installed bundle too.
+ */
+const FULL_LIB_MIRROR_OWNERS = new Map([['prd-cli.js', 'product']]);
+
+/**
+ * How shipped prose names a lib file: the plugin-root form the installed
+ * plugin resolves, and the repo form the source packages write. The owner
+ * package is captured so a missing bundle entry can be fixed with an exact
+ * `ln -sf` line instead of a guess.
+ */
+const BUNDLE_LIB_REFERENCE_RE =
+  /(?:\$\{CLAUDE_PLUGIN_ROOT\}\/lib|packages\/([a-z0-9-]+)\/lib)\/([A-Za-z0-9._/-]*)/g;
+
+/**
  * Ensure every packages/development/lib/*.js file has a corresponding
  * entry (symlink or real file) in packages/full/lib/. packages/full is
  * meant to mirror the underlying packages via symlinks; a silently
  * missing entry here means the bundled full plugin is missing code that
  * command YAML in packages/development relies on.
  *
- * @returns {string[]} One message per missing file
+ * The mirror target is checked too, not just the presence of an entry: an
+ * entry that points somewhere else is a bundle that ships different code than
+ * the package it claims to mirror, and the install dereferences the link
+ * without ever noticing.
+ *
+ * @param {string} packagesDir Packages root
+ * @returns {string[]} One message per missing or mis-targeted file
  */
-function validateFullLibMirror() {
+function validateFullLibMirror(packagesDir = PACKAGES_DIR) {
   const failures = [];
-  const devLibDir = path.join(PACKAGES_DIR, 'development', 'lib');
-  const fullLibDir = path.join(PACKAGES_DIR, 'full', 'lib');
+  const devLibDir = path.join(packagesDir, 'development', 'lib');
+  const fullLibDir = path.join(packagesDir, 'full', 'lib');
 
   if (!fs.existsSync(devLibDir) || !fs.existsSync(fullLibDir)) {
     return failures;
@@ -82,12 +111,172 @@ function validateFullLibMirror() {
         `packages/full/lib/${file} is missing (present in packages/development/lib/) - add a symlink: ` +
         `ln -sf ../../development/lib/${file} packages/full/lib/${file}`
       );
-    } else {
-      checked++;
+      return;
     }
+    const link = fs.lstatSync(fullPath);
+    if (!link.isSymbolicLink()) {
+      failures.push(
+        `packages/full/lib/${file} is a regular file, not a mirror - packages/full is a symlink farm, ` +
+        `so the bundle must point at the owning package: ` +
+        `ln -sf ../../${FULL_LIB_MIRROR_OWNERS.get(file) || 'development'}/lib/${file} packages/full/lib/${file}`
+      );
+      return;
+    }
+    const owner = FULL_LIB_MIRROR_OWNERS.get(file) || 'development';
+    const resolved = path.resolve(fullLibDir, fs.readlinkSync(fullPath));
+    const expectedDir = path.join(packagesDir, owner, 'lib');
+    if (path.dirname(resolved) !== expectedDir || path.basename(resolved) !== file) {
+      failures.push(
+        `packages/full/lib/${file} mirrors ${path.relative(packagesDir, resolved)}, not ` +
+        `packages/${owner}/lib/${file} - the installed bundle dereferences the link and would ship ` +
+        `the wrong code: ln -sf ../../${owner}/lib/${file} packages/full/lib/${file}`
+      );
+      return;
+    }
+    if (!fs.existsSync(resolved)) {
+      failures.push(
+        `packages/full/lib/${file} is a broken mirror - ${path.relative(PACKAGES_DIR, resolved)} does not exist`
+      );
+      return;
+    }
+    checked++;
   });
 
   console.log(`  ✓ ${checked}/${devFiles.length} packages/development/lib/*.js file(s) mirrored in packages/full/lib/`);
+  return failures;
+}
+
+/**
+ * Collect every lib file the shipped skills, agents and commands name.
+ *
+ * The shipped prose is what a session actually runs: a skill that says
+ * `${CLAUDE_PLUGIN_ROOT}/lib/reqnroll-cli.js` is a promise about the
+ * installed plugin, and nothing in the repo checked it. The bundle is copied
+ * with its symlinks dereferenced and `npm install` is never run, so a name
+ * that is not mirrored into packages/full/lib/ is a file that does not exist
+ * in the install.
+ *
+ * @param {string} dir Directory to walk
+ * @param {Map<string, {isDirectory: boolean, owners: Set<string>, sources: Set<string>}>} references Collected references
+ * @param {Set<string>} seen Real paths already walked, so a mirror that points at itself ends the walk
+ * @returns {Map} The references map
+ */
+function collectBundleLibReferences(dir, references = new Map(), seen = new Set()) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return references;
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    let stat;
+    try {
+      // statSync, not lstatSync: a symlinked directory is part of the bundle
+      // and the install copies its contents in.
+      stat = fs.statSync(entryPath);
+    } catch {
+      continue; // a broken mirror is findDeSymlinkedMirrors' business
+    }
+    if (stat.isDirectory()) {
+      let real;
+      try {
+        real = fs.realpathSync(entryPath);
+      } catch {
+        real = entryPath;
+      }
+      if (seen.has(real)) continue;
+      seen.add(real);
+      collectBundleLibReferences(entryPath, references, seen);
+      continue;
+    }
+    if (!/\.(md|ya?ml|json)$/i.test(entry.name)) continue;
+    let source;
+    try {
+      source = fs.readFileSync(entryPath, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const match of source.matchAll(BUNDLE_LIB_REFERENCE_RE)) {
+      const cleaned = match[2].replace(/[.,;:]+$/, '');
+      const isDirectory = cleaned.endsWith('/');
+      const relative = cleaned.replace(/\/+$/, '');
+      if (!relative) continue;
+      if (!references.has(relative)) {
+        references.set(relative, { isDirectory, owners: new Set(), sources: new Set() });
+      }
+      const record = references.get(relative);
+      record.isDirectory = record.isDirectory || isDirectory;
+      if (match[1]) record.owners.add(match[1]);
+      record.sources.add(path.relative(PACKAGES_DIR, entryPath));
+    }
+  }
+  return references;
+}
+
+/**
+ * Ensure every lib file named by a shipped skill, agent or command exists in
+ * packages/full/lib/.
+ *
+ * @param {string} packagesDir Packages root
+ * @returns {string[]} One message per missing bundle entry
+ */
+function validateFullLibReferences(packagesDir = PACKAGES_DIR) {
+  const failures = [];
+  const fullDir = path.join(packagesDir, 'full');
+  const fullLibDir = path.join(fullDir, 'lib');
+
+  if (!fs.existsSync(fullDir) || !fs.existsSync(fullLibDir)) {
+    return failures;
+  }
+
+  const references = new Map();
+  for (const shipped of ['skills', 'agents', 'commands']) {
+    collectBundleLibReferences(path.join(fullDir, shipped), references);
+  }
+
+  let checked = 0;
+  for (const relative of [...references.keys()].sort()) {
+    const record = references.get(relative);
+    const bundlePath = path.join(fullLibDir, relative);
+    let stat = null;
+    try {
+      stat = fs.statSync(bundlePath);
+    } catch {
+      stat = null;
+    }
+    if (!stat) {
+      const owner = [...record.owners][0];
+      const hint = owner
+        ? `ln -sf ../../${owner}/lib/${relative} packages/full/lib/${relative}`
+        : `ln -sf ../../<package>/lib/${relative} packages/full/lib/${relative}`;
+      failures.push(
+        `packages/full/lib/${relative} is missing but ${[...record.sources].sort().join(', ')} names it - ` +
+        `the installed bundle dereferences its symlinks and carries no sibling packages, so add a mirror: ${hint}`
+      );
+      continue;
+    }
+    if (record.isDirectory && !stat.isDirectory()) {
+      failures.push(
+        `packages/full/lib/${relative} is not a directory but ${[...record.sources].sort().join(', ')} ` +
+        `names it as one`
+      );
+      continue;
+    }
+    if (!record.isDirectory && !stat.isFile()) {
+      failures.push(
+        `packages/full/lib/${relative} is not a file but ${[...record.sources].sort().join(', ')} ` +
+        `names it as one`
+      );
+      continue;
+    }
+    checked++;
+  }
+
+  console.log(
+    `  ✓ ${checked}/${references.size} lib reference(s) in shipped skills, agents and commands ` +
+    `resolve inside packages/full/lib/`
+  );
   return failures;
 }
 
@@ -1173,6 +1362,14 @@ function main() {
     errors++;
   });
 
+  // ...and every lib file the shipped prose names must be inside the bundle
+  console.log('\nValidating lib references in shipped skills, agents and commands are bundled...');
+  const fullLibReferenceFailures = validateFullLibReferences();
+  fullLibReferenceFailures.forEach(message => {
+    console.error(`✗ ${message}`);
+    errors++;
+  });
+
   // packages/full must be self-contained once the install flattens its symlinks
   console.log('\nValidating packages/full/ relative requires resolve inside the bundle...');
   const fullRequireFailures = validateFullBundleRequires();
@@ -1320,6 +1517,8 @@ module.exports = {
   validateFullSkillsMirror,
   validateFullCommandSkillsDirect,
   validateFullLibMirror,
+  validateFullLibReferences,
+  collectBundleLibReferences,
   validateFullBundleRequires,
   relativeSpecifiers,
   bundleRequireResolves,
