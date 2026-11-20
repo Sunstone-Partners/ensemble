@@ -27,6 +27,7 @@ const path = require('path');
 const {
   validateBundleBareRequires,
   bareSpecifiers,
+  bareSpecifierFindings,
   specifierPackage,
 } = require('../validate-all');
 const { VENDORED, TARGET_NON_PACKAGES, checkVendored, fileList } = require('../vendor-bundle-deps');
@@ -58,6 +59,26 @@ describe('bareSpecifiers', () => {
     expect(bareSpecifiers(source)).toEqual(['js-yaml']);
   });
 
+  test('a line marked validate-bundle-ignore is excused', () => {
+    const source = [
+      "const a = require('js-yaml');",
+      "const b = require('dev-only-pkg'); // validate-bundle-ignore",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('a finding carries the line the specifier sits on', () => {
+    const source = [
+      "const a = require('js-yaml');",
+      '',
+      "const b = require('fast-uri');",
+    ].join('\n');
+    expect(bareSpecifierFindings(source)).toEqual([
+      { specifier: 'js-yaml', line: 1 },
+      { specifier: 'fast-uri', line: 3 },
+    ]);
+  });
+
   test('ignores a require inside a block comment, including a doc comment', () => {
     const source = [
       '/**',
@@ -82,6 +103,222 @@ describe('bareSpecifiers', () => {
 
   test('reports a specifier once per occurrence, so two call sites are two entries', () => {
     expect(bareSpecifiers("require('ajv');\nrequire('ajv');")).toEqual(['ajv', 'ajv']);
+  });
+
+  test('a specifier a generator emits is not a dependency of the file', () => {
+    // skills/jest/generate-test.js writes this text into the tests it generates. The
+    // dependency belongs to the generated project, not to the bundle that ships the skill.
+    const source = [
+      "const imports = `import { render } from '@testing-library/react';`;",
+      "const more = `require('emitted-only-pkg');`;",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual([]);
+  });
+
+  test('a require inside a template expression is a dependency, because it runs', () => {
+    expect(bareSpecifiers("const out = `${require('runtime-pkg')}`;")).toEqual(['runtime-pkg']);
+  });
+
+  test('a string that holds the word import is not an import', () => {
+    expect(bareSpecifiers("const label = 'import the thing';\nconst yaml = require('js-yaml');")).toEqual([
+      'js-yaml',
+    ]);
+  });
+
+  test('a regex literal holding a quote does not hide the require after it', () => {
+    // A character scanner that does not know about regex literals reads the quote in
+    // /['"]/ as the start of a string and swallows the rest of the line with it.
+    const source = [
+      "const quote = /['\"]/;",
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('a regex literal holding a backtick does not hide the require after it', () => {
+    const source = [
+      'const tick = /`/;',
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('a slash that divides is not a regex literal', () => {
+    // `a / b / c` is three divisions; reading the second slash as a regex would swallow the
+    // rest of the line and hide the require that follows it.
+    const source = [
+      'const ratio = total / count / 2;',
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('require.resolve names the package it resolves', () => {
+    // require.resolve('pkg') throws MODULE_NOT_FOUND without the package, exactly as
+    // require('pkg') does.
+    expect(bareSpecifiers("const p = require.resolve('js-yaml');")).toEqual(['js-yaml']);
+  });
+
+  test('a division does not swallow the require that follows it', () => {
+    const source = [
+      'const ratio = total / count;',
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('a division by a number does not start a regex literal', () => {
+    // `y /2/ z` is a division and a division: reading the second slash as a regex would
+    // swallow the rest of the line.
+    const source = [
+      'const x = y /2/ z;',
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('a regex literal after a closing bracket does not hide the require after it', () => {
+    const source = [
+      'if (ready) /[\'"]/.test(text);',
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+
+  test('a regex literal after a keyword does not hide the require after it', () => {
+    // `return /re/` is a regex, not a division, so the quote inside it must not open a string.
+    const source = [
+      'function check(value) { return /[\'"]/.test(value); }',
+      "const yaml = require('js-yaml');",
+    ].join('\n');
+    expect(bareSpecifiers(source)).toEqual(['js-yaml']);
+  });
+});
+
+describe('validateBundleBareRequires against a fixture bundle', () => {
+  // The bundle's own skills are part of what the install ships, so a skill that loads a
+  // package the bundle cannot resolve is a dead skill. Before this check reached every
+  // bundle file, `glob` (required by skills/core/detect-stack/detect-stack.js) sat in a
+  // reported-but-not-blocking set and every installed plugin answered with no file
+  // evidence at all. These tests pin the blocking scope, from both sides.
+  const writeBundle = files => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-bare-'));
+    for (const [rel, contents] of Object.entries(files)) {
+      const file = path.join(dir, rel);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, contents);
+    }
+    return dir;
+  };
+
+  const vendoredManifest = JSON.stringify({ name: 'js-yaml', version: '4.1.0' });
+
+  test('a skill that requires a package the bundle cannot resolve fails the check', () => {
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/skill.js': [
+        "const yaml = require('js-yaml');",
+        "const missing = require('not-vendored-pkg');",
+      ].join('\n'),
+    });
+    try {
+      const failures = validateBundleBareRequires(dir);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain("requires 'not-vendored-pkg'");
+      expect(failures[0]).toContain('vendor-bundle-deps.js');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a skill that only EMITS a require is not a dependency of the bundle', () => {
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/generate.js': [
+        'const out = `import { render } from \'@testing-library/react\';`;',
+        'const more = `require(\'emitted-only-pkg\');`;',
+      ].join('\n'),
+    });
+    try {
+      expect(validateBundleBareRequires(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a skill that requires a vendored package passes', () => {
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/skill.js': "const yaml = require('js-yaml');\nconst fs = require('node:fs');\n",
+    });
+    try {
+      expect(validateBundleBareRequires(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a package installed in the repository does not count as vendored', () => {
+    // The bundle is installed on a machine that has the plugin and nothing else, so a package
+    // that only exists in the repository's own node_modules is as missing there as one that
+    // exists nowhere.
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/skill.js': "const minimatch = require('minimatch');\n",
+    });
+    try {
+      const failures = validateBundleBareRequires(dir);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain("requires 'minimatch'");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a line marked validate-bundle-ignore is excused', () => {
+    // A blocking gate needs a way out for a dependency that is genuinely not needed at run
+    // time. The marker sits on the line it excuses, so the exception is visible where it
+    // applies.
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/skill.js':
+        "const yaml = require('js-yaml');\n" +
+        "const only = require('dev-only-pkg'); // validate-bundle-ignore\n",
+    });
+    try {
+      expect(validateBundleBareRequires(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a builtin subpath is not a dependency the bundle has to vendor', () => {
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/skill.js':
+        "const fs = require('fs/promises');\nconst path = require('node:path/posix');\n",
+    });
+    try {
+      expect(validateBundleBareRequires(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('the failure names the file and the line, so a false positive is one look away', () => {
+    const dir = writeBundle({
+      'lib/node_modules/js-yaml/package.json': vendoredManifest,
+      'skills/demo/skill.js':
+        "const yaml = require('js-yaml');\nconst missing = require('not-vendored-pkg');\n",
+    });
+    try {
+      const failures = validateBundleBareRequires(dir);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain('skill.js:2');
+      expect(failures[0]).toContain("requires 'not-vendored-pkg'");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

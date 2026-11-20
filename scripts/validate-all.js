@@ -92,15 +92,18 @@ function validateFullLibMirror() {
 }
 
 /** Extensions treated as bundled code whose requires must resolve. */
+// TypeScript is not here on purpose: the .ts files the bundle ships are templates and
+// examples a skill emits into the operator's project, not code the plugin runs.
 const BUNDLE_CODE_EXTENSIONS = new Set(['.js', '.cjs', '.mjs']);
 
 /**
- * Node's own builtins, from Node rather than a hand-written list, plus the `node:`
- * prefixed spellings of each. A list written here would go stale against the runtime.
+ * Whether a specifier names a Node builtin, subpaths included.
+ *
+ * `module.isBuiltin` is Node's own answer, so `fs/promises`, `node:fs/promises` and
+ * `assert/strict` count as builtins and nothing else does. A hand-written list would go
+ * stale against the runtime.
  */
-const BUILTIN_MODULES = new Set(
-  require('module').builtinModules.flatMap(name => [name, `node:${name}`])
-);
+const { isBuiltin } = require('module');
 
 /** Suffixes Node will try for a bare relative specifier, in its own order. */
 const BUNDLE_RESOLVE_SUFFIXES = ['', '.js', '.cjs', '.mjs', '.json'];
@@ -191,23 +194,413 @@ function stripComments(source) {
 /**
  * Every bare specifier a file requires or imports: a package name, not a path.
  *
- * The import form requires the `import` keyword rather than a bare `from`, for the
- * reason stripComments() gives: `from 'two words'` is a sentence as often as it is code.
+ * The source is walked as CODE rather than read as text, because a text scan cannot tell a
+ * module this file loads from a module it writes. Three shapes used to hide behind the regex:
+ *
+ * - a specifier inside a comment or inside a string,
+ * - a specifier a generator EMITS: skills/jest/generate-test.js writes
+ *   `from '@testing-library/react'` into the tests it generates, and that text is a dependency
+ *   of the generated project, not of the bundle,
+ * - a `//` inside a string literal, which a comment stripper reads as a comment and takes the
+ *   rest of the line with it.
+ *
+ * Walking the code answers the question the validator actually asks: does THIS file load a
+ * package, and which one. A relative specifier names a path in this repository rather than a
+ * package, so it is not reported here; validateFullBundleRequires answers whether that path
+ * resolves inside the bundle.
  *
  * @param {string} source File contents
- * @returns {string[]} Bare specifiers, duplicates included
+ * @returns {string[]} Bare specifiers, duplicates included, in the order the file loads them
  */
 function bareSpecifiers(source) {
-  const code = stripComments(source);
+  return bareSpecifierFindings(source).map(finding => finding.specifier);
+}
+
+/**
+ * Every bare specifier a file loads, with the line each one sits on.
+ *
+ * A line carrying the marker `validate-bundle-ignore` is excused: the file names that
+ * package on purpose, but the bundle does not need it at run time. The marker keeps a
+ * deliberate exception next to the code it excuses, instead of in a list nobody reads.
+ *
+ * @param {string} source File contents
+ * @returns {Array<{specifier: string, line: number}>} Findings, in the order the file loads them
+ */
+function bareSpecifierFindings(source) {
   const found = [];
-  for (const pattern of [
-    /\brequire\(\s*['"]([^.'"][^'"]*)['"]\s*\)/g,
-    /\bimport\s*(?:[\w*{}\s,$]*?\bfrom\s*)?['"]([^.'"][^'"]*)['"]/g,
-  ]) {
-    let match;
-    while ((match = pattern.exec(code)) !== null) found.push(match[1]);
+  scanCode(source, 0, found, null);
+  const lineStarts = buildLineStarts(source);
+  return found
+    .map(finding => ({ specifier: finding.specifier, line: lineNumber(lineStarts, finding.at) }))
+    .filter(finding => !isExcusedLine(source, lineStarts, finding.line));
+}
+
+/**
+ * The marker that excuses a line from the bare-require check.
+ */
+const BUNDLE_IGNORE_MARKER = 'validate-bundle-ignore';
+
+/**
+ * Where each line of the source starts, so a specifier can be traced back to its line.
+ *
+ * @param {string} source File contents
+ * @returns {number[]} Offsets of the first character of every line
+ */
+function buildLineStarts(source) {
+  const starts = [0];
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] === '\n') starts.push(index + 1);
   }
-  return found;
+  return starts;
+}
+
+/**
+ * The 1-based line an offset falls on.
+ *
+ * @param {number[]} lineStarts Offsets of the first character of every line
+ * @param {number} index Offset in the source
+ * @returns {number} Line number
+ */
+function lineNumber(lineStarts, index) {
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (lineStarts[middle] <= index) low = middle;
+    else high = middle - 1;
+  }
+  return low + 1;
+}
+
+/**
+ * Whether the line carries the marker that excuses it.
+ *
+ * @param {string} source File contents
+ * @param {number[]} lineStarts Offsets of the first character of every line
+ * @param {number} line Line number
+ * @returns {boolean} True when the line is excused
+ */
+function isExcusedLine(source, lineStarts, line) {
+  const start = lineStarts[line - 1];
+  const end = line < lineStarts.length ? lineStarts[line] : source.length;
+  return source.slice(start, end).includes(BUNDLE_IGNORE_MARKER);
+}
+
+/**
+ * Walk code from `index`, collecting the module specifiers it loads.
+ *
+ * @param {string} source File contents
+ * @param {number} index Where to start
+ * @param {Array<{specifier: string, at: number}>} found Collected specifiers
+ * @param {string|null} stopChar Character that ends the walk, '}' inside a template expression
+ * @returns {number} Index where the walk stopped
+ */
+function scanCode(source, index, found, stopChar) {
+  // The last significant character and word, for the one decision a character scanner cannot
+  // avoid: a slash starts a regex literal or is a division. What came before it decides which.
+  let prev = '';
+  let prevWord = '';
+  while (index < source.length) {
+    const char = source[index];
+    if (stopChar && char === stopChar) return index;
+    if (/\s/.test(char)) {
+      index++;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      index = skipLineComment(source, index);
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      index = skipBlockComment(source, index);
+      continue;
+    }
+    if (char === '/') {
+      if (startsRegexLiteral(prev, prevWord)) {
+        index = skipRegexLiteral(source, index);
+        prev = '/';
+        prevWord = '';
+        continue;
+      }
+      // A division. The character before it still ends the expression, so `a / b / c` reads
+      // as three divisions rather than as a division and a regex.
+      index++;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      index = skipQuoted(source, index, char);
+      prev = char;
+      prevWord = '';
+      continue;
+    }
+    if (char === '`') {
+      index = skipTemplate(source, index, found);
+      prev = '`';
+      prevWord = '';
+      continue;
+    }
+    if (!/[A-Za-z_$]/.test(char)) {
+      prev = char;
+      prevWord = '';
+      index++;
+      continue;
+    }
+    let end = index;
+    while (end < source.length && /[\w$]/.test(source[end])) end++;
+    const word = source.slice(index, end);
+    if (word === 'require' || word === 'import' || word === 'export') {
+      const moduleRef = readModuleSpecifier(source, end, word);
+      if (moduleRef !== null && !moduleRef.specifier.startsWith('.')) {
+        found.push({ specifier: moduleRef.specifier, at: moduleRef.at });
+      }
+    }
+    prev = source[end - 1];
+    prevWord = word;
+    index = end;
+  }
+  return index;
+}
+
+/**
+ * Keywords after which a slash starts a regex literal rather than a division.
+ *
+ * `return /a/.test(x)` is a regex; `x = a / b` is a division. The character before the slash
+ * cannot tell the two apart after a keyword, so the keyword is what decides.
+ */
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
+  'typeof', 'void', 'yield',
+]);
+
+/**
+ * Whether a slash after `prev` starts a regex literal rather than a division.
+ *
+ * A slash after a value -- an identifier, a number, a closing bracket -- divides. Anywhere else
+ * it starts a literal: after an operator, an opening bracket, a comma or at the start of a
+ * statement. After a keyword that can precede an expression, it starts a literal too.
+ *
+ * @param {string} prev The last significant character before the slash
+ * @param {string} prevWord The last significant word before the slash
+ * @returns {boolean} True when the slash starts a regex literal
+ */
+function startsRegexLiteral(prev, prevWord) {
+  if (REGEX_PRECEDING_KEYWORDS.has(prevWord)) return true;
+  if (prev === '') return true;
+  if (/[A-Za-z0-9_$)\]}]/.test(prev)) return false;
+  return true;
+}
+
+/**
+ * Skip a regex literal, its body and its flags.
+ *
+ * @param {string} source File contents
+ * @param {number} index Where the opening slash is
+ * @returns {number} Index after the literal
+ */
+function skipRegexLiteral(source, index) {
+  index++;
+  let inClass = false;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === '\\') {
+      index += 2;
+      continue;
+    }
+    if (char === '[') {
+      inClass = true;
+      index++;
+      continue;
+    }
+    if (char === ']') {
+      inClass = false;
+      index++;
+      continue;
+    }
+    if (char === '/' && !inClass) {
+      index++;
+      break;
+    }
+    if (char === '\n') break;
+    index++;
+  }
+  while (index < source.length && /[A-Za-z]/.test(source[index])) index++;
+  return index;
+}
+
+/** Skip a line comment to the end of its line. */
+function skipLineComment(source, index) {
+  while (index < source.length && source[index] !== '\n') index++;
+  return index;
+}
+
+/** Skip a block comment, delimiters included. */
+function skipBlockComment(source, index) {
+  index += 2;
+  while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) index++;
+  return index + 2;
+}
+
+/** Skip a quoted string, honouring backslash escapes. */
+function skipQuoted(source, index, quote) {
+  index++;
+  while (index < source.length) {
+    if (source[index] === '\\') {
+      index += 2;
+      continue;
+    }
+    if (source[index] === quote) return index + 1;
+    // A string does not span lines. An unterminated quote means the scanner mistook something
+    // else for a string -- a quote inside a regex literal, most likely -- so stop at the line
+    // end rather than swallowing the rest of the file.
+    if (source[index] === '\n') return index;
+    index++;
+  }
+  return index;
+}
+
+/**
+ * Skip a template literal. The text between the backticks is data, but the expressions inside
+ * `${}` are code and may load a module of their own, so they are scanned.
+ */
+function skipTemplate(source, index, found) {
+  index++;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === '\\') {
+      index += 2;
+      continue;
+    }
+    if (char === '`') return index + 1;
+    if (char === '$' && source[index + 1] === '{') {
+      index = scanCode(source, index + 2, found, '}');
+      if (source[index] === '}') index++;
+      continue;
+    }
+    index++;
+  }
+  return index;
+}
+
+/** Skip whitespace. */
+function skipSpace(source, index) {
+  while (index < source.length && /\s/.test(source[index])) index++;
+  return index;
+}
+
+/**
+ * The specifier a quoted string names, with the offset the string starts at.
+ *
+ * @param {string} source File contents
+ * @param {number} at Offset of the opening quote
+ * @returns {{specifier: string, at: number}|null} The specifier, or null when there is none
+ */
+function readSpecifierAt(source, at) {
+  const value = readQuoted(source, at);
+  return value === null ? null : { specifier: value, at };
+}
+
+/**
+ * The contents of the quoted string at `index`, or null when there is none.
+ *
+ * @param {string} source File contents
+ * @param {number} index Where the quote is
+ * @returns {string|null} The string, without its quotes
+ */
+function readQuoted(source, index) {
+  const quote = source[index];
+  if (quote !== '"' && quote !== "'") return null;
+  let cursor = index + 1;
+  let value = '';
+  while (cursor < source.length) {
+    if (source[cursor] === '\\') {
+      value += source[cursor + 1] === undefined ? '' : source[cursor + 1];
+      cursor += 2;
+      continue;
+    }
+    if (source[cursor] === quote) return value;
+    value += source[cursor];
+    cursor++;
+  }
+  return null;
+}
+
+/**
+ * The module specifier a require() call or an import or export clause names.
+ *
+ * @param {string} source File contents
+ * @param {number} index Just after the keyword
+ * @param {string} word The keyword: require, import or export
+ * @returns {{specifier: string, at: number}|null} The specifier and where it starts, or null
+ */
+function readModuleSpecifier(source, index, word) {
+  if (word === 'require') {
+    const cursor = skipSpace(source, index);
+    if (source[cursor] === '(') return readSpecifierAt(source, skipSpace(source, cursor + 1));
+    if (source[cursor] === '.') {
+      // require.resolve('pkg') resolves a package path at runtime, so it names a package the
+      // file needs just as much as require('pkg') does.
+      let end = cursor + 1;
+      while (end < source.length && /[\w$]/.test(source[end])) end++;
+      if (source.slice(cursor + 1, end) !== 'resolve') return null;
+      const after = skipSpace(source, end);
+      if (source[after] !== '(') return null;
+      return readSpecifierAt(source, skipSpace(source, after + 1));
+    }
+    return null;
+  }
+  const cursor = skipSpace(source, index);
+  if (source[cursor] === '(') {
+    return readSpecifierAt(source, skipSpace(source, cursor + 1));
+  }
+  if (source[cursor] === '"' || source[cursor] === "'") {
+    return readSpecifierAt(source, cursor);
+  }
+  // A clause: `import x from 'y'`, `import { a } from 'y'`, `export * from 'y'`. The clause is
+  // read token by token until the `from` keyword names the specifier.
+  let depth = 0;
+  let cursor2 = cursor;
+  while (cursor2 < source.length) {
+    const char = source[cursor2];
+    if (char === '/' && source[cursor2 + 1] === '/') {
+      cursor2 = skipLineComment(source, cursor2);
+      continue;
+    }
+    if (char === '/' && source[cursor2 + 1] === '*') {
+      cursor2 = skipBlockComment(source, cursor2);
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      cursor2 = skipQuoted(source, cursor2, char);
+      continue;
+    }
+    if (char === '`') {
+      cursor2 = skipTemplate(source, cursor2, []);
+      continue;
+    }
+    if (char === '{' || char === '[') {
+      depth++;
+      cursor2++;
+      continue;
+    }
+    if (char === '}' || char === ']') {
+      depth--;
+      cursor2++;
+      continue;
+    }
+    if (char === ';' && depth <= 0) return null;
+    if (/[A-Za-z_$]/.test(char)) {
+      let end = cursor2;
+      while (end < source.length && /[\w$]/.test(source[end])) end++;
+      const token = source.slice(cursor2, end);
+      if (token === 'from' && depth <= 0) {
+        return readSpecifierAt(source, skipSpace(source, end));
+      }
+      cursor2 = end;
+      continue;
+    }
+    cursor2++;
+  }
+  return null;
 }
 
 /**
@@ -386,6 +779,18 @@ function validateBundleDataPaths(fullDir = path.join(PACKAGES_DIR, 'full')) {
 }
 
 /**
+ * Where a bundle file lives, named the way an operator would name it: under packages/ when it
+ * is in this repository, by absolute path when it is a fixture bundle.
+ *
+ * @param {string} file Absolute path of the file
+ * @returns {string} The path to put in a message
+ */
+function whereInBundle(file) {
+  const prefix = PACKAGES_DIR + path.sep;
+  return file.startsWith(prefix) ? `packages/${path.relative(PACKAGES_DIR, file)}` : file;
+}
+
+/**
  * Ensure every bare dependency the bundle requires is vendored beside it.
  *
  * The sibling of validateFullBundleRequires below, for the other half of the same
@@ -413,24 +818,22 @@ function validateBundleDataPaths(fullDir = path.join(PACKAGES_DIR, 'full')) {
  * `npm run validate`; these two questions answer the same thing without the copy.
  * packages/full/lib/node_modules/README.md has the copy-based command for a human.
  *
- * SCOPE, which is narrower than the bundle and says so out loud. Only `lib/` and
- * `hooks/` are blocking: that is the module graph a command loads, and it is where the
- * defect was. `skills/` is scanned and reported, never blocking, because some skills
- * EMIT code -- skills/jest/generate-test.js writes `from '@testing-library/react'`
- * into the tests it generates, and a scanner cannot tell that string from a module
- * this file loads without parsing the template literals it sits in. Treating those as
- * missing dependencies would have failed `npm run validate` on a correct bundle, and
- * narrowing the scope silently to avoid it would have been the worse answer: the
- * skill-level count is printed on every run so the gap is visible rather than assumed
- * away. `glob`, required by skills/core/detect-stack/detect-stack.js, is in that
- * reported set and is deliberately not vendored -- nothing loads that skill at
- * command start, so no entry point dies on it.
+ * SCOPE, which is the whole bundle. The scope used to be `lib/` and `hooks/` only,
+ * with `skills/` reported and never blocking, because a skill may EMIT code:
+ * skills/jest/generate-test.js writes `from '@testing-library/react'` into the
+ * tests it generates, and a text scan could not tell that string from a module the
+ * file loads. The scan reads code now (see bareSpecifiers), so the emitted text is
+ * no longer read as a dependency and there is nothing left to excuse. A skill that
+ * loads a package the installed bundle cannot resolve is a dead skill, exactly like
+ * a dead entry point, and `glob` -- required by skills/core/detect-stack/detect-stack.js
+ * and never vendored -- was exactly such a case: the skill answered with no file
+ * evidence at all in every installed plugin.
  *
- * @returns {string[]} One message per missing package in the load-time graph
+ * @param {string} [fullDir] The bundle to check, so a test can point it at a fixture
+ * @returns {string[]} One message per missing package in the bundle
  */
-function validateBundleBareRequires() {
+function validateBundleBareRequires(fullDir = path.join(PACKAGES_DIR, 'full')) {
   const failures = [];
-  const fullDir = path.join(PACKAGES_DIR, 'full');
   const vendorDir = path.join(fullDir, 'lib', 'node_modules');
   if (!fs.existsSync(fullDir)) {
     return failures;
@@ -444,16 +847,14 @@ function validateBundleBareRequires() {
 
   const files = bundleCodeFiles(fullDir);
 
-  // The load-time graph: what a command pulls in before it does anything. A missing
-  // package here is a dead entry point, which is the defect. Everything else is
-  // counted and reported, for the reason the doc comment gives.
-  const loadTimeDirs = [path.join(fullDir, 'lib'), path.join(fullDir, 'hooks')];
-  const isLoadTime = file => loadTimeDirs.some(dir => file.startsWith(dir + path.sep));
-
+  // Every file the bundle ships is blocking. The scope used to be lib/ and hooks/ only, because
+  // a skill file could name a package it only EMITS (skills/jest/generate-test.js writes
+  // `from '@testing-library/react'` into the tests it generates) and a text scan could not tell
+  // emitted code from a module the bundle loads. The scan reads code now, so that excuse is
+  // gone: a skill that loads a package the installed bundle cannot resolve is a dead skill,
+  // exactly like a dead entry point.
   let checked = 0;
-  let loadTimeFiles = 0;
   const missing = new Map();
-  const skillLevel = new Set();
   files.forEach(file => {
     let source;
     try {
@@ -461,27 +862,24 @@ function validateBundleBareRequires() {
     } catch {
       return;
     }
-    const loadTime = isLoadTime(file);
-    if (loadTime) loadTimeFiles++;
-    for (const specifier of bareSpecifiers(source)) {
-      const pkg = specifierPackage(specifier);
-      if (BUILTIN_MODULES.has(pkg) || vendored.has(pkg)) {
+    for (const finding of bareSpecifierFindings(source)) {
+      const pkg = specifierPackage(finding.specifier);
+      if (isBuiltin(finding.specifier) || vendored.has(pkg)) {
         checked++;
         continue;
       }
-      if (loadTime) {
-        if (!missing.has(pkg)) missing.set(pkg, path.relative(PACKAGES_DIR, file));
-      } else {
-        skillLevel.add(pkg);
+      if (!missing.has(pkg)) {
+        missing.set(pkg, { where: whereInBundle(file), ...finding });
       }
     }
   });
 
-  for (const [pkg, where] of missing) {
+  for (const [pkg, finding] of missing) {
     failures.push(
-      `packages/${where} requires '${pkg}', which is not vendored and is not a Node builtin - ` +
-      `the installed bundle never runs npm install, so add it to VENDORED in ` +
-      `scripts/vendor-bundle-deps.js and re-run that script`
+      `${finding.where}:${finding.line} requires '${finding.specifier}', which is not vendored ` +
+      `and is not a Node builtin - the installed bundle never runs npm install, so add ` +
+      `'${pkg}' to VENDORED in scripts/vendor-bundle-deps.js and re-run that script, or mark ` +
+      `the line with '// ${BUNDLE_IGNORE_MARKER}' when the package is not needed at run time`
     );
   }
 
@@ -496,7 +894,7 @@ function validateBundleBareRequires() {
       continue;
     }
     for (const dep of Object.keys(manifest.dependencies || {})) {
-      if (!vendored.has(dep) && !BUILTIN_MODULES.has(dep)) {
+      if (!vendored.has(dep) && !isBuiltin(dep)) {
         failures.push(
           `vendored ${pkg}@${manifest.version} depends on '${dep}', which is not vendored - ` +
           `the closure is incomplete and the bundle fails at load one module further in`
@@ -506,18 +904,9 @@ function validateBundleBareRequires() {
   }
 
   console.log(
-    `  ${failures.length === 0 ? '✓' : '✗'} ${checked} bare require(s) across ${loadTimeFiles} ` +
-    `lib/ and hooks/ file(s) resolve to a builtin or one of ${vendored.size} vendored package(s)`
+    `  ${failures.length === 0 ? '✓' : '✗'} ${checked} bare require(s) across ${files.length} ` +
+    `bundle file(s) resolve to a builtin or one of ${vendored.size} vendored package(s)`
   );
-  if (skillLevel.size > 0) {
-    // Stated, not blocking. Some of these are strings a generator emits rather than
-    // modules anything loads, and the two are indistinguishable without parsing the
-    // template literals they sit in. A reader who sees one that matters can vendor it.
-    console.log(
-      `  i ${skillLevel.size} unvendored package(s) named under skills/, not blocking ` +
-      `(emitted code and real skill dependencies are mixed here): ${[...skillLevel].sort().join(', ')}`
-    );
-  }
   return failures;
 }
 
@@ -1325,6 +1714,7 @@ module.exports = {
   bundleRequireResolves,
   validateBundleBareRequires,
   bareSpecifiers,
+  bareSpecifierFindings,
   specifierPackage,
   bundleCodeFiles,
   dirnamePaths,
