@@ -1,2 +1,1 @@
-
-
+NO IMPLEMENTATION - phase 1 shipped no implementation for bead ensemble-pdf-f2-bundle-glob-dependency-r3; the defect is still open. See docs/reports/foreman-ensemble-pdf-f2-bundle-glob-dependency-r3/REVIEW_REPORT.md (the finding that reads "phase 1 shipped no implementation") and its unresolved-findings block.
