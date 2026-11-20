@@ -233,6 +233,9 @@ function tokenize(command) {
  *
  * Detects:
  * - Command substitution: $() and ``
+ * - Parameter expansion: ${...}
+ * - ANSI-C quoting: $'...'
+ * - IFS assignments (IFS=...) that can remove word separators
  * - Heredocs: <<
  * - Process substitution: <() and >()
  *
@@ -252,6 +255,22 @@ function checkUnsafe(command) {
   // Command substitution: backticks
   if (/`/.test(command)) {
     throw new Error('Command substitution `` not supported');
+  }
+
+  // Parameter expansion: ${...}
+  if (/\$\{/.test(command)) {
+    throw new Error('Parameter expansion ${...} not supported');
+  }
+
+  // ANSI-C quoting: $'...' can hide separators and command words
+  if (/\$'/.test(command)) {
+    throw new Error("ANSI-C quoting $'...' not supported");
+  }
+
+  // IFS assignment removes word separators (e.g. rm$IFS-rf), so any command
+  // assigning IFS is not auto-allowed
+  if (/^IFS=/.test(command) || /[;&|\n\s(\[]IFS=/.test(command)) {
+    throw new Error('IFS assignment not supported');
   }
 
   // Heredocs: <<
@@ -350,9 +369,11 @@ function isRedirection(token) {
  * wrappers, skip commands, background operator, and redirections.
  *
  * @param {string[]} tokens - Token array for one command (will be mutated)
+ * @param {{expandWrappers?: boolean}} [options] - expandWrappers:false leaves a
+ *   bash/sh -c wrapper unexpanded (parseCommand() classifies every inner segment itself)
  * @returns {{executable: string, args: string}|null} Normalized command or null if skipped
  */
-function normalizeSegment(tokens) {
+function normalizeSegment(tokens, options = {}) {
   if (!tokens || tokens.length === 0) {
     return null;
   }
@@ -426,12 +447,15 @@ function normalizeSegment(tokens) {
     return null;
   }
 
-  // Handle bash -c "command" - extract the inner command
-  if (tokens[0] === 'bash' || tokens[0] === 'sh') {
-    // Look for -c flag
+  // Handle bash -c "command" - extract the FIRST inner command. This is the
+  // documented single-segment contract for direct callers. parseCommand() opts
+  // out ({ expandWrappers: false }) and classifies every inner segment through
+  // classifySegment() instead; a wrapper that reaches here from there (e.g.
+  // after an env/sudo prefix) stays a plain `bash` executable and is refused
+  // by the allowlist rather than being reduced to its first inner segment.
+  if (options.expandWrappers !== false && (tokens[0] === 'bash' || tokens[0] === 'sh')) {
     const cIndex = tokens.indexOf('-c');
     if (cIndex !== -1 && cIndex + 1 < tokens.length) {
-      // The argument after -c is the command to parse
       const innerCommand = tokens[cIndex + 1];
 
       // Handle empty inner command
@@ -439,14 +463,9 @@ function normalizeSegment(tokens) {
         return null;
       }
 
-      // Recursively tokenize and normalize the inner command
-      const innerTokens = tokenize(innerCommand);
-      const innerSegments = splitByOperators(innerTokens);
-
-      // If there are multiple commands in the inner shell, we need to return the first
-      // and the caller should handle the rest
+      const innerSegments = splitByOperators(tokenize(innerCommand));
       if (innerSegments.length > 0) {
-        return normalizeSegment(innerSegments[0]);
+        return normalizeSegment(innerSegments[0], options);
       }
       return null;
     }
@@ -494,6 +513,43 @@ function normalizeSegment(tokens) {
 }
 
 /**
+ * Classify one command segment, expanding `bash -c`/`sh -c` wrappers into the
+ * full list of inner segments so no hidden segment escapes matching.
+ *
+ * normalizeSegment() keeps its documented single-segment contract; this helper
+ * is what parseCommand() uses so every inner segment is checked.
+ *
+ * @param {string[]} tokens - Token array for one command segment
+ * @returns {{executable: string, args: string}[]} Normalized commands (0..n)
+ */
+function classifySegment(tokens) {
+  // Handle bash -c "command" / sh -c "command": every inner segment counts
+  if (tokens.length > 0 && (tokens[0] === 'bash' || tokens[0] === 'sh')) {
+    const cIndex = tokens.indexOf('-c');
+    if (cIndex !== -1 && cIndex + 1 < tokens.length) {
+      const innerCommand = tokens[cIndex + 1];
+
+      // Empty inner command: wrapper alone is not auto-allowed
+      if (!innerCommand || innerCommand.trim() === '') {
+        return [];
+      }
+
+      const innerTokens = tokenize(innerCommand);
+      const innerSegments = splitByOperators(innerTokens);
+
+      const results = [];
+      for (const innerSegment of innerSegments) {
+        results.push(...classifySegment(innerSegment));
+      }
+      return results.filter(Boolean);
+    }
+  }
+
+  const normalized = normalizeSegment(tokens, { expandWrappers: false });
+  return normalized ? [normalized] : [];
+}
+
+/**
  * Parse a Bash command and extract normalized core commands.
  *
  * This is the main entry point for the parser. It:
@@ -533,10 +589,7 @@ function parseCommand(command) {
   // Normalize each segment
   const commands = [];
   for (const segment of segments) {
-    const normalized = normalizeSegment(segment);
-    if (normalized) {
-      commands.push(normalized);
-    }
+    commands.push(...classifySegment(segment));
   }
 
   return commands;
