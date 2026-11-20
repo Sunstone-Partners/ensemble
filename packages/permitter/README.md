@@ -158,7 +158,7 @@ Raw Command: "export API_KEY=xxx && timeout 30 npm test --coverage"
 |                        3. NORMALIZATION                                |
 |   - Strips export/set statements (skipped)                            |
 |   - Strips wrapper commands (timeout stripped)                         |
-|   - Strips env var prefixes                                           |
+|   - Strips env var prefixes (when safe)                               |
 |   - Strips redirections                                                |
 |   Result: [{ executable: "npm", args: "test --coverage" }]            |
 +-----------------------------------------------------------------------+
@@ -172,6 +172,18 @@ Raw Command: "export API_KEY=xxx && timeout 30 npm test --coverage"
 |   Result: ALLOW (exit 0)                                              |
 +-----------------------------------------------------------------------+
 ```
+
+A `#` that starts a word is a comment that runs to the end of that line: the
+comment text is not classified, and the next line is still parsed as its own
+command. A comment that contains an unmatched quote makes the whole command
+defer to the normal permission flow. Env var prefixes are stripped only when
+the variable is safe to assign; assignments to `PATH`, `IFS`, `BASH_ENV`,
+`ENV`, `LD_*` or `DYLD_*` are refused instead. Also refused: `env` options
+other than `-i`, `-u NAME` and `VAR=value`, ANSI-C (`$'...'`) or locale
+(`$"..."`) quoting, a command with an unbalanced quote, and
+`declare`/`typeset`/`local` options that change how a value is interpreted
+(`-n`, `-i`). A refused command is not classified: it defers to the normal
+permission flow.
 
 ### Normalization Examples
 
@@ -187,6 +199,9 @@ Raw Command: "export API_KEY=xxx && timeout 30 npm test --coverage"
 | `NODE_ENV=test npm run build` | `npm run build` | `Bash(npm run:*)` |
 | `npm test > log.txt 2>&1` | `npm test` | `Bash(npm test:*)` |
 | `npm start &` | `npm start` | `Bash(npm start:*)` |
+| `npm test # build` | `npm test` | `Bash(npm test:*)` |
+| `PATH=/evil npm test` | refused | Defers to permission flow |
+| `env -C /tmp npm test` | refused | Defers to permission flow |
 
 ### Exit Codes
 
@@ -261,7 +276,9 @@ const {
   tokenize,
   splitByOperators,
   normalizeSegment,
-  checkUnsafe
+  checkUnsafe,
+  checkRedirections,
+  checkQuoteBalance
 } = require('./lib/command-parser');
 ```
 
@@ -297,6 +314,10 @@ Tokenize a Bash command string with proper quote handling.
 
 **Returns:** Array of tokens
 
+**Notes:**
+- A `#` that starts a word opens a comment that runs to the end of that line
+- ANSI-C (`$'...'`) and locale (`$"..."`) quoting are refused
+
 **Example:**
 ```javascript
 tokenize('npm test --coverage');
@@ -317,6 +338,25 @@ Check for unsafe constructs that should cause deferral.
 - Command substitution: `$()` or backticks
 - Heredocs: `<<`
 - Process substitution: `<()` or `>()`
+
+#### `checkQuoteBalance(command): void`
+
+Check that every quote in the command is closed. A quote inside a comment
+counts, so a comment with an unmatched quote makes the whole command defer
+to the normal permission flow.
+
+**Parameters:**
+- `command` (string): Raw command string
+
+**Throws:**
+- `Error` if the command contains an unbalanced quote
+
+**Example:**
+
+```javascript
+checkQuoteBalance('echo "ok"');    // Returns: undefined
+checkQuoteBalance('echo "open');  // Throws: Error('Unbalanced quote not supported')
+```
 
 #### `splitByOperators(tokens): string[][]`
 
@@ -603,6 +643,11 @@ Permitter rejects commands containing potentially dangerous constructs:
 | Heredocs | `cat <<EOF` | Multi-line, complex parsing |
 | Process substitution | `<(cmd)`, `>(cmd)` | Hidden command execution |
 | Deeply nested subshells | `bash -c "bash -c '...'"` | Only 1 level extracted |
+| Unbalanced quotes | `git status --pretty='%h` | Command cannot be classified safely |
+| ANSI-C or locale quoting | `echo $'a'` | Contents are not expanded by the parser |
+| Unsupported `env` options | `env -C /tmp git status` | Changes how the command is resolved |
+| Dangerous variable assignments | `PATH=/evil git status` | Changes how the command is resolved |
+| Declaration options that change the value | `declare -n cmd` | The parser cannot follow the target |
 
 ### Unicode Homoglyph Protection
 
@@ -721,6 +766,16 @@ These scenarios are NOT in scope for Permitter to mitigate:
 | "Command substitution `` not supported" | Command contains backticks | Use simpler command form |
 | "Heredocs not supported" | Command contains `<<` | Use simpler command form |
 | "Process substitution not supported" | Command contains `<()` or `>()` | Use simpler command form |
+| "Unbalanced quote not supported" | Command contains an unmatched `'` or `"` | Close the quote or use a simpler command form |
+| "ANSI-C quoting not supported" | Command contains `$'...'` or `$"..."` | Use plain single or double quotes |
+| "Dangerous variable assignment not supported: NAME" | Command assigns `PATH`, `IFS`, `BASH_ENV`, `ENV`, `LD_*` or `DYLD_*` | Assign the variable in a separate command |
+| "Subscripted assignment not supported: TOKEN" | Assignment targets a subscript that is not a plain index, e.g. `a[PATH=0]=x` | Assign the variable directly |
+| "Arithmetic assignment not supported: TOKEN" | Assignment value is itself an assignment, e.g. `n+=PATH=0` | Assign the variable in a separate command |
+| "dynamic export argument not supported: TOKEN" | A skipped command takes an argument that expands at run time, e.g. `export $VAR` | Pass the literal value |
+| "env option not supported: TOKEN" | `env` option changes how the command is resolved | Use `-i`, `-u NAME` or `VAR=value` |
+| "env option not supported: -u requires a variable name" | `env -u` without a variable name | Give the variable name after `-u` |
+| "Nameref declaration not supported: TOKEN" | `declare -n` creates a name reference | Declare the variable with its value |
+| "Integer declaration not supported: TOKEN" | `declare -i` evaluates values as arithmetic | Declare the variable with its value |
 
 These commands will defer to Claude Code's normal permission flow.
 

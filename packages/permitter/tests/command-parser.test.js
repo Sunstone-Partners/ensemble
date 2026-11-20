@@ -13,9 +13,11 @@ const {
   splitByOperators,
   normalizeSegment,
   checkUnsafe,
+  checkQuoteBalance,
   WRAPPER_COMMANDS,
   SKIP_COMMANDS,
   OPERATORS,
+  DANGEROUS_ASSIGNMENT_VARS,
   State
 } = require('../lib/command-parser');
 
@@ -729,5 +731,23 @@ describe('Module Exports', () => {
     expect(OPERATORS.has('||')).toBe(true);
     expect(OPERATORS.has(';')).toBe(true);
     expect(OPERATORS.has('|')).toBe(true);
+  });
+
+  test('should export DANGEROUS_ASSIGNMENT_VARS set', () => {
+    expect(DANGEROUS_ASSIGNMENT_VARS).toBeInstanceOf(Set);
+    expect(DANGEROUS_ASSIGNMENT_VARS.has('PATH')).toBe(true);
+    expect(DANGEROUS_ASSIGNMENT_VARS.has('IFS')).toBe(true);
+    expect(DANGEROUS_ASSIGNMENT_VARS.has('BASH_ENV')).toBe(true);
+    expect(DANGEROUS_ASSIGNMENT_VARS.has('ENV')).toBe(true);
+    expect(DANGEROUS_ASSIGNMENT_VARS.has('HOME')).toBe(false);
+  });
+
+  test('should export checkQuoteBalance', () => {
+    expect(typeof checkQuoteBalance).toBe('function');
+    expect(() => checkQuoteBalance('npm test')).not.toThrow();
+    expect(() => checkQuoteBalance('echo "ok"')).not.toThrow();
+    expect(() => checkQuoteBalance("echo 'ok'")).not.toThrow();
+    expect(() => checkQuoteBalance('echo "open')).toThrow('Unbalanced quote not supported');
+    expect(() => checkQuoteBalance("echo 'open")).toThrow('Unbalanced quote not supported');
   });
 });
