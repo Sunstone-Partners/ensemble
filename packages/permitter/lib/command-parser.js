@@ -19,6 +19,10 @@ const WRAPPER_COMMANDS = new Set(['timeout', 'time', 'nice', 'nohup', 'env']);
 // Commands that are skipped entirely
 const SKIP_COMMANDS = new Set(['export', 'set', 'unset', 'local', 'declare', 'typeset']);
 
+// Commands that create or change a variable. Their options decide how the
+// value is interpreted, so the ones the parser cannot follow are refused.
+const DECLARATION_COMMANDS = new Set(['declare', 'typeset', 'local']);
+
 // Environment variables that change how a command is resolved or parsed.
 // PATH controls executable lookup, LD_* / DYLD_* inject code into the
 // process, IFS changes how words are split, BASH_ENV / ENV make a shell
@@ -394,14 +398,56 @@ function splitByOperators(tokens) {
 }
 
 /**
- * Check if a token is an environment variable assignment.
+ * Environment assignment: `NAME=value` or bash's append form `NAME+=value`.
+ *
+ * The base name (the identifier in front of the subscript and `=` or `+=`)
+ * is what decides whether the assignment is dangerous, so it is captured
+ * on its own: `PATH[0]=/evil` mutates PATH just like `PATH=/evil`.
+ * The subscript and the value are captured as well, because bash reads
+ * both as arithmetic expressions.
+ * `A+B=c` is not an assignment in bash (invalid identifier) and does not
+ * match here either.
+ *
+ * @type {RegExp}
+ */
+const ENV_ASSIGNMENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)((?:\[[^\]]*\])*)(?:\+?=)(.*)$/;
+
+/**
+ * Split an assignment token into its parts.
  *
  * @param {string} token - Token to check
- * @returns {boolean} True if token is VAR=value format
+ * @returns {{name: string, subscript: string, value: string}|null} Parts, or null when the token is not an assignment
+ */
+function envAssignmentParts(token) {
+  if (!token || typeof token !== 'string') {
+    return null;
+  }
+  const match = ENV_ASSIGNMENT_RE.exec(token);
+  if (!match) {
+    return null;
+  }
+  return { name: match[1], subscript: match[2], value: match[3] };
+}
+
+/**
+ * Get the variable name an assignment token sets.
+ *
+ * @param {string} token - Token to check
+ * @returns {string|null} Variable name, or null when the token is not an assignment
+ */
+function envAssignmentName(token) {
+  const parts = envAssignmentParts(token);
+  return parts ? parts.name : null;
+}
+
+/**
+ * Check if token is an environment variable assignment.
+ *
+ * @param {string} token - Token to check
+ * @returns {boolean} True if token is a VAR=value or VAR+=value format
  */
 function isEnvAssignment(token) {
-  // Must start with letter or underscore, contain =, and have valid var name
-  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+  return envAssignmentName(token) !== null;
 }
 
 /**
@@ -429,13 +475,47 @@ function assertSafeAssignmentVar(name) {
 }
 
 /**
- * Refuse a VAR=value token that changes command behaviour.
+ * Refuse a VAR=value (or VAR+=value) token that changes command behaviour.
  *
- * @param {string} token - VAR=value token
+ * @param {string} token - VAR=value or VAR+=value token
  * @throws {Error} If the assignment targets a dangerous variable
  */
 function assertSafeAssignment(token) {
-  assertSafeAssignmentVar(token.slice(0, token.indexOf('=')));
+  const parts = envAssignmentParts(token);
+  if (parts === null) {
+    return;
+  }
+  assertSafeAssignmentVar(parts.name);
+  if (parts.subscript && !/^\[\d+\]$/.test(parts.subscript)) {
+    // Bash evaluates an array subscript as an arithmetic expression, so
+    // `a[PATH=0]=x` assigns PATH inside the subscript. Only a plain index
+    // is understood here, so anything else is refused.
+    throw new Error(`Subscripted assignment not supported: ${token}`);
+  }
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(parts.value)) {
+    // The value of a variable with the integer attribute is evaluated as an
+    // arithmetic expression, and there `n+=PATH=0` assigns PATH. The parser
+    // cannot see the attribute, so a value that looks like an assignment is
+    // refused.
+    throw new Error(`Arithmetic assignment not supported: ${token}`);
+  }
+}
+
+/**
+ * Check whether a token can expand to a value the parser cannot see.
+ *
+ * A single-quoted string is inert in bash, so only an expansion outside
+ * single quotes counts.
+ *
+ * @param {string} token - Token to check
+ * @returns {boolean} True if the token contains an active expansion
+ */
+function hasExpansion(token) {
+  if (!token || typeof token !== 'string') {
+    return false;
+  }
+  const outsideSingleQuotes = token.replace(/'[^']*'/g, '');
+  return outsideSingleQuotes.includes('$') || outsideSingleQuotes.includes('`');
 }
 
 /**
@@ -455,6 +535,11 @@ function assertSafeSkipCommand(tokens) {
   for (const token of rest) {
     if (isEnvAssignment(token)) {
       assertSafeAssignment(token);
+    } else if (hasExpansion(token)) {
+      // `export "$X"` expands before bash runs it, so the variable it sets
+      // cannot be established here: the segment is refused instead of
+      // being skipped.
+      throw new Error(`dynamic ${command} argument not supported: ${token}`);
     }
   }
 
@@ -661,6 +746,61 @@ function normalizeSegment(tokens) {
 }
 
 /**
+ * Strip the blanks bash treats as word separators.
+ *
+ * `String.trim()` also removes characters bash keeps inside a word
+ * (U+00A0, U+000B, U+000C, U+FEFF, ...). Trimming those moves a following
+ * '#' to the start of the command, where the tokenizer would treat the rest
+ * of the line as a comment and never classify the command that runs there.
+ * Only space, tab and newline separate words in bash, so only those are
+ * trimmed.
+ *
+ * @param {string} command - Raw command string
+ * @returns {string} Command without leading/trailing shell blanks
+ */
+function trimShellBlanks(command) {
+  return command.replace(/^[ \t\n]+/, '').replace(/[ \t\n]+$/, '');
+}
+
+/**
+ * Refuse a command line that declares a variable the parser cannot follow.
+ *
+ * `declare -n p=LD_PRELOAD` makes p an alias of LD_PRELOAD, so an
+ * assignment to p changes LD_PRELOAD without naming it, and `declare -i n`
+ * makes the value of n an arithmetic expression, so `n+=PATH=0` assigns
+ * PATH. Neither effect can be tracked, so the command line is refused.
+ *
+ * The guard is on the command line rather than on a single segment,
+ * because the declaration and the assignment that exploits it can sit in
+ * different segments of the same line.
+ *
+ * @param {string[][]} segments - Token segments of the command line
+ * @throws {Error} If a segment declares an alias or an integer variable
+ */
+function assertSafeDeclarationOptions(segments) {
+  for (const segment of segments) {
+    if (segment.length === 0 || !DECLARATION_COMMANDS.has(segment[0])) {
+      continue;
+    }
+    for (const token of segment.slice(1)) {
+      if (token === '--') {
+        break;
+      }
+      if (!/^-[A-Za-z]+$/.test(token)) {
+        continue;
+      }
+      const flags = token.slice(1);
+      if (flags.includes('n')) {
+        throw new Error(`Nameref declaration not supported: ${token}`);
+      }
+      if (flags.includes('i')) {
+        throw new Error(`Integer declaration not supported: ${token}`);
+      }
+    }
+  }
+}
+
+/**
  * Parse a Bash command and extract normalized core commands.
  *
  * This is the main entry point for the parser. It:
@@ -678,7 +818,7 @@ function parseCommand(command) {
     return [];
   }
 
-  const trimmed = command.trim();
+  const trimmed = trimShellBlanks(command);
   if (!trimmed) {
     return [];
   }
@@ -700,6 +840,9 @@ function parseCommand(command) {
 
   // Split by operators into segments
   const segments = splitByOperators(tokens);
+
+  // A declaration the parser cannot follow is refused for the whole line
+  assertSafeDeclarationOptions(segments);
 
   // Normalize each segment
   const commands = [];

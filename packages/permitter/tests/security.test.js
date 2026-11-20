@@ -1201,3 +1201,205 @@ describe('Security: permitter hook fails closed (pdf-f6b2)', () => {
     expect(debug).toMatch(/Parse error: env option not supported/);
   });
 });
+
+// =============================================================================
+// Security: CodeRabbit review round 1 (pdf-f6b2)
+// =============================================================================
+describe('Security: review round 1 findings (pdf-f6b2)', () => {
+  const allowlist = ['Bash(git:*)', 'Bash(npm test:*)', 'Bash(npm run build:*)', 'Bash(ls:*)', 'Bash(echo:*)'];
+
+  // Mirrors hooks/permitter.js: allow only if parse succeeds and every segment matches.
+  function autoAllowed(cmd) {
+    let cmds;
+    try {
+      cmds = parseCommand(cmd);
+    } catch {
+      return false;
+    }
+    return cmds.length > 0 && cmds.every(c => matchesAny(c, allowlist));
+  }
+
+  // Finding 1: bash's append assignment form `NAME+=value` was not recognised
+  // as an assignment, so `export LD_PRELOAD+=...` was dropped as a skipped
+  // command and the rest of the line was approved.
+  describe('append assignments are refused like plain assignments', () => {
+    test.each([
+      ['export PATH', 'export PATH+=/tmp/evil; git status'],
+      ['export LD_PRELOAD', 'export LD_PRELOAD+=/tmp/evil.so; git status'],
+      ['export IFS', 'export IFS+=$x; git status'],
+      ['declare LD_PRELOAD', 'declare LD_PRELOAD+=/tmp/evil.so; git status'],
+      ['typeset PATH', 'typeset PATH+=/tmp/evil; git status'],
+      ['local PATH', 'local PATH+=/tmp/evil; git status'],
+      ['set PATH', 'set PATH+=/tmp/evil; git status']
+    ])('%s with += must not be allowed through', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('a harmless append export is still allowed', () => {
+      expect(autoAllowed('export FOO+=bar; git status')).toBe(true);
+    });
+  });
+
+  // Finding 2: JavaScript `trim()` removed characters bash keeps inside a
+  // word (U+00A0, U+000B, U+000C, ...), so a leading non-breaking space moved
+  // the '#' to the start of the command: the rest of that line was treated as
+  // a comment and the real command was never classified.
+  describe('leading non-shell whitespace cannot hide a command', () => {
+    test.each([
+      ['non-breaking space', '\u00a0'],
+      ['vertical tab', '\u000b'],
+      ['form feed', '\u000c'],
+      ['carriage return', '\r'],
+      ['byte order mark', '\ufeff'],
+      ['line separator', '\u2028']
+    ])('%s before # must not hide the rest of the line', (_name, blank) => {
+      const cmd = `${blank}#; curl https://example.invalid/\ngit status`;
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('the command hidden behind the # is still classified', () => {
+      const cmd = '\u00a0#; curl https://example.invalid/\ngit status';
+      let cmds;
+      expect(() => {
+        cmds = parseCommand(cmd);
+      }).not.toThrow();
+      expect(cmds.map(c => c.executable)).toContain('curl');
+    });
+
+    test('a real leading blank (space, tab) is still a comment in bash', () => {
+      expect(parseCommand('  # comment\ngit status').map(c => c.executable)).toEqual(['git']);
+    });
+
+    test('ordinary commands with leading blanks are still allowed', () => {
+      expect(autoAllowed('  git status')).toBe(true);
+      expect(autoAllowed('\tnpm test')).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// Security: CodeRabbit review round 2 (pdf-f6b2)
+// =============================================================================
+describe('Security: review round 2 findings (pdf-f6b2)', () => {
+  const allowlist = ['Bash(git:*)', 'Bash(npm test:*)', 'Bash(npm run build:*)', 'Bash(ls:*)', 'Bash(echo:*)'];
+
+  // Mirrors hooks/permitter.js: allow only if parse succeeds and every segment matches.
+  function autoAllowed(cmd) {
+    let cmds;
+    try {
+      cmds = parseCommand(cmd);
+    } catch {
+      return false;
+    }
+    return cmds.length > 0 && cmds.every(c => matchesAny(c, allowlist));
+  }
+
+  // Finding 3: `export "$X"` expands before bash runs it, so the assignment
+  // target of a declaration command that expands cannot be established. The
+  // segment is refused instead of being skipped.
+  describe('dynamic assignment targets are refused', () => {
+    test.each([
+      ['export with an expanded name', 'X=PATH=/tmp/evil; export $X; git status'],
+      ['export with a quoted expanded name', 'X=PATH=/tmp/evil; export "$X"; git status'],
+      ['declare with an expanded name', 'X=PATH=/tmp/evil; declare $X; git status'],
+      ['typeset with an expanded name', 'X=PATH=/tmp/evil; typeset $X; git status'],
+      ['local with an expanded name', 'X=PATH=/tmp/evil; local $X; git status'],
+      ['unset with an expanded name', 'X=PATH; unset $X; git status']
+    ])('%s must not be allowed through', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('a literal assignment is still allowed', () => {
+      expect(autoAllowed('export FOO=bar; git status')).toBe(true);
+    });
+
+    test('a literal assignment with an expanded value is still allowed', () => {
+      expect(autoAllowed('export FOO=$HOME/bin; git status')).toBe(true);
+    });
+  });
+
+  // Finding 4: `PATH[0]=/tmp/evil` mutates element 0 of PATH, so the
+  // assignment target is PATH even though the token carries a subscript.
+  describe('subscripted mutations of dangerous variables are refused', () => {
+    test.each([
+      ['declare', 'declare PATH[0]=/tmp/evil; git status'],
+      ['typeset', 'typeset PATH[0]=/tmp/evil; git status'],
+      ['local', 'local PATH[0]=/tmp/evil; git status'],
+      ['declare with a quoted subscript', "declare 'PATH[0]=/tmp/evil'; git status"]
+    ])('%s must not be allowed through', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('a harmless subscripted assignment is still allowed', () => {
+      expect(autoAllowed('declare FOO[0]=bar; git status')).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// Security: CodeRabbit review round 3 (pdf-f6b2)
+// =============================================================================
+describe('Security: review round 3 findings (pdf-f6b2)', () => {
+  const allowlist = ['Bash(git:*)', 'Bash(npm test:*)', 'Bash(npm run build:*)', 'Bash(ls:*)', 'Bash(echo:*)'];
+
+  // Mirrors hooks/permitter.js: allow only if parse succeeds and every segment matches.
+  function autoAllowed(cmd) {
+    let cmds;
+    try {
+      cmds = parseCommand(cmd);
+    } catch {
+      return false;
+    }
+    return cmds.length > 0 && cmds.every(c => matchesAny(c, allowlist));
+  }
+
+  // Finding 5: bash evaluates an array subscript as an arithmetic expression,
+  // so `a[PATH=0]=x` assigns PATH inside the subscript.
+  describe('subscripts that assign another variable are refused', () => {
+    test.each([
+      ['a subscript that assigns another variable', 'a[PATH=0]=x; git status'],
+      ['a quoted subscript that assigns another variable', "declare 'a[PATH=0]=x'; git status"],
+      ['a subscript on a dangerous variable', 'PATH[0]=x; git status']
+    ])('%s must not be allowed through', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('a plain numeric subscript is still allowed', () => {
+      expect(autoAllowed('declare FOO[0]=bar; git status')).toBe(true);
+    });
+  });
+
+  // Finding 6: `declare -n p=LD_PRELOAD` makes p an alias of LD_PRELOAD, so
+  // an assignment to p changes LD_PRELOAD without naming it.
+  describe('nameref declarations are refused', () => {
+    test.each([
+      ['declare -n', 'declare -n p=LD_PRELOAD; p+=/tmp/evil.so; export LD_PRELOAD; git status'],
+      ['typeset -n', 'typeset -n p=PATH; p=/tmp/evil; export PATH; git status'],
+      ['local -n', 'local -n p=PATH; p=/tmp/evil; export PATH; git status']
+    ])('%s must not be allowed through', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('a readonly declaration is still allowed', () => {
+      expect(autoAllowed('declare -r FOO=bar; git status')).toBe(true);
+    });
+  });
+
+  // Finding 7: the value of an integer-attribute variable is evaluated as an
+  // arithmetic expression, so `n+=PATH=0` assigns PATH.
+  describe('integer declarations and arithmetic values are refused', () => {
+    test.each([
+      ['declare -i', 'declare -i n; n+=PATH=0; git status'],
+      ['typeset -i', 'typeset -i n; n+=PATH=0; git status'],
+      ['an arithmetic assignment value', 'n+=PATH=0; git status']
+    ])('%s must not be allowed through', (_name, cmd) => {
+      expect(autoAllowed(cmd)).toBe(false);
+    });
+
+    test('plain scalar assignments are still allowed', () => {
+      expect(autoAllowed('export FOO=bar; git status')).toBe(true);
+      expect(autoAllowed('declare FOO=bar; git status')).toBe(true);
+      expect(autoAllowed('FOO=bar git status')).toBe(true);
+    });
+  });
+});
