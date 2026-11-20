@@ -24,7 +24,7 @@ Claude Code sets `CLAUDE_PLUGIN_ROOT` when a plugin loads or a hook is invoked. 
 
 | Variable | Purpose | Notes |
 |---|---|---|
-| `CLAUDE_PLUGIN_ROOT` | Absolute path to the installed plugin directory. Used in all hook `command` fields to locate hook scripts. | Referenced as `${CLAUDE_PLUGIN_ROOT}/hooks/permitter.js` in `hooks.json`. |
+| `CLAUDE_PLUGIN_ROOT` | Absolute path to the installed plugin directory. Used in all hook `command` fields to locate hook scripts. | Referenced as `${CLAUDE_PLUGIN_ROOT}/hooks/permitter.js` in `hooks.json`; the command string is quoted so a path with a space execs as one word. |
 | `CLAUDE_SESSION_ID` | Claude Code session identifier. | Read by the toolchain confirmation code (`packages/development/lib/toolchain/confirm.js`) to identify the session. |
 
 `TOOL_NAME` and `TOOL_INPUT` are not injected by Claude Code. The OpenCode hook bridge (`packages/opencode/src/hooks/bridge.js`) sets them for the hook processes it starts.
