@@ -223,6 +223,40 @@ function repoRoot() {
   return process.cwd();
 }
 
+/**
+ * Does this repo hold a .NET project? Any `*.csproj` or `*.sln` at the repo root or one
+ * directory below it counts. Synchronous and glob-free on purpose: `resolve-bdd` is a
+ * short, cheap call both commands make, and `packages/core/lib/detect-framework.js` is
+ * async and glob-based, which this CLI cannot await.
+ * @param {string} root repo root
+ * @returns {boolean} true when a .NET project file is there
+ */
+function hasDotnetProject(root) {
+  if (!root) return false;
+  const isDotnetFile = (name) => /\.(csproj|sln)$/i.test(name);
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.some((e) => e.isFile() && isDotnetFile(e.name))) return true;
+  return entries.some(
+    (e) =>
+      e.isDirectory() &&
+      !e.name.startsWith('.') &&
+      (() => {
+        try {
+          return fs
+            .readdirSync(path.join(root, e.name), { withFileTypes: true })
+            .some((c) => c.isFile() && isDotnetFile(c.name));
+        } catch {
+          return false;
+        }
+      })()
+  );
+}
+
 /** Repo-root-relative forward-slash form of `p`; stays absolute if `p` lies outside the repo. */
 function toRepoRelative(p, root) {
   const real = (x) => {
@@ -807,7 +841,8 @@ function resolveTrdArg(given) {
  *   -> { ok:true, enabled, source, evidence?, warning?, message }
  *
  * Thin CLI adapter over bdd-mode.js's resolveBdd (precedence: flag, ENSEMBLE_BDD, the TRD's
- * `test_approach` frontmatter, on). BDD stays on by default; these are the ways to opt out. Run by both
+ * `test_approach` frontmatter, then the repo: a repo with no .NET project is off, since Reqnroll is
+ * C#-only). Explicit choices always win; otherwise BDD follows the repo. Run by both
  * `create-trd` and `implement-trd-tasks` so the two commands agree on whether Reqnroll is in play.
  * Reads ENSEMBLE_BDD from the `env` param rather than process.env directly, like runResolveSdlc.
  *
@@ -833,7 +868,7 @@ function runResolveBdd(argv, env) {
     if (flags.trd === '') throw new Error('--trd requires a TRD path');
     trdPath = resolveTrdArg(flags.trd);
   }
-  return { ok: true, ...resolveBdd({ flag, env: env || {}, trdPath }) };
+  return { ok: true, ...resolveBdd({ flag, env: env || {}, trdPath, repo: { dotnet: hasDotnetProject(repoRoot()) } }) };
 }
 
 /** Load all TRD paths for combined workstream helpers. */
@@ -1683,6 +1718,7 @@ module.exports = {
   runPrPlan,
   runResolveSdlc,
   runResolveBdd,
+  hasDotnetProject,
   runQuickstart,
   runValidateWorkstream,
   runCreateWorkstreamTrd,
