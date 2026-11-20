@@ -19,7 +19,7 @@ Smart permission expansion hook for Claude Code - semantic command matching.
 
 ## Overview
 
-Permitter is a PreToolUse hook that intercepts Bash tool invocations and performs semantic equivalence checking to expand permission matching beyond exact prefix matching. It normalizes commands by stripping environment variables, wrappers, and chains, then matches the core commands against the user's allowlist.
+Permitter is a PermissionRequest hook that intercepts Bash tool invocations and performs semantic equivalence checking to expand permission matching beyond exact prefix matching. It normalizes commands by stripping environment variables, wrappers, and chains, then matches the core commands against the user's allowlist.
 
 ### Why Permitter?
 
@@ -206,12 +206,13 @@ characters (the rule name is always kept), so a very long command cannot produce
 ### Fail-Closed Design
 
 Permitter uses a fail-closed security model - when in doubt it emits **no decision** so Claude Code
-shows its normal permission prompt. It never auto-allows on error:
+shows its normal permission prompt. It never auto-allows a command it could not parse or evaluate:
 
 | Scenario | stdout | Result |
 |----------|--------|--------|
 | Parse error | (empty) | Normal permission flow |
-| Settings file error | (empty) | Normal permission flow |
+| Malformed settings file | (none) | File skipped; other settings files still apply |
+| Settings load exception | (empty) | Normal permission flow |
 | Unknown operator | (empty) | Normal permission flow |
 | Unsafe construct | (empty) | Normal permission flow |
 | Any exception | (empty) | Normal permission flow |
@@ -219,6 +220,10 @@ shows its normal permission prompt. It never auto-allows on error:
 | Denylist hit | `deny` + message | Execution blocked |
 | Hook disabled | (empty) | Pass through (no interference) |
 | All commands match | `allow` | Allow execution |
+
+A malformed or unreadable settings file is skipped rather than fatal: the remaining settings
+files still apply, so a command allowed by another file can still be auto-approved. Only an
+unexpected exception while loading the settings defers.
 
 ---
 
@@ -838,7 +843,7 @@ packages/permitter/
 |   +-- allowlist-loader.js   # Settings file loading
 |   +-- matcher.js            # Pattern matching
 +-- tests/
-|   +-- permitter.test.js     # Hook integration tests
+|   +-- hook-contract.test.js  # Hook contract tests
 |   +-- command-parser.test.js # Parser unit tests
 |   +-- allowlist-loader.test.js # Loader unit tests
 |   +-- matcher.test.js       # Matcher unit tests

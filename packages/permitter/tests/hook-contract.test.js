@@ -54,7 +54,15 @@ function runHook(payload, opts = {}) {
     cwd: opts.cwd,
     encoding: 'utf8',
     input,
-    env: { ...process.env, HOME: sandboxHome, PERMITTER_DEBUG: '0', ...opts.env },
+    env: {
+      ...process.env,
+      HOME: sandboxHome,
+      PERMITTER_DEBUG: '0',
+      // Keep the run hermetic: an operator-exported disable flag would make
+      // every hook call defer. The disabled-hook test re-sets it via opts.env.
+      ENSEMBLE_PERMITTER_DISABLE: '0',
+      ...opts.env,
+    },
   });
   return { stdout: res.stdout || '', stderr: res.stderr || '', status: res.status };
 }
