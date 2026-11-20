@@ -179,6 +179,21 @@ errors whose message contains `not supported`, `Heredocs`, `Command substitution
   changes the environment of the commands that follow it (10 cases), a harmless `export` stays
   allowed (1 case), `BASH_ENV` / `ENV` assignments are refused (2 cases) and ANSI-C quoting is
   refused (3 cases).
+* **Added** `Security: env wrapper option completeness (pdf-f6b2)` — a table-driven block (6 tests)
+  added by this run as **missing coverage, not as a behaviour change**: the parser staged in this
+  branch already refuses every `env` option it does not understand, but nothing pinned that, so a
+  future edit could silently start dropping options again. Cases: `env -- npm test`,
+  `env -iu SOME_VAR npm test`, `env --unset=SOME_VAR npm test`, `env --chdir=/tmp npm test` (each
+  must throw `env option not supported: …`), the same commands must not become auto-allowed, and
+  a whole-line comment must yield no command to classify (`parseCommand('# just a comment')` →
+  `[]`). All six are red on `origin/dev`'s parser.
+* **Added** `Security: permitter hook fails closed (pdf-f6b2)` — 2 tests that run the real hook
+  (`packages/permitter/hooks/permitter.js`) end-to-end with a Bash permission request: a
+  comment-only command and a command the parser refuses must both yield the `ask` decision and
+  never `allow` — the first through the hook's "no executable commands extracted" path
+  (`hooks/permitter.js:182`), the second through its "parse error" path (`hooks/permitter.js:175`).
+  Both are red on `origin/dev`'s parser (there the comment text is parsed as a program name
+  instead of extracting nothing).
 
 ## Tests
 
@@ -193,7 +208,16 @@ cd packages/permitter && npx jest tests/security.test.js
   Tests:       33 failed, 186 passed, 219 total
 ```
 
-The 33 failures are the 32 pre-written cases plus one new case (`a comment ends at the newline, not
+Re-measured at the end of this run with the same reverted parser and the **final** test file
+(247 cases, including the `env`-option and hook blocks added by this run):
+
+```
+cd packages/permitter && npx jest tests/security.test.js
+→ Test Suites: 1 failed, 1 total
+  Tests:       55 failed, 192 passed, 247 total
+```
+
+The 33 failures above are the 32 pre-written cases plus one new case (`a comment ends at the newline, not
 at the end of command`). Failure names (abridged):
 
 ```
@@ -301,11 +325,11 @@ The mutation was reverted immediately afterwards (verified by re-running the sui
 ```
 cd packages/permitter && npx jest tests/security.test.js
 → Test Suites: 1 passed, 1 total
-  Tests:       239 passed, 239 total
+  Tests:       247 passed, 247 total
 
 cd packages/permitter && npx jest
 → Test Suites: 7 passed, 7 total
-  Tests:       629 passed, 629 total
+  Tests:       637 passed, 637 total
 ```
 
 The pre-existing suites (`command-parser.test.js`, `integration.test.js`, `matcher.test.js`,
@@ -324,9 +348,9 @@ passes: `git status`, `ls -la`, `npm test`, `npm run build`, `echo hello`, `npm 
 
 | Command | Result |
 | --- | --- |
-| `cd packages/permitter && npx jest tests/security.test.js` (original parser, final tests) | **red** — 33 failed, 186 passed, 219 total |
-| `cd packages/permitter && npx jest tests/security.test.js` (fixed parser) | **green** — 239 passed, 239 total |
-| `cd packages/permitter && npx jest` (fixed parser) | **green** — 7 suites, 629 passed, 629 total |
+| `cd packages/permitter && npx jest tests/security.test.js` (original parser, final tests) | **red** — 33 failed, 186 passed, 219 total (re-measured at the end of this run with the final 247-case test file: **55 failed, 192 passed, 247 total**) |
+| `cd packages/permitter && npx jest tests/security.test.js` (fixed parser) | **green** — 247 passed, 247 total |
+| `cd packages/permitter && npx jest` (fixed parser) | **green** — 7 suites, 637 passed, 637 total |
 | `cd packages/permitter && npx jest` × 3 more runs | **green** — 609 passed each time (run before the round-2 hardening) |
 | `cd packages/permitter && npx jest tests/security.test.js` (round-2 parser, final tests) | **red** — 18 failed, 221 passed, 239 total |
 | `cd packages/permitter && npx jest tests/performance.test.js` × 5 | **green** — 19 passed each time |
@@ -338,11 +362,13 @@ passes: `git status`, `ls -la`, `npm test`, `npm run build`, `echo hello`, `npm 
 | Micro-benchmark of the added quote scan (scratch script, `~/.omp/perm-f6b2/perf-compare.js`) | `parseCommand` on 4 simple commands: p50 0.0024 ms → 0.0025 ms; long command: p50 0.0155 ms → 0.0163 ms (thresholds in `performance.test.js` are 5 ms / 20 ms) |
 | Adversarial probe of the comment scope (scratch script, `~/.omp/perm-f6b2/probe2.js`) | `git status\ #; rm -rf /` → two segments `[git status #]`, `[rm -rf /]` (the escaped space means the `#` is not a comment, so the `rm` stays classified); `git commit -m "a #b"; rm x` and `git commit -m 'a #b'; rm x` → two segments (`#` literal inside quotes); `git status # note \` + newline + `rm -rf /` → two segments (the `rm` is classified and refused); `env LD_PRELOAD=x git status` and `FOO=1 env LD_PRELOAD=x git status` → throw `Dangerous variable assignment not supported: LD_PRELOAD`; `bash -c 'PATH=/evil git status'` → throw `Dangerous variable assignment not supported: PATH`; `env -uNAME`, `env --unset NAME`, `env -iu`, `env -` → throw `env option not supported: …`; `zsh -c "git status"` → `executable: 'zsh'` (refused by the allowlist) |
 | `foreman_inbox_send` (phase-completion progress note) | sent OK |
-| `foreman_task_add_comment` (task Work Log comment) | **failed** — server error `Task external_id is malformed` (the task record's `external_id` is null). The phase-completion progress note carries the same summary, so the work log is not lost. |
+| `foreman_task_add_comment` (task Work Log comment) | **failed** — server error `Task external_id is malformed` (the task record's `external_id` is null). Re-attempted at the end of this re-run with the same result. The phase-completion progress note carries the same summary, so the work log is not lost. |
 | Final re-run after the report amendments (code unchanged) | `npm run generate:validate; echo EXIT=$?` → `EXIT=0`; `npm run validate; echo EXIT=$?` → `EXIT=0`; `cd packages/permitter && npx jest tests/security.test.js` → `219 passed, 219 total`; `cd packages/permitter && npx jest` → `7 suites, 609 passed, 609 total`; `npx markdownlint <report> packages/permitter/CHANGELOG.md` → exit 0; `npx eslint <changed files>` → 0 errors, 2 warnings (both pre-existing: one `command-parser.js` ignore-pattern warning, one unused `allowlist` in a pre-existing test at `tests/security.test.js:777`) |
 | Final re-run after the round-2 hardening (code unchanged since the run below) | `npm run generate:validate; echo EXIT=$?` → `EXIT=0`; `npm run validate; echo EXIT=$?` → `EXIT=0`; `cd packages/permitter && npx jest tests/security.test.js` → `239 passed, 239 total`; `cd packages/permitter && npx jest` → `7 suites, 629 passed, 629 total`; `npx eslint packages/permitter/lib/command-parser.js packages/permitter/tests/security.test.js` → 0 errors, 2 warnings (both pre-existing: the `command-parser.js` ignore-pattern warning and the unused `allowlist` in the pre-existing test at `tests/security.test.js:777`); `npx markdownlint <report> packages/permitter/CHANGELOG.md` → exit 0 |
-| Bash-parity fuzz of the `#` rule (scratch script, `~/.omp/perm-f6b2/fuzz-comment.js`) | 36 generated commands (space, tab, newline, CR, VT, FF, NBSP, U+2028, `;`, `|`, `&`, no separator before the `#`) executed with real `bash -c` and compared with the parser: `checked=36 hidden=0` — every command bash ran is still classified by the parser. |
-| Bash-parity fuzz of quoting and wrappers (scratch script, `~/.omp/perm-f6b2/fuzz-bash.js`) | 120 generated commands mixing `$'…'`, quotes, escapes, `;`, `&&`, `|` and comments executed with real `bash -c` and compared with the parser: `checked=120 bypasses=0` — no command that bash ran is hidden from the parser (the parser refuses the ANSI-C forms outright). |
+| Bash-parity fuzz of the `#` rule (scratch script, `~/.omp/perm-f6b2/fuzz-comment.js`) | 36 generated commands (space, tab, newline, CR, VT, FF, NBSP, U+2028, `;`, the pipe character, `&`, no separator before the `#`) executed with real `bash -c` and compared with the parser: `checked=36 hidden=0` — every command bash ran is still classified by the parser. |
+| Bash-parity fuzz of quoting and wrappers (scratch script, `~/.omp/perm-f6b2/fuzz-bash.js`) | 120 generated commands mixing `$'…'`, quotes, escapes, `;`, `&&`, the pipe character and comments executed with real `bash -c` and compared with the parser: `checked=120 bypasses=0` — no command that bash ran is hidden from the parser (the parser refuses the ANSI-C forms outright). |
+| Failing-first baseline of this re-run (`origin/dev`'s parser + the final test file, scratch copy under `~/.omp/ensemble-pdf-f6b2-rerun/baseline/`) | **red** — 55 failed, 192 passed, 247 total (all eight cases added by this run — six `env`-option / comment cases and two hook-level cases — are red on the old parser) |
+| Re-run of this phase (2026-11-20; parser code unchanged, only the `env`-option and hook test blocks added) | `npm run generate:validate; echo EXIT=$?` → `EXIT=0`; `npm run validate; echo EXIT=$?` → `EXIT=0`; `cd packages/permitter && npx jest tests/security.test.js` → `247 passed, 247 total`; `cd packages/permitter && npx jest` → `7 suites, 637 passed, 637 total`; `npx eslint packages/permitter/lib/command-parser.js packages/permitter/tests/security.test.js` → 0 errors, 2 warnings (both pre-existing: the `command-parser.js` ignore-pattern warning and the unused `allowlist` in the pre-existing test at `tests/security.test.js:777`); `npx markdownlint <report> packages/permitter/CHANGELOG.md` → exit 0 |
 
 One earlier full-package run reported `Tests: 1 failed, 608 passed, 609 total` while the machine was
 busy; the failing test name was not captured (the output was tail-truncated). Five subsequent full
@@ -451,7 +477,7 @@ Intentionally left undone, all conservative (refuse, not allow) decisions:
 
 ## PR body
 
-### Summary
+## Summary
 
 Hardens the permitter's shell parser so a command that hides part of itself can never produce an
 allow decision.
@@ -467,6 +493,15 @@ allow decision.
   understood; everything else (`-C`, `-S`, `-0`, `-v`, `--unset=…`, `--`) is refused, so
   `env -C /tmp git status` (executable was mis-identified as `/tmp`) can no longer reach the
   allowlist.
+* An `env` option the parser does not understand is refused, never silently dropped: `env --`,
+  `env -iu NAME`, `env --unset=NAME` and `env --chdir=/tmp` all raise
+  `env option not supported: …` instead of being parsed as if they were absent (a dropped option
+  can change which program runs or what the child process sees).
+* A comment that covers the whole command leaves nothing to classify — comment text is never
+  treated as a program name (`parseCommand('# just a comment')` → `[]`).
+* The hook's fail-closed paths are now covered end-to-end: a comment-only command and a command the
+  parser refuses both produce the `ask` decision and never `allow` (the hook's "no executable
+  commands extracted" and "parse error" paths).
 * Leading `VAR=value` assignments are no longer silently dropped: assignments to `PATH`, `IFS`,
   `LD_*`, `DYLD_*`, `BASH_ENV` or `ENV` are refused instead of the program being classified as if
   the assignment were absent.
@@ -484,14 +519,16 @@ Changes are confined to `packages/permitter/lib/command-parser.js` (the source;
 CHANGELOG. The hook entrypoint, `hooks.json` and the hook's output format are unchanged — the
 parser keeps using the existing "throw ⇒ ask the user" path.
 
-### Testing
+## Testing
 
 * Failing-first: with the parser reverted to the base-commit version, the pulled-in regression tests
   plus the new comment-scope block fail — `npx jest tests/security.test.js` → **33 failed, 186
   passed, 219 total**. The second hardening round was proven the same way against the already-staged
-  parser: **18 failed, 221 passed, 239 total**.
-* After the fix: `npx jest tests/security.test.js` → **239 passed**; full package
-  `npx jest` → **7 suites, 629 passed, 629 total** (earlier rounds: 5 consecutive clean runs at
+  parser: **18 failed, 221 passed, 239 total**. Re-measured at the end of this run against
+  `origin/dev`'s parser with the final 247-case test file: **55 failed, 192 passed, 247 total**
+  (the eight extra cases are the `env`-option and hook blocks added by this run).
+* After the fix: `npx jest tests/security.test.js` → **247 passed**; full package
+  `npx jest` → **7 suites, 637 passed, 637 total** (earlier rounds: 5 consecutive clean runs at
   609/609).
 * The comment-scope hazard was proven separately: mutating the comment branch to swallow the rest of
   the command turns the new tests red (3 failed), and the mutation was reverted.
@@ -501,7 +538,7 @@ parser keeps using the existing "throw ⇒ ask the user" path.
 * `npm run generate:validate` → `EXIT=0`; `npm run validate` → `EXIT=0`;
   `npx eslint` on the changed files → 0 errors (2 pre-existing warnings).
 
-### Risk
+## Risk
 
 Low-to-moderate, and it fails closed. The parser now refuses a few command shapes it previously
 classified: commands with an unbalanced quote (including a comment that contains an apostrophe,
@@ -516,13 +553,18 @@ by regression tests. The added quote scan changes the
 `parseCommand` p50 from 0.0024 ms to 0.0025 ms for four simple commands (long command: 0.0155 ms
 → 0.0163 ms), far inside the thresholds in `performance.test.js` (5 ms / 20 ms).
 
-### How to revert
+The canonical regression tests were pulled in unchanged from the task's reference branch, so they
+were not re-derived here; the Bash-parity fuzzing above offsets the risk that they miss a shell
+form. The parser code itself is unchanged by this re-run — it only added regression coverage for
+behaviour the branch already had.
+
+## How to revert
 
 Revert this commit. The change is confined to `packages/permitter/lib/command-parser.js`,
 `packages/permitter/tests/security.test.js` and `packages/permitter/CHANGELOG.md`; no schema,
 config, hook or generated artifact changes are involved, so reverting restores the previous parser
 behaviour exactly.
 
-### Directed by
+## Directed by
 
 Directed by: @ldangelo

@@ -1115,3 +1115,89 @@ describe('Security: shell semantics hardening (pdf-f6b2)', () => {
     expect(autoAllowed("echo $'a'; rm -rf /")).toBe(false);
   });
 });
+
+// =============================================================================
+// Security: env wrapper options are refused, never silently dropped (pdf-f6b2)
+// =============================================================================
+describe('Security: env wrapper option completeness (pdf-f6b2)', () => {
+  const allowlist = ['Bash(npm test:*)', 'Bash(git:*)'];
+
+  function autoAllowed(cmd) {
+    let cmds;
+    try {
+      cmds = parseCommand(cmd);
+    } catch {
+      return false;
+    }
+    return cmds.length > 0 && cmds.every(c => matchesAny(c, allowlist));
+  }
+
+  // An env option the parser does not understand changes what actually runs
+  // (env -C /tmp, env -S 'cmd') or what the child process sees. Dropping it
+  // silently would classify the program as if the option was never there, so
+  // every unknown option is refused instead.
+  test.each([
+    ['-- ends the option list', 'env -- npm test'],
+    ['combined -i and -u', 'env -iu SOME_VAR npm test'],
+    ['--unset= form', 'env --unset=SOME_VAR npm test'],
+    ['unknown long option', 'env --chdir=/tmp npm test']
+  ])('%s is refused, not dropped', (_name, cmd) => {
+    expect(() => parseCommand(cmd)).toThrow(/env option/i);
+  });
+
+  test('a dropped env option cannot make a command auto-allowed', () => {
+    expect(autoAllowed('env -- npm test')).toBe(false);
+    expect(autoAllowed('env -iu SOME_VAR npm test')).toBe(false);
+  });
+
+  // A comment covering the whole command leaves nothing to classify: the
+  // comment text is not a program name.
+  test('a whole-line comment yields no command to classify', () => {
+    expect(parseCommand('# just a comment')).toEqual([]);
+    expect(parseCommand('  # indented comment')).toEqual([]);
+  });
+});
+
+// =============================================================================
+// Security: the hook fails closed on what the parser refuses (pdf-f6b2)
+// =============================================================================
+describe('Security: permitter hook fails closed (pdf-f6b2)', () => {
+  const { spawnSync } = require('child_process');
+  const path = require('path');
+  const hookPath = path.join(__dirname, '..', 'hooks', 'permitter.js');
+
+  // Runs the real hook (packages/permitter/hooks/permitter.js) with a Bash
+  // permission request and returns the decision behaviour plus its debug log.
+  function runHook(command) {
+    const result = spawnSync(process.execPath, [hookPath], {
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+      encoding: 'utf8',
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, PERMITTER_DEBUG: '1' }
+    });
+    let decision;
+    try {
+      decision = JSON.parse((result.stdout || '').trim());
+    } catch {
+      // Not JSON output - the decision stays undefined and the test fails below.
+    }
+    return {
+      behavior: decision?.hookSpecificOutput?.decision?.behavior ?? null,
+      debug: result.stderr || ''
+    };
+  }
+
+  test('a comment-only command is not auto-approved by the hook', () => {
+    const { behavior, debug } = runHook('# just a comment');
+    expect(behavior).toBe('ask');
+    // The parser extracted nothing at all, so the hook must ask instead of
+    // approving an empty command list.
+    expect(debug).toMatch(/No executable commands extracted/);
+  });
+
+  test('a command the parser refuses is not auto-approved by the hook', () => {
+    const { behavior, debug } = runHook('env -- npm test');
+    expect(behavior).toBe('ask');
+    expect(debug).toMatch(/Parse error: env option not supported/);
+  });
+});
