@@ -28,6 +28,7 @@ const path = require('path');
 const { loadAdapter } = require('../lib/toolchain/adapters');
 const { runCapability } = require('../lib/toolchain/runner');
 const { resolveAdapterOverrides } = require('../lib/toolchain/config');
+const { rewriteStatusArg } = require('../lib/toolchain/status-overrides');
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const SCRATCH_PARENT = path.join(process.env.HOME || '/root', '.omp', 'ensemble-pdf-f45-r5', 'jest');
@@ -203,6 +204,58 @@ describe('per-adapter status overrides: writing (statusNames)', () => {
 
     expect(result.ok).toBe(true);
     expect(statusArgValue(binDir)).toBe('Resolved');
+  });
+});
+
+describe('per-adapter status overrides: the rewrite touches the --status value only', () => {
+  const INDEX = { 'To Do': 'open', Done: 'closed' };
+  const NAMES = { open: 'Backlog', closed: 'Resolved' };
+
+  test('only the value after --status is replaced, other argument values keep their text', () => {
+    const argv = ['jira', 'issues', 'update', 'VA-1', '--summary', 'Done', '--status', 'Done'];
+    expect(rewriteStatusArg(argv, INDEX, NAMES)).toEqual([
+      'jira',
+      'issues',
+      'update',
+      'VA-1',
+      '--summary',
+      'Done',
+      '--status',
+      'Resolved'
+    ]);
+  });
+
+  test('the inline --status=VALUE spelling is rewritten as well', () => {
+    expect(rewriteStatusArg(['jira', 'issues', 'update', 'VA-1', '--status=To Do'], INDEX, NAMES)).toEqual([
+      'jira',
+      'issues',
+      'update',
+      'VA-1',
+      '--status=Backlog'
+    ]);
+  });
+
+  test('a status value that is in no known vocabulary is passed through unchanged', () => {
+    const argv = ['jira', 'issues', 'update', 'VA-1', '--status', 'QA Testing'];
+    expect(rewriteStatusArg(argv, INDEX, NAMES)).toEqual(argv);
+  });
+
+  test('no write-side name configured means the provider default name is kept, never a blank value', () => {
+    const argv = ['jira', 'issues', 'update', 'VA-1', '--status', 'Done'];
+    expect(rewriteStatusArg(argv, INDEX, { open: 'Backlog' })).toEqual(argv);
+  });
+
+  test('tracker.close keeps the adapter default Done when the repo configures no closed-status name', async () => {
+    const binDir = mkScratch('bin-');
+    writeStubJira(binDir, 'Done');
+    const root = projectWith(
+      ['tracker: jira', 'adapters:', '  jira:', '    statusMap:', '      Code Review: in_progress', ''].join('\n')
+    );
+
+    const result = await runCapability(MANIFEST, 'tracker.close', { id: 'VA-1' }, stubEnv(root, binDir));
+
+    expect(result.ok).toBe(true);
+    expect(statusArgValue(binDir)).toBe('Done');
   });
 });
 

@@ -56,9 +56,11 @@ function providerStatusIndex(declared, statusMap) {
 
 /**
  * Rewrite the `--status` argument of one command line to the provider status name the
- * repository configured for that normalized status. Returns the argv unchanged when the command
- * writes no status, when the written name is not part of any known vocabulary, or when the
- * repository configured no write-side name for it.
+ * repository configured for that normalized status. Both spellings are handled: the separate
+ * token form the adapter manifests use (`--status Done`) and the inline form
+ * (`--status=Done`). Only the value of that one flag is ever touched. Returns the argv
+ * unchanged when the command writes no status, when the written name is not part of any known
+ * vocabulary, or when the repository configured no write-side name for it.
  *
  * @param {string[]} argv the already-substituted argv
  * @param {Record<string,string>} index provider status name -> normalized status
@@ -66,15 +68,25 @@ function providerStatusIndex(declared, statusMap) {
  * @returns {string[]}
  */
 function rewriteStatusArg(argv, index, statusNames) {
-  const position = argv.indexOf('--status');
-  if (position === -1 || position + 1 >= argv.length) return argv;
-  const current = argv[position + 1];
+  if (!Array.isArray(argv)) return argv;
+  const separate = argv.indexOf('--status');
+  const inline = argv.findIndex(
+    (arg) => typeof arg === 'string' && arg.startsWith('--status=')
+  );
+  const isInline = separate === -1 && inline !== -1;
+  const flag = isInline ? inline : separate;
+  if (flag === -1) return argv;
+  const valueIndex = isInline ? flag : flag + 1;
+  if (valueIndex >= argv.length) return argv;
+  const current = isInline ? argv[flag].slice('--status='.length) : argv[valueIndex];
+  if (typeof current !== 'string' || current.length === 0) return argv;
   const normalized = index[current];
   if (!normalized) return argv;
   const replacement = statusNames[normalized];
   if (!replacement || replacement === current) return argv;
   const rewritten = argv.slice();
-  rewritten[position + 1] = replacement;
+  if (isInline) rewritten[flag] = `--status=${replacement}`;
+  else rewritten[valueIndex] = replacement;
   return rewritten;
 }
 

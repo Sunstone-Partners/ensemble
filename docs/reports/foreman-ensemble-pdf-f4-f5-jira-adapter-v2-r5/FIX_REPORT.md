@@ -60,15 +60,27 @@ express an override.
 | Path | Rationale |
 | --- | --- |
 | `packages/full/bin/jira` (new, mode 0755, `#!/usr/bin/env node`) | The executable the adapter manifest actually invokes: `issues read\|list\|create\|update`, `comments create\|list`, `--version`; node builtins + global `fetch` only, no new npm dependency; Jira Cloud REST v3 basic auth from `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` (+ optional `JIRA_PROJECT_KEY`), with the legacy `ATLASSIAN_SITE_URL`/`ATLASSIAN_EMAIL`/`ATLASSIAN_AUTH_TOKEN` accepted as fallbacks so an existing setup keeps working; every failure prints exactly one line to stderr and exits non-zero. |
+| `packages/full/package.json` | Adds the `bin` map `{"jira": "bin/jira"}`, following the repo convention (`packages/telemetry`, `packages/codex` both declare a `bin` map for their `bin/` directory). Without it the command is in the tarball but npm never links it, so an npm-installed bundle would still fail with `MISSING_BINARY`. |
+| `package-lock.json` | Records the new `bin` map on the `packages/full` workspace entry (the lockfile already carries the `bin` maps of `packages/telemetry` and `packages/codex`). Only that one entry changed — see Follow-ups for the pre-existing version drift that was deliberately left alone. |
 | `packages/infrastructure/skills/adapter-tracker-jira/adapter.yaml` | `env:` now declares the four `JIRA_*` names the shipped binary reads **and keeps the four legacy `ATLASSIAN_*` names** — `runner.js#buildChildEnv` forwards *only* names declared by the manifest, so dropping the old ones would silently strip a user's credentials from a user-provided `jira` CLI. Comments document the shipped binary and the override block. |
 | `packages/infrastructure/skills/jira/SKILL.md` | Replaces the "installed globally via npm link from `~/utils/atlassian`" story with the bundled command, its exact covered subcommands, the `JIRA_*` auth contract and the legacy aliases. |
 | `packages/infrastructure/skills/adapter-tracker-jira/SKILL.md` | Documents the shipped binary, the `JIRA_*` variables (plus the legacy aliases) and the new per-repo status-vocabulary override. |
 | `scripts/validate-all.js` | New `validateBundleBinaries()` validator: every command in `packages/full/bin/` must exist, be executable, start with `#!/usr/bin/env node` and require nothing but node builtins (so a future bundle command cannot smuggle in an unvendored dependency). |
 | `scripts/tests/toolchain-jira-bin.test.js` (new) | The F4 regression test (see Tests). |
 
+`packages/full` is **not** a generator output — it is a committed symlink farm, and no generator writes
+into it (`scripts/generate-markdown.js`, `scripts/generate-run-index-lib.js`, the Pi bundler and the
+codex/opencode generators only reference it in comments). `packages/full/bin/jira` is therefore an
+ordinary source file that survives `npm run generate`; the new validator, not `generate:validate`, is what
+guards it.
+
 `packages/full` has no `.npmignore` and no `files` allow-list, so `packages/full/bin/` ships: confirmed
-with `npm pack --dry-run` in `packages/full`, which lists `13.4kB bin/jira`. Claude Code puts a plugin's
-`bin/` directory on `PATH`, which is what makes the shipped command reachable in an installed plugin.
+with `npm pack --dry-run` in `packages/full`, whose tarball lists `package/bin/jira` with mode
+`-rwxr-xr-x`. (The tarball has 10 entries in total: npm's packlist does not follow the symlinked
+`skills/`, `agents/`, `commands/` and `lib/` trees, so the npm package is a meta-package whose content
+comes from its peer dependencies — the Claude Code plugin path, `/plugin install ensemble-full@ensemble`,
+is the path that materialises the whole `packages/full` tree, and a plugin's `bin/` directory is on
+`PATH` there.)
 
 ### F5 — let a repository extend the status vocabulary from `.ensemble/toolchain.yaml`
 
@@ -146,7 +158,7 @@ round; it is green on the new code by construction and would fail on the pre-ali
 
 ### F5 — failing first, then green
 
-New file `packages/development/tests/toolchain-status-overrides.test.js` (11 tests), using the existing
+New file `packages/development/tests/toolchain-status-overrides.test.js` (16 tests), using the existing
 `packages/development/tests/toolchain-*.test.js` harness:
 
 * `tracker.show` on a mock Jira issue whose status is `Code Review` maps to `in_progress` once the repo
@@ -162,6 +174,11 @@ New file `packages/development/tests/toolchain-status-overrides.test.js` (11 tes
 * A runner call with a malformed project config fails `CONFIG_INVALID` instead of spawning anything.
 * The built-in `work-graph` fallback forwards the project root to its tracker calls, so the overrides
   apply on the path the Jira adapter actually takes for `work-graph.*` capabilities.
+* **Rewrite scope** (added in the second review round): only the value of the `--status` flag is
+  replaced — a `--summary Done` argument keeps its text; the inline `--status=VALUE` spelling is rewritten
+  as well; a value that is in no known vocabulary is passed through unchanged; and when the repository
+  configures no write-side name for the normalized status, the provider's default name is kept (never a
+  blank or `undefined` value) — including `tracker.close`, which keeps writing `Done`.
 
 Red (old code, new test): the tracked source changes were stashed, the new test kept:
 
@@ -180,7 +197,7 @@ Green (after):
 
 ```
 $ cd packages/development && npx jest tests/toolchain-status-overrides.test.js
-Tests:       11 passed, 11 total
+Tests:       16 passed, 16 total
 EXIT=0
 ```
 
@@ -195,7 +212,7 @@ $ cd packages/development && npx jest tests/toolchain-status-overrides.test.js
 Tests:       1 failed, 10 passed, 11 total
 ```
 
-Green after restoring the fix: `Tests: 11 passed, 11 total`.
+Green after restoring the fix: `Tests: 16 passed, 16 total`.
 
 ---
 
@@ -208,17 +225,20 @@ Commands run from the repository root unless stated otherwise. Every result belo
 | `node packages/development/lib/toolchain-cli.js preflight --require tracker.show --project-root <repo>` with a PATH without `jira` (**before**) | `MISSING_BINARY: jira: required binary 'jira' was not found on PATH (health check 'jira-installed'); …` — exit 1 |
 | same command with `packages/full/bin` on PATH (**after**) | `jira-installed` passes (no longer reported); `jira-auth` fails only because no Jira server is reachable: `HEALTH_FAILED: … request to http://127.0.0.1:9/rest/api/3/search/jql?… failed: fetch failed` — exit 1 |
 | `packages/full/bin/jira --version` | `jira 1.0.0`, exit 0 |
-| `npm pack --dry-run` (in `packages/full`) | tarball lists `13.4kB bin/jira` — the command ships |
+| `npm pack --dry-run --pack-destination <scratch>` (in `packages/full`) | tarball `sunstone-partners-ensemble-full-10.0.0.tgz` (9 257 B) lists `package/bin/jira` with mode `-rwxr-xr-x` — the command ships |
+| `npm install --prefix <scratch-prefix> --legacy-peer-deps --ignore-scripts --no-save <tarball>` | exit 0 (`added 3 packages in 209ms`); npm links the declared bin: `node_modules/.bin/jira -> ../@sunstone-partners/ensemble-full/bin/jira`; `<prefix>/node_modules/.bin/jira --version` → `jira 1.0.0`, exit 0 |
+| preflight against a scratch project **with only that installed prefix's `node_modules/.bin` on `PATH`** (no other `jira` anywhere) | `jira-installed` health check **passes** (no `MISSING_BINARY`); `jira-auth` fails only for missing credentials: `HEALTH_FAILED: jira: health check 'jira-auth' failed (TOOL_FAILED): jira: missing configuration: set JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN (Jira Cloud REST v3 basic auth)` — exit 1. This is the realistic installed-plugin path. |
 | `npx jest scripts/tests/toolchain-jira-bin.test.js` | 13 passed, 13 total (red run before the binary existed: 12 failed) |
-| `cd packages/development && npx jest tests/toolchain-status-overrides.test.js` | 11 passed, 11 total (red run on the old code: 8 failed, 2 passed; red run for the fallback plumbing test: 1 failed, 10 passed) |
+| `cd packages/development && npx jest tests/toolchain-status-overrides.test.js` | 16 passed, 16 total (red run on the old code: 8 failed, 2 passed; red run for the fallback plumbing test: 1 failed, 10 passed) |
 | `npx jest scripts/tests/toolchain-jira-bin.test.js scripts/tests/toolchain-adapter-tracker-jira-manifest.test.js scripts/tests/toolchain-adapter-tracker-jira-capabilities.test.js scripts/tests/toolchain-vendor-sync.test.js scripts/tests/toolchain-runtime-parity.test.js` | 5 suites, 63 tests passed |
 | `cd packages/development && npx jest tests/toolchain-status-overrides.test.js tests/work-graph-module-dispatch.test.js tests/trd-cli-adapter-swap.test.js tests/toolchain-cli.test.js` | 4 suites, 73 tests passed (these three suites needed the source-shape updates listed above) |
 | `npm run generate:validate; echo EXIT=$?` | `EXIT=0` — "✓ Validation passed (64 files)" and the run-index matches a fresh build |
 | `npm run validate; echo EXIT=$?` | `EXIT=0` — validators, version sync, provider-ref lint, taxonomy coverage, contract docs and skill-spec validation all pass. Only pre-existing advisory hints remain (prompt-budget "below baseline" notes). |
-| `npm run generate` / `npm run generate:pi` / `npm run generate:codex` / `npm run generate:opencode` | exit 0 each; Pi version **not** bumped (branch already carries `1.6.29` over the `1.6.28` merge-base) |
-| `npx jest scripts/tests` (full script suite) | 95 suites: **93 passed, 2 failed**; 1 910 tests: 1 905 passed, 4 failed, 1 skipped. The 4 failures are **pre-existing and environmental** — verified by re-running the same two suites with this change stashed: `TRD-003-TEST: provider selection precedence chain › Scenario: Shipped default fallback`, `detect signal types › git_config_set …` (×2) and `mutation-proof branches › OR semantics …` fail identically on the base tree. |
-| `cd packages/development && npx jest` (full package) | 312 suites: **310 passed, 2 failed**; 13 211 tests: 13 205 passed, 2 failed, 3 skipped, 1 todo. Both failures are **pre-existing**, reproduced on the base tree: `runResolveSdlc › TRD-037 AC-2` (the operator's user-level toolchain config resolves source `user` instead of `detection`/`default` — the case the task brief calls out) and `secrets and environment › GH_TOKEN and GITHUB_TOKEN …` (the local-CI `printenv` step fails on this machine's Node v26.13.1; the repo's `engines` are 22/24). An earlier run of the same suite also hit a `kata-preflight` 5 s timeout flake under load; it passes when re-run alone (`npx jest tests/kata-preflight.test.js` → 11 passed) and did not reproduce in the final run. |
+| `npm run generate` / `npm run generate:pi` / `npm run generate:codex` / `npm run generate:opencode` | exit 0 each; `packages/full/bin/jira` untouched by the generators; Pi version **not** bumped (branch already carries `1.6.29` over the `1.6.28` merge-base) |
+| `npx jest scripts/tests` (full script suite) | 95 suites: **93 passed, 2 failed**; 1 910 tests: 1 905 passed, 4 failed, 1 skipped. The 4 failures are **pre-existing and environmental** — verified by re-running the same two suites with this change stashed: `TRD-003-TEST: provider selection precedence chain › Scenario: Shipped default fallback`, `detect signal types › git_config_set does not match an absent key`, `detect signal types › git_config_set signal detects a configured custom key` and `mutation-proof branches › OR semantics …` fail identically on the base tree. |
+| `cd packages/development && npx jest` (full package) | 312 suites: **310 passed, 2 failed**; 13 216 tests: 13 210 passed, 2 failed, 3 skipped, 1 todo. Both failures are **pre-existing**, reproduced on the base tree: `runResolveSdlc › TRD-037 AC-2` (the operator's user-level toolchain config resolves source `user` instead of `detection`/`default` — the case the task brief calls out) and `secrets and environment › GH_TOKEN and GITHUB_TOKEN …` (the local-CI `printenv` step fails on this machine's Node v26.13.1; the repo's `engines` are 22/24). An earlier run of the same suite also hit a `kata-preflight` 5 s timeout flake under load; it passes when re-run alone (`npx jest tests/kata-preflight.test.js` → 11 passed) and did not reproduce in the final run. |
 | `node scripts/validate-all.js` | exit 0 — "✓ 1/1 packages/full/bin/ command(s) executable and dependency-free" |
+| `npm install --package-lock-only` (root) | exit 0; the only change kept is the `packages/full` `bin` entry (3 added lines). The pre-existing version drift the regeneration also reported (`packages/development` 7.1.7 → 7.2.0, `packages/git` 6.1.2 → 6.1.3, `packages/pi` 1.6.28 → 1.6.29) was reverted out of the diff — those versions are stale in the base lockfile and belong to other changes. |
 
 ---
 
@@ -233,8 +253,11 @@ Commands run from the repository root unless stated otherwise. Every result belo
   `PATH` (e.g. `ankitpokhrel/jira-cli`, whose `jira issue view` differs from the adapter's
   `jira issues read`), the adapter will call that tool instead of the bundled one whenever the plugin's
   `bin/` is not first on `PATH`; the `jira-installed` health check (`jira --version`) cannot tell the
-  two apart. Resolving this robustly needs the runner to prefer a known bundle path over a bare `PATH`
-  lookup — a runner change beyond this task's scope.
+  two apart — it only checks the exit code. Distinguishing them needs either a health check that matches
+  the expected output (`^jira 1\.0\.0`) or a runner that prefers a known bundle path over a bare `PATH`
+  lookup; both are runner changes beyond this task's scope. Note the same collision applies to npm's own
+  bin linking: installing the bundle into a prefix that already links a different `jira` replaces that
+  link.
 * `packages/full/bin/jira` implements exactly the command set the Jira adapter manifest invokes
   (`issues read|list|create|update`, `comments create|list`, `--version`). The `jira` *skill* documents a
   wider surface (`issues search`, `issues fetch`, `issues transitions`, `projects list`, `users list`); the
@@ -249,6 +272,17 @@ Commands run from the repository root unless stated otherwise. Every result belo
 * The bundled command talks to Jira Cloud REST v3 only (basic auth, no SSO/OAuth, no Jira Server/Data Center).
 * The `jira-auth` health check (`jira issues list --limit 1`) needs reachable Jira credentials; a plugin
   installed without credentials reports `HEALTH_FAILED` for that check instead of `MISSING_BINARY`.
+* **The base `package-lock.json` is stale for three workspace packages** (`packages/development` 7.1.7 vs 7.2.0,
+  `packages/git` 6.1.2 vs 6.1.3, `packages/pi` 1.6.28 vs 1.6.29). `npm install` regenerates those entries, so
+  any contributor running it sees a lockfile diff that is not theirs; this change deliberately keeps only
+  the `packages/full` `bin` entry so the diff stays surgical.
+* **A Foreman auto-commit landed mid-phase.** Commit `387389e4` ("init", 2026-11-20T10:16:15-06:00) was created
+  by Foreman's own commit step while `npm run generate:pi` / `npm run generate:codex` were still writing the
+  vendored mirrors. It captured the current sources but the `packages/pi` / `packages/codex` vendored copies of
+  `status-overrides.js` one regeneration behind, and it does not contain this report. The remaining
+  uncommitted diff is exactly what restores consistency: the two regenerated mirrors, the new
+  rewrite-scope tests, the `package-lock.json` `bin` entry and this report. `npm run generate:validate` is
+  green on the working tree (exit 0) and would be red on that commit alone.
 * Operational notes for Foreman: during this phase another run's files (task
   `ensemble-pdf-f2-bundle-glob-dependency-r5`) appeared in this worktree and a `git stash` round-trip lost
   the uncommitted work; it was recovered from the dropped stash commit (`02626449`) and the foreign files
@@ -272,9 +306,17 @@ Commands run from the repository root unless stated otherwise. Every result belo
 * The normalized vocabulary stays `open` / `in_progress` / `closed` (the vocabulary the existing adapter,
   category contract and normalized-output schema already use); a repository maps *its* provider names onto
   those, it does not introduce new normalized statuses.
+* The override block is part of the project config **file**, which the existing config layer validates as
+  a whole. A malformed override therefore invalidates the file exactly like any other malformed key in
+  `.ensemble/toolchain.yaml` does today, and *every* toolchain command in that repository fails with a
+  message naming the offending path — e.g.
+  `invalid toolchain config (adapters/jira/statusMap/Code Review)` — instead of only the Jira calls.
+  Narrowing that to per-adapter validation would mean a second, per-adapter schema and a change to the
+  config layer's contract, which is beyond this task's scope. The runner's own `CONFIG_INVALID` result
+  covers the case where a caller supplies the override block without the file-level validation.
 * `packages/full/bin/` is shipped by virtue of `packages/full` having no `.npmignore` and no `files`
-  allow-list (proven with `npm pack --dry-run`); the new validator guards the file's mode, shebang and
-  dependency-freedom rather than the packaging step.
+  allow-list (proven with `npm pack --dry-run`); the `bin` map in `packages/full/package.json` makes npm
+  link the command, and the new validator guards the file's mode, shebang and dependency-freedom.
 * The legacy `ATLASSIAN_*` variable names stay declared in the manifest. They were the adapter's only
   declared names before this change, so removing them would silently strip an existing user's credentials
   from a user-provided `jira` CLI; keeping them costs nothing and the bundled command reads the three
@@ -296,9 +338,10 @@ package provided that executable, so every Jira tracker call in an installed plu
 manifest invokes, plus `jira --version`, authenticating against Jira Cloud REST v3 with `JIRA_BASE_URL`,
 `JIRA_EMAIL` and `JIRA_API_TOKEN` (the legacy `ATLASSIAN_SITE_URL`/`ATLASSIAN_EMAIL`/`ATLASSIAN_AUTH_TOKEN`
 names still work as fallbacks, and the manifest keeps declaring the legacy `ATLASSIAN_*` names so an
-existing setup does not lose its credentials). The `jira` skill and the adapter skill now document the
-shipped command and its variables, and a new validator (`validateBundleBinaries`) requires every
-`packages/full/bin/` command to be executable, shebanged and free of non-builtin imports.
+existing setup does not lose its credentials). `packages/full/package.json` now declares the `bin` map so
+npm links the command, the `jira` skill and the adapter skill document the shipped command and its
+variables, and a new validator (`validateBundleBinaries`) requires every `packages/full/bin/` command to be
+executable, shebanged and free of non-builtin imports.
 
 **F5 — the status vocabulary was hard-coded to Jira's 7 default statuses.** An issue in any other workflow
 status (`Code Review`, `QA Testing`, …) failed `tracker.show` with `BAD_OUTPUT: status value "Code
@@ -329,16 +372,21 @@ the call with `CONFIG_INVALID` instead of silently falling back.
 * New `scripts/tests/toolchain-jira-bin.test.js` (13 tests, 12 red before the binary existed) drives the
   shipped command against a local `http` server and asserts each subcommand's request, its output shape and
   that the adapter's own parse block consumes that output.
-* New `packages/development/tests/toolchain-status-overrides.test.js` (11 tests, 8 red on the old code)
+* New `packages/development/tests/toolchain-status-overrides.test.js` (16 tests, 8 red on the old code)
   covers `tracker.show` with a `Code Review` status, `set-status`/`close` writing the overridden names,
-  the unchanged defaults when no override is set, the schema rejecting malformed override blocks and the
-  project-root plumbing on the built-in `work-graph` fallback path (1 red before that fix).
+  the unchanged defaults when no override is set, the schema rejecting malformed override blocks, the
+  rewrite touching only the `--status` value, and the project-root plumbing on the built-in `work-graph`
+  fallback path (1 red before that fix).
+* Realistic install check: `npm pack` in `packages/full` produces a tarball containing `package/bin/jira`
+  (mode `-rwxr-xr-x`); installing it into a prefix makes npm link `node_modules/.bin/jira`; a preflight
+  run with **only** that bin on `PATH` passes the `jira-installed` health check and fails `jira-auth` only
+  for missing credentials.
 * Existing tests updated for the intentional contract changes (the manifest's `env` list, the exact
   capability-call options objects, and three source-text mutation needles); none deleted, skipped or weakened.
-* `npm run generate:validate` → exit 0; `npm run validate` → exit 0; `npm pack --dry-run` in `packages/full`
-  lists `bin/jira`; `npx jest scripts/tests` → 93/95 suites pass, the 4 failing tests fail identically on the
-  base tree (operator-level toolchain config / global git config / Node 26 `printenv`);
-  `cd packages/development && npx jest` → 310/312 suites pass, both failures pre-existing on the base tree.
+* `npm run generate:validate` → exit 0; `npm run validate` → exit 0; `npx jest scripts/tests` → 93/95 suites
+  pass, the 4 failing tests fail identically on the base tree (operator-level toolchain config / global git
+  config / Node 26 `printenv`); `cd packages/development && npx jest` → 310/312 suites pass, both failures
+  pre-existing on the base tree.
 
 ## Risk
 
@@ -346,8 +394,10 @@ Low-to-moderate. The behavioural change is confined to the toolchain runner and 
 is resolved only when a caller passes a project root, so existing callers that do not are unaffected. The
 `BAD_OUTPUT` message for an unmapped status gains a hint (message text only), and the manifest keeps the
 legacy `ATLASSIAN_*` names declared so no existing credential setup is silently broken. The schema property
-is additive, and an invalid override block fails loudly rather than silently. The shipped command is
-dependency-free and only talks to Jira Cloud REST v3; it changes nothing for the `beads` adapter or any
+is additive, and an invalid override block fails loudly rather than silently — because the override lives
+in the project config file, a malformed block invalidates that file for every toolchain command in the
+repository, exactly as any other malformed key in `.ensemble/toolchain.yaml` does today. The shipped command
+is dependency-free and only talks to Jira Cloud REST v3; it changes nothing for the `beads` adapter or any
 other tracker adapter. Two known limits: the command ships with the `full` bundle only (the Pi/Codex
 mirrors do not expose a `bin/` directory), and a pre-existing `jira` CLI earlier on `PATH` could still be
 called instead of the bundled one.
@@ -357,8 +407,8 @@ called instead of the bundled one.
 Revert this commit (or `git revert` the PR merge). The change is self-contained: the new
 `packages/full/bin/jira`, `packages/development/lib/toolchain/status-overrides.js`, the two new test files,
 the `adapters` schema property, the runner/config/mapping/work-graph-resolve changes, the skill and
-adapter-manifest edits, the `validateBundleBinaries` validator, and the regenerated mirrors. No data
-migration, no persisted state.
+adapter-manifest edits, the `bin` map in `packages/full/package.json`, the `validateBundleBinaries`
+validator, and the regenerated mirrors. No data migration, no persisted state.
 
 ## Directed by
 
