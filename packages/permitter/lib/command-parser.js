@@ -19,6 +19,13 @@ const WRAPPER_COMMANDS = new Set(['timeout', 'time', 'nice', 'nohup', 'env']);
 // Commands that are skipped entirely
 const SKIP_COMMANDS = new Set(['export', 'set', 'unset', 'local', 'declare', 'typeset']);
 
+// Environment variables that change how a command is resolved or parsed.
+// PATH controls executable lookup, LD_* / DYLD_* inject code into the
+// process, IFS changes how words are split, BASH_ENV / ENV make a shell
+// source a file before it runs anything. A command that assigns one of them
+// is refused instead of having the assignment silently stripped.
+const DANGEROUS_ASSIGNMENT_VARS = new Set(['PATH', 'IFS', 'BASH_ENV', 'ENV']);
+
 // Operators that split commands
 // '&' (background) and '|&' (pipe stdout+stderr) also start a new command.
 const OPERATORS = new Set(['&&', '||', ';', '|', '&', '|&']);
@@ -36,6 +43,49 @@ const State = {
 };
 
 /**
+ * Check that every quote in a command is closed.
+ *
+ * An unbalanced quote means the real word boundaries are unknown, so the
+ * command is refused instead of being classified from a guess. Quote
+ * characters inside a comment are counted as well: a stray apostrophe in a
+ * comment ("git status # don't") is exactly the shape that hides a tail from
+ * the parser, so it is treated as unsafe.
+ *
+ * @param {string} command - Raw command string
+ * @throws {Error} If a quote is left open
+ */
+function checkQuoteBalance(command) {
+  let state = State.NORMAL;
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+
+    if (state === State.NORMAL) {
+      if (char === '\\') {
+        i++; // escaped character, never a quote delimiter
+      } else if (char === "'") {
+        state = State.SINGLE_QUOTE;
+      } else if (char === '"') {
+        state = State.DOUBLE_QUOTE;
+      }
+    } else if (state === State.SINGLE_QUOTE) {
+      // No escaping inside single quotes
+      if (char === "'") {
+        state = State.NORMAL;
+      }
+    } else if (char === '\\') {
+      i++; // escaped character inside double quotes
+    } else if (char === '"') {
+      state = State.NORMAL;
+    }
+  }
+
+  if (state !== State.NORMAL) {
+    throw new Error('Unbalanced quote not supported');
+  }
+}
+
+/**
  * Tokenize a Bash command string.
  *
  * Uses a state machine to properly handle:
@@ -43,6 +93,7 @@ const State = {
  * - Double-quoted strings (backslash escaping)
  * - Unquoted whitespace as token separator
  * - Multi-character operators (&&, ||)
+ * - Comments: a '#' that begins a word runs to the end of the line
  *
  * @param {string} command - Raw command string
  * @returns {string[]} Array of tokens
@@ -64,7 +115,13 @@ function tokenize(command) {
 
     switch (state) {
       case State.NORMAL:
-        if (char === "'") {
+        if (char === '$' && (nextChar === "'" || nextChar === '"')) {
+          // ANSI-C quoting ($'...') and locale quoting ($"...") are not
+          // implemented by the tokenizer: their word boundaries can differ
+          // from the shell's, so the command is refused instead of being
+          // classified from a guess.
+          throw new Error('ANSI-C quoting not supported');
+        } else if (char === "'") {
           // Enter single-quote mode
           state = State.SINGLE_QUOTE;
           inQuotedSection = true;
@@ -94,6 +151,19 @@ function tokenize(command) {
             current = '';
             inQuotedSection = false;
           }
+        } else if (char === '#' && current === '' && (i === 0 || /[ \t\n;|&]/.test(command[i - 1]))) {
+          // A '#' that begins a word starts a comment that runs to the end of
+          // the line. The newline is left in place so it still separates
+          // commands: a later line is never swallowed by a comment.
+          // Only space, tab and newline separate words in the shell, so a '#'
+          // after any other character (non-breaking space, vertical tab,
+          // form feed, carriage return) is an ordinary argument and the rest
+          // of the line stays a separate command.
+          while (i < command.length && command[i] !== '\n') {
+            i++;
+          }
+          i--; // the loop increment lands back on the newline (or the end)
+          continue;
         } else if ((char === '>' || char === '<') && /^(>>?|<)&(\d+|-)/.test(command.slice(i))) {
           // fd duplication/close such as 2>&1, >&2, <&0, 2>&-: no file involved
           const m = /^(>>?|<)&(\d+|-)/.exec(command.slice(i));
@@ -335,6 +405,69 @@ function isEnvAssignment(token) {
 }
 
 /**
+ * Check if a variable must not be assigned by a command.
+ *
+ * @param {string} name - Variable name without '='
+ * @returns {boolean} True if assigning the variable is unsafe
+ */
+function isDangerousAssignmentVar(name) {
+  return DANGEROUS_ASSIGNMENT_VARS.has(name) ||
+    name.startsWith('LD_') ||
+    name.startsWith('DYLD_');
+}
+
+/**
+ * Refuse an assignment to a variable that changes command behaviour.
+ *
+ * @param {string} name - Variable name without '='
+ * @throws {Error} If the variable must not be assigned
+ */
+function assertSafeAssignmentVar(name) {
+  if (isDangerousAssignmentVar(name)) {
+    throw new Error(`Dangerous variable assignment not supported: ${name}`);
+  }
+}
+
+/**
+ * Refuse a VAR=value token that changes command behaviour.
+ *
+ * @param {string} token - VAR=value token
+ * @throws {Error} If the assignment targets a dangerous variable
+ */
+function assertSafeAssignment(token) {
+  assertSafeAssignmentVar(token.slice(0, token.indexOf('=')));
+}
+
+/**
+ * Refuse a skipped command that changes a variable the parser cannot trust.
+ *
+ * `export PATH=/evil`, `declare IFS=$x` and `unset PATH` change the
+ * environment of every command that follows them on the same line, so the
+ * segment is refused instead of being skipped.
+ *
+ * @param {string[]} tokens - Tokens of the segment, first token is the command
+ * @throws {Error} If the command changes a dangerous variable
+ */
+function assertSafeSkipCommand(tokens) {
+  const command = tokens[0];
+  const rest = tokens.slice(1);
+
+  for (const token of rest) {
+    if (isEnvAssignment(token)) {
+      assertSafeAssignment(token);
+    }
+  }
+
+  if (command === 'unset') {
+    for (const token of rest) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(token)) {
+        assertSafeAssignmentVar(token);
+      }
+    }
+  }
+}
+
+/**
  * Check if a token is a redirection operator.
  *
  * @param {string} token - Token to check
@@ -360,8 +493,10 @@ function normalizeSegment(tokens) {
   // Clone to avoid mutating original
   tokens = [...tokens];
 
-  // Strip leading environment variable assignments (KEY=value)
+  // Strip leading environment variable assignments (KEY=value). An assignment
+  // that changes how the command is resolved is refused, not stripped.
   while (tokens.length > 0 && isEnvAssignment(tokens[0])) {
+    assertSafeAssignment(tokens[0]);
     tokens.shift();
   }
 
@@ -369,8 +504,12 @@ function normalizeSegment(tokens) {
     return null;
   }
 
-  // Check if command should be skipped (export, set, etc.)
+  // Check if command should be skipped (export, set, etc.). A skipped
+  // command still changes the environment of every command that follows it
+  // on the same line, so an assignment to a variable the parser cannot trust
+  // is refused instead of being skipped.
   if (SKIP_COMMANDS.has(tokens[0])) {
+    assertSafeSkipCommand(tokens);
     return null;
   }
 
@@ -407,16 +546,40 @@ function normalizeSegment(tokens) {
         tokens.shift(); // nice -10 format
       }
     } else if (wrapper === 'env') {
-      // env can have VAR=value pairs before the command
-      while (tokens.length > 0 && isEnvAssignment(tokens[0])) {
-        tokens.shift();
-      }
-      // env can also have flags like -i, -u
-      while (tokens.length > 0 && tokens[0].startsWith('-')) {
-        const flag = tokens.shift();
-        if (flag === '-u' && tokens.length > 0) {
-          tokens.shift(); // unset var name
+      // env takes options and VAR=value pairs before the command it runs.
+      // Only the forms whose effect is understood are stripped: -i (ignore
+      // the environment) and -u NAME (unset a variable). Every other option
+      // (-C/--chdir, -S/--split-string, -0, -v, --, ...) can change what is
+      // actually executed, so the segment is refused instead.
+      while (tokens.length > 0) {
+        const token = tokens[0];
+
+        if (isEnvAssignment(token)) {
+          assertSafeAssignment(token);
+          tokens.shift();
+          continue;
         }
+
+        if (!token.startsWith('-')) {
+          break; // the command env should run
+        }
+
+        if (token === '-i') {
+          tokens.shift();
+          continue;
+        }
+
+        if (token === '-u') {
+          tokens.shift();
+          const name = tokens.length > 0 ? tokens.shift() : '';
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+            throw new Error('env option not supported: -u requires a variable name');
+          }
+          assertSafeAssignmentVar(name);
+          continue;
+        }
+
+        throw new Error(`env option not supported: ${token}`);
       }
     }
     // time and nohup don't have additional arguments to strip
@@ -438,6 +601,10 @@ function normalizeSegment(tokens) {
       if (!innerCommand || innerCommand.trim() === '') {
         return null;
       }
+
+      // The inner command is parsed on its own, so it needs its own quote
+      // check: an unbalanced quote there hides words just the same.
+      checkQuoteBalance(innerCommand);
 
       // Recursively tokenize and normalize the inner command
       const innerTokens = tokenize(innerCommand);
@@ -519,6 +686,10 @@ function parseCommand(command) {
   // Check for unsafe constructs first
   checkUnsafe(trimmed);
 
+  // An unbalanced quote makes the word boundaries unknowable, so the command
+  // is refused rather than classified from a guess.
+  checkQuoteBalance(trimmed);
+
   // Tokenize the command
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) {
@@ -549,9 +720,11 @@ module.exports = {
   normalizeSegment,
   checkUnsafe,
   checkRedirections,
+  checkQuoteBalance,
   // Export constants for testing
   WRAPPER_COMMANDS,
   SKIP_COMMANDS,
   OPERATORS,
+  DANGEROUS_ASSIGNMENT_VARS,
   State
 };
