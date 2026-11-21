@@ -114,7 +114,7 @@ function validateBundleBinaries(fullDir = path.join(PACKAGES_DIR, 'full')) {
   const binDir = path.join(fullDir, 'bin');
   const REQUIRED_COMMANDS = ['jira'];
 
-  let entries = [];
+  let entries;
   try {
     entries = fs.readdirSync(binDir, { withFileTypes: true });
   } catch {

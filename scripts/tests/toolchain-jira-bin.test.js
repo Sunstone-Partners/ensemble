@@ -63,7 +63,7 @@ function startServer({ empty = false } = {}) {
       if (raw) {
         try {
           body = JSON.parse(raw);
-        } catch (error) {
+        } catch {
           body = raw;
         }
       }
