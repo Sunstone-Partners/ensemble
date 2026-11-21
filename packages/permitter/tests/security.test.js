@@ -1652,13 +1652,15 @@ describe('ensemble-pdf-f6b2: tokenizer and wrapper bypasses', () => {
     });
   });
 
-  describe('the hook asks instead of approving', () => {
+  describe('the hook defers instead of approving', () => {
     const { spawnSync } = require('child_process');
     const path = require('path');
     const hookPath = path.join(__dirname, '..', 'hooks', 'permitter.js');
 
     // Runs the real hook (hooks/permitter.js) with a Bash permission request
-    // and returns its decision plus its debug log.
+    // and returns its raw stdout plus its debug log. The hook never emits an
+    // `ask` decision: when it cannot approve a command it writes nothing, which
+    // hands the decision back to Claude Code's normal permission prompt.
     function runHook(command) {
       const result = spawnSync(process.execPath, [hookPath], {
         input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
@@ -1666,27 +1668,24 @@ describe('ensemble-pdf-f6b2: tokenizer and wrapper bypasses', () => {
         cwd: path.join(__dirname, '..'),
         env: { ...process.env, ENSEMBLE_PERMITTER_DISABLE: '', PERMITTER_DEBUG: '1' }
       });
-      let decision;
-      try {
-        decision = JSON.parse((result.stdout || '').trim());
-      } catch {
-        // Not JSON: the behavior stays null and the test fails below.
-      }
       return {
-        behavior: decision?.hookSpecificOutput?.decision?.behavior ?? null,
+        status: result.status,
+        stdout: (result.stdout || '').trim(),
         debug: result.stderr || ''
       };
     }
 
-    test('a comment-only command yields nothing to classify, so the hook asks', () => {
-      const { behavior, debug } = runHook('# just a comment');
-      expect(behavior).toBe('ask');
+    test('a comment-only command yields nothing to classify, so the hook defers', () => {
+      const { status, stdout, debug } = runHook('# just a comment');
+      expect(status).toBe(0);
+      expect(stdout).toBe('');
       expect(debug).toMatch(/No executable commands extracted/);
     });
 
-    test('a command the parser refuses makes the hook ask', () => {
-      const { behavior, debug } = runHook('env -- git status');
-      expect(behavior).toBe('ask');
+    test('a command the parser refuses makes the hook defer', () => {
+      const { status, stdout, debug } = runHook('env -- git status');
+      expect(status).toBe(0);
+      expect(stdout).toBe('');
       expect(debug).toMatch(/Parse error: env option not supported/);
     });
   });
