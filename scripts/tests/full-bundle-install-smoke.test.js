@@ -311,7 +311,7 @@ describe('packages/full install smoke test', () => {
         const specifier = match[1];
         if (ALLOWED_UNRESOLVED_BARE_REQUIRES.has(specifier)) continue;
         if (require('module').builtinModules.includes(specifier)) continue;
-        let resolved = false;
+        let resolved;
         try {
           require.resolve(specifier, { paths: [path.dirname(file), path.join(installRoot, 'lib')] });
           resolved = true;

@@ -264,7 +264,7 @@ function validateFullLibReferences(packagesDir = PACKAGES_DIR) {
   for (const relative of [...references.keys()].sort()) {
     const record = references.get(relative);
     const bundlePath = path.join(fullLibDir, relative);
-    let stat = null;
+    let stat;
     try {
       stat = fs.statSync(bundlePath);
     } catch {

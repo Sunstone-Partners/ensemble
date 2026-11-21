@@ -26,7 +26,6 @@ const {
 } = require('../validate-all');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const FULL_DIR = path.join(REPO_ROOT, 'packages', 'full');
 
 /**
  * Temp roots live under the repo, not under the OS temp dir: /tmp is wiped on
