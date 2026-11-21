@@ -16,7 +16,10 @@ plus runner" interpretation `adapter-tracker-beads`'s own `SKILL.md` documents).
 
 Backing tool: the `jira` command the `full` bundle ships (`packages/full/bin/jira`; command
 contract in `packages/infrastructure/skills/jira/SKILL.md`), a dependency-free Node script over
-the Jira Cloud REST v3 API. This adapter targets **Jira Cloud only** (PRD REQ-016's
+the Jira Cloud REST v3 API. Only `full` ships it; the Pi and Codex bundles mirror this manifest
+without a `bin/`, and the host must put the bundle's `bin/` on PATH (Claude Code does). The
+`jira-installed` health check reads the `ensemble-client` marker in `jira --version`, so a
+different `jira` first on PATH fails preflight. This adapter targets **Jira Cloud only** (PRD REQ-016's
 first-release scope), authenticated via the three environment variables below -- it needs
 network access and a live Atlassian API token, unlike the credential-free `beads` adapter.
 
@@ -131,13 +134,8 @@ use.
   contract slot -- a caller moving between adapters must pass a different shape of value for
   `fields`; this cross-adapter inconsistency is inherited from the TRD's own category contract
   design (one opaque placeholder, no per-adapter field schema), not something any adapter can
-  paper over. Status transitions were ORIGINALLY also routed through this same opaque slot
-  (`--status ${fields}`), which PR 8's independent review flagged as a real bug (finding 1: a
-  caller-supplied value -- including an entire JSON object's string form -- reached `--status`
-  verbatim, with nothing validating it against this adapter's own documented status
-  vocabulary); the new `tracker.set-status` capability (see "Vocabulary" above) replaces that
-  usage entirely, with one fixed, provider-native status-name literal per `variants` entry,
-  never a caller-supplied value.
+  paper over. A status never travels through this slot: `tracker.set-status` (see "Vocabulary"
+  above) writes one fixed, provider-native status name per `variants` entry (PR 8 finding 1).
 - **`tracker.list`'s per-item `.status` stays in Jira's own raw vocabulary (e.g. "To Do"), not
   normalized to open/in_progress/closed (PR 8 fix, partial).** `tracker.list` now declares a
   `parse.arrayMap` that renames each raw item's `.key`/`.summary`/`.status` into

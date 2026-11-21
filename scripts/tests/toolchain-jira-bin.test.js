@@ -555,3 +555,174 @@ describe('the shipped jira command keeps caller text out of the request structur
     expect(server.requests[0].url).toBe('/rest/api/3/issue/VA-1%2F..%2F..%2Fmyself%3Fx%3D1%23y');
   });
 });
+
+describe('the shipped jira command takes every value as written, never as an option', () => {
+  let server;
+
+  beforeAll(async () => {
+    server = await startServer();
+  });
+
+  afterAll(async () => {
+    if (server) await server.close();
+  });
+
+  beforeEach(() => {
+    server.requests.length = 0;
+  });
+
+  const env = () => authorizedEnv(server.baseUrl);
+
+  test.each(['--status=Done', '--foo', '--', '--version', '--help', '-x'])(
+    'issues update --summary %s writes that text as the summary and changes no status',
+    async (text) => {
+      const result = await runCli(['issues', 'update', 'VA-1', '--summary', text], env());
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      const writes = server.requests.filter((request) => request.method !== 'GET');
+      expect(writes).toHaveLength(1);
+      expect(writes[0].method).toBe('PUT');
+      expect(writes[0].url).toBe('/rest/api/3/issue/VA-1');
+      expect(writes[0].body.fields.summary).toBe(text);
+      expect(server.requests.some((request) => request.url.endsWith('/transitions'))).toBe(false);
+    }
+  );
+
+  test('--option=value and --option value are equivalent, and the value may contain =', async () => {
+    const result = await runCli(['issues', 'update', 'VA-1', '--summary=--status=Done'], env());
+    expect(result.status).toBe(0);
+    const write = server.requests.find((request) => request.method === 'PUT');
+    expect(write.body.fields.summary).toBe('--status=Done');
+  });
+
+  test.each(['--status=Done', '--type'])('issues update --description %s writes that text', async (text) => {
+    const result = await runCli(['issues', 'update', 'VA-1', '--description', text], env());
+    expect(result.status).toBe(0);
+    const write = server.requests.find((request) => request.method === 'PUT');
+    expect(write.body.fields.description.content[0].content[0].text).toBe(text);
+    expect(server.requests.some((request) => request.url.endsWith('/transitions'))).toBe(false);
+  });
+
+  test('issues create --description --status=Done keeps the text as the description', async () => {
+    const result = await runCli(['issues', 'create', 'Title', '--description', '--status=Done'], env());
+    expect(result.status).toBe(0);
+    const write = server.requests.find((request) => request.method === 'POST');
+    expect(write.body.fields.description.content[0].content[0].text).toBe('--status=Done');
+  });
+
+  test('-- ends the options, so a summary that starts with -- can follow it', async () => {
+    const result = await runCli(['issues', 'create', '--type', 'Bug', '--', '--leading'], env());
+    expect(result.status).toBe(0);
+    const write = server.requests.find((request) => request.method === 'POST');
+    expect(write.body.fields.summary).toBe('--leading');
+    expect(write.body.fields.issuetype).toEqual({ name: 'Bug' });
+  });
+
+  test.each([
+    ['an option without a value', ['issues', 'update', 'VA-1', '--summary'], /--summary needs a value/],
+    ['a repeated scalar option', ['issues', 'update', 'VA-1', '--summary', 'a', '--summary', 'b'], /more than once/],
+    ['an unknown option', ['issues', 'update', 'VA-1', '--sumary', 'x'], /unknown option --sumary/],
+    ['a leading-- summary without --', ['issues', 'create', '--leading'], /unknown option --leading/],
+    ['an extra argument', ['issues', 'read', 'VA-1', 'VA-2'], /takes 1 argument/],
+    ['a missing argument', ['issues', 'update', '--summary', 'x'], /takes 1 argument/],
+    ['an empty summary', ['issues', 'update', 'VA-1', '--summary', ''], /--summary must not be empty/],
+    ['an update that changes nothing', ['issues', 'update', 'VA-1'], /nothing to update/],
+    ['an unknown command', ['issues', 'delete', 'VA-1'], /unknown command: jira issues delete/]
+  ])('%s fails loudly with one stderr line and sends no request', async (label, args, pattern) => {
+    const result = await runCli(args, env());
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe('');
+    expect(oneStderrLine(result)).toMatch(pattern);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  test('a repeated --label accumulates', async () => {
+    const result = await runCli(['issues', 'update', 'VA-1', '--label', 'a', '--label', 'b'], env());
+    expect(result.status).toBe(0);
+    const write = server.requests.find((request) => request.method === 'PUT');
+    expect(write.body.fields.labels).toEqual(['a', 'b']);
+  });
+});
+
+describe('the jira-installed health check recognises this client and no other jira', () => {
+  const { runPreflight } = require('../../packages/development/lib/toolchain/preflight');
+  const HEALTH = MANIFEST.health.find((check) => check.id === 'jira-installed');
+  const SCRATCH_PARENT = path.join(REPO_ROOT, 'node_modules', '.cache', 'jira-bin-test');
+  const scratch = [];
+  const mk = (prefix) => {
+    fs.mkdirSync(SCRATCH_PARENT, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(SCRATCH_PARENT, prefix));
+    scratch.push(dir);
+    return dir;
+  };
+
+  afterAll(() => {
+    for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('--version prints the marker the manifest version probe reads', async () => {
+    const result = await runCli(['--version']);
+    const read = new RegExp(HEALTH.versionPattern).exec(result.stdout);
+    expect(read && read[1]).toBe('1.0.0');
+    expect(HEALTH.minVersion).toBe('1.0.0');
+  });
+
+  function project() {
+    const root = mk('proj-');
+    fs.mkdirSync(path.join(root, '.ensemble'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.ensemble', 'toolchain.yaml'), 'tracker: jira\n');
+    return root;
+  }
+
+  /** Health checks spawn with the process environment, so the probe PATH and credentials go there. */
+  async function withProcessEnv(overrides, fn) {
+    const saved = {};
+    for (const key of Object.keys(overrides)) saved[key] = process.env[key];
+    Object.assign(process.env, overrides);
+    try {
+      return await fn();
+    } finally {
+      for (const key of Object.keys(saved)) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    }
+  }
+
+  test('preflight passes with this client first on PATH', async () => {
+    const server = await startServer();
+    try {
+      const result = await withProcessEnv(
+        {
+          PATH: `${path.dirname(JIRA_BIN)}${path.delimiter}${process.env.PATH}`,
+          JIRA_BASE_URL: server.baseUrl,
+          JIRA_EMAIL: 'ada@example.com',
+          JIRA_API_TOKEN: 'secret-token'
+        },
+        () => runPreflight({ categories: ['tracker'], runId: 'ours' }, { projectRoot: project() })
+      );
+      expect(result.ok).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test.each([
+    ['the unrelated jira-cli', 'jira version 1.5.1'],
+    ['a bare version', '1.0.0']
+  ])('preflight refuses %s on PATH before it is ever called again', async (label, versionLine) => {
+    const bin = mk('foreign-');
+    fs.writeFileSync(
+      path.join(bin, 'jira'),
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo '${versionLine}'; exit 0; fi\necho called >> "${bin}/calls"\nexit 0\n`,
+      { mode: 0o755 }
+    );
+    const result = await withProcessEnv({ PATH: `${bin}${path.delimiter}${process.env.PATH}` }, () =>
+      runPreflight({ categories: ['tracker'], runId: 'foreign' }, { projectRoot: project() })
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe('HEALTH_FAILED');
+    expect(result.error.message).toMatch(/jira-installed/);
+    expect(fs.existsSync(path.join(bin, 'calls'))).toBe(false);
+  });
+});
