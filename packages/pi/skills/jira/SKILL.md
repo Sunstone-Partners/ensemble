@@ -13,7 +13,9 @@ description: >-
 
 **Tool**: the `jira` command the `full` bundle ships (`packages/full/bin/jira`) -- a
 dependency-free Node script over the Jira Cloud REST v3 API (node builtins plus global
-`fetch`, no npm dependencies). No global install and no `npm link` is required.
+`fetch`, no npm dependencies). Only the `full` bundle ships it, and it is on PATH only where the
+host adds an installed plugin's `bin/` to PATH (Claude Code does); the Pi and Codex bundles ship
+no `bin/`, so there a client whose `--version` prints `ensemble-client` must be put on PATH.
 
 **Bundled command coverage**: `issues read|list|create|update`, `comments create|list` and
 `--version` -- exactly the command set the `tracker` adapter invokes
@@ -42,8 +44,8 @@ is not implemented by the bundled command.
 ### Verify Installation
 
 ```bash
-# Check the bundled command is on PATH
-jira --version  # Expects: jira 1.0.0
+# Check the bundled command is on PATH (the marker shows it is this client, not another one)
+jira --version  # Expects: jira 1.0.0 (ensemble-client)
 ```
 
 ### Authentication

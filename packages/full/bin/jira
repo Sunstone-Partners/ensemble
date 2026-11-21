@@ -27,6 +27,8 @@
  */
 
 const VERSION = '1.0.0';
+/** Printed by `--version` so the adapter's health check can tell this client from any other `jira`. */
+const CLIENT_MARKER = 'ensemble-client';
 const API_ROOT = '/rest/api/3';
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -115,53 +117,86 @@ function readConfig(env) {
   return { baseUrl, email, apiToken, projectKey };
 }
 
-/** Parse `--flag value`, `--flag=value` and repeated flags (the last one wins for scalars). */
-function parseArgs(argv) {
+/** The options each command accepts: `scalar` take one value (given once), `repeat` may repeat. */
+const COMMANDS = {
+  'issues read': { args: 1, usage: '<KEY>', scalar: [], repeat: [] },
+  'issues list': {
+    args: 0,
+    usage: '',
+    scalar: ['limit', 'project', 'status', 'assignee', 'search', 'text', 'jql'],
+    repeat: []
+  },
+  'issues create': {
+    args: 1,
+    usage: '"<summary>"',
+    scalar: ['type', 'description', 'project', 'priority'],
+    repeat: ['label']
+  },
+  'issues update': {
+    args: 1,
+    usage: '<KEY>',
+    scalar: ['summary', 'description', 'status', 'type', 'priority'],
+    repeat: ['label']
+  },
+  'comments create': { args: 1, usage: '<KEY>', scalar: ['body'], repeat: [] },
+  'comments list': { args: 1, usage: '<KEY>', scalar: [], repeat: [] }
+};
+
+/**
+ * Parse `--option value` and `--option=value` strictly. A value is whatever follows its option,
+ * even when it starts with `-` (`--summary --status=Done` renames the issue); a missing value, an
+ * unknown option, a repeated scalar option or a wrong number of arguments fails loudly; `--` ends
+ * the options, so a summary that starts with `--` can follow it.
+ */
+function parseArgs(args, spec, label) {
   const positional = [];
   const flags = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg.startsWith('--')) {
-      const equals = arg.indexOf('=');
-      let name;
-      let value;
-      if (equals !== -1) {
-        name = arg.slice(2, equals);
-        value = arg.slice(equals + 1);
-      } else {
-        name = arg.slice(2);
-        const next = argv[index + 1];
-        if (next !== undefined && !next.startsWith('--')) {
-          value = next;
-          index += 1;
-        } else {
-          value = true;
-        }
-      }
-      if (flags[name] === undefined) {
-        flags[name] = value;
-      } else if (Array.isArray(flags[name])) {
-        flags[name].push(value);
-      } else {
-        flags[name] = [flags[name], value];
-      }
-    } else {
+  let optionsEnded = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (optionsEnded || !arg.startsWith('--')) {
       positional.push(arg);
+      continue;
     }
+    if (arg === '--') {
+      optionsEnded = true;
+      continue;
+    }
+    const equals = arg.indexOf('=');
+    const name = equals === -1 ? arg.slice(2) : arg.slice(2, equals);
+    const repeat = spec.repeat.includes(name);
+    if (!repeat && !spec.scalar.includes(name)) {
+      fail(`unknown option --${name} for ${label} (put -- before an argument that starts with --)`);
+    }
+    let value;
+    if (equals !== -1) {
+      value = arg.slice(equals + 1);
+    } else if (index + 1 < args.length) {
+      index += 1;
+      value = args[index];
+    } else {
+      fail(`option --${name} needs a value`);
+    }
+    if (repeat) {
+      (flags[name] = flags[name] || []).push(value);
+    } else if (flags[name] === undefined) {
+      flags[name] = value;
+    } else {
+      fail(`option --${name} was given more than once`);
+    }
+  }
+  if (positional.length !== spec.args) {
+    fail(`${label} takes ${spec.args} argument(s)${spec.usage ? ` ${spec.usage}` : ''}, got ${positional.length}`);
   }
   return { positional, flags };
 }
 
 function flagValue(flags, name) {
-  const value = flags[name];
-  if (value === undefined || value === true) return '';
-  return Array.isArray(value) ? String(value[value.length - 1]) : String(value);
+  return flags[name] === undefined ? '' : String(flags[name]);
 }
 
 function flagValues(flags, name) {
-  const value = flags[name];
-  if (value === undefined || value === true) return [];
-  return (Array.isArray(value) ? value : [value]).map(String);
+  return flags[name] === undefined ? [] : flags[name].map(String);
 }
 
 /** Atlassian document format -> plain text. */
@@ -368,12 +403,20 @@ async function issuesCreate(config, positional, flags) {
 
 async function issuesUpdate(config, positional, flags) {
   const key = issueKey(positional[0]);
+  // An option that was given must change something: an empty value would otherwise be dropped
+  // while the call still reported success.
+  for (const name of ['summary', 'description', 'status', 'type', 'priority']) {
+    if (flags[name] === '') fail(`--${name} must not be empty`);
+  }
   const status = flagValue(flags, 'status');
   const summary = flagValue(flags, 'summary');
   const description = flagValue(flags, 'description');
   const type = flagValue(flags, 'type');
   const priority = flagValue(flags, 'priority');
-  const labels = flagValues(flags, 'label');
+  const labels = flagValues(flags, 'label').filter((label) => label !== '');
+  if (!status && !summary && !description && !type && !priority && !labels.length) {
+    fail('nothing to update: pass --summary, --description, --status, --type, --priority or --label');
+  }
   let transition = null;
 
   if (status) {
@@ -449,37 +492,34 @@ function usage() {
   ].join('\n');
 }
 
-async function main(argv) {
-  if (argv.includes('--help') || argv.includes('-h')) {
-    await new Promise((resolve) => {
-      process.stdout.write(`${usage()}\n`, () => resolve());
-    });
-    return;
-  }
-  if (argv.includes('--version') || argv.includes('-v')) {
-    await new Promise((resolve) => {
-      process.stdout.write(`jira ${VERSION}\n`, () => resolve());
-    });
-    return;
-  }
+/** Print one line to stdout and resolve once it is flushed. */
+function printLine(text) {
+  return new Promise((resolve) => {
+    process.stdout.write(`${text}\n`, () => resolve());
+  });
+}
 
-  const { positional, flags } = parseArgs(argv);
-  const [group, action] = positional;
+async function main(argv) {
+  // Help and version are recognised only as the FIRST argument, never inside option values:
+  // `jira issues update K --summary --version` must rename the issue, not print a version.
+  if (argv[0] === '--help' || argv[0] === '-h') return printLine(usage());
+  if (argv[0] === '--version' || argv[0] === '-v') return printLine(`jira ${VERSION} (${CLIENT_MARKER})`);
+
+  const [group, action] = argv;
+  const label = `jira ${group === undefined ? '' : group} ${action === undefined ? '' : action}`.trim();
+  const spec = COMMANDS[`${group} ${action}`];
+  if (!spec) fail(`unknown command: ${label}`);
+  const { positional, flags } = parseArgs(argv.slice(2), spec, label);
   const config = readConfig(process.env);
 
   if (group === 'issues') {
-    if (action === 'read') return issuesRead(config, positional.slice(2));
+    if (action === 'read') return issuesRead(config, positional);
     if (action === 'list') return issuesList(config, flags);
-    if (action === 'create') return issuesCreate(config, positional.slice(2), flags);
-    if (action === 'update') return issuesUpdate(config, positional.slice(2), flags);
-    fail(`unknown command: jira issues ${action === undefined ? '' : action}`);
+    if (action === 'create') return issuesCreate(config, positional, flags);
+    return issuesUpdate(config, positional, flags);
   }
-  if (group === 'comments') {
-    if (action === 'create') return commentsCreate(config, positional.slice(2), flags);
-    if (action === 'list') return commentsList(config, positional.slice(2));
-    fail(`unknown command: jira comments ${action === undefined ? '' : action}`);
-  }
-  fail(`unknown command: jira ${group === undefined ? '' : group}`);
+  if (action === 'create') return commentsCreate(config, positional, flags);
+  return commentsList(config, positional);
 }
 
 main(process.argv.slice(2)).then(
