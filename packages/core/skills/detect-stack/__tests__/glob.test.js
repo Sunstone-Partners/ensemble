@@ -92,3 +92,74 @@ describe('glob', () => {
     expect(results).toEqual(['a.yaml', 'one/b.yaml']);
   });
 });
+
+describe('glob and the ignore option', () => {
+  let root;
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'detect-stack-glob-ignore-'));
+    fs.mkdirSync(path.join(root, 'node_modules', 'dep', 'deep'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'src'));
+    fs.writeFileSync(path.join(root, 'node_modules', 'dep', 'deep', 'x.js'), 'x');
+    fs.writeFileSync(path.join(root, 'src', 'a.js'), 'a');
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('a single pattern is accepted as well as a list', async () => {
+    expect(await glob('**/*.js', { cwd: root, ignore: '**/node_modules/**' })).toEqual(['src/a.js']);
+    expect(await glob('**/*.js', { cwd: root, ignore: ['**/node_modules/**'] })).toEqual(['src/a.js']);
+  });
+
+  test('an ignored directory is not read at all', async () => {
+    // A project's node_modules is the largest tree a scan meets; filtering its matches
+    // afterwards would still walk all of it.
+    const readdir = jest.spyOn(fs.promises, 'readdir');
+    try {
+      await glob('**/*.js', { cwd: root, ignore: ['**/node_modules/**'] });
+      const read = readdir.mock.calls.map(([dir]) => String(dir));
+      expect(read.some((dir) => dir.includes(`${path.sep}node_modules`))).toBe(false);
+      expect(read).toContain(path.join(root, 'src').replace(/\\/g, '/'));
+    } finally {
+      readdir.mockRestore();
+    }
+  });
+});
+
+describe('glob and symbolic links', () => {
+  let root;
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'detect-stack-glob-links-'));
+    fs.mkdirSync(path.join(root, 'real', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'real', 'a.cs'), 'a');
+    fs.writeFileSync(path.join(root, 'real', 'sub', 'b.cs'), 'b');
+    fs.symlinkSync(path.join(root, 'real'), path.join(root, 'Controllers'));
+    fs.symlinkSync(path.join(root, 'nowhere'), path.join(root, 'broken'));
+    fs.symlinkSync(root, path.join(root, 'loop'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('a directory named by a literal segment is entered through a link', async () => {
+    expect(await glob('Controllers/*.cs', { cwd: root })).toEqual(['Controllers/a.cs']);
+    expect(await glob('Controllers/**/*.cs', { cwd: root })).toEqual(['Controllers/a.cs', 'Controllers/sub/b.cs']);
+  });
+
+  test('a link found through a leading ** is not entered', async () => {
+    expect(await glob('**/*.cs', { cwd: root })).toEqual(['real/a.cs', 'real/sub/b.cs']);
+  });
+
+  test('a broken link neither throws nor matches', async () => {
+    expect(await glob('broken/*', { cwd: root })).toEqual([]);
+  });
+
+  test('a link back to the root ends with the pattern', async () => {
+    expect(await glob('loop/loop/loop/real/*.cs', { cwd: root })).toEqual(['loop/loop/loop/real/a.cs']);
+    expect(await glob('**/*.cs', { cwd: root })).toEqual(['real/a.cs', 'real/sub/b.cs']);
+  });
+});

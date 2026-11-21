@@ -116,3 +116,107 @@ describe('the skill matcher answers the same as the npm glob package', () => {
     expect(withoutDirs).not.toContain('one');
   });
 });
+
+/**
+ * The directories the shipped patterns name are sometimes symbolic links (a monorepo that links
+ * `tests` or `Controllers` from a shared location). The npm package resolves a link named by a
+ * pattern segment and descends it, and refuses one only when it is found through `**`.
+ */
+function symlinkedTree() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'detect-stack-glob-links-'));
+  tempDirs.push(dir);
+  const write = (rel) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), 'x');
+  };
+  [
+    'real/Controllers/HomeController.cs',
+    'real/Controllers/sub/Deep.cs',
+    'real/Pages/Index.razor',
+    'real/src/index.ts',
+    'real/lib/foo/application.ex',
+    'real/lib/foo_web/router.ex',
+    'real/spec/models/user_spec.rb',
+    'real/tests/unit/test_a.py',
+    'real/test/unit/a_test.exs',
+    'real/one/a.yaml',
+    'real/one/two/b.yaml',
+    'plain/a.js',
+    'dirX/x.txt',
+    'dirY/f.txt',
+  ].forEach(write);
+  for (const name of ['Controllers', 'Pages', 'src', 'lib', 'spec', 'tests', 'test']) {
+    fs.symlinkSync(path.join(dir, 'real', name), path.join(dir, name));
+  }
+  fs.symlinkSync(path.join(dir, 'real/one'), path.join(dir, 'linkdir'));
+  // A link inside a linked directory, a link to nothing, a link back to the root, a link to a
+  // file, and a chain of two links: none may throw or loop.
+  fs.symlinkSync(path.join(dir, 'real/one'), path.join(dir, 'real/one/self'));
+  fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'broken'));
+  fs.symlinkSync(dir, path.join(dir, 'loop'));
+  fs.symlinkSync(path.join(dir, 'plain/a.js'), path.join(dir, 'filelink.js'));
+  fs.mkdirSync(path.join(dir, 'a'));
+  fs.symlinkSync(path.join(dir, 'dirX'), path.join(dir, 'a/lnk1'));
+  fs.symlinkSync(path.join(dir, 'dirY'), path.join(dir, 'dirX/lnk2'));
+  return dir;
+}
+
+describe('the skill matcher follows symbolic links the way the npm glob package does', () => {
+  const cwd = symlinkedTree();
+
+  const CASES = [
+    // The shipped patterns with a literal directory prefix, through a linked directory.
+    { pattern: 'Controllers/*.cs', options: { nodir: true } },
+    { pattern: 'Controllers/*.cs', options: {} },
+    { pattern: 'Pages/*.razor', options: { nodir: true } },
+    { pattern: 'src/*.ts', options: {} },
+    { pattern: 'lib/*/application.ex', options: {} },
+    { pattern: 'lib/*_web/endpoint.ex', options: {} },
+    { pattern: 'lib/*_web/router.ex', options: { nodir: true } },
+    { pattern: 'spec/**/*.rb', options: { nodir: true } },
+    { pattern: 'tests/**/*.py', options: { nodir: true } },
+    { pattern: 'test/**/*_test.exs', options: { nodir: true } },
+    { pattern: 'test/**/*_test.exs', options: { ignore: ['**/node_modules/**'] } },
+    // The same shapes through an ordinary linked directory.
+    { pattern: 'linkdir/*', options: {} },
+    { pattern: 'linkdir/*', options: { nodir: true } },
+    { pattern: 'linkdir/**/*.yaml', options: {} },
+    { pattern: 'linkdir/**/*.yaml', options: { nodir: true } },
+    { pattern: 'linkdir/*/*.yaml', options: {} },
+    { pattern: 'linkdir/**', options: {} },
+    { pattern: '*/*.yaml', options: {} },
+    { pattern: '?inkdir/*', options: {} },
+    { pattern: '{linkdir,real/one}/*', options: {} },
+    { pattern: '*/Controllers/*.cs', options: {} },
+    { pattern: 'real/Controllers/*.cs', options: {} },
+    { pattern: 'Controllers/**/*.cs', options: { maxDepth: 2 } },
+    { pattern: 'Controllers/**/*.cs', options: { absolute: true } },
+    // `**` does not enter a link at the start of a pattern, and enters one link after that.
+    { pattern: '**/*.cs', options: {} },
+    { pattern: '**/Controllers/*.cs', options: {} },
+    { pattern: '**/f.txt', options: {} },
+    { pattern: 'a/**/f.txt', options: {} },
+    { pattern: 'a/**/*.txt', options: {} },
+    { pattern: 'a/lnk1/**/f.txt', options: {} },
+    { pattern: 'a/*/*.txt', options: {} },
+    { pattern: 'a/*/lnk2/*', options: {} },
+    { pattern: '**/*', options: {} },
+    // Links that lead nowhere, back, or to a file.
+    { pattern: 'broken/*', options: {} },
+    { pattern: 'broken', options: {} },
+    { pattern: 'loop/*', options: {} },
+    { pattern: 'loop/real/one/*.yaml', options: {} },
+    { pattern: 'linkdir/self/*', options: {} },
+    { pattern: 'filelink.js/*', options: {} },
+    { pattern: '*.js', options: {} },
+    // The `ignore` option is a pattern or a list of them.
+    { pattern: '**/*.cs', options: { ignore: '**/sub/**' } },
+    { pattern: 'Controllers/*.cs', options: { ignore: '**/sub/**' } },
+  ];
+
+  test.each(CASES)('$pattern $options', async ({ pattern, options }) => {
+    const mine = await glob(pattern, { cwd, ...options });
+    const theirs = await realGlob(pattern, { cwd, ...options });
+    expect(mine).toEqual([...theirs].sort());
+  });
+});

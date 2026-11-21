@@ -22,7 +22,10 @@
  *   covers the directory it names
  * - the `nodir`, `absolute` and `maxDepth` options
  *
- * Symbolic links are never followed, matching glob(10)'s default.
+ * Symbolic links are followed like glob(10) follows them without its `follow`
+ * option: a pattern segment that is not `**` enters a link to a directory, and
+ * `**` enters none when it is the first item of the pattern, or one link
+ * otherwise. A broken link is skipped, and no walk can loop on a cycle.
  *
  * Matches are returned sorted. glob(10) returns them in directory-walk
  * order, so a tree with many matches yields the same set of paths in a
@@ -267,17 +270,39 @@ function createLimiter(limit) {
  * several brace alternatives reads every directory once.
  *
  * @param {string} dir Absolute directory path
- * @param {Map<string, Promise<Array<{name: string, isDirectory: boolean}>>>} cache Listing cache
+ * @param {Map<string, Promise<*>>} cache Listing cache
  * @param {function(function): Promise<*>} limit Read scheduler
- * @returns {Promise<Array<{name: string, isDirectory: boolean}>>} Directory entries
+ * @returns {Promise<Array<{name: string, isDirectory: boolean, isSymlink: boolean}>>} Directory entries
  */
 function readEntries(dir, cache, limit) {
   const cached = cache.get(dir);
   if (cached) return cached;
   const pending = limit(() => fsp.readdir(dir, { withFileTypes: true }))
-    .then((entries) => entries.map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() })))
+    .then((entries) => entries.map((entry) => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      isSymlink: entry.isSymbolicLink(),
+    })))
     .catch(() => []);
   cache.set(dir, pending);
+  return pending;
+}
+
+/**
+ * Whether a symbolic link resolves to a directory. A broken link, or one that
+ * cannot be read, is not one.
+ *
+ * @param {string} file Absolute path of the link
+ * @param {Map<string, Promise<boolean>>} cache Answers per link for the whole call
+ * @param {function(function): Promise<*>} limit Read scheduler
+ * @returns {Promise<boolean>} True when the link points at a directory
+ */
+function linkIsDirectory(file, cache, limit) {
+  const key = `stat:${file}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const pending = limit(() => fsp.stat(file)).then((stat) => stat.isDirectory(), () => false);
+  cache.set(key, pending);
   return pending;
 }
 
@@ -292,7 +317,7 @@ function readEntries(dir, cache, limit) {
  * @param {boolean} options.absolute Return absolute paths
  * @param {number|null} options.maxDepth Maximum number of path segments in a match
  * @param {Set<string>} out Collects matched paths
- * @param {Map<string, Promise<Array<{name: string, isDirectory: boolean}>>>} cache Listing cache
+ * @param {Map<string, Promise<*>>} cache Listing and link-resolution cache
  * @param {function(function): Promise<*>} limit Read scheduler
  * @returns {Promise<void>} Resolves once the tree below `cwd` was walked
  */
@@ -312,6 +337,12 @@ async function walkPattern(pattern, cwd, options, out, cache, limit) {
 
   const childPath = (relativeDir, name) => (relativeDir === '' ? name : `${relativeDir}/${name}`);
 
+  // Whether a walk may enter an entry: a directory, or a symbolic link that resolves to one.
+  const isEnterable = async (entry, child) => {
+    if (entry.isDirectory) return true;
+    return entry.isSymlink && (await linkIsDirectory(child, cache, limit));
+  };
+
   const walkEverythingBelow = async (dir, relativeDir, depth) => {
     const entries = await readEntries(dir, cache, limit);
     const waits = [];
@@ -327,30 +358,43 @@ async function walkPattern(pattern, cwd, options, out, cache, limit) {
     await Promise.all(waits);
   };
 
-  const walk = async (dir, relativeDir, patternIndex, depth) => {
+  const walk = async (dir, relativeDir, patternIndex, depth, viaLink = false) => {
     const segment = compiled[patternIndex];
     if (segment.kind === 'starstar' && patternIndex === compiled.length - 1) {
       // A trailing recursive segment covers the directory itself and
       // everything under it.
-      addMatch(relativeDir === '' ? '.' : relativeDir, true, relativeDir === '' ? 1 : depth);
+      addMatch(relativeDir === '' ? '.' : relativeDir, !viaLink, relativeDir === '' ? 1 : depth);
       await walkEverythingBelow(dir, relativeDir, depth);
       return;
     }
     const entries = await readEntries(dir, cache, limit);
     if (segment.kind === 'starstar') {
       // A recursive segment matches no directory at all ...
-      const waits = [walk(dir, relativeDir, patternIndex + 1, depth)];
-      // ... or any number of them.
+      const waits = [walk(dir, relativeDir, patternIndex + 1, depth, viaLink)];
+      // ... or any number of them. It does not follow a symbolic link, except that
+      // when it is not the first item of the pattern it lets the rest of the
+      // pattern match inside one link to a directory, like glob(10) without its
+      // `follow` option.
       for (const entry of entries) {
-        if (!entry.isDirectory) continue;
         if (entry.name.startsWith('.')) continue;
         const childRelative = childPath(relativeDir, entry.name);
         if (isPruned(options.ignores, childRelative)) continue;
-        waits.push(walk(`${dir}/${entry.name}`, childRelative, patternIndex, depth + 1));
+        const child = `${dir}/${entry.name}`;
+        if (entry.isDirectory) {
+          waits.push(walk(child, childRelative, patternIndex, depth + 1));
+        } else if (patternIndex > 0 && entry.isSymlink) {
+          waits.push((async () => {
+            if (await isEnterable(entry, child)) {
+              await walk(child, childRelative, patternIndex + 1, depth + 1, true);
+            }
+          })());
+        }
       }
       await Promise.all(waits);
       return;
     }
+    // A segment that is not `**` is resolved and descended even when the entry is a
+    // symbolic link to a directory, like glob(10).
     const waits = [];
     for (const entry of entries) {
       const childRelative = childPath(relativeDir, entry.name);
@@ -359,9 +403,13 @@ async function walkPattern(pattern, cwd, options, out, cache, limit) {
         addMatch(childRelative, entry.isDirectory, depth + 1);
         continue;
       }
-      if (!entry.isDirectory) continue;
+      if (!entry.isDirectory && !entry.isSymlink) continue;
       if (isPruned(options.ignores, childRelative)) continue;
-      waits.push(walk(`${dir}/${entry.name}`, childRelative, patternIndex + 1, depth + 1));
+      const child = `${dir}/${entry.name}`;
+      waits.push((async () => {
+        if (!(await isEnterable(entry, child))) return;
+        await walk(child, childRelative, patternIndex + 1, depth + 1, !entry.isDirectory);
+      })());
     }
     await Promise.all(waits);
   };
@@ -375,7 +423,7 @@ async function walkPattern(pattern, cwd, options, out, cache, limit) {
  * @param {string} pattern Glob pattern
  * @param {Object} [options] Options
  * @param {string} [options.cwd] Directory the pattern is relative to (default: process.cwd())
- * @param {string[]} [options.ignore] Patterns whose matches are excluded
+ * @param {string|string[]} [options.ignore] Patterns whose matches are excluded
  * @param {boolean} [options.nodir] Skip directories
  * @param {boolean} [options.absolute] Return absolute paths
  * @param {number} [options.maxDepth] Maximum number of path segments in a match
@@ -384,7 +432,7 @@ async function walkPattern(pattern, cwd, options, out, cache, limit) {
 async function glob(pattern, options = {}) {
   if (typeof pattern !== 'string' || pattern.length === 0) return [];
   const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd();
-  const ignores = compileIgnores(options.ignore || []);
+  const ignores = compileIgnores([].concat(options.ignore || []));
   const out = new Set();
   const cache = new Map();
   const limit = READ_SCHEDULER;
