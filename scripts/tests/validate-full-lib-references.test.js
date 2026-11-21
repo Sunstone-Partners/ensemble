@@ -212,4 +212,53 @@ describe('validateFullLibMirror', () => {
 
     expect(validateFullLibMirror(packagesDir)).toEqual([]);
   });
+
+  describe('entries owned by a package other than development', () => {
+    // reqnroll-cli.js is owned by product and delegation-contract.js by e2e-testing;
+    // neither exists in development/lib, so only the owner map can check them.
+    function makeTree() {
+      const packagesDir = makeTempDir('packages');
+      for (const [pkg, file] of [
+        ['development', 'other.js'],
+        ['product', 'reqnroll-cli.js'],
+        ['e2e-testing', 'delegation-contract.js'],
+        ['e2e-testing', 'reqnroll-cli.js'],
+      ]) {
+        fs.mkdirSync(path.join(packagesDir, pkg, 'lib'), { recursive: true });
+        fs.writeFileSync(path.join(packagesDir, pkg, 'lib', file), 'module.exports = {};\n');
+      }
+      fs.mkdirSync(path.join(packagesDir, 'full', 'lib'), { recursive: true });
+      fs.symlinkSync('../../development/lib/other.js', path.join(packagesDir, 'full', 'lib', 'other.js'));
+      return packagesDir;
+    }
+
+    test('links to the owning packages pass', () => {
+      const packagesDir = makeTree();
+      const fullLib = path.join(packagesDir, 'full', 'lib');
+      fs.symlinkSync('../../product/lib/reqnroll-cli.js', path.join(fullLib, 'reqnroll-cli.js'));
+      fs.symlinkSync('../../e2e-testing/lib/delegation-contract.js', path.join(fullLib, 'delegation-contract.js'));
+      expect(validateFullLibMirror(packagesDir)).toEqual([]);
+    });
+
+    test('a link to an existing but wrong file is a failure, not a pass on presence', () => {
+      const packagesDir = makeTree();
+      const fullLib = path.join(packagesDir, 'full', 'lib');
+      // Same file name, wrong package: it exists, so an existence check would pass it.
+      fs.symlinkSync('../../e2e-testing/lib/reqnroll-cli.js', path.join(fullLib, 'reqnroll-cli.js'));
+      fs.symlinkSync('../../development/lib/other.js', path.join(fullLib, 'delegation-contract.js'));
+      const failures = validateFullLibMirror(packagesDir);
+      expect(failures).toHaveLength(2);
+      expect(failures.join('\n')).toContain('packages/full/lib/reqnroll-cli.js mirrors e2e-testing/lib/reqnroll-cli.js');
+      expect(failures.join('\n')).toContain('ln -sf ../../product/lib/reqnroll-cli.js');
+      expect(failures.join('\n')).toContain('packages/full/lib/delegation-contract.js mirrors development/lib/other.js');
+    });
+
+    test('a missing link for an owned file is a failure that names the owner', () => {
+      const packagesDir = makeTree();
+      const failures = validateFullLibMirror(packagesDir);
+      expect(failures).toHaveLength(2);
+      expect(failures.join('\n')).toContain('ln -sf ../../product/lib/reqnroll-cli.js');
+      expect(failures.join('\n')).toContain('ln -sf ../../e2e-testing/lib/delegation-contract.js');
+    });
+  });
 });

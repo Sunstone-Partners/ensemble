@@ -55,7 +55,7 @@ function validateFrontmatter() {
 
 /**
  * Files whose packages/full mirror is owned by a package other than
- * development.
+ * development. Every entry must be a link to exactly that package's file.
  *
  * packages/full/lib/prd-cli.js is the product's CLI: it serves the development
  * registry commands (list, status, migrate-frontmatter) and the feature
@@ -64,8 +64,25 @@ function validateFrontmatter() {
  * lib/prd-cli.js, and the shipped skills call both halves through that one
  * path. The product copy carries the registry half (packages/product/lib/
  * prd-registry.js) so the superset holds in the installed bundle too.
+ *
+ * The other entries are the product and e2e-testing libraries the shipped
+ * skills and the playwright-tester agent name.
  */
-const FULL_LIB_MIRROR_OWNERS = new Map([['prd-cli.js', 'product']]);
+const FULL_LIB_MIRROR_OWNERS = new Map([
+  ['prd-cli.js', 'product'],
+  ['prd-registry.js', 'product'],
+  ['prd-feature-parser.js', 'product'],
+  ['feature-gen.js', 'product'],
+  ['drift.js', 'product'],
+  ['reqnroll-cli.js', 'product'],
+  ['reqnroll-gen.js', 'product'],
+  ['reqnroll-run.js', 'product'],
+  ['delegation-contract.js', 'e2e-testing'],
+  ['test-runner-mode.js', 'e2e-testing'],
+  ['grounded-marker-checker.js', 'e2e-testing'],
+  ['evidence-capture.js', 'e2e-testing'],
+  ['spec-writer.js', 'e2e-testing'],
+]);
 
 /**
  * How shipped prose names a lib file: the plugin-root form the installed
@@ -101,15 +118,23 @@ function validateFullLibMirror(packagesDir = PACKAGES_DIR) {
   }
 
   const devFiles = fs.readdirSync(devLibDir).filter(f => f.endsWith('.js'));
+  // Mirrors owned by another package are checked as strictly as the development ones:
+  // each must be a link to exactly that owner's file, so a link to an existing but
+  // wrong file cannot pass on mere presence.
+  const files = [...devFiles];
+  FULL_LIB_MIRROR_OWNERS.forEach((owner, file) => {
+    if (!files.includes(file) && fs.existsSync(path.join(packagesDir, owner, 'lib', file))) files.push(file);
+  });
   let checked = 0;
-  devFiles.forEach(file => {
+  files.forEach(file => {
     const fullPath = path.join(fullLibDir, file);
     // lstatSync so this correctly reports presence of symlinks even if
     // their target is missing (a broken symlink is still "present").
     if (!safeLstatExists(fullPath)) {
+      const owner = FULL_LIB_MIRROR_OWNERS.get(file) || 'development';
       failures.push(
-        `packages/full/lib/${file} is missing (present in packages/development/lib/) - add a symlink: ` +
-        `ln -sf ../../development/lib/${file} packages/full/lib/${file}`
+        `packages/full/lib/${file} is missing (present in packages/${owner}/lib/) - add a symlink: ` +
+        `ln -sf ../../${owner}/lib/${file} packages/full/lib/${file}`
       );
       return;
     }
@@ -142,7 +167,7 @@ function validateFullLibMirror(packagesDir = PACKAGES_DIR) {
     checked++;
   });
 
-  console.log(`  ✓ ${checked}/${devFiles.length} packages/development/lib/*.js file(s) mirrored in packages/full/lib/`);
+  console.log(`  ✓ ${checked}/${files.length} packages/*/lib/*.js file(s) mirrored in packages/full/lib/`);
   return failures;
 }
 

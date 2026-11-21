@@ -13,9 +13,9 @@
  *   1. runs the bundled toolchain CLI and asserts the shipped defaults resolve;
  *   2. asserts every `lib/<file>.js` named by a shipped skill, agent or command
  *      exists in the installed tree and parses;
- *   3. asserts the bundled prd-cli.js knows every subcommand the shipped
- *      skills call;
- *   4. asserts bare npm requires inside the installed tree resolve.
+ *   3. asserts the bundled prd-cli.js and reqnroll-cli.js dispatch every
+ *      subcommand the shipped skills call (none falls through to Usage);
+ *   4. asserts relative and bare requires inside the installed tree resolve.
  *
  * The scratch directory lives under the repository (never /tmp — see AGENTS.md)
  * and is removed after the suite.
@@ -23,7 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FULL_DIR = path.join(REPO_ROOT, 'packages', 'full');
@@ -46,6 +46,9 @@ const REQUIRED_PRD_CLI_SUBCOMMANDS = [
   'generate-features',
   'check-drift',
 ];
+
+/** Subcommands the bundle reqnroll-cli.js must know. */
+const REQUIRED_REQNROLL_CLI_SUBCOMMANDS = ['generate-bindings', 'migrate-bindings', 'check-binding-drift', 'run'];
 
 /** Shipped toolchain defaults (packages/full/toolchain). */
 const SHIPPED_TOOLCHAIN_DEFAULTS = {
@@ -166,6 +169,35 @@ function runNode(args, options = {}) {
   });
 }
 
+/**
+ * Subcommands of `"$PRD_CLI"` / `"$REQNROLL_CLI"` that the shipped skills, agents and
+ * commands actually invoke, keyed by variable name.
+ */
+function collectCliSubcommands(installRoot) {
+  const found = new Map();
+  const re = /\b(PRD_CLI|REQNROLL_CLI)"\s+([a-z][a-z-]*)/g;
+  for (const doc of ['skills', 'agents', 'commands']) {
+    for (const file of walkFiles(path.join(installRoot, doc))) {
+      if (!/\.(md|json|ya?ml)$/.test(file)) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      let match;
+      re.lastIndex = 0;
+      while ((match = re.exec(text)) !== null) {
+        if (!found.has(match[1])) found.set(match[1], new Set());
+        found.get(match[1]).add(match[2]);
+      }
+    }
+  }
+  return found;
+}
+
+/** True when the CLI dispatches `subcommand` (it does not fall through to its Usage block). */
+function isRecognised(cli, subcommand, cwd) {
+  const result = spawnSync(process.execPath, [cli, subcommand], { cwd, encoding: 'utf8', timeout: 30000 });
+  if (result.error) throw result.error;
+  return !/^Usage:/m.test(result.stderr || '') && !/Unknown subcommand/.test(`${result.stdout}${result.stderr}`);
+}
+
 describe('packages/full install smoke test', () => {
   let installRoot;
   let scratchHome;
@@ -212,22 +244,27 @@ describe('packages/full install smoke test', () => {
     expect(missing).toEqual([]);
   }, 120000);
 
-  test('the bundled prd-cli.js knows every subcommand the bundle ships', () => {
-    const unknown = [];
-    for (const subcommand of REQUIRED_PRD_CLI_SUBCOMMANDS) {
-      let stdout = '';
-      let failed = false;
-      try {
-        stdout = runNode([path.join(installRoot, 'lib', 'prd-cli.js'), subcommand], { cwd: installRoot });
-      } catch (err) {
-        failed = true;
-        stdout = `${err.stdout || ''}${err.stderr || ''}`;
+  test('the bundled prd-cli.js and reqnroll-cli.js recognise every subcommand the bundle ships', () => {
+    // A subcommand the CLI does not dispatch falls through to its Usage block (exit 1,
+    // nothing on stdout). A recognised one either answers on stdout (registry JSON) or
+    // fails with an "Error: ..." of its own (e.g. missing <prd-path>), never the Usage block.
+    const referenced = collectCliSubcommands(installRoot);
+    const targets = [
+      ['prd-cli.js', 'PRD_CLI', REQUIRED_PRD_CLI_SUBCOMMANDS],
+      ['reqnroll-cli.js', 'REQNROLL_CLI', REQUIRED_REQNROLL_CLI_SUBCOMMANDS],
+    ];
+    const unrecognised = [];
+    for (const [file, variable, required] of targets) {
+      const cli = path.join(installRoot, 'lib', file);
+      // The detector must be able to say "unknown": a made-up subcommand reads as unrecognised.
+      expect(isRecognised(cli, 'no-such-subcommand-xyz', installRoot)).toBe(false);
+      const subcommands = new Set([...required, ...(referenced.get(variable) || [])]);
+      for (const subcommand of subcommands) {
+        if (!isRecognised(cli, subcommand, installRoot)) unrecognised.push(`${file} ${subcommand}`);
       }
-      if (/Unknown subcommand/.test(stdout)) unknown.push(subcommand);
-      if (failed && stdout.trim() === '') unknown.push(`${subcommand} (no output)`);
     }
-    expect(unknown).toEqual([]);
-  }, 60000);
+    expect(unrecognised).toEqual([]);
+  }, 120000);
 
   test('every relative require inside the installed bundle resolves inside it', () => {
     const boundary = installRoot + path.sep;
