@@ -1654,8 +1654,24 @@ describe('ensemble-pdf-f6b2: tokenizer and wrapper bypasses', () => {
 
   describe('the hook defers instead of approving', () => {
     const { spawnSync } = require('child_process');
+    const fs = require('fs');
     const path = require('path');
     const hookPath = path.join(__dirname, '..', 'hooks', 'permitter.js');
+
+    // A scratch project (inside the repo tree, never the OS temp dir) whose only
+    // allowlist entry is `git status`, used as both cwd and HOME so neither the
+    // developer's global ~/.claude/settings.json nor the repo's own settings
+    // can change what the hook decides.
+    let sandbox;
+    beforeAll(() => {
+      sandbox = fs.mkdtempSync(path.join(__dirname, '.tmp-hook-'));
+      fs.mkdirSync(path.join(sandbox, '.claude'));
+      fs.writeFileSync(
+        path.join(sandbox, '.claude', 'settings.json'),
+        JSON.stringify({ permissions: { allow: ['Bash(git status:*)'] } })
+      );
+    });
+    afterAll(() => fs.rmSync(sandbox, { recursive: true, force: true }));
 
     // Runs the real hook (hooks/permitter.js) with a Bash permission request
     // and returns its raw stdout plus its debug log. The hook never emits an
@@ -1665,8 +1681,8 @@ describe('ensemble-pdf-f6b2: tokenizer and wrapper bypasses', () => {
       const result = spawnSync(process.execPath, [hookPath], {
         input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
         encoding: 'utf8',
-        cwd: path.join(__dirname, '..'),
-        env: { ...process.env, ENSEMBLE_PERMITTER_DISABLE: '', PERMITTER_DEBUG: '1' }
+        cwd: sandbox,
+        env: { ...process.env, HOME: sandbox, USERPROFILE: sandbox, ENSEMBLE_PERMITTER_DISABLE: '', PERMITTER_DEBUG: '1' }
       });
       return {
         status: result.status,
@@ -1674,6 +1690,12 @@ describe('ensemble-pdf-f6b2: tokenizer and wrapper bypasses', () => {
         debug: result.stderr || ''
       };
     }
+
+    test('positive control: an allowlisted command is approved with a decision on stdout', () => {
+      const { status, stdout } = runHook('git status');
+      expect(status).toBe(0);
+      expect(JSON.parse(stdout).hookSpecificOutput.decision.behavior).toBe('allow');
+    });
 
     test('a comment-only command yields nothing to classify, so the hook defers', () => {
       const { status, stdout, debug } = runHook('# just a comment');
