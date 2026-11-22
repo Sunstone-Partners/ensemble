@@ -14,7 +14,7 @@ Evidence (worktree is clean at `a0d6a213`, identical to `origin/dev`):
 - `git merge-base --is-ancestor 5b6c0028 origin/dev` → ancestor (merged).
 - `gh pr list --state all --search "foreman FOREMAN_TASK_TITLE"` → PR #458 `MERGED` 2026-11-20.
 - Source prose carries the rule. `packages/development/skills/ensemble-new-feature/references/phase-1-entry-point-resolution.md:12`:
-  `- Foreman mode: FOREMAN = true when `--foreman` is present or env FOREMAN_TASK_TITLE is non-empty (FOREMAN_SOURCE = flag|env, flag wins; none when false); same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it.`
+  > - Foreman mode: FOREMAN = true when `--foreman` is present or env FOREMAN_TASK_TITLE is non-empty (FOREMAN_SOURCE = flag|env, flag wins; none when false); same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it.
 - Per-entry-path approval detail strings exist at
   `packages/development/skills/ensemble-new-feature/references/phase-3-execute-stage.md:40` (implementation grant)
   and `:51` (PR grant), both with

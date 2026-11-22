@@ -8,6 +8,6 @@ Phase 3 done.
 
 **Verification:** `npm run generate:validate` 0 · `npm run validate` 0 · `npx jest --env=node` (packages/development): 313 suites pass, 1 pre-existing env-dependent failure (`tests/local-ci-adversarial.test.js` — fails identically alone **and** on a pristine HEAD tree → not caused by this run) · markdownlint clean on both touched files.
 
-**Findings block:** minor/coderabbit=fixed · major/phase-3-audit=fixed · minor `PLAN.md:17` MD038=**open** (operator) · risk **LOW**. Diff = 2 markdown reports only; no source/test/generated file touched. `foreman_inbox_send` delivered (msg_OHPjGeEUpGVQygYBLPqjjQ); `foreman_task_add_comment` still `INVALID_STATE`; `ask_advisor` unreachable (Anthropic `invalid_grant`), `contact_supervisor` has no session — both noted in the artifact.
+**Findings block:** minor/coderabbit=fixed · major/phase-3-audit=fixed · minor `PLAN.md:17` MD038=**open** at this phase, **fixed** by the repo-rules review phase (phase 4) · risk **LOW**. Diff = 2 markdown reports only; no source/test/generated file touched. `foreman_inbox_send` delivered (msg_OHPjGeEUpGVQygYBLPqjjQ); `foreman_task_add_comment` still `INVALID_STATE`; `ask_advisor` unreachable (Anthropic `invalid_grant`), `contact_supervisor` has no session — both noted in the artifact.
 
 Report: `docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_CODERABBIT_REPORT.md` (both fixes left uncommitted for Foreman).
