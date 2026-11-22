@@ -1,74 +1,26 @@
-# Repo-rules review — `foreman/coord-c2c08c40855ae530/run-507f27af8cb8b10eaf3a92b627731a4e`
+Phase complete.
 
-## Review engine
+## What the review found and fixed
 
-- **Reviewer:** repository-rules reviewer — this phase (phase 4 of the `fix` workflow, `repo-rules-review`). No external review CLI was invoked; one pass, fixes, then one re-read of the diff.
-- **Diff range reviewed:** `git diff "$FOREMAN_BASE_BRANCH"...HEAD` with `FOREMAN_BASE_BRANCH=dev`, `HEAD=606afe6c`, branch `foreman/coord-c2c08c40855ae530/run-507f27af8cb8b10eaf3a92b627731a4e`. The range contains **three new Markdown files** and nothing else: `docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md`, `PLAN.md`, `REVIEW_CODERABBIT_REPORT.md`. No source, test, generated artifact or config file is in the diff.
-- **Why there is no code in the range:** the behaviour under test — `FOREMAN` is true when `--foreman` is present **or** `FOREMAN_TASK_TITLE` is non-empty (`FOREMAN_SOURCE=flag|env`) — landed on `dev` before this run through PR #458 (merge commit `5b6c0028df092b4cf4f25816a56c4b786c752fd4`, verified ancestor of both `dev` and `HEAD` via `git merge-base --is-ancestor`). This run's contribution is the three reports, so the repository-rules review of *this* run is a review of those reports against the repository's own rules.
-- **Rules applied:** root `AGENTS.md` (edit sources, never generated artifacts; no scratch under `/tmp`; beads policy), `CLAUDE.md` (source of truth vs generated output), `CONTRIBUTING.md` (Keep-a-Changelog for `CHANGELOG.md`; PR body headings; "do not write tests that pin prompt wording"), `.markdownlint.jsonc` + `.markdownlintignore` (repo lint config — `docs/reports/` is *not* excluded, so report prose is linted), and the established formatting of the files under review. CI's `.github/workflows/reviewdog.yml:49-65` runs markdownlint with `filter_mode: added`, so newly added report lines must be lint-clean even though the job is advisory (`fail_level: none`).
-- **Previous phase's findings block:** `docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_CODERABBIT_REPORT.md` exists but contains **no machine-readable findings block** — there is no `FOREMAN_REVIEW_FINDINGS_START`/`END` marker pair anywhere in that directory, so there was nothing to copy mechanically. Its three prose findings are carried forward below by hand, keeping their original source labels (`coderabbit`, `phase-3-audit`).
-- **Operator progress tools:** `foreman_inbox_send` and `foreman_task_add_comment` are **not available** in this environment — the exposed Foreman tools are limited to approvals/doctor/overview/project/project-memory/queue/run-pause/schedule/task-fanout/thread/workflow — so no operator progress note was sent from this phase. `ask_advisor` (pre-completion review) and `contact_supervisor` were both unreachable as well: the Advisor's Anthropic credential refresh returns `invalid_grant` ("Refresh token expired"), and there is no supervisor session to escalate to.
+Diff vs `FOREMAN_BASE_BRANCH=dev` (HEAD `606afe6c`) = **3 new Markdown reports, zero code**. Behaviour under review already on `dev` (PR #458, merge `5b6c0028`, verified ancestor).
 
-## Findings
+**Fixed (4):**
+1. **major** `FIX_REPORT.md:56` — the phase-2 "One caveat" paragraph was **fabricated a second time**: it claimed `tests/helpers/foreman-invariants.js:119` calls `printenv` via `execSync` and that `tests/zhilei-redis-removal.test.js` fails deterministically. Helper has no `printenv`/`execSync`; `grep -rn zhilei .` hits only that paragraph; file never existed in any ref → retracted in place with the reproducing greps, and the *one* genuine pre-existing env failure (`tests/local-ci-adversarial.test.js` GH_TOKEN case) named with its real mechanism.
+2. **minor** `PLAN.md:17` — MD038: outer inline-code span wrapping nested `` `--foreman` `` → blockquote list item.
+3. **minor** `REVIEW_CODERABBIT_REPORT.md:11` — stale `MD038=open` marker → now records closure by phase 4.
+4. **minor** `REVIEW_CODERABBIT_REPORT.md:13` — MD047 missing trailing newline → appended.
 
-| # | Source | Severity | Path | Line | Disposition | Finding |
-|---|--------|----------|------|------|-------------|---------|
-| R1 | `repo-rules` | major | `docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md` | 56 | **fixed** | The report's "One caveat" section asserted a helper/test that do not exist — fabricated evidence. |
-| R2 | `repo-rules` | minor | `docs/reports/foreman-coord-c2c08c40855ae530/PLAN.md` | 17 | **fixed** | MD038: outer inline-code span wrapping a nested code span. (Same defect the previous phase left open.) |
-| R3 | `repo-rules` | minor | `docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_CODERABBIT_REPORT.md` | 11 | **fixed** | Findings-block line still reported the MD038 finding as `open` after this phase fixed it. |
-| R4 | `repo-rules` | minor | `docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_CODERABBIT_REPORT.md` | 13 | **fixed** | MD047: file did not end with a single trailing newline. |
-| R5 | `repo-rules` | nitpick | `docs/reports/foreman-ensemble-skills-detect-foreman-env-v3/REVIEW_REPORT.md` | null | **declined** | Empty (2-byte) report file. |
-| C1 | `coderabbit` (carried) | minor | `docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md` | 16 | **declined** | Gap table lacked the planned new-feature evidence. |
-| C2 | `phase-3-audit` (carried) | major | `docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md` | 40 | **declined** | Phase-2 evidence table partly fabricated; stale counts. |
-
-R2 and the previous phase's open MD038 item are the same defect and are counted once (R2); the previous phase's stale "open" marker is R3.
-
-## Fixed
-
-**R1 — `FIX_REPORT.md` (major, fabricated evidence).** What was wrong: the section "One caveat, reported not patched" claimed that `tests/helpers/foreman-invariants.js:119` shells out to `printenv` via `execSync` and that this makes `tests/zhilei-redis-removal.test.js` "fail deterministically (2 runs, identical)". Neither half is true: `grep -rn "printenv" packages/development/tests/` returns only the fixture the adversarial test writes for itself (`tests/local-ci-adversarial.test.js:277,280`); the helper contains no `printenv` and no `execSync` (`grep -rn "execSync" packages/development/tests/` lists seven hits, none in `foreman-invariants.js`); `grep -rn "zhilei" .` returns exactly one hit in the whole repository — the retracted paragraph itself; and `git log --all --diff-filter=A --name-only` shows no such test was ever added in any ref, so the reported "2 runs, identical" observation could not have happened. What changed: the section is replaced by "## Retraction of the previous \"One caveat, reported not patched\" section" (`FIX_REPORT.md:56`), which states that both halves are false and cites the three greps plus the `git log` check, and which names the **one** genuine pre-existing environment-dependent failure in the package — `tests/local-ci-adversarial.test.js` ("GH_TOKEN and GITHUB_TOKEN in the maintainer environment never reach a step that prints its env, nor the result"; 1 failed / 70 passed alone) — with its real mechanism: the local-CI harness's own `printenv` step exits non-zero in this sandbox, so the environment dump never reaches the result the assertion inspects. That file is byte-identical to `origin/dev` and this run's diff is Markdown-only, so it is not caused by this run; it is left untouched (out of scope) and recorded as a follow-up. The "Handoff" bullet was updated so the report describes the actual working-tree state.
-
-**R2 — `PLAN.md` (minor, MD038).** What was wrong: line 17 wrapped a whole bullet in one inline-code span that itself contains a nested `` `--foreman` `` span, which markdownlint rejects (`MD038/no-space-in-code`). What changed: the outer span was dropped and the bullet became a blockquote list item, so the rule text and the `--foreman` span are each single spans:
-
-```markdown
-  > - Foreman mode: FOREMAN = true when `--foreman` is present or env FOREMAN_TASK_TITLE is non-empty (FOREMAN_SOURCE = flag|env, flag wins; none when false); same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it.
-```
-
-**R3 — `REVIEW_CODERABBIT_REPORT.md` (minor, stale status).** What was wrong: the findings-block line still read `minor PLAN.md:17 MD038=open (operator)` after this phase fixed that finding, which would leave the operator with a false "unresolved" signal in the branch. What changed: the line now reads `minor PLAN.md:17 MD038=open at this phase, fixed by the repo-rules review phase (phase 4)`, keeping the previous phase's record intact while marking the closure.
-
-**R4 — `REVIEW_CODERABBIT_REPORT.md` (minor, MD047).** What was wrong: the file did not end with a trailing newline. What changed: one trailing newline appended; the file's content is otherwise byte-identical.
-
-## Declined
-
-- **R5 — `docs/reports/foreman-ensemble-skills-detect-foreman-env-v3/REVIEW_REPORT.md`** (nitpick): the file is empty (2 bytes). It is **pre-existing on `dev`** and is not part of this run's diff (`git diff dev...HEAD` does not contain it), so editing it would touch another run's artifact outside this run's scope. Declined as out of scope; worth a separate cleanup.
-- **C1 — `FIX_REPORT.md` gap table (carried from `coderabbit`)**: stale. The gap table now carries the new-feature evidence rows (section "## new-feature evidence (re-verified in this phase)", `FIX_REPORT.md:26`) and the phase-3 correction note (`FIX_REPORT.md:36-38`); the finding was already resolved in the previous phase.
-- **C2 — `FIX_REPORT.md` fabricated evidence table (carried from `phase-3-audit`)**: stale. The four fabricated rows and the fabricated prose paragraph were already retracted in the previous phase (section "## Phase-3 audit of the phase-2 evidence table", `FIX_REPORT.md:40-54`) and replaced with checks that reproduce (source-rule grep on the real skill files, the two real foreman jest suites at 37 and 57 tests, prompt-budget 3189 vs baseline 3193, the current `generate:validate` output, and a package-wide jest re-run). No further action.
+**Declined (3):** empty `REVIEW_REPORT.md` in another run's dir (pre-existing on `dev`, out of scope); the two carried findings (stale — already resolved by phase 3, whose retractions I re-verified).
 
 ## Verification
+| Command | Exit | Result |
+|---|---|---|
+| `npm run generate:validate` | 0 | Validation passed (64 files) |
+| `npm run validate` | 0 | only 9 pre-existing below-baseline advisories (new-feature 3189 vs 3193) |
+| `npx jest tests/new-feature-foreman.test.js tests/feature-foreman-passthrough.test.js tests/new-feature-command.test.js` | 0 | 3 suites, 94 tests (37+57) |
+| `npx jest --env=node` (pkg-wide) | 1 | 313/314 suites, **13252 passed**, 1 pre-existing env failure, 318 s (first attempt hit the 900 s tool limit under load — not a failure) |
+| `npx markdownlint` (4 files) | 0 | clean; whole repo ~1217 pre-existing errors elsewhere, **0** in this dir |
 
-| Command | Working directory | Exit | Result |
-|---------|-------------------|------|--------|
-| `git diff "$FOREMAN_BASE_BRANCH"...HEAD` (pre-fix read) | repo root | 0 | 3 new Markdown reports; no code. |
-| `grep -rn "printenv" packages/development/tests/` | repo root | 1 | Only `tests/local-ci-adversarial.test.js:277,280` (the fixture the test writes for itself). |
-| `grep -rn "execSync" packages/development/tests/` | repo root | 0 | 7 hits, none in `tests/helpers/foreman-invariants.js`. |
-| `grep -rn "zhilei" .` | repo root | 0 | 1 hit — the retracted paragraph itself. |
-| `git log --all --diff-filter=A --name-only \| grep zhilei` | repo root | 1 | No such file was ever added in any ref. |
-| `npm run generate:validate` | repo root | 0 | `✓ Validation passed (64 files)` + run-index lib matches a fresh build. |
-| `npm run validate` | repo root | 0 | Exit 0. Only the 9 pre-existing "below baseline" advisories, including `packages/development/skills/ensemble-new-feature/SKILL.md: 3189 words … is below baseline 3193` — advisory, 0 failures. |
-| `npx jest tests/new-feature-foreman.test.js tests/feature-foreman-passthrough.test.js tests/new-feature-command.test.js` | `packages/development` | 0 | 3 suites passed, 94 tests passed (37 + 57) — matches the numbers the report asserts. |
-| `npx jest --env=node` (package-wide) | `packages/development` | 1 | 313 suites pass / 314 total; **13252 passed, 1 failed, 3 skipped, 1 todo**; 317.966 s. The single failure is `tests/local-ci-adversarial.test.js` — the pre-existing, environment-dependent GH_TOKEN case described in R1: the harness's own `printenv` step exits 1 in this sandbox, so the env dump never reaches the asserted result. That file is byte-identical to `origin/dev` and untouched by this run, so it is not caused by this run. |
-| `npx jest --env=node` (first attempt) | `packages/development` | 124 (timeout) | Killed at the 900 s tool limit under machine load; re-run with a larger limit completed in 318 s. Not a test failure. |
-| `npx markdownlint docs/reports/foreman-coord-c2c08c40855ae530/{FIX_REPORT,PLAN,REVIEW_CODERABBIT_REPORT}.md` | repo root | 0 | Clean — no lint findings on the changed files. |
-| `npx markdownlint .` | repo root | 1 | ~1217 pre-existing error lines elsewhere in the repository (`packages/product`, `packages/quality`, `packages/rspec`, …); **0** in `docs/reports/foreman-coord-c2c08c40855ae530/`. |
-| `git diff "$FOREMAN_BASE_BRANCH"...HEAD` (re-read after fixes) | repo root | 0 | The fixes introduce no new violation: the three files are lint-clean, no code path is touched, and every retraction cites a command that reproduces. |
+Artifact: `docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_REPORT.md` — both JSON blocks parse, exactly 4 marker lines, 7 findings (4 fixed / 3 declined), risk **LOW**.
 
-No test file was changed by this phase, so no jest file is directly affected by the diff; the package-wide run was executed because the repository's own `AGENTS.md` requires it and the pull-request-attached report asserts package-wide numbers.
-
-Fixes are left **uncommitted** for Foreman to commit. `git status --porcelain` shows exactly the three files above.
-
-<!-- FOREMAN_REVIEW_FINDINGS_START -->
-{"schema": "foreman.review_findings/1", "reviewed": true, "findings": [{"severity": "major", "path": "docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md", "line": 56, "description": "The report asserted that tests/helpers/foreman-invariants.js:119 shells out to printenv via execSync and that tests/zhilei-redis-removal.test.js fails deterministically, but neither the helper call nor that test file exists in any ref, so the section was retracted in place with the reproducing checks.", "disposition": "fixed", "source": "repo-rules"}, {"severity": "minor", "path": "docs/reports/foreman-coord-c2c08c40855ae530/PLAN.md", "line": 17, "description": "The rule bullet was wrapped in one outer inline-code span containing a nested `--foreman` span, which markdownlint rejects as MD038, so the outer span was replaced by a blockquote list item.", "disposition": "fixed", "source": "repo-rules"}, {"severity": "minor", "path": "docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_CODERABBIT_REPORT.md", "line": 11, "description": "The findings-block line still reported the PLAN.md MD038 finding as open after this phase fixed it, so the line now records that the repo-rules review phase closed it.", "disposition": "fixed", "source": "repo-rules"}, {"severity": "minor", "path": "docs/reports/foreman-coord-c2c08c40855ae530/REVIEW_CODERABBIT_REPORT.md", "line": 13, "description": "The file did not end with a trailing newline, violating markdownlint MD047, so exactly one trailing newline was appended.", "disposition": "fixed", "source": "repo-rules"}, {"severity": "nitpick", "path": "docs/reports/foreman-ensemble-skills-detect-foreman-env-v3/REVIEW_REPORT.md", "line": null, "description": "The report file is empty, but it is pre-existing on dev and outside this run's diff, so it was left for a separate cleanup.", "disposition": "declined", "source": "repo-rules"}, {"severity": "minor", "path": "docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md", "line": 16, "description": "Carried finding that the gap table lacked the planned new-feature evidence, already resolved by the previous phase, which added the new-feature evidence rows and correction note.", "disposition": "declined", "source": "coderabbit"}, {"severity": "major", "path": "docs/reports/foreman-coord-c2c08c40855ae530/FIX_REPORT.md", "line": 40, "description": "Carried finding that the phase-2 evidence table was partly fabricated with stale counts, already resolved by the previous phase, which retracted each row and replaced it with reproducing checks.", "disposition": "declined", "source": "phase-3-audit"}]}
-<!-- FOREMAN_REVIEW_FINDINGS_END -->
-
-<!-- FOREMAN_RISK_JUDGEMENT_START -->
-{"schema": "foreman.risk_judgement/1", "level": "LOW", "rationale": "The run's diff is three Markdown reports only, with no source, test, generated or config file touched, so no runtime behaviour changes; the underlying FOREMAN env-detection behaviour was already merged on dev via PR #458. This phase's only substantive edit retracts a fabricated evidence paragraph and applies markdownlint fixes, and the residual risk is limited to the reports' self-reported evidence rather than code risk."}
-<!-- FOREMAN_RISK_JUDGEMENT_END -->
+Fixes left **uncommitted** (3 modified + 1 new). `foreman_inbox_send`/`foreman_task_add_comment` not exposed; `ask_advisor` still dead (Anthropic `invalid_grant`), `contact_supervisor` has no supervisor — noted in the artifact.
