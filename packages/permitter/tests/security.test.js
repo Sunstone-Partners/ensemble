@@ -1589,7 +1589,7 @@ describe('ensemble-pdf-f6b2: tokenizer and wrapper bypasses', () => {
 
     test('a direct normalizeSegment() call does not drop the inner segments after the first', () => {
       expect(() => normalizeSegment(['bash', '-c', 'unset FOO; npm test'])).toThrow(
-        /more than one inner command/
+        /shell -c with more than one inner command is not supported/
       );
       expect(normalizeSegment(['bash', '-c', 'npm test'])).toEqual({ executable: 'npm', args: 'test' });
     });
@@ -1838,7 +1838,7 @@ describe('foreman-zflwr/siil7: a shell -c wrapper hides neither a redirect nor i
 
     test('more than one inner segment is refused', () => {
       expect(() => normalizeSegment(['bash', '-c', 'git status; rm -rf /'])).toThrow(
-        /more than one inner command/
+        /shell -c with more than one inner command is not supported/
       );
     });
   });

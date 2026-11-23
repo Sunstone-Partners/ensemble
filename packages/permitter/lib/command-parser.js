@@ -904,7 +904,7 @@ function normalizeSegment(tokens, options = {}) {
       // inner command: dropping the rest would judge the wrapper by its
       // first inner command only.
       if (innerSegments.length > 1) {
-        throw new Error('bash -c with more than one inner command is not supported');
+        throw new Error('shell -c with more than one inner command is not supported');
       }
 
       if (innerSegments.length > 0) {
