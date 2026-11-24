@@ -2,7 +2,7 @@
 
 **Range**: `git diff dev...HEAD` (base `a0d6a213`, HEAD `19d1cd5c`) — 7 files, +702/−31.
 
-**Fixed (4, uncommitted)**
+**Fixed (4, uncommitted):**
 - `packages/permitter/README.md` — Parse Errors table + `normalizeSegment()` doc now match code: `ZDOTDIR` added; rows for `shell invocation not supported` + `shell -c behind a wrapper not supported`; skips-row widened to all expanded shells.
 - `packages/permitter/lib/command-parser.js:907` — unreleased msg `bash -c with more than one inner command…` → `shell -c with more than one inner command…` (fires for every shell now). 2 test regexes tightened: red → green.
 - `packages/permitter/CHANGELOG.md:29-30` — bullet fixed: `bash +e -c` / `-O extglob` are read as options (inner cmd expanded, not refused); trusted dirs = `/bin,/usr/bin,/sbin,/usr/sbin`.
