@@ -17,7 +17,10 @@
 const { parseArgv } = require('./engine/argv');
 const { describe, nearestVerbs, renderGroupHelp, renderVerbHelp } = require('./engine/describe');
 const { buildEnvelope, exitCodeFor, internal, invalidInput } = require('./engine/envelope');
+const { mountLegacyGroup } = require('./engine/mount');
 const { createRegistry } = require('./engine/registry');
+
+const MOUNTED_GROUPS = [require('./engine/groups/trd'), require('./engine/groups/tool')];
 
 /**
  * The engine's registry. Groups are registered here and nowhere else, so `--describe` and the
@@ -25,7 +28,9 @@ const { createRegistry } = require('./engine/registry');
  * @returns {object} a fresh registry
  */
 function buildRegistry() {
-  return createRegistry();
+  const registry = createRegistry();
+  for (const mount of MOUNTED_GROUPS) mountLegacyGroup(registry, mount);
+  return registry;
 }
 
 function result(envelope, exitCode) {
@@ -50,7 +55,14 @@ function main(argv, ctx = {}) {
   const parsed = parseArgv(argv);
   const label = [parsed.group, parsed.verb].filter(Boolean).join(' ') || 'ensemble';
 
-  if (parsed.error) {
+  // A mounted legacy verb owns every flag after `<group> <verb>`: the parser does not know the
+  // legacy CLI's flags, so what it reports as an unknown flag there is passed through untouched
+  // (TRD-003 byte-identical output). For an engine verb the flag error stands and nothing runs.
+  const parsedSpec =
+    parsed.group && parsed.verb ? registry.get(parsed.group, parsed.verb) : null;
+  const passthrough = Boolean(parsedSpec && parsedSpec.passthrough);
+
+  if (parsed.error && !passthrough) {
     return envelopeResult(
       invalidInput(label, parsed.error.code, parsed.error.message)
     );
@@ -96,7 +108,7 @@ function main(argv, ctx = {}) {
     return result(null, 0);
   }
 
-  const spec = registry.get(parsed.group, parsed.verb);
+  const spec = parsedSpec;
   if (!spec) {
     const nearest = nearestVerbs(registry, parsed.group, parsed.verb);
     const suffix = nearest.length === 0 ? 'no verbs are registered' : `did you mean: ${nearest.join(', ')}`;
@@ -117,6 +129,9 @@ function main(argv, ctx = {}) {
 
   try {
     const value = spec.handler(call);
+    // A mounted verb has already written the legacy CLI's own bytes to stdout; wrapping them in
+    // an envelope would break parity, so it reports only the legacy exit code.
+    if (spec.passthrough) return result(null, value);
     return envelopeResult(
       buildEnvelope({ data: value, ok: true, status: 'OK', verb: label })
     );

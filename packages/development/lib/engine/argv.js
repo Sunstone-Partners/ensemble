@@ -13,7 +13,9 @@
  *
  * `rest` is the argv slice that follows `<group> <verb>` verbatim -- including any global flag
  * written there -- because mounted legacy groups must receive what the caller typed, byte for
- * byte, for their output to stay identical to the legacy CLI's.
+ * byte, for their output to stay identical to the legacy CLI's. A parse error therefore stops
+ * the scan but still finalises `group`, `verb` and `rest`, so the caller can tell an engine
+ * verb's bad flag (refused) from a mounted legacy verb's own flag (passed through, TRD-003).
  */
 
 /** Global flags that take no value. */
@@ -73,7 +75,7 @@ function parseArgv(argv) {
     if (Object.prototype.hasOwnProperty.call(BOOLEAN_GLOBALS, flag)) {
       if (inlineValue !== null) {
         result.error = parseError('INVALID_FLAG_VALUE', `flag '${flag}' takes no value`);
-        return result;
+        break;
       }
       result.globals[BOOLEAN_GLOBALS[flag]] = true;
       continue;
@@ -90,7 +92,7 @@ function parseArgv(argv) {
           'MISSING_FLAG_VALUE',
           `flag '${flag}' expects a value, got '${value === undefined ? '' : value}'`
         );
-        return result;
+        break;
       }
       result.globals[VALUE_GLOBALS[flag]] = value;
       continue;
@@ -98,7 +100,7 @@ function parseArgv(argv) {
 
     if (token.startsWith('-') && token !== '-') {
       result.error = parseError('UNKNOWN_FLAG', `unknown flag '${flag}'`);
-      return result;
+      break;
     }
 
     if (positionals.length < 2) {
