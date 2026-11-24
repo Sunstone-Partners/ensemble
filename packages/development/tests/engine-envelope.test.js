@@ -235,4 +235,105 @@ describe('engine envelope and validation boundary (TRD-001)', () => {
     expect(stdout).not.toContain(token);
     expect(JSON.parse(stdout).data.note).toBe('token [REDACTED:github-token]');
   });
+
+  test('an own constructor key does not stop redaction', () => {
+    // An own `constructor` key shadows the inherited one, so a plain `value.constructor === Object`
+    // test would treat this payload as foreign and leave its strings unredacted.
+    const streams = makeStreams();
+    const token = `ghp_${'a1b2c3d4e5'.repeat(3)}`;
+    const payload = JSON.parse(`{"constructor":null,"note":"token ${token}"}`);
+    const exitCode = runFixtureVerb('fixture secret', () => payload, streams);
+
+    expect(exitCode).toBe(0);
+    const stdout = streams.stdout.text;
+    expect(stdout).not.toContain(token);
+    expect(JSON.parse(stdout).data.note).toBe('token [REDACTED:github-token]');
+  });
+
+  test('a null-prototype record is redacted too', () => {
+    // `JSON.stringify` emits the enumerable own properties of a null-prototype record, so
+    // skipping it would put its strings on stdout unredacted.
+    const streams = makeStreams();
+    const token = `ghp_${'a1b2c3d4e5'.repeat(3)}`;
+    const payload = Object.assign(Object.create(null), { note: `token ${token}` });
+    const exitCode = runFixtureVerb('fixture secret', () => payload, streams);
+
+    expect(exitCode).toBe(0);
+    const stdout = streams.stdout.text;
+    expect(stdout).not.toContain(token);
+    expect(JSON.parse(stdout).data.note).toBe('token [REDACTED:github-token]');
+  });
+
+  test('a custom toJSON cannot smuggle an unredacted value out', () => {
+    // A `toJSON` method decides the serialized form, and `JSON.stringify` calls it *after*
+    // redaction has run. Unless the serialized form is materialized and redacted first, the
+    // value it returns reaches stdout untouched.
+    const streams = makeStreams();
+    const token = `ghp_${'a1b2c3d4e5'.repeat(3)}`;
+    const payload = { toJSON: () => ({ note: `token ${token}` }) };
+    const exitCode = runFixtureVerb('fixture secret', () => payload, streams);
+
+    expect(exitCode).toBe(0);
+    const stdout = streams.stdout.text;
+    expect(stdout).not.toContain(token);
+    expect(JSON.parse(stdout).data.note).toBe('token [REDACTED:github-token]');
+  });
+
+  test('a stdin stream that closes before it ends is refused', async () => {
+    // A stream destroyed before EOF emits `close` without `end` or `error`; nothing may settle
+    // the promise on that event, or the call would hang forever.
+    const stream = new Readable({ read() { this.destroy(); } });
+    await expect(readStdinCapped(stream)).rejects.toMatchObject({
+      code: 'INPUT_STREAM_CLOSED',
+      status: 'INVALID_INPUT',
+    });
+  });
+
+  test('a __proto__ field survives as an own data property', () => {
+    // A plain assignment to `__proto__` replaces the prototype of the rebuilt object instead of
+    // copying the field, so the supplied JSON would silently lose it.
+    const streams = makeStreams();
+    const payload = JSON.parse('{"__proto__":{"label":"example"},"value":1}');
+    const exitCode = runFixtureVerb('fixture proto', () => payload, streams);
+
+    expect(exitCode).toBe(0);
+    const parsed = JSON.parse(streams.stdout.text);
+    expect(Object.keys(parsed.data)).toEqual(['__proto__', 'value']);
+    expect(parsed.data.__proto__).toEqual({ label: 'example' });
+  });
+
+  test('a dangling symlink out of the tree is refused', () => {
+    // The link target does not exist, so `realpath` fails with ENOENT exactly as it does for a
+    // plain absent file. Re-attaching the missing part to the nearest existing ancestor would
+    // accept the link, and a later write would follow it out of the project root.
+    const root = makeRoot();
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'engine-outside-')));
+    try {
+      fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(root, 'out'));
+
+      let thrown = null;
+      try {
+        resolveCallerPath(root, 'out');
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).not.toBeNull();
+      expect(thrown.code).toBe('PATH_ESCAPE');
+      expect(thrown.status).toBe('INVALID_INPUT');
+    } finally {
+      fs.rmSync(outside, { force: true, recursive: true });
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('a genuinely absent in-project file stays valid', () => {
+    const root = makeRoot();
+    try {
+      expect(resolveCallerPath(root, 'not-created-yet.txt')).toBe(
+        path.join(root, 'not-created-yet.txt')
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
 });

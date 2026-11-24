@@ -72,6 +72,17 @@ function readStdinCapped(stream) {
       chunks.push(buf);
     });
     stream.on('error', fail);
+    stream.on('close', () => {
+      // A stream destroyed before it reached EOF emits `close` without `end` or `error`, so
+      // nothing would ever settle the promise and the call would hang.
+      if (settled) return;
+      fail(
+        invalidInputError(
+          'INPUT_STREAM_CLOSED',
+          'stdin closed before it ended; refused without parsing'
+        )
+      );
+    });
     stream.on('end', () => {
       if (settled) return;
       settled = true;
@@ -109,12 +120,37 @@ function parseInput(text, schema) {
 }
 
 /**
+ * Tell an absent path component from a symlink whose target is absent.
+ *
+ * `realpath` fails with `ENOENT` for both, so the fallback that re-attaches the missing part to
+ * the nearest existing ancestor would happily accept a dangling symlink that points out of the
+ * tree -- a later file creation would follow the link. `lstat` does not follow the link, so it
+ * succeeds for a dangling symlink and fails for a path that is simply not there.
+ *
+ * @param {string} target an absolute path
+ * @returns {boolean} true when `target` exists as a symlink whose target cannot be resolved
+ */
+function isDanglingSymlink(target) {
+  try {
+    fs.lstatSync(target);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+/**
  * Resolve the nearest existing ancestor of `target` to its real path, then re-append the part
  * that does not exist yet. A path may legitimately name a file the verb is about to create.
  * @param {string} target an absolute path
+ * @param {{rejectDanglingSymlink?: boolean}} [options] when `rejectDanglingSymlink` is false
+ *   (the default is true) a symlink with a missing target is treated as an absent component
  * @returns {string} the real path of the existing prefix joined with the missing remainder
+ * @throws {Error} `PATH_ESCAPE` when a dangling symlink is rejected
  */
-function realpathOfNearestAncestor(target) {
+function realpathOfNearestAncestor(target, options = {}) {
+  const rejectDanglingSymlink = options.rejectDanglingSymlink !== false;
   let current = target;
   const missing = [];
   for (;;) {
@@ -122,6 +158,12 @@ function realpathOfNearestAncestor(target) {
       return path.join(fs.realpathSync.native(current), ...missing.reverse());
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
+      if (rejectDanglingSymlink && isDanglingSymlink(current)) {
+        throw invalidInputError(
+          'PATH_ESCAPE',
+          `refusing path '${target}': '${current}' is a symlink whose target does not exist`
+        );
+      }
       const parent = path.dirname(current);
       if (parent === current) return target;
       missing.push(path.basename(current));
@@ -146,7 +188,11 @@ function resolveCallerPath(projectRoot, candidate) {
     throw invalidInputError('PATH_ESCAPE', `refusing path '${candidate}': looks like a flag`);
   }
 
-  const root = realpathOfNearestAncestor(path.resolve(projectRoot));
+  // The project root is the operator's own path, so it is resolved tolerantly; only the
+  // caller-supplied path has to survive the containment check.
+  const root = realpathOfNearestAncestor(path.resolve(projectRoot), {
+    rejectDanglingSymlink: false,
+  });
   const resolved = realpathOfNearestAncestor(path.resolve(root, candidate));
   const stateDir = path.join(root, '.ensemble', 'state');
 
@@ -167,7 +213,9 @@ function resolveCallerPath(projectRoot, candidate) {
 module.exports = {
   MAX_STDIN_BYTES,
   invalidInputError,
+  isDanglingSymlink,
   parseInput,
   readStdinCapped,
+  realpathOfNearestAncestor,
   resolveCallerPath,
 };

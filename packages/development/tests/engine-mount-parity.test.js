@@ -9,8 +9,9 @@
  * fails the test instead of silently drifting past a stale fixture.
  *
  * The side-effect-table scenario proves registration is refused for an undeclared verb, and the
- * byte-equality scenario hashes both legacy CLIs against their committed `HEAD` blobs, so this
- * PR cannot have modified them (TRD-003 Implementation AC).
+ * byte-equality scenario hashes both legacy CLIs against their committed HEAD blobs, so a
+ * working-tree edit to either one fails the test. The authority on whether this PR modified
+ * them is the PR diff against the base branch; this test only pins the working tree to HEAD.
  */
 
 const crypto = require('crypto');
@@ -25,6 +26,7 @@ const DEV_ROOT = path.join(__dirname, '..');
 const ENSEMBLE_CLI = path.join(DEV_ROOT, 'lib', 'ensemble-cli.js');
 const TRD_CLI = path.join(DEV_ROOT, 'lib', 'trd-cli.js');
 const TOOLCHAIN_CLI = path.join(DEV_ROOT, 'lib', 'toolchain-cli.js');
+const EXIT_CLI = path.join(__dirname, 'fixtures', 'engine', 'exit-cli.js');
 const FIXTURE = path.join('tests', 'fixtures', 'engine', 'trd-parity.md');
 
 function run(args) {
@@ -66,15 +68,35 @@ describe('mounted legacy groups keep legacy behaviour (TRD-003)', () => {
   });
 
   test('a legacy handler that exits cannot terminate the engine process', () => {
-    // `toolchain-cli.js:1410` calls `process.exit`; an unknown subcommand exits 2. Going through
-    // the engine must surface that code without the engine process itself being killed, and the
-    // engine must stay alive long enough to run a second verb in the same invocation path.
-    const unknown = run([ENSEMBLE_CLI, 'tool', 'resolve', '--no-such-flag-for-legacy']);
-    expect(typeof unknown.status).toBe('number');
-    expect(unknown.signal).toBeNull();
+    // The legacy CLIs end with `process.exit` (`toolchain-cli.js:1410`), so the engine mounts
+    // them as child processes: their exit has to surface as an exit code without killing the
+    // engine. Both dispatches run inside ONE child process and the marker written after the
+    // second one is what proves the engine was still alive -- with the dispatches in separate
+    // processes a terminated engine still looks like a clean numeric exit.
+    const script = [
+      `const { main } = require(${JSON.stringify(ENSEMBLE_CLI)});`,
+      `const { createRegistry } = require(${JSON.stringify(
+        path.join(DEV_ROOT, 'lib', 'engine', 'registry')
+      )});`,
+      `const { mountLegacyGroup } = require(${JSON.stringify(
+        path.join(DEV_ROOT, 'lib', 'engine', 'mount')
+      )});`,
+      'const registry = createRegistry();',
+      `mountLegacyGroup(registry, { cliPath: ${JSON.stringify(EXIT_CLI)}, group: 'fixture', sideEffects: { die: 'read' }, summaries: { die: 'a fixture verb that exits' }, verbs: ['die'] });`,
+      "const first = main(['fixture', 'die'], { registry });",
+      "const second = main(['fixture', 'die'], { registry });",
+      "process.stdout.write('ENGINE_SURVIVED:' + first.exitCode + ':' + second.exitCode + '\\n');",
+    ].join('\n');
 
-    const after = run([ENSEMBLE_CLI, 'tool', 'resolve', '--json']);
-    expect(after.status).toBe(0);
+    const child = spawnSync(process.execPath, ['-e', script], {
+      cwd: DEV_ROOT,
+      encoding: 'buffer',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+
+    expect(child.signal).toBeNull();
+    expect(child.status).toBe(0);
+    expect(child.stdout.toString('utf8')).toContain('ENGINE_SURVIVED:2:2');
   });
 
   test('mounting refuses a verb with no declared side-effect class', () => {

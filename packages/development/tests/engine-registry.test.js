@@ -180,4 +180,49 @@ describe('engine registry, argv and discovery (TRD-002)', () => {
     expect(verbCtx.stdout.text).toContain('fixture verb implement args');
     expect(verbCtx.stdout.text).toContain('--run-id');
   });
+
+  test('a handler error with an unknown status is contained as INTERNAL', () => {
+    // `status = 404` is not one of the engine's seven statuses. Passing it on would make
+    // `buildEnvelope` throw inside the catch block, and the run would answer with no envelope
+    // and no exit code at all.
+    const boom = new Error('handler blew up');
+    boom.status = 404;
+    const ctx = makeCtx(
+      fixtureRegistry({
+        args: {
+          handler: () => {
+            throw boom;
+          },
+        },
+      })
+    );
+    const { envelope, exitCode } = main(['implement', 'args'], ctx);
+
+    expect(exitCode).toBe(6);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.status).toBe('INTERNAL');
+    expect(envelope.error.message).toBe('handler blew up');
+  });
+
+  test('a handler error with a tabled status keeps that status', () => {
+    const refused = new Error('not now');
+    refused.status = 'REFUSED';
+    refused.code = 'NOT_NOW';
+    const ctx = makeCtx(
+      fixtureRegistry({
+        args: {
+          handler: () => {
+            throw refused;
+          },
+        },
+      })
+    );
+    const { envelope, exitCode } = main(['implement', 'args'], ctx);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('NOT_NOW');
+    expect(envelope.error.message).toBe('not now');
+  });
 });

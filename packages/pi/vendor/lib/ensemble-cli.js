@@ -16,7 +16,7 @@
 
 const { parseArgv } = require('./engine/argv');
 const { describe, nearestVerbs, renderGroupHelp, renderVerbHelp } = require('./engine/describe');
-const { buildEnvelope, exitCodeFor, internal, invalidInput } = require('./engine/envelope');
+const { STATUS_EXIT, buildEnvelope, exitCodeFor, internal, invalidInput } = require('./engine/envelope');
 const { mountLegacyGroup } = require('./engine/mount');
 const { createRegistry } = require('./engine/registry');
 
@@ -35,6 +35,24 @@ function buildRegistry() {
 
 function result(envelope, exitCode) {
   return { envelope, exitCode };
+}
+
+/**
+ * Tell one of the engine's seven statuses from anything else a thrown error may carry.
+ *
+ * Only a tabled status may become an envelope status: `buildEnvelope` refuses an unknown one,
+ * and that refusal would escape the catch block, so the run would answer with no envelope and
+ * no exit code at all. An error with, say, `status = 404` is an ordinary fault and belongs in
+ * the `INTERNAL` envelope.
+ *
+ * @param {*} status
+ * @returns {boolean} true when `status` is one of the seven tabled statuses
+ */
+function isEngineStatus(status) {
+  return (
+    typeof status === 'string' &&
+    Object.prototype.hasOwnProperty.call(STATUS_EXIT, status)
+  );
 }
 
 function envelopeResult(envelope) {
@@ -73,7 +91,7 @@ function main(argv, ctx = {}) {
     try {
       data = describe(registry);
     } catch (error) {
-      if (error && error.status) {
+      if (error && isEngineStatus(error.status)) {
         return envelopeResult(
           buildEnvelope({
             error: { code: error.code, message: error.message },
@@ -136,7 +154,7 @@ function main(argv, ctx = {}) {
       buildEnvelope({ data: value, ok: true, status: 'OK', verb: label })
     );
   } catch (error) {
-    if (error && error.status) {
+    if (error && isEngineStatus(error.status)) {
       return envelopeResult(
         buildEnvelope({
           error: { code: error.code, message: error.message },

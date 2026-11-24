@@ -42,6 +42,46 @@ function exitCodeFor(status) {
 }
 
 /**
+ * Tell a record (an object whose properties are data) from anything else by its prototype.
+ *
+ * The prototype is the test, not `value.constructor`: an own `constructor` key (legal JSON, and
+ * `JSON.parse` produces one for `{"constructor": ...}`) shadows the inherited constructor and
+ * would make an ordinary object look foreign, leaving its strings unredacted. An own property
+ * cannot change the prototype, so this test cannot be spoofed that way.
+ *
+ * A null-prototype record is a record too: `JSON.stringify` emits its enumerable own
+ * properties, so skipping it would let its strings reach stdout unredacted.
+ *
+ * @param {*} value
+ * @returns {boolean} true for a plain or null-prototype record; false for arrays, class
+ *   instances and every other object
+ */
+function isRecord(value) {
+  if (value === null || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Copy one own property onto `target`, including a key named `__proto__`.
+ *
+ * A plain assignment to `__proto__` runs the inherited setter and replaces the prototype of
+ * `target` instead of copying the field, so the supplied JSON would silently lose it.
+ *
+ * @param {object} target
+ * @param {string} key
+ * @param {*} value
+ */
+function setOwn(target, key, value) {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+/**
  * Deep-sort object keys. Arrays keep their order (it is data); plain objects are rebuilt with
  * `Object.keys(o).sort()` so `JSON.stringify` emits a stable key order.
  * @param {*} value
@@ -49,9 +89,9 @@ function exitCodeFor(status) {
  */
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === 'object' && value.constructor === Object) {
+  if (isRecord(value)) {
     const out = {};
-    for (const key of Object.keys(value).sort()) out[key] = sortKeys(value[key]);
+    for (const key of Object.keys(value).sort()) setOwn(out, key, sortKeys(value[key]));
     return out;
   }
   return value;
@@ -60,16 +100,24 @@ function sortKeys(value) {
 /**
  * Deep-redact every string in `value` through the repository's existing `redactSecrets`.
  * Keys are left alone: a key is a protocol name, not caller data.
+ *
+ * A value that defines its own `toJSON` decides its own serialized form, so that form is
+ * materialized before redaction; `JSON.stringify` would otherwise call `toJSON` afterwards and
+ * emit whatever it returns, unredacted.
+ *
  * @param {*} value
  * @returns {*}
  */
 function redact(value) {
   if (typeof value === 'string') return redactSecrets(value).text;
   if (Array.isArray(value)) return value.map(redact);
-  if (value && typeof value === 'object' && value.constructor === Object) {
-    const out = {};
-    for (const key of Object.keys(value)) out[key] = redact(value[key]);
-    return out;
+  if (value && typeof value === 'object') {
+    if (typeof value.toJSON === 'function') return redact(value.toJSON());
+    if (isRecord(value)) {
+      const out = {};
+      for (const key of Object.keys(value)) setOwn(out, key, redact(value[key]));
+      return out;
+    }
   }
   return value;
 }
@@ -150,6 +198,7 @@ module.exports = {
   exitCodeFor,
   internal,
   invalidInput,
+  isRecord,
   redact,
   sortKeys,
 };
