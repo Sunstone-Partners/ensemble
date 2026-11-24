@@ -165,10 +165,25 @@ function renderRootHelp(registry) {
   return `${lines.join('\n')}\n`;
 }
 
-if (require.main === module) {
-  const { envelope, exitCode } = main(process.argv.slice(2));
+/**
+ * The only part of this file that touches the process: run `main`, print the envelope and set
+ * the exit code. It is exported as well as guarded, because `packages/full/bin/ensemble` is a
+ * launcher that requires this module rather than being this module -- under that launcher
+ * `require.main` is the launcher, so the guard below does not fire and the launcher calls
+ * `run()` itself (TRD-004).
+ *
+ * @param {string[]} argv the arguments after the command name
+ * @returns {number} the exit code, also set on `process.exitCode`
+ */
+function run(argv) {
+  const { envelope, exitCode } = main(argv);
   if (envelope) process.stdout.write(`${JSON.stringify(envelope)}\n`);
   process.exitCode = exitCode;
+  return exitCode;
 }
 
-module.exports = { buildRegistry, main };
+if (require.main === module) {
+  run(process.argv.slice(2));
+}
+
+module.exports = { buildRegistry, main, run };
