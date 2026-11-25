@@ -36,6 +36,7 @@ const SUBCOMMANDS = Object.freeze([
   'dep-add',
   'dep-remove',
   'label',
+  'set-status',
   'sync',
   'comment',
   'close',
@@ -176,13 +177,35 @@ function runStubCli(argv, options, streams = process) {
   if (verb === 'label') {
     const ids = String(argv[1] || '').split(',').filter(part => part.length > 0);
     const labels = String(argv[2] || '').split(',').filter(part => part.length > 0);
+    const control = state.control || {};
+    if (control.failLabel) {
+      err(`stub ${STUB_BIN}: label failed\n`);
+      return 1;
+    }
+    // `dropLabelFor` makes the call succeed and store nothing, which is what a tracker that
+    // silently loses a label looks like to the caller -- the only way the verb's own
+    // count-back check can be shown to fail.
+    const dropped = Array.isArray(control.dropLabelFor) ? control.dropLabelFor : [];
     for (const issue of issueList(state)) {
       if (!ids.includes(issue.id)) continue;
+      if (dropped.includes(issue.id)) continue;
       const have = Array.isArray(issue.labels) ? issue.labels : [];
       issue.labels = [...new Set([...have, ...labels])];
     }
     writeState(statePath, state);
     out(`${JSON.stringify({ ids, labels })}\n`);
+    return 0;
+  }
+
+  if (verb === 'set-status') {
+    const issue = issueList(state).find(candidate => candidate.id === argv[1]);
+    if (!issue) {
+      err(`stub ${STUB_BIN}: no such issue '${argv[1]}'\n`);
+      return 1;
+    }
+    issue.status = argv[2];
+    writeState(statePath, state);
+    out(`${JSON.stringify({ id: issue.id, status: issue.status })}\n`);
     return 0;
   }
 
@@ -273,6 +296,17 @@ function capabilityTable(declare, createParse, exposeDependencies) {
     table['tracker.dep-remove'] = { run: [STUB_BIN, 'dep-remove', '${id}', '${dependsOnId}'] };
   }
   if (on('label')) table['tracker.label'] = { run: [STUB_BIN, 'label', '${ids}', '${labels}'] };
+  if (on('setStatus')) {
+    table['tracker.set-status'] = {
+      run: [STUB_BIN, 'set-status', '${id}', '${status}'],
+      parse: {
+        format: 'json',
+        root: '$',
+        map: { id: '$.id', status: '$.status' },
+        statusMap: { open: 'open', in_progress: 'in_progress', closed: 'closed' },
+      },
+    };
+  }
   if (on('sync')) table['tracker.sync'] = { run: [STUB_BIN, 'sync'] };
   return table;
 }
@@ -449,6 +483,18 @@ function createTrackerStub(root, options = {}) {
       const issue = issueList(state).find(candidate => candidate.id === id);
       if (!issue) throw new Error(`setStatus: no issue '${id}'`);
       issue.status = status;
+      writeState(statePath, state);
+    },
+    /** Accept every `label` call for these ids and store nothing, as a lossy tracker would. */
+    dropLabelFor: ids => {
+      const state = read();
+      state.control = { ...(state.control || {}), dropLabelFor: ids };
+      writeState(statePath, state);
+    },
+    /** Make every later `label` call fail, as an unusable tracker would. */
+    failLabel: () => {
+      const state = read();
+      state.control = { ...(state.control || {}), failLabel: true };
       writeState(statePath, state);
     },
   };

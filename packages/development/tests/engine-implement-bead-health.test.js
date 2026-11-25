@@ -13,6 +13,7 @@
  * `git status`, never off the verb's own report.
  */
 
+const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
@@ -22,6 +23,9 @@ const { expectMatchesOutputSchema, makeCtx, runMain } = require('./helpers/engin
 const { initRepo, makeRepo } = require('./helpers/engine-repo');
 const { createTrackerStub, fixtureTrd } = require('./fixtures/engine/tracker-stub');
 
+/** The file the verbatim texts come from, read the way `engine-implement-args.test.js` reads it. */
+const REFERENCE = path.join(__dirname, '..', 'skills', 'implement-trd-tasks-reference', 'SKILL.md');
+const FOREMAN_LABEL = 'foreman-exec';
 const TRD_PATH = 'docs/TRD/widget-engine.md';
 const SLUG = 'widget-engine';
 const EPIC = `[trd:${SLUG}]`;
@@ -365,13 +369,290 @@ describe('the verb is reachable, declared, and selective about its operand', () 
     expect(fx.tracker.calls()).toHaveLength(before);
   });
 
-  test('the write flags of this verb do not exist yet', () => {
-    const fx = healthRepo({ scaffold: false });
+  test('the texts this verb prints are the skill\'s own', () => {
+    const reference = fs.readFileSync(REFERENCE, 'utf8');
+
+    expect(reference).toContain(MESSAGES.RESET_TASK_NOT_FOUND);
+    expect(reference).toContain(MESSAGES.RESET_TASK_AMBIGUOUS);
+    expect(reference).toContain(MESSAGES.FOREMAN_TAGGING_INCOMPLETE);
+  });
+});
+
+describe('--label backfills the TRD label through beads-label', () => {
+  test('every scoped bead is labelled, and a second run labels nothing more', () => {
+    const fx = healthRepo();
+
+    const first = run(fx, ['--label']);
+
+    expect(first.exitCode).toBe(0);
+    expect(first.envelope.status).toBe('OK');
+    expect(first.envelope.data.LABEL).toEqual({
+      already: 0,
+      label: SLUG,
+      labeled: 12,
+      matched: 12,
+      skipped: false,
+    });
+    expect(fx.tracker.issues().filter(issue => (issue.labels || []).includes(SLUG))).toHaveLength(
+      12
+    );
+    expectMatchesOutputSchema(healthSpec(), first.envelope);
+
+    const second = run(fx, ['--label']);
+
+    expect(second.exitCode).toBe(0);
+    expect(second.envelope.data.LABEL).toEqual({
+      already: 12,
+      label: SLUG,
+      labeled: 0,
+      matched: 12,
+      skipped: false,
+    });
+    // The health report is read before the label is written, so the second run is the one that
+    // sees the first run's work.
+    expect(second.envelope.data.LABELS.missingCount).toBe(0);
+  });
+
+  test('a tracker that cannot label is warned about, not refused', () => {
+    const fx = healthRepo({ declare: { label: false } });
 
     const { envelope, exitCode } = run(fx, ['--label']);
 
-    expect(exitCode).toBe(2);
-    expect(envelope.error.code).toBe('UNKNOWN_FLAG');
-    expect(fx.tracker.mutations()).toEqual([]);
+    expect(exitCode).toBe(0);
+    expect(envelope.status).toBe('OK');
+    expect(envelope.data.LABEL.skipped).toBe(true);
+    expect(envelope.data.LABEL.labeled).toBe(0);
+    expect(
+      envelope.data.WARNINGS.filter(warning => warning.startsWith('beads-label unavailable ('))
+    ).toHaveLength(1);
+    expect(fx.tracker.issues().some(issue => (issue.labels || []).includes(SLUG))).toBe(false);
+  });
+
+  test('a tracker whose label call fails is refused', () => {
+    const fx = healthRepo();
+    fx.tracker.failLabel();
+
+    const { envelope, exitCode } = run(fx, ['--label']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('LABEL_FAILED');
+    expect(envelope.error.message.startsWith('ERROR: could not label the beads of this TRD: ')).toBe(
+      true
+    );
+    expect(fx.tracker.issues().some(issue => (issue.labels || []).includes(SLUG))).toBe(false);
+  });
+});
+
+describe('--foreman tags the beads a build dispatches', () => {
+  /** A bead the build dispatches: a task, its test or a synthesised test, never epic or story. */
+  const dispatched = issue => /^\[trd:[^\]]*:task:/.test(String(issue.title));
+
+  test('every task-level bead carries foreman-exec, no epic or story does, and the tracker is synced', () => {
+    const fx = healthRepo();
+    const taskCount = fx.tracker.issues().filter(dispatched).length;
+    const syncedBefore = fx.tracker.calls().filter(argv => argv[0] === 'sync').length;
+
+    const { envelope, exitCode } = run(fx, ['--foreman']);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.status).toBe('OK');
+    expect(taskCount).toBe(9);
+    expect(envelope.data.FOREMAN).toEqual({
+      alreadyTagged: 0,
+      labelled: taskCount,
+      listed: taskCount,
+      tagged: taskCount,
+    });
+    for (const issue of fx.tracker.issues()) {
+      expect((issue.labels || []).includes(FOREMAN_LABEL)).toBe(dispatched(issue));
+    }
+    expect(fx.tracker.calls().filter(argv => argv[0] === 'sync').length).toBe(syncedBefore + 1);
+    expectMatchesOutputSchema(healthSpec(), envelope);
+  });
+
+  test('a second run tags nothing again', () => {
+    const fx = healthRepo();
+    const taskCount = fx.tracker.issues().filter(dispatched).length;
+
+    expect(run(fx, ['--foreman']).exitCode).toBe(0);
+    const { envelope, exitCode } = run(fx, ['--foreman']);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.data.FOREMAN).toEqual({
+      alreadyTagged: taskCount,
+      labelled: 0,
+      listed: taskCount,
+      tagged: taskCount,
+    });
+  });
+
+  test('a tracker that loses a label is refused with both counts', () => {
+    const fx = healthRepo();
+    const lost = fx.tracker.issues().find(issue => issue.title.startsWith(TASK('TRD-002')));
+    fx.tracker.dropLabelFor([lost.id]);
+
+    const { envelope, exitCode } = run(fx, ['--foreman']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('FOREMAN_TAGGING_INCOMPLETE');
+    expect(envelope.error.message).toBe(MESSAGES.foremanTaggingIncomplete(9, 8));
+    expect(envelope.error.message.startsWith(MESSAGES.FOREMAN_TAGGING_INCOMPLETE)).toBe(true);
+    expect(envelope.error.details).toEqual({ listed: 8, tagged: 9 });
+  });
+
+  test('a tracker whose label call fails names the bead it stopped at', () => {
+    const fx = healthRepo();
+    fx.tracker.failLabel();
+
+    const { envelope, exitCode } = run(fx, ['--foreman']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('FOREMAN_TAGGING_FAILED');
+    expect(envelope.error.details.titlePrefix).toBe(TASK('TRD-001'));
+    expect(envelope.error.message).toContain(
+      `could not tag bead '${TASK('TRD-001')}' with foreman-exec`
+    );
+    expect(envelope.error.message).toContain('Nothing further was tagged.');
+    expect(fx.tracker.issues().some(issue => (issue.labels || []).includes(FOREMAN_LABEL))).toBe(
+      false
+    );
+  });
+
+  test('a refused work-graph step stops the run before any tagging', () => {
+    const fx = healthRepo();
+    const ids = idsByPrefix(fx);
+    fx.tracker.seedEdge(ids.get(TASK('TRD-001')), ids.get(TASK('TRD-002')));
+
+    const { envelope, exitCode } = run(fx, ['--foreman']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.error.code).toBe('WORK_GRAPH_FINDINGS');
+    expect(fx.tracker.calls().some(argv => argv[0] === 'label')).toBe(false);
+  });
+
+  test('an unavailable work-graph backend does not stop the tagging', () => {
+    const fx = healthRepo({ workGraph: 'unavailable' });
+
+    const { envelope, exitCode } = run(fx, ['--foreman']);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.data.WORK_GRAPH.status).toBe('unavailable');
+    expect(envelope.data.FOREMAN.tagged).toBe(9);
+  });
+
+  test('without a run id the side-effect gate refuses before any bead is tagged', () => {
+    const fx = healthRepo();
+    const hashBefore = fx.tracker.hash();
+
+    const { envelope, exitCode } = run(fx, ['--foreman'], ['--non-interactive']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('PREFLIGHT_REQUIRED');
+    expect(fx.tracker.hash()).toBe(hashBefore);
+  });
+});
+
+describe('reset-task reopens exactly one bead', () => {
+  test('the one bead carrying the task id is set back to open', () => {
+    const fx = healthRepo();
+    const bead = fx.tracker.issues().find(issue => issue.title.startsWith(TASK('TRD-002')));
+    fx.tracker.setStatus(bead.id, 'closed');
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-002']);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.status).toBe('OK');
+    expect(envelope.data).toEqual({
+      MODE: 'reset-task',
+      RESET_TASK: {
+        beadId: bead.id,
+        previousStatus: 'closed',
+        status: 'open',
+        taskId: 'TRD-002',
+      },
+      TRD_FILE_PATH: TRD_PATH,
+      TRD_SLUG: SLUG,
+      WARNINGS: [],
+    });
+    expect(fx.tracker.issues().find(issue => issue.id === bead.id).status).toBe('open');
+    expectMatchesOutputSchema(healthSpec(), envelope);
+  });
+
+  test('a task id no bead carries is refused in the skill\'s own words', () => {
+    const fx = healthRepo();
+    const hashBefore = fx.tracker.hash();
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-999']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('RESET_TASK_NOT_FOUND');
+    expect(envelope.error.message).toBe(MESSAGES.resetTaskNotFound('TRD-999', SLUG));
+    expect(fx.tracker.hash()).toBe(hashBefore);
+  });
+
+  test('a task id two beads carry is refused as ambiguous', () => {
+    // Two beads already carry this task id, so the scaffold reuses the first and leaves the
+    // second in place: the tracker now answers for TRD-002 twice.
+    const fx = healthRepo({
+      issues: [
+        { id: 'dup-1', title: `${TASK('TRD-002')} Read widget storage` },
+        { id: 'dup-2', title: `${TASK('TRD-002')} Read widget storage (copy)` },
+      ],
+    });
+    const hashBefore = fx.tracker.hash();
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-002']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('RESET_TASK_AMBIGUOUS');
+    expect(envelope.error.message).toBe(MESSAGES.RESET_TASK_AMBIGUOUS);
+    expect(envelope.error.details.ids).toEqual(['dup-1', 'dup-2']);
+    expect(fx.tracker.hash()).toBe(hashBefore);
+  });
+
+  test('a tracker that cannot set a status says so instead of claiming the reset', () => {
+    const fx = healthRepo({ declare: { setStatus: false } });
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-002']);
+
+    expect(exitCode).toBe(5);
+    expect(envelope.status).toBe('UNAVAILABLE');
+    expect(envelope.error.code).toBe('RESET_TASK_UNAVAILABLE');
+  });
+
+  test('without a run id the side-effect gate refuses before the status is written', () => {
+    const fx = healthRepo();
+    const hashBefore = fx.tracker.hash();
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-002'], ['--non-interactive']);
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('PREFLIGHT_REQUIRED');
+    expect(fx.tracker.hash()).toBe(hashBefore);
+  });
+
+  test('reset-task cannot be combined with a labelling flag, and nothing runs', () => {
+    const fx = healthRepo();
+    const callsBefore = fx.tracker.calls().length;
+
+    const withLabel = run(fx, ['--reset-task', 'TRD-002', '--label']);
+    const withForeman = run(fx, ['--reset-task', 'TRD-002', '--foreman']);
+
+    expect(withLabel.exitCode).toBe(1);
+    expect(withLabel.envelope.error.code).toBe('RESET_TASK_EXCLUSIVE');
+    expect(withLabel.envelope.error.message).toBe(MESSAGES.exclusive('--reset-task', '--label'));
+    expect(withForeman.exitCode).toBe(1);
+    expect(withForeman.envelope.error.code).toBe('RESET_TASK_EXCLUSIVE');
+    expect(withForeman.envelope.error.message).toBe(
+      MESSAGES.exclusive('--reset-task', '--foreman')
+    );
+    expect(fx.tracker.calls()).toHaveLength(callsBefore);
   });
 });

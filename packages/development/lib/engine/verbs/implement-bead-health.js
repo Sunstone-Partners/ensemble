@@ -11,8 +11,12 @@
  * state, read fresh on every run. Every gate -- preflight, confirmation, allowlist -- belongs to
  * `toolchain-cli` and is returned unchanged rather than degraded around (Rule 5).
  *
- * In this package the verb is read-only: no tracker write is reachable. It is nevertheless
- * declared `sideEffect: 'write'` because the write flags land on this same verb, and a verb that
+ * The report itself is read-only. The three write flags are the repairs the report names:
+ * `--label` backfills the TRD's scoping label, `--foreman` tags the beads a build dispatches and
+ * `--reset-task` reopens one task bead. Each one runs only after every check that could refuse
+ * the run has passed, so a run that refuses has written nothing.
+ *
+ * The verb is declared `sideEffect: 'write'` for every run, flags or not, because a verb that
  * changed its declared side effect with a flag would let a write slip past the gates that the
  * declaration selects.
  */
@@ -25,10 +29,11 @@ const {
   classify,
   depIdOf,
   isClosed,
+  isTaskLevel,
   readIssues,
   scopeBeads,
 } = require('../tracker');
-const { requireTrd } = require('../trd-source');
+const { requireTrd, slugOf } = require('../trd-source');
 const { parseReferencesBlock } = require('../../bead-refs');
 
 /** The two capabilities the work-graph step runs, in order. */
@@ -285,14 +290,212 @@ function checkReferences(call, { beads, rootEpicId, trdPath, warnings }) {
   };
 }
 
+/** The label a Foreman build selects the beads it dispatches by (REF:73). */
+const FOREMAN_LABEL = 'foreman-exec';
+
+/**
+ * Backfill the TRD's scoping label over every bead of this TRD.
+ *
+ * The work is `trd-cli beads-label`'s, not this verb's: that is the labeller the skill calls and
+ * the one whose idempotence (`beads-label.js`) is already proven, so a second run labels nothing
+ * again. A backend that cannot label at all is a warning rather than a refusal, because an
+ * unlabelled bead is a scoping inconvenience and not drift.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {string} slug the TRD's slug, which is also the label
+ * @param {string[]} warnings collected warnings, appended to in place
+ * @returns {{already: number, label: string, labeled: number, matched: number, skipped: boolean}
+ *   |object} the report, or a tagged engine result
+ */
+function labelBeads(call, slug, warnings) {
+  const result = runTrd(call, ['beads-label', '--label', slug, '--match', `[trd:${slug}`]);
+  if (!result.json) {
+    return unavailable(
+      'LABEL_UNREADABLE',
+      `trd-cli beads-label produced no JSON result (exit ${result.exitCode})${
+        result.stderr ? `: ${result.stderr.trim()}` : ''
+      }`
+    );
+  }
+  const json = result.json;
+  if (json.ok === true) {
+    return {
+      already: Number(json.already) || 0,
+      label: slug,
+      labeled: Number(json.labeled) || 0,
+      matched: Number(json.matched) || 0,
+      skipped: false,
+    };
+  }
+  if (json.ok === false && json.unavailable === true) {
+    warnings.push(
+      MESSAGES.unavailableWarning(
+        'beads-label',
+        json.reason,
+        'the beads of this TRD stay unlabelled'
+      )
+    );
+    return {
+      already: 0,
+      label: slug,
+      labeled: 0,
+      matched: Number(json.matched) || 0,
+      skipped: true,
+    };
+  }
+  const detail = typeof json.error === 'string' ? json.error : JSON.stringify(json);
+  return refused('LABEL_FAILED', MESSAGES.labelFailed(detail));
+}
+
+/**
+ * Tag the beads a build dispatches with `foreman-exec`, and nothing else (REF:73).
+ *
+ * The epic and its stories are never tagged: a build that dispatched them would run a phase as
+ * if it were a task. The tracker is flushed and then re-read, because a tag this verb believes
+ * it wrote and the tracker did not keep is exactly the state a dispatch would silently skip --
+ * so the count is taken from the tracker's own answer, never from this loop's bookkeeping.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {{beads: object[], slug: string, warnings: string[]}} context the scoped beads
+ * @returns {{alreadyTagged: number, labelled: number, listed: number, tagged: number}|object}
+ *   the report, or a tagged engine result
+ */
+function tagForeman(call, { beads, slug, warnings }) {
+  const taskBeads = beads.filter(bead => isTaskLevel(bead.kind));
+  let alreadyTagged = 0;
+  let labelled = 0;
+  for (const bead of taskBeads) {
+    const labels = Array.isArray(bead.labels) ? bead.labels : [];
+    if (labels.includes(FOREMAN_LABEL)) {
+      alreadyTagged += 1;
+      continue;
+    }
+    const tagged = classify(
+      callCapability(call, 'tracker.label', { ids: bead.id, labels: FOREMAN_LABEL }),
+      'tracker.label'
+    );
+    if (tagged.kind === 'gate') return tagged.result;
+    if (tagged.kind !== 'ok') {
+      return refused(
+        'FOREMAN_TAGGING_FAILED',
+        MESSAGES.foremanTaggingFailed(bead.prefix, tagged.message),
+        { titlePrefix: bead.prefix }
+      );
+    }
+    labelled += 1;
+  }
+
+  const synced = classify(callCapability(call, 'tracker.sync'), 'tracker.sync');
+  if (synced.kind === 'gate') return synced.result;
+  if (synced.kind !== 'ok') {
+    warnings.push(
+      synced.kind === 'unavailable'
+        ? MESSAGES.unavailableWarning('tracker.sync', synced.message, 'the tracker is not flushed')
+        : MESSAGES.failedWarning(
+            'tracker.sync',
+            slug,
+            synced.message,
+            'the tracker is not flushed'
+          )
+    );
+  }
+
+  const relisted = readIssues(call);
+  if (isResult(relisted)) return relisted;
+  const listed = scopeBeads(relisted.issues, slug).filter(
+    bead =>
+      isTaskLevel(bead.kind) && Array.isArray(bead.labels) && bead.labels.includes(FOREMAN_LABEL)
+  ).length;
+  if (listed !== taskBeads.length) {
+    return refused(
+      'FOREMAN_TAGGING_INCOMPLETE',
+      MESSAGES.foremanTaggingIncomplete(taskBeads.length, listed),
+      { listed, tagged: taskBeads.length }
+    );
+  }
+
+  return { alreadyTagged, labelled, listed, tagged: taskBeads.length };
+}
+
+/**
+ * Put one task bead back to open, so its task can be built again (REF:69).
+ *
+ * The bead is found by the task id its title carries, not by position, and exactly one match is
+ * required: resetting the wrong bead of a TRD reopens work nobody asked for, and resetting two
+ * hides which one was meant.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {{taskId: string, trdPath: string}} context
+ * @returns {object} the report, or a tagged engine result
+ */
+function resetTask(call, { taskId, trdPath }) {
+  const slug = slugOf(trdPath);
+  const listed = readIssues(call);
+  if (isResult(listed)) return listed;
+
+  const marker = `[trd:${slug}:task:${taskId}]`;
+  const candidates = (listed.issues || []).filter(issue =>
+    String(issue && issue.title == null ? '' : issue.title).includes(marker)
+  );
+  if (candidates.length === 0) {
+    return refused('RESET_TASK_NOT_FOUND', MESSAGES.resetTaskNotFound(taskId, slug));
+  }
+  if (candidates.length > 1) {
+    return refused('RESET_TASK_AMBIGUOUS', MESSAGES.RESET_TASK_AMBIGUOUS, {
+      ids: candidates.map(issue => issue.id),
+    });
+  }
+
+  const bead = candidates[0];
+  const reset = classify(
+    callCapability(call, 'tracker.set-status', { id: bead.id, status: 'open' }),
+    'tracker.set-status'
+  );
+  if (reset.kind === 'gate') return reset.result;
+  if (reset.kind === 'unavailable') {
+    return unavailable('RESET_TASK_UNAVAILABLE', reset.message);
+  }
+  if (reset.kind !== 'ok') {
+    return refused('RESET_TASK_FAILED', MESSAGES.resetTaskFailed(bead.id, reset.message));
+  }
+
+  return {
+    MODE: 'reset-task',
+    RESET_TASK: {
+      beadId: bead.id,
+      previousStatus: bead.status == null ? null : String(bead.status),
+      status: 'open',
+      taskId,
+    },
+    TRD_FILE_PATH: trdPath,
+    TRD_SLUG: slug,
+    WARNINGS: [],
+  };
+}
+
 /**
  * @param {object} call the dispatcher's call object
  * @returns {object} the report, or a tagged engine result
  */
 function handler(call) {
+  const input = call.input;
+  const taskId = input['reset-task'];
+  // Checked before anything is read, so a request that cannot be honoured touches nothing: a
+  // reset and a labelling pass are different jobs and running both would hide which was meant.
+  if (typeof taskId === 'string') {
+    if (input.label === true) {
+      return refused('RESET_TASK_EXCLUSIVE', MESSAGES.exclusive('--reset-task', '--label'));
+    }
+    if (input.foreman === true) {
+      return refused('RESET_TASK_EXCLUSIVE', MESSAGES.exclusive('--reset-task', '--foreman'));
+    }
+  }
+
   const trd = requireTrd(call);
   if (isResult(trd)) return trd;
   const trdPath = trd.path;
+
+  if (typeof taskId === 'string') return resetTask(call, { taskId, trdPath });
 
   const calls = runTrd(call, ['scaffold-calls', trdPath]);
   if (!calls.json) {
@@ -371,7 +574,22 @@ function handler(call) {
   );
   if (missingLabel.length > 0) warnings.push(MESSAGES.labelsWarning(missingLabel.length, slug));
 
+  // Every check that can refuse this run has passed, so from here the repairs may write.
+  let LABEL = null;
+  if (call.input.label === true) {
+    LABEL = labelBeads(call, slug, warnings);
+    if (isResult(LABEL)) return LABEL;
+  }
+
+  let FOREMAN = null;
+  if (call.input.foreman === true) {
+    FOREMAN = tagForeman(call, { beads, slug, warnings });
+    if (isResult(FOREMAN)) return FOREMAN;
+  }
+
   return {
+    ...(FOREMAN ? { FOREMAN } : {}),
+    ...(LABEL ? { LABEL } : {}),
     BEADS: {
       found: creates.filter(entry => idByPrefix.has(entry.titlePrefix)).length,
       planned: creates.length,
@@ -413,6 +631,9 @@ const spec = {
   inputSchema: {
     additionalProperties: false,
     properties: {
+      foreman: { type: 'boolean' },
+      label: { type: 'boolean' },
+      'reset-task': { pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', type: 'string' },
       trd: { type: 'string', 'x-operand': true },
     },
     type: 'object',
@@ -451,13 +672,36 @@ const spec = {
         ],
         type: 'object',
       },
+      FOREMAN: {
+        additionalProperties: false,
+        properties: {
+          alreadyTagged: { type: 'integer' },
+          labelled: { type: 'integer' },
+          listed: { type: 'integer' },
+          tagged: { type: 'integer' },
+        },
+        required: ['alreadyTagged', 'labelled', 'listed', 'tagged'],
+        type: 'object',
+      },
+      LABEL: {
+        additionalProperties: false,
+        properties: {
+          already: { type: 'integer' },
+          label: { type: 'string' },
+          labeled: { type: 'integer' },
+          matched: { type: 'integer' },
+          skipped: { type: 'boolean' },
+        },
+        required: ['already', 'label', 'labeled', 'matched', 'skipped'],
+        type: 'object',
+      },
       LABELS: {
         additionalProperties: false,
         properties: { expected: { type: 'string' }, missingCount: { type: 'integer' } },
         required: ['expected', 'missingCount'],
         type: 'object',
       },
-      MODE: { enum: ['health'] },
+      MODE: { enum: ['health', 'reset-task'] },
       REFERENCES: {
         additionalProperties: false,
         properties: {
@@ -477,6 +721,17 @@ const spec = {
         required: ['beadContext', 'missingCount', 'openScoped'],
         type: 'object',
       },
+      RESET_TASK: {
+        additionalProperties: false,
+        properties: {
+          beadId: { type: 'string' },
+          previousStatus: { type: ['string', 'null'] },
+          status: { enum: ['open'] },
+          taskId: { type: 'string' },
+        },
+        required: ['beadId', 'previousStatus', 'status', 'taskId'],
+        type: 'object',
+      },
       ROOT_EPIC_ID: { type: ['string', 'null'] },
       TRD_FILE_PATH: { type: 'string' },
       TRD_SLUG: { type: 'string' },
@@ -494,18 +749,9 @@ const spec = {
         type: 'object',
       },
     },
-    required: [
-      'BEADS',
-      'EDGES',
-      'LABELS',
-      'MODE',
-      'REFERENCES',
-      'ROOT_EPIC_ID',
-      'TRD_FILE_PATH',
-      'TRD_SLUG',
-      'WARNINGS',
-      'WORK_GRAPH',
-    ],
+    // Only what both modes answer with is required: `reset-task` reports one bead and reads no
+    // health, so requiring the health keys would make its own answer invalid.
+    required: ['MODE', 'TRD_FILE_PATH', 'TRD_SLUG', 'WARNINGS'],
     type: 'object',
   },
   policyKeys: [],

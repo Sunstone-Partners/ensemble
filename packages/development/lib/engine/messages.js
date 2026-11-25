@@ -273,16 +273,83 @@ function edgesUnreadable(reason) {
   return `the tracker reports no dependency data (${reason}); the edge diff was skipped`;
 }
 
+/** implement-trd-tasks-reference/SKILL.md:69 */
+const RESET_TASK_NOT_FOUND = "ERROR: No bead found for TASK_ID=<ID> with TRD_SLUG=<slug>";
+
+/** implement-trd-tasks-reference/SKILL.md:69 */
+const RESET_TASK_AMBIGUOUS = "ERROR: Multiple beads match — ambiguous TASK_ID, please be more specific";
+
+/** implement-trd-tasks-reference/SKILL.md:73 */
+const FOREMAN_TAGGING_INCOMPLETE = "ERROR: foreman-exec tagging incomplete";
+
+/**
+ * No bead carries this task id. The skill prints the placeholders literally
+ * (implement-trd-tasks-reference/SKILL.md:69); the engine fills them in, so the operator reads
+ * the id it actually looked for.
+ * @param {string} taskId the task id asked for
+ * @param {string} slug the TRD slug it was looked for under
+ * @returns {string}
+ */
+function resetTaskNotFound(taskId, slug) {
+  return RESET_TASK_NOT_FOUND.replace('<ID>', taskId).replace('<slug>', slug);
+}
+
+/**
+ * The tracker lists fewer tagged beads than were tagged. The skill's own text
+ * (implement-trd-tasks-reference/SKILL.md:73) is kept verbatim and both counts it names are
+ * appended, because the text alone does not carry them.
+ * @param {number} tagged how many beads this run tagged or found already tagged
+ * @param {number} listed how many the tracker reports carrying the label afterwards
+ * @returns {string}
+ */
+function foremanTaggingIncomplete(tagged, listed) {
+  return `${FOREMAN_TAGGING_INCOMPLETE} (tagged ${tagged}, tracker.list reports ${listed})`;
+}
+
+/**
+ * The labelling pass itself failed. Authored in the pattern of `createFailed`, naming the
+ * subject and the tracker's own words.
+ * @param {string} detail what the labeller reported
+ * @returns {string}
+ */
+function labelFailed(detail) {
+  return `ERROR: could not label the beads of this TRD: ${detail}`;
+}
+
+/**
+ * One bead could not be tagged. Authored in the pattern of `createFailed`; it names the bead by
+ * its title prefix and says the pass stopped, because a half-tagged run must not look complete.
+ * @param {string} titlePrefix the bead's `[trd:...]` title prefix
+ * @param {string} detail what the tracker reported
+ * @returns {string}
+ */
+function foremanTaggingFailed(titlePrefix, detail) {
+  return `ERROR: could not tag bead '${titlePrefix}' with foreman-exec: ${detail}. Nothing further was tagged.`;
+}
+
+/**
+ * The status write of `reset-task` failed. Authored in the pattern of `createFailed`.
+ * @param {string} beadId the bead that stayed as it was
+ * @param {string} detail what the tracker reported
+ * @returns {string}
+ */
+function resetTaskFailed(beadId, detail) {
+  return `ERROR: could not set bead ${beadId} to open: ${detail}`;
+}
+
 module.exports = {
   BRANCH_FLAGS_EXCLUSIVE,
   DETACHED_HEAD,
   EXECUTE_NEEDS_SCAFFOLD,
+  FOREMAN_TAGGING_INCOMPLETE,
   GIT_TOWN_EXIT_REASONS,
   GENERATE_ONLY_CONFLICT,
   GENERATE_ONLY_REQUIRES_WORKSTREAM,
   MULTIPLE_TRDS,
   PLAN_EXECUTE_EXCLUSIVE,
   PR_BACKEND_UNRESOLVED,
+  RESET_TASK_AMBIGUOUS,
+  RESET_TASK_NOT_FOUND,
   WORKTREE_DIRTY,
   agentNotRegistered,
   ambiguousKey,
@@ -295,11 +362,16 @@ module.exports = {
   edgesUnreadable,
   exclusive,
   failedWarning,
+  foremanTaggingFailed,
+  foremanTaggingIncomplete,
   gitTownUnusable,
+  labelFailed,
   labelsWarning,
   lookupFailed,
   notScaffolded,
   referencesWarning,
+  resetTaskFailed,
+  resetTaskNotFound,
   scaffoldPlanFailed,
   workGraphFindings,
   unavailableWarning,

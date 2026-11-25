@@ -147,6 +147,42 @@ describe('the dereferenced bundle runs bin/ensemble', () => {
     expect(argsEnvelope.data.PLAN_ONLY).toBe(true);
     expect(argsEnvelope.data.TRD_PATHS).toEqual(['docs/x.md']);
   }, 120000);
+
+  test('implement bead-health is published and refuses a missing operand from the bundle', () => {
+    const bundleRoot = path.join(installRoot, 'full');
+    const launcher = path.join(bundleRoot, 'bin', 'ensemble');
+
+    const described = spawnSync(process.execPath, [launcher, '--describe'], {
+      cwd: bundleRoot,
+      encoding: 'utf8',
+      timeout: 60000,
+    });
+    expect(`${described.status} ${described.stderr}`).toBe('0 ');
+    expect(JSON.parse(described.stdout).data.verbs).toContainEqual(
+      expect.objectContaining({ group: 'implement', name: 'bead-health', sideEffect: 'write' })
+    );
+
+    const schema = spawnSync(
+      process.execPath,
+      [launcher, 'engine', 'schema', 'implement.bead-health'],
+      { cwd: bundleRoot, encoding: 'utf8', timeout: 60000 }
+    );
+    expect(`${schema.status} ${schema.stderr}`).toBe('0 ');
+    const schemaEnvelope = JSON.parse(schema.stdout);
+    expect(schemaEnvelope.data.group).toBe('implement');
+    expect(schemaEnvelope.data.name).toBe('bead-health');
+
+    // The verb's own refusal, not a crash: a bundle missing one of its requires would exit
+    // non-zero with no JSON at all.
+    const refused = spawnSync(process.execPath, [launcher, 'implement', 'bead-health'], {
+      cwd: bundleRoot,
+      encoding: 'utf8',
+      timeout: 60000,
+    });
+    expect(refused.status).toBe(1);
+    const refusedEnvelope = JSON.parse(refused.stdout);
+    expect(refusedEnvelope.error.code).toBe('TRD_REQUIRED');
+  }, 120000);
 });
 
 describe('the bundled-binary rules are enforced', () => {
@@ -265,6 +301,7 @@ describe('the engine is vendored for pi', () => {
       'groups/tool.js',
       'groups/trd.js',
       'verbs/implement-args.js',
+      'verbs/implement-bead-health.js',
       'verbs/implement-branch.js',
       'verbs/implement-env.js',
       'verbs/implement-resume.js',
