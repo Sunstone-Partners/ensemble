@@ -181,12 +181,12 @@ function idOf(data) {
  * reported as this one's drift. A row with no id cannot be addressed and is dropped; list order
  * is kept, so a duplicate prefix resolves the way the scaffold's own cache resolves it.
  *
- * @param {object[]} issues the `tracker.list` rows
- * @param {string} slug the TRD's slug
  * The row's `dependencies` are carried through untouched: on a tracker whose list already holds
  * the links, they are the live edge set, and re-reading each bead to find that out would be a
  * read per bead for data already in hand.
  *
+ * @param {object[]} issues the `tracker.list` rows
+ * @param {string} slug the TRD's slug
  * @returns {{dependencies: *, description: *, id: string, kind: string, labels: *,
  *   prefix: string, status: *, taskId: string|null, title: string}[]}
  */
