@@ -13,6 +13,7 @@
 
 const { runToolchain, toolchainFailure } = require('./cli-json');
 const { unavailable } = require('./result');
+const { parseTitlePrefix } = require('../bead-refs');
 
 /**
  * The runner's own wording for a capability the adapter never declared (`runner.js:990`), which
@@ -172,11 +173,94 @@ function idOf(data) {
   return typeof id === 'string' ? id.trim() : '';
 }
 
+/**
+ * The beads of one TRD, and nothing else.
+ *
+ * Scope is the title prefix's own slug, compared for equality rather than by prefix: the beads
+ * of `[trd:widget-engine-v2]` are a different TRD's and must never be counted, relabelled or
+ * reported as this one's drift. A row with no id cannot be addressed and is dropped; list order
+ * is kept, so a duplicate prefix resolves the way the scaffold's own cache resolves it.
+ *
+ * The row's `dependencies` are carried through untouched: on a tracker whose list already holds
+ * the links, they are the live edge set, and re-reading each bead to find that out would be a
+ * read per bead for data already in hand.
+ *
+ * @param {object[]} issues the `tracker.list` rows
+ * @param {string} slug the TRD's slug
+ * @returns {{dependencies: *, description: *, id: string, kind: string, labels: *,
+ *   prefix: string, status: *, taskId: string|null, title: string}[]}
+ */
+function scopeBeads(issues, slug) {
+  const scoped = [];
+  for (const issue of Array.isArray(issues) ? issues : []) {
+    if (!issue || typeof issue !== 'object') continue;
+    const id = typeof issue.id === 'string' ? issue.id.trim() : '';
+    if (id === '') continue;
+    const title = String(issue.title == null ? '' : issue.title);
+    const info = parseTitlePrefix(title);
+    if (!info || info.slug !== slug) continue;
+    scoped.push({
+      dependencies: issue.dependencies,
+      description: issue.description,
+      id,
+      kind: info.kind,
+      labels: issue.labels,
+      prefix: prefixOf(title),
+      status: issue.status,
+      taskId: info.taskId || null,
+      title,
+    });
+  }
+  return scoped;
+}
+
+/**
+ * Whether a bead is done. Trackers spell the status differently in case only.
+ * @param {{status: *}} bead
+ * @returns {boolean}
+ */
+function isClosed(bead) {
+  return String(bead && bead.status).toLowerCase() === 'closed';
+}
+
+/**
+ * Whether a bead is one the build dispatches: the epic and its stories are not.
+ * @param {string} kind a `parseTitlePrefix` kind
+ * @returns {boolean}
+ */
+function isTaskLevel(kind) {
+  return kind === 'task' || kind === 'test' || kind === 'synth';
+}
+
+/**
+ * The id a dependency link names. Both shapes the normalized work-item schema allows are
+ * accepted (`work-graph-scan.js:28-41`): a `{id}` object and a bare id string, each meaning
+ * "blocked by that id". Anything else is a link this reader cannot follow.
+ *
+ * @param {*} entry one element of a bead's `dependencies`
+ * @returns {string|null}
+ */
+function depIdOf(entry) {
+  if (typeof entry === 'string') {
+    const text = entry.trim();
+    return text === '' ? null : text;
+  }
+  if (entry && typeof entry === 'object' && typeof entry.id === 'string') {
+    const text = entry.id.trim();
+    return text === '' ? null : text;
+  }
+  return null;
+}
+
 module.exports = {
   UNDECLARED_RE,
   callCapability,
   classify,
+  depIdOf,
   idOf,
+  isClosed,
+  isTaskLevel,
   prefixOf,
   readIssues,
+  scopeBeads,
 };
