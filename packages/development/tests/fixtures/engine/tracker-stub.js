@@ -83,10 +83,18 @@ function runStubCli(argv, options, streams = process) {
     const all = kata ? issueList(state).filter(i => i.status !== 'closed') : issueList(state);
     // `br list` carries a dependency COUNT, not the links themselves; a tracker whose rows do
     // carry them lets a reader skip the per-bead reads. Both shapes exist, so both are offered.
+    // `listWithoutDependenciesFor` hides the links of some beads only, the shape a tracker whose
+    // list answers for some rows and not for others has.
+    const stripDependencies = ({ dependencies: _dependencies, ...rest }) => rest;
+    const withoutFor = Array.isArray(state.control && state.control.listWithoutDependenciesFor)
+      ? state.control.listWithoutDependenciesFor
+      : [];
     const issues = listDependencies
-      ? all
-      : all.map(({ dependencies: _dependencies, ...rest }) => rest);
-    out(`${JSON.stringify({ issues, total: issues.length })}\n`);
+      ? all.map(issue => (withoutFor.includes(issue.id) ? stripDependencies(issue) : issue))
+      : all.map(stripDependencies);
+    // `nullRowInList` makes the list carry a row that is not an issue at all.
+    const nullRow = state.control && state.control.nullRowInList ? [null] : [];
+    out(`${JSON.stringify({ issues: issues.concat(nullRow), total: issues.length })}\n`);
     return 0;
   }
 
@@ -97,7 +105,12 @@ function runStubCli(argv, options, streams = process) {
       err(`stub ${STUB_BIN}: no such issue '${argv[1]}'\n`);
       return 1;
     }
-    out(`${JSON.stringify(issue)}\n`);
+    // `stripShowDependenciesFor` hides the links of some beads from this read only: the shape a
+    // tracker whose show answers for some rows and not for others has.
+    const hidden = Array.isArray(state.control && state.control.stripShowDependenciesFor) &&
+      state.control.stripShowDependenciesFor.includes(issue.id);
+    const { dependencies: _dependencies, ...rest } = issue;
+    out(`${JSON.stringify(hidden ? rest : issue)}\n`);
     return 0;
   }
 
@@ -495,6 +508,24 @@ function createTrackerStub(root, options = {}) {
     failLabel: () => {
       const state = read();
       state.control = { ...(state.control || {}), failLabel: true };
+      writeState(statePath, state);
+    },
+    /** Hide the links of these beads from the list rows only; `show` still carries them. */
+    stripListDependenciesFor: ids => {
+      const state = read();
+      state.control = { ...(state.control || {}), listWithoutDependenciesFor: ids };
+      writeState(statePath, state);
+    },
+    /** Hide the links of these beads from the show answer only; the list still carries them. */
+    stripShowDependenciesFor: ids => {
+      const state = read();
+      state.control = { ...(state.control || {}), stripShowDependenciesFor: ids };
+      writeState(statePath, state);
+    },
+    /** Make the list carry a row that is not an issue at all, as a malformed tracker would. */
+    nullRowInList: () => {
+      const state = read();
+      state.control = { ...(state.control || {}), nullRowInList: true };
       writeState(statePath, state);
     },
   };

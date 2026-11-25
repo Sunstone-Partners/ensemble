@@ -13,8 +13,9 @@
  *
  * The report itself is read-only. The three write flags are the repairs the report names:
  * `--label` backfills the TRD's scoping label, `--foreman` tags the beads a build dispatches and
- * `--reset-task` reopens one task bead. Each one runs only after every check that could refuse
- * the run has passed, so a run that refuses has written nothing.
+ * `--reset-task` reopens one task bead. A refusal before the first write leaves the tracker as
+ * it was; a refusal inside `--foreman` can follow tags the tracker already stored, so the
+ * messages name the bead it stopped at and the counts the tracker reports.
  *
  * The verb is declared `sideEffect: 'write'` for every run, flags or not, because a verb that
  * changed its declared side effect with a flag would let a write slip past the gates that the
@@ -65,7 +66,10 @@ function sortEdges(edges) {
  */
 function readLiveEdges(call, beads) {
   const fromRows = beads.filter(bead => Array.isArray(bead.dependencies));
-  if (fromRows.length > 0) {
+  // The list answers for the live edges only when it carries them for EVERY scoped bead: a row
+  // without the field contributes no edge at all, so a partly-readable list would report edges
+  // that exist as missing. Such a tracker is read bead by bead below instead.
+  if (beads.length > 0 && fromRows.length === beads.length) {
     return { live: collectEdges(fromRows), reason: null, source: 'list' };
   }
 
@@ -97,7 +101,16 @@ function readLiveEdges(call, beads) {
     if (shown.kind !== 'ok') {
       return { live: new Set(), reason: shown.message, source: null };
     }
-    detailed.push({ dependencies: shown.data && shown.data.dependencies, id: bead.id });
+    if (!Array.isArray(shown.data && shown.data.dependencies)) {
+      // The same rule the probe applies to the first bead: an answer without the links says
+      // nothing about the edges, so it is reported as unreadable and not as drift.
+      return {
+        live: new Set(),
+        reason: `tracker.show for ${bead.id} carries no 'dependencies'`,
+        source: null,
+      };
+    }
+    detailed.push({ dependencies: shown.data.dependencies, id: bead.id });
   }
   return { live: collectEdges(detailed), reason: null, source: 'show' };
 }
@@ -138,6 +151,10 @@ function diffEdges({ deps, idByPrefix, live, prefixById }) {
     const blocked = prefixById.get(blockedId);
     const blocker = prefixById.get(blockerId);
     if (blocked === undefined || blocker === undefined) continue;
+    // The bead the prefix cache selected is the one this report is about: a live edge of a
+    // second bead carrying the same prefix is not the selected bead's edge, and counting it
+    // would hide a missing edge of the selected one.
+    if (idByPrefix.get(blocked) !== blockedId || idByPrefix.get(blocker) !== blockerId) continue;
     liveScoped.add(edgeKey(blocked, blocker));
   }
 
@@ -433,10 +450,16 @@ function resetTask(call, { taskId, trdPath }) {
   const listed = readIssues(call);
   if (isResult(listed)) return listed;
 
+  // The bead is selected by the task id its title carries. The marker is matched exactly,
+  // case-sensitively and including the closing bracket, as the TRD and the plan require, so a
+  // title that mentions the marker in its prose matches too. That is why a second match is
+  // refused as ambiguous instead of one of the two being guessed at.
   const marker = `[trd:${slug}:task:${taskId}]`;
-  const candidates = (listed.issues || []).filter(issue =>
-    String(issue && issue.title == null ? '' : issue.title).includes(marker)
-  );
+  const candidates = (listed.issues || []).filter(issue => {
+    // A row that is not an issue at all carries no title: it is skipped, not read.
+    if (!issue || typeof issue !== 'object') return false;
+    return String(issue.title == null ? '' : issue.title).includes(marker);
+  });
   if (candidates.length === 0) {
     return refused('RESET_TASK_NOT_FOUND', MESSAGES.resetTaskNotFound(taskId, slug));
   }

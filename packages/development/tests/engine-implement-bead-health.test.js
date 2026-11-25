@@ -188,6 +188,64 @@ describe('the live edges are diffed against the plan', () => {
       { blocked: PHASE_2, blocker: TASK('TRD-004'), type: 'task-blocks-story' },
     ]);
   });
+
+  test('a tracker whose list carries the links of some beads only is read bead by bead too', () => {
+    const fx = healthRepo();
+    const ids = idsByPrefix(fx);
+    // The list answers for the links of some rows only: the row of PHASE_1 carries none, so a
+    // reader that trusts the list would report the edge PHASE_1 really has as missing.
+    fx.tracker.stripListDependenciesFor([ids.get(PHASE_1)]);
+
+    const { envelope, exitCode } = run(fx);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.data.EDGES.checked).toBe(true);
+    expect(envelope.data.EDGES.source).toBe('show');
+    expect(envelope.data.EDGES.missing).toEqual([]);
+  });
+
+  test('a tracker whose show answers for some beads only says so instead of reporting drift', () => {
+    const fx = healthRepo({ listDependencies: false });
+    const ids = idsByPrefix(fx);
+    // The show answer carries the links of most beads but not of PHASE_2: a reader that trusted
+    // the answers it got would report PHASE_2's own edges as missing.
+    fx.tracker.stripShowDependenciesFor([ids.get(PHASE_2)]);
+
+    const { envelope, exitCode } = run(fx);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.data.EDGES.checked).toBe(false);
+    expect(envelope.data.EDGES.source).toBeNull();
+    expect(envelope.data.EDGES.missing).toEqual([]);
+    expect(envelope.data.EDGES.extra).toEqual([]);
+    expect(envelope.data.EDGES.live).toBe(0);
+    expect(typeof envelope.data.EDGES.reason).toBe('string');
+    expect(envelope.data.WARNINGS).toContain(MESSAGES.edgesUnreadable(envelope.data.EDGES.reason));
+  });
+
+  test('a live edge of a bead sharing a prefix is not credited to the selected bead', () => {
+    // Two beads carry the TRD-001 task prefix; the scaffold reuses the first, so the second is a
+    // second bead with the same prefix.
+    const fx = healthRepo({
+      issues: [
+        { id: 'dup-1', title: `${TASK('TRD-001')} first`, type: 'task' },
+        { id: 'dup-2', title: `${TASK('TRD-001')} second`, type: 'task' },
+      ],
+    });
+    const ids = idsByPrefix(fx);
+    // The planned edge leaves PHASE_1 for the selected TRD-001 bead; only the bead sharing its
+    // prefix carries it now.
+    fx.tracker.dropEdge(ids.get(PHASE_1), ids.get(TASK('TRD-001')));
+    fx.tracker.seedEdge(ids.get(PHASE_1), 'dup-2');
+
+    const { envelope, exitCode } = run(fx);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.data.EDGES.checked).toBe(true);
+    expect(envelope.data.EDGES.missing).toEqual([
+      { blocked: PHASE_1, blocker: TASK('TRD-001'), type: 'task-blocks-story' },
+    ]);
+  });
 });
 
 describe('the work-graph step gates the report', () => {
@@ -654,5 +712,44 @@ describe('reset-task reopens exactly one bead', () => {
       MESSAGES.exclusive('--reset-task', '--foreman')
     );
     expect(fx.tracker.calls()).toHaveLength(callsBefore);
+  });
+
+  test('a bead that mentions the task marker in its prose matches the rule and refuses the run', () => {
+    const fx = healthRepo({
+      issues: [{ id: 'prose-1', title: `Fix the notes of ${TASK('TRD-002')} today`, type: 'task' }],
+    });
+    const bead = fx.tracker.issues().find(issue => issue.title.startsWith(TASK('TRD-002')));
+    fx.tracker.setStatus(bead.id, 'closed');
+    fx.tracker.setStatus('prose-1', 'closed');
+    const hashBefore = fx.tracker.hash();
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-002']);
+
+    // The rule the TRD and the plan pin is that the title CONTAINS the marker, so a title that
+    // mentions it in prose matches as well. Two matches are refused as ambiguous rather than
+    // one of the two being guessed at, and no bead is reopened.
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('RESET_TASK_AMBIGUOUS');
+    expect(envelope.error.details.ids.slice().sort()).toEqual([bead.id, 'prose-1'].sort());
+    expect(fx.tracker.hash()).toBe(hashBefore);
+    expect(fx.tracker.issues().find(issue => issue.id === 'prose-1').status).toBe('closed');
+    expect(fx.tracker.issues().find(issue => issue.id === bead.id).status).toBe('closed');
+  });
+
+  test('a tracker whose list carries a row that is not an issue is not read as one', () => {
+    const fx = healthRepo();
+    const bead = fx.tracker.issues().find(issue => issue.title.startsWith(TASK('TRD-002')));
+    fx.tracker.setStatus(bead.id, 'closed');
+    // The list answers with a row that is not an issue at all: a reader that took its title
+    // would fail on it instead of resetting the one bead that carries the task id.
+    fx.tracker.nullRowInList();
+
+    const { envelope, exitCode } = run(fx, ['--reset-task', 'TRD-002']);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.status).toBe('OK');
+    expect(envelope.data.RESET_TASK.beadId).toBe(bead.id);
+    expect(fx.tracker.issues().find(issue => issue.id === bead.id).status).toBe('open');
   });
 });
