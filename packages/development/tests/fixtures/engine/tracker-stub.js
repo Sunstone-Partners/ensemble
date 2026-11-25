@@ -29,6 +29,7 @@ const STUB_BIN = 'fixture-tracker';
 const SUBCOMMANDS = Object.freeze([
   '--version',
   'list',
+  'show',
   'find-by-key',
   'create',
   'create-detailed',
@@ -62,7 +63,7 @@ function issueList(state) {
  * @returns {number} the process exit code
  */
 function runStubCli(argv, options, streams = process) {
-  const { kata = false, log, state: statePath } = options;
+  const { kata = false, listDependencies = true, log, state: statePath } = options;
   const out = text => streams.stdout.write(text);
   const err = text => streams.stderr.write(text);
   fs.appendFileSync(log, `${JSON.stringify(argv)}\n`);
@@ -78,8 +79,24 @@ function runStubCli(argv, options, streams = process) {
   if (verb === 'list') {
     // A kata workspace lists open work only; beads lists everything. The difference is what
     // makes the external-key lookup necessary on the kata path.
-    const issues = kata ? issueList(state).filter(i => i.status !== 'closed') : issueList(state);
+    const all = kata ? issueList(state).filter(i => i.status !== 'closed') : issueList(state);
+    // `br list` carries a dependency COUNT, not the links themselves; a tracker whose rows do
+    // carry them lets a reader skip the per-bead reads. Both shapes exist, so both are offered.
+    const issues = listDependencies
+      ? all
+      : all.map(({ dependencies: _dependencies, ...rest }) => rest);
     out(`${JSON.stringify({ issues, total: issues.length })}\n`);
+    return 0;
+  }
+
+  if (verb === 'show') {
+    // One issue, whole: the only read that can carry an item's dependency links.
+    const issue = issueList(state).find(candidate => candidate.id === argv[1]);
+    if (!issue) {
+      err(`stub ${STUB_BIN}: no such issue '${argv[1]}'\n`);
+      return 1;
+    }
+    out(`${JSON.stringify(issue)}\n`);
     return 0;
   }
 
@@ -197,11 +214,33 @@ function runStubCli(argv, options, streams = process) {
  * collection answers (`tracker.list`, `tracker.find-by-key`, `tracker.label`, `tracker.sync`)
  * are handed to the caller as raw text, exactly as the beads adapter hands them over.
  */
-function capabilityTable(declare, createParse) {
+function capabilityTable(declare, createParse, exposeDependencies) {
   const on = key => declare[key] !== false;
   const idParse = { format: 'json', root: '$', map: { id: '$.id' } };
   const table = {
     'tracker.list': { run: [STUB_BIN, 'list'] },
+    // Modelled on `adapter-tracker-beads/adapter.yaml` :68-98, plus the one field no shipped
+    // tracker maps today: `dependencies`. `exposeDependencies: false` drops it again, which is
+    // exactly what a reader of live edges meets on the shipped beads and kata adapters.
+    'tracker.show': {
+      run: [STUB_BIN, 'show', '${id}'],
+      parse: {
+        format: 'json',
+        root: '$',
+        map: {
+          id: '$.id',
+          title: '$.title',
+          description: { path: '$.description', optional: true },
+          type: '$.type',
+          status: '$.status',
+          labels: { path: '$.labels', default: [] },
+          ...(exposeDependencies
+            ? { dependencies: { path: '$.dependencies', optional: true } }
+            : {}),
+        },
+        statusMap: { open: 'open', in_progress: 'in_progress', closed: 'closed' },
+      },
+    },
     'tracker.create': {
       run: [STUB_BIN, 'create', '${title}', '${type}', '${description}'],
       ...(createParse ? { parse: idParse } : {}),
@@ -244,13 +283,30 @@ function capabilityTable(declare, createParse) {
  * `.ensemble/toolchain.yaml` naming it. Call it BEFORE `initRepo` so the committed tree is clean.
  *
  * @param {string} root the project root
- * @param {{adapter?: string, createParse?: boolean, declare?: object, issues?: object[]}} [options]
+ * @param {{adapter?: string, createParse?: boolean, declare?: object, exposeDependencies?: boolean,
+ *   issues?: object[], workGraph?: 'builtin'|'unavailable'}} [options]
  *   `adapter: 'kata'` makes the manifest claim the `kata` id, which shadows the library's own
  *   kata adapter by discovery order and switches the verb onto its kata path.
+ *   `exposeDependencies: false` removes `dependencies` from the `tracker.show` mapping, the
+ *   situation on every shipped tracker adapter today; `listDependencies: false` drops them from
+ *   the `list` rows as `br list` does, which is what makes a per-bead `tracker.show` read the
+ *   only way to see an edge.
+ *   `workGraph: 'builtin'` (the default) leaves `work-graph` off the manifest's categories, so
+ *   the toolchain's own links fallback answers the work-graph capabilities from `tracker.list`
+ *   plus `tracker.show`; `workGraph: 'unavailable'` claims the category and declares none of
+ *   its capabilities, so every work-graph call comes back `unavailable`.
  * @returns {object} the handle described in this module's tests
  */
 function createTrackerStub(root, options = {}) {
-  const { adapter = 'fixture-tracker', createParse = true, declare = {}, issues = [] } = options;
+  const {
+    adapter = 'fixture-tracker',
+    createParse = true,
+    declare = {},
+    exposeDependencies = true,
+    issues = [],
+    listDependencies = true,
+    workGraph = 'builtin',
+  } = options;
   const kata = adapter === 'kata';
 
   const dataDir = `${root}-tracker`;
@@ -271,7 +327,12 @@ function createTrackerStub(root, options = {}) {
     '#!/usr/bin/env node',
     "'use strict';",
     `const { runStubCli } = require(${JSON.stringify(__filename)});`,
-    `process.exit(runStubCli(process.argv.slice(2), ${JSON.stringify({ kata, log, state: statePath })}));`,
+    `process.exit(runStubCli(process.argv.slice(2), ${JSON.stringify({
+      kata,
+      listDependencies,
+      log,
+      state: statePath,
+    })}));`,
   ].join('\n');
   const bin = path.join(binDir, STUB_BIN);
   fs.writeFileSync(bin, `${source}\n`, { mode: 0o755 });
@@ -284,21 +345,32 @@ function createTrackerStub(root, options = {}) {
     yaml.dump({
       adapter,
       version: '1.0.0',
-      categories: ['tracker'],
-      contract: { tracker: '1.0' },
+      categories: workGraph === 'unavailable' ? ['tracker', 'work-graph'] : ['tracker'],
+      contract:
+        workGraph === 'unavailable'
+          ? { tracker: '1.0', 'work-graph': '2.0' }
+          : { tracker: '1.0' },
       binaries: [STUB_BIN],
       allowlist: [{ bin: STUB_BIN, sub: [...SUBCOMMANDS] }],
       env: [],
       health: [{ id: 'tracker-version', run: [STUB_BIN, '--version'], timeoutMs: 5000 }],
       detect: [],
-      capabilities: capabilityTable(declare, createParse),
+      capabilities: capabilityTable(declare, createParse, exposeDependencies),
     })
   );
   fs.writeFileSync(path.join(adapterDir, 'SKILL.md'), `# ${adapter}\n`);
 
   const configFile = path.join(root, '.ensemble', 'toolchain.yaml');
   fs.mkdirSync(path.dirname(configFile), { recursive: true });
-  fs.writeFileSync(configFile, `tracker: ${adapter}\n`);
+  // Naming this adapter for `work-graph` too keeps the shipped `auto` sentinel out of the way:
+  // the category then resolves to a manifest that claims it and declares none of its
+  // capabilities, which is what an adapter that cannot answer them looks like to the runner.
+  fs.writeFileSync(
+    configFile,
+    workGraph === 'unavailable'
+      ? `tracker: ${adapter}\nwork-graph: ${adapter}\n`
+      : `tracker: ${adapter}\n`
+  );
 
   const read = () => readState(statePath);
   return {
@@ -355,6 +427,14 @@ function createTrackerStub(root, options = {}) {
       const blocked = issueList(state).find(issue => issue.id === blockedId);
       if (!blocked) throw new Error(`dropEdge: no issue '${blockedId}'`);
       blocked.dependencies = (blocked.dependencies || []).filter(dep => dep.id !== blockerId);
+      writeState(statePath, state);
+    },
+    /** Delete a bead behind the engine's back, so a planned edge can lose an endpoint. */
+    removeIssue: id => {
+      const state = read();
+      const at = issueList(state).findIndex(candidate => candidate.id === id);
+      if (at === -1) throw new Error(`removeIssue: no issue '${id}'`);
+      state.issues.splice(at, 1);
       writeState(statePath, state);
     },
     setDescription: (id, text) => {

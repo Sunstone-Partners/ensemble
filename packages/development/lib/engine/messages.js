@@ -209,6 +209,70 @@ function duplicatePrefixWarning(prefix, ids, reused) {
   return `title prefix '${prefix}' is carried by ${ids.length} beads (${ids.join(', ')}); reusing ${reused}`;
 }
 
+/**
+ * No bead of this TRD exists. Authored: `implement-trd-tasks-reference/SKILL.md:64` refuses
+ * `--execute` without a scaffold in exactly this shape, and this verb reads the same scaffold.
+ * @param {string} slug the TRD's slug
+ * @returns {string}
+ */
+function notScaffolded(slug) {
+  return `ERROR: no beads exist for TRD '${slug}'. Run /ensemble:implement-trd-tasks --plan first.`;
+}
+
+/**
+ * The work graph is unsound. Authored: `phase-2-scaffold.md:26` halts on graph-health findings
+ * and names `/ensemble:refine-beads` as the repair, but prints no text of its own.
+ * @param {number} count how many findings
+ * @returns {string}
+ */
+function workGraphFindings(count) {
+  return `ERROR: work-graph reports ${count} finding(s). Fix the dependencies, or run /ensemble:refine-beads, before execution.`;
+}
+
+/**
+ * A bead's reference block does not resolve. Authored: `bead-context` returns the reasons and
+ * names none of its own, so each is listed under the `ERROR: ` pattern of phase-1-preflight.md:7.
+ * @param {string} beadId the bead it refused
+ * @param {string[]} missing its own reasons
+ * @returns {string}
+ */
+function beadContextFailed(beadId, missing) {
+  return [`ERROR: bead-context refused bead ${beadId}:`, ...missing.map(entry => `  ${entry}`)].join(
+    '\n'
+  );
+}
+
+/**
+ * Open beads carry no `## References` block. Authored on the count-and-subject pattern of the
+ * `phase-3-*.md:9` reference check, which reports the gap and does not halt.
+ * @param {number} count how many open beads of this TRD
+ * @returns {string}
+ */
+function referencesWarning(count) {
+  return `${count} open bead(s) of this TRD have no '## References' block`;
+}
+
+/**
+ * Beads of this TRD are unlabelled. Authored on the same pattern as `referencesWarning`
+ * (`phase-3-*.md:8`), with the repair this verb itself offers.
+ * @param {number} count how many beads
+ * @param {string} label the label they should carry
+ * @returns {string}
+ */
+function labelsWarning(count, label) {
+  return `${count} bead(s) of this TRD do not carry the label '${label}'; run implement bead-health --label`;
+}
+
+/**
+ * The tracker exposes no dependency data at all, so no edge can be compared. Authored, as
+ * `unavailableWarning`: an unreadable edge set is not drift and must never be reported as drift.
+ * @param {string} reason why no edge could be read
+ * @returns {string}
+ */
+function edgesUnreadable(reason) {
+  return `the tracker reports no dependency data (${reason}); the edge diff was skipped`;
+}
+
 module.exports = {
   BRANCH_FLAGS_EXCLUSIVE,
   DETACHED_HEAD,
@@ -222,15 +286,21 @@ module.exports = {
   WORKTREE_DIRTY,
   agentNotRegistered,
   ambiguousKey,
+  beadContextFailed,
   branchNotFound,
   createFailed,
   createNoId,
   depArgsFailed,
   duplicatePrefixWarning,
+  edgesUnreadable,
   exclusive,
   failedWarning,
   gitTownUnusable,
+  labelsWarning,
   lookupFailed,
+  notScaffolded,
+  referencesWarning,
   scaffoldPlanFailed,
+  workGraphFindings,
   unavailableWarning,
 };
