@@ -256,6 +256,7 @@ describe('the engine is vendored for pi', () => {
       'registry.js',
       'result.js',
       'staleness.js',
+      'tracker.js',
       'trd-source.js',
       'validate.js',
       'worktree.js',
@@ -267,6 +268,7 @@ describe('the engine is vendored for pi', () => {
       'verbs/implement-branch.js',
       'verbs/implement-env.js',
       'verbs/implement-resume.js',
+      'verbs/implement-scaffold.js',
       'verbs/implement-team.js',
     ];
     const vendoredFiles = fs.existsSync(path.join(PI_VENDOR_LIB_DIR, 'engine'))

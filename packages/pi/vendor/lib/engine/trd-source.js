@@ -20,9 +20,14 @@ const {
   normalizeLineEndings,
   scanFrontmatter,
 } = require('../trd-parser');
+const { refused } = require('./result');
+const { resolveCallerPath } = require('./validate');
 
 /** Where a TRD lives, the one directory `trd list` scans. */
 const TRD_DIR = path.join('docs', 'TRD');
+
+/** A TRD is a markdown file; the operand says so or it is not a TRD. */
+const MD_RE = /\.md$/i;
 
 /**
  * The heading a TRD must carry, tested exactly as `trd-parser.js:448` tests it.
@@ -132,12 +137,41 @@ function readFrontmatter(absolutePath) {
   return { frontmatter: frontmatter || null, present: true };
 }
 
+/**
+ * Resolve the TRD operand every TRD-scoped verb takes, refusing rather than guessing.
+ *
+ * A caller-supplied path is resolved through `resolveCallerPath`, so a path escaping the project
+ * root is `INVALID_INPUT` `PATH_ESCAPE` and never reaches the file system check.
+ *
+ * @param {object} call the dispatcher's call object
+ * @returns {{path: string}|object} the project-relative path, or a tagged refusal
+ * @throws {Error} `INVALID_INPUT` `PATH_ESCAPE` when the operand escapes the project root
+ */
+function requireTrd(call) {
+  const operand = call.input.trd;
+  if (typeof operand !== 'string' || !MD_RE.test(operand)) {
+    return refused('TRD_REQUIRED', "name the TRD as a '.md' path");
+  }
+  const absolute = resolveCallerPath(call.projectRoot, operand);
+  let stat;
+  try {
+    stat = fs.statSync(absolute);
+  } catch {
+    stat = null;
+  }
+  if (!stat || !stat.isFile()) {
+    return refused('TRD_NOT_FOUND', `TRD '${operand}' does not exist`);
+  }
+  return { path: toProjectRelative(call.projectRoot, absolute) };
+}
+
 module.exports = {
   TRD_DIR,
   discoverTrds,
   hasMasterTaskList,
   hasTaskLine,
   readFrontmatter,
+  requireTrd,
   slugOf,
   toProjectRelative,
 };

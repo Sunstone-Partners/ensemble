@@ -25,7 +25,8 @@ const { evaluateStaleness } = require('../staleness');
 const { isResult, needsChoice, refused, unavailable } = require('../result');
 const { lsFiles } = require('../git');
 const { resolveInteractivity } = require('../interactivity');
-const { runToolchain, runTrd, toolchainFailure } = require('../cli-json');
+const { runTrd } = require('../cli-json');
+const { readIssues } = require('../tracker');
 const { readWorktree } = require('../worktree');
 const { resolveCallerPath } = require('../validate');
 const {
@@ -232,37 +233,9 @@ function validateTraceability(call, trdPath) {
  *   total: number}|object}
  */
 function readEpic(call, slug) {
-  const result = runToolchain(call, ['run', 'tracker.list']);
-  if (!result.json) {
-    return unavailable(
-      'TRACKER_UNREADABLE',
-      `tracker.list produced no JSON result (exit ${result.exitCode})${
-        result.stderr ? `: ${result.stderr.trim()}` : ''
-      }`
-    );
-  }
-  if (result.json.ok !== true) return toolchainFailure(result.json.error);
-
-  let payload = result.json.data;
-  if (typeof payload === 'string') {
-    try {
-      payload = JSON.parse(payload);
-    } catch {
-      return unavailable('TRACKER_UNREADABLE', 'tracker.list output is not valid JSON');
-    }
-  }
-  // Every shipped tracker shape: a bare array (older `br`), `{issues}` (`br --json`) or the
-  // normalized `{items}` a parsed adapter answers with.
-  const issues = Array.isArray(payload)
-    ? payload
-    : payload && Array.isArray(payload.issues)
-      ? payload.issues
-      : payload && Array.isArray(payload.items)
-        ? payload.items
-        : null;
-  if (!issues) {
-    return unavailable('TRACKER_UNREADABLE', 'tracker.list output has no issue list');
-  }
+  const listed = readIssues(call);
+  if (isResult(listed)) return listed;
+  const { issues } = listed;
 
   const epicPrefix = `[trd:${slug}]`;
   const taskPrefix = `[trd:${slug}:task:`;

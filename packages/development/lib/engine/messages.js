@@ -110,6 +110,105 @@ const PR_BACKEND_UNRESOLVED = [
   '  ENSEMBLE_PR_BACKEND=gh',
 ].join('\n');
 
+/**
+ * The scaffold could not be planned. Authored: `phase-2-scaffold.md:17` says only "HALT" and
+ * prints no text, so this follows the `ERROR: ` pattern of phase-1-preflight.md:7.
+ * @param {string} trdPath
+ * @param {string} detail the planner's own message
+ * @returns {string}
+ */
+function scaffoldPlanFailed(trdPath, detail) {
+  return `ERROR: could not plan the scaffold of '${trdPath}': ${detail}`;
+}
+
+/**
+ * A bead could not be created. Authored: `phase-2-scaffold.md:17` says "HALT" and names no text.
+ * The resume hint is the behaviour `implement-trd-tasks-reference/SKILL.md:66` promises.
+ * @param {string} titlePrefix the bead that failed, named so the operator can find it
+ * @param {string} detail the tracker's own message
+ * @returns {string}
+ */
+function createFailed(titlePrefix, detail) {
+  return `ERROR: could not create bead '${titlePrefix}': ${detail}. Nothing further was created; run it again to resume.`;
+}
+
+/**
+ * A create succeeded but answered with no id. Authored, as `createFailed`.
+ * @param {string} titlePrefix
+ * @returns {string}
+ */
+function createNoId(titlePrefix) {
+  return `ERROR: the tracker returned no id for bead '${titlePrefix}'. Nothing further was created; run it again to resume.`;
+}
+
+/**
+ * The external-key lookup that precedes a create failed. Authored, as `createFailed`.
+ * @param {string} titlePrefix
+ * @param {string} detail
+ * @returns {string}
+ */
+function lookupFailed(titlePrefix, detail) {
+  return `ERROR: could not look up bead '${titlePrefix}' by its external key: ${detail}. Nothing further was created.`;
+}
+
+/**
+ * Two beads carry the one external key. Authored around `tracker-findings.js:209`'s own text,
+ * which `detail` carries verbatim.
+ * @param {string} titlePrefix
+ * @param {string} detail
+ * @returns {string}
+ */
+function ambiguousKey(titlePrefix, detail) {
+  return `ERROR: bead '${titlePrefix}': ${detail}`;
+}
+
+/**
+ * The dependency edges could not be resolved against the created beads. Authored: the beads
+ * exist, so the sentence says so rather than implying the scaffold is lost.
+ * @param {string} detail
+ * @returns {string}
+ */
+function depArgsFailed(detail) {
+  return `ERROR: could not resolve the dependency edges: ${detail}. The beads exist; run it again to wire the edges.`;
+}
+
+/**
+ * A capability this adapter cannot do. Authored in the pattern of `phase-2-scaffold.md:24`
+ * ("warn once and skip the dependency wiring"), which names no text of its own.
+ * @param {string} capability
+ * @param {string} detail the runner's own message
+ * @param {string} consequence what was skipped
+ * @returns {string}
+ */
+function unavailableWarning(capability, detail, consequence) {
+  return `${capability} unavailable (${detail}); ${consequence}`;
+}
+
+/**
+ * A capability that exists and failed. Authored, as `unavailableWarning`.
+ * @param {string} capability
+ * @param {string} subject what it was called for
+ * @param {string} detail the tracker's own message
+ * @param {string} consequence
+ * @returns {string}
+ */
+function failedWarning(capability, subject, detail, consequence) {
+  return `${capability} failed for ${subject} (${detail}); ${consequence}`;
+}
+
+/**
+ * More than one bead carries a title prefix. Authored: the idempotency rule of
+ * `implement-trd-tasks-reference/SKILL.md:66` is by title prefix, so a duplicate makes the reuse
+ * a choice, and a choice the operator cannot see is a silent one.
+ * @param {string} prefix
+ * @param {string[]} ids every bead carrying it
+ * @param {string} reused the one that was reused
+ * @returns {string}
+ */
+function duplicatePrefixWarning(prefix, ids, reused) {
+  return `title prefix '${prefix}' is carried by ${ids.length} beads (${ids.join(', ')}); reusing ${reused}`;
+}
+
 module.exports = {
   BRANCH_FLAGS_EXCLUSIVE,
   DETACHED_HEAD,
@@ -122,7 +221,16 @@ module.exports = {
   PR_BACKEND_UNRESOLVED,
   WORKTREE_DIRTY,
   agentNotRegistered,
+  ambiguousKey,
   branchNotFound,
+  createFailed,
+  createNoId,
+  depArgsFailed,
+  duplicatePrefixWarning,
   exclusive,
+  failedWarning,
   gitTownUnusable,
+  lookupFailed,
+  scaffoldPlanFailed,
+  unavailableWarning,
 };

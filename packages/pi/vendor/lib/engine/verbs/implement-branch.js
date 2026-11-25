@@ -18,7 +18,6 @@
  */
 
 const path = require('path');
-const fs = require('fs');
 
 const MESSAGES = require('../messages');
 const { STRATEGIES } = require('../policy');
@@ -26,10 +25,7 @@ const { isResult, needsChoice, refused, unavailable } = require('../result');
 const { currentBranch, localBranches, remoteDefaultBranch, switchTo } = require('../git');
 const { resolveInteractivity } = require('../interactivity');
 const { runToolchain, runTrd, toolchainFailure } = require('../cli-json');
-const { slugOf, toProjectRelative } = require('../trd-source');
-const { resolveCallerPath } = require('../validate');
-
-const MD_RE = /\.md$/i;
+const { requireTrd, slugOf } = require('../trd-source');
 
 /** The two topology sentences the reference prints, verbatim (SKILL.md:27). */
 const TOPOLOGY = Object.freeze({
@@ -39,30 +35,6 @@ const TOPOLOGY = Object.freeze({
 
 function flag(input, key) {
   return input[key] === true;
-}
-
-/**
- * The TRD the decision is about. Named explicitly here rather than discovered: `implement resume`
- * already owns discovery, and a branch is created against one document.
- * @param {object} call the dispatcher's call object
- * @returns {{path: string}|object} the project-relative path, or a tagged engine result
- */
-function selectTrd(call) {
-  const operand = call.input.trd;
-  if (typeof operand !== 'string' || !MD_RE.test(operand)) {
-    return refused('TRD_REQUIRED', "name the TRD as a '.md' path");
-  }
-  const absolute = resolveCallerPath(call.projectRoot, operand);
-  let stat;
-  try {
-    stat = fs.statSync(absolute);
-  } catch {
-    stat = null;
-  }
-  if (!stat || !stat.isFile()) {
-    return refused('TRD_NOT_FOUND', `TRD '${operand}' does not exist`);
-  }
-  return { path: toProjectRelative(call.projectRoot, absolute) };
 }
 
 /**
@@ -343,7 +315,7 @@ function handler(call) {
     return refused('PLAN_EXECUTE_EXCLUSIVE', MESSAGES.PLAN_EXECUTE_EXCLUSIVE);
   }
 
-  const selected = selectTrd(call);
+  const selected = requireTrd(call);
   if (isResult(selected)) return selected;
   const trdPath = selected.path;
 
