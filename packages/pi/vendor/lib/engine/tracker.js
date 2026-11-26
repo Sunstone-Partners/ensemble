@@ -97,11 +97,22 @@ function classify(result, capability) {
 /**
  * Every issue the tracker holds, and the adapter that answered.
  *
+ * `all` asks for closed work too. A kata-shaped tracker lists only open items by default, so a
+ * reader that must decide whether every task of a phase is CLOSED cannot see the answer without
+ * it -- the phase would look permanently unfinished. The category's `filter` input is the
+ * supported way to ask, so this passes it rather than reading a second source.
+ *
  * @param {object} call the dispatcher's call object
+ * @param {{all?: boolean}} [options]
  * @returns {{adapter: string|null, issues: object[]}|object} the rows, or a tagged engine result
  */
-function readIssues(call) {
-  const result = runToolchain(call, ['run', 'tracker.list']);
+function readIssues(call, options = {}) {
+  const result = runToolchain(
+    call,
+    options.all === true
+      ? ['run', 'tracker.list', '--arg', 'filter=all']
+      : ['run', 'tracker.list']
+  );
   if (!result.json) {
     return unavailable(
       'TRACKER_UNREADABLE',
@@ -134,6 +145,49 @@ function readIssues(call) {
   }
 
   return { adapter: typeof result.json.adapter === 'string' ? result.json.adapter : null, issues };
+}
+
+/**
+ * Every comment already recorded on one work item.
+ *
+ * Two shipped shapes answer this: `br comments list` prints a bare array of `{id, text}`, and
+ * `kata show --json` prints `{comments: [{id, body}], comments_truncated}`. Both are read here
+ * so a caller can ask "did I already say this?" on either tracker; a tracker that cannot answer
+ * at all is `unavailable`, which is a different thing from "no comments" and must stay so.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {string} id the work item
+ * @returns {{texts: string[], truncated: boolean}|object} the comments, or a tagged engine result
+ */
+function readComments(call, id) {
+  const answer = classify(callCapability(call, 'tracker.comments', { id }), 'tracker.comments');
+  if (answer.kind !== 'ok') return answer;
+
+  let payload = answer.data;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      return unavailable('COMMENTS_UNREADABLE', 'tracker.comments output is not valid JSON');
+    }
+  }
+  const rows = Array.isArray(payload)
+    ? payload
+    : payload && Array.isArray(payload.comments)
+      ? payload.comments
+      : null;
+  if (!rows) {
+    return unavailable('COMMENTS_UNREADABLE', 'tracker.comments output has no comment list');
+  }
+  return {
+    texts: rows.map(row => {
+      if (typeof row === 'string') return row;
+      if (!row || typeof row !== 'object') return '';
+      if (typeof row.text === 'string') return row.text;
+      return typeof row.body === 'string' ? row.body : '';
+    }),
+    truncated: Boolean(payload && payload.comments_truncated === true),
+  };
 }
 
 /**
@@ -261,6 +315,7 @@ module.exports = {
   isClosed,
   isTaskLevel,
   prefixOf,
+  readComments,
   readIssues,
   scopeBeads,
 };

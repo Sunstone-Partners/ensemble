@@ -39,8 +39,21 @@ const SUBCOMMANDS = Object.freeze([
   'set-status',
   'sync',
   'comment',
+  'comments',
   'close',
+  'close-with-reason',
+  'export',
 ]);
+
+/** The test-runner stub's own subcommands; a separate allowlist, as a separate adapter. */
+const TEST_RUNNER_SUBCOMMANDS = Object.freeze(['--version', 'test-run']);
+
+/** The package-runner stub's own subcommands; again a separate adapter, again its own list. */
+const PACKAGE_RUNNER_SUBCOMMANDS = Object.freeze(['--version', 'script']);
+
+/** kata's server-side closure rules, which the engine must satisfy rather than work around. */
+const KATA_REASON_MIN = 40;
+const KATA_COMMIT_RE = /^[0-9a-f]{7,40}$/;
 
 function readState(statePath) {
   return JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -79,8 +92,12 @@ function runStubCli(argv, options, streams = process) {
 
   if (verb === 'list') {
     // A kata workspace lists open work only; beads lists everything. The difference is what
-    // makes the external-key lookup necessary on the kata path.
-    const all = kata ? issueList(state).filter(i => i.status !== 'closed') : issueList(state);
+    // makes the external-key lookup necessary on the kata path. `--all` is kata's own opt-in
+    // (the adapter's `filter: all` variant): a reader that needs closed work must ask for it.
+    const all =
+      kata && !argv.includes('--all')
+        ? issueList(state).filter(i => i.status !== 'closed')
+        : issueList(state);
     // `br list` carries a dependency COUNT, not the links themselves; a tracker whose rows do
     // carry them lets a reader skip the per-bead reads. Both shapes exist, so both are offered.
     // `listWithoutDependenciesFor` hides the links of some beads only, the shape a tracker whose
@@ -121,6 +138,9 @@ function runStubCli(argv, options, streams = process) {
     out(`${JSON.stringify({ issues, total: issues.length })}\n`);
     return 0;
   }
+
+  const read = runStubRead(verb, argv, { err, kata, out, state, statePath });
+  if (read !== null) return read;
 
   fs.appendFileSync(log, `MUTATION ${JSON.stringify(argv)}\n`);
 
@@ -229,13 +249,138 @@ function runStubCli(argv, options, streams = process) {
     return 0;
   }
 
-  if (verb === 'comment' || verb === 'close') {
-    out(`${JSON.stringify({ id: argv[1] || null, status: verb === 'close' ? 'closed' : 'open' })}\n`);
+  // TRD-013-TEST: the quality gate's own calls. `comment` and `close` are stateful here (they
+  // were write-only before) because "the same phase twice adds no second comment and closes
+  // nothing again" can only be observed against a tracker that remembers the first run.
+  if (verb === 'comment') {
+    const issue = issueList(state).find(candidate => candidate.id === argv[1]);
+    if (!issue) {
+      err(`stub ${STUB_BIN}: no such issue '${argv[1]}'\n`);
+      return 1;
+    }
+    issue.comments = Array.isArray(issue.comments) ? issue.comments : [];
+    issue.comments.push({ id: `c-${issue.comments.length + 1}`, text: String(argv[2] || '') });
+    writeState(statePath, state);
+    out(`${JSON.stringify({ id: issue.id, status: issue.status })}\n`);
+    return 0;
+  }
+
+  if (verb === 'close' || verb === 'close-with-reason') {
+    const issue = issueList(state).find(candidate => candidate.id === argv[1]);
+    if (!issue) {
+      err(`stub ${STUB_BIN}: no such issue '${argv[1]}'\n`);
+      return 1;
+    }
+    if (verb === 'close-with-reason') {
+      const reason = String(argv[2] || '');
+      const commit = String(argv[3] || '');
+      // kata's server refuses a thin reason or a sha it cannot resolve; the stub refuses the
+      // same way, so "the reason really is long enough" is the tracker's answer, not ours.
+      if (kata && (reason.length < KATA_REASON_MIN || !KATA_COMMIT_RE.test(commit))) {
+        err(`stub ${STUB_BIN}: close-with-reason needs a >=40-character reason and a commit sha\n`);
+        return 1;
+      }
+      issue.closure = { commit, reason };
+    }
+    issue.status = 'closed';
+    writeState(statePath, state);
+    out(`${JSON.stringify({ id: issue.id, status: issue.status })}\n`);
     return 0;
   }
 
   err(`stub ${STUB_BIN}: unexpected ${JSON.stringify(argv)}\n`);
   return 1;
+}
+
+/**
+ * The read-only half of the stub: the two reads that carry no mutation and so are answered
+ * before the mutation log is touched. Kept separate from `runStubCli`'s mutating tail only for
+ * readability; the dispatch order is unchanged.
+ */
+function runStubRead(verb, argv, { kata, state, statePath, out, err }) {
+  if (verb === 'comments') {
+    const issue = issueList(state).find(candidate => candidate.id === argv[1]);
+    if (!issue) {
+      err(`stub ${STUB_BIN}: no such issue '${argv[1]}'\n`);
+      return 1;
+    }
+    const comments = Array.isArray(issue.comments) ? issue.comments : [];
+    // Two real shapes: `br comments list` prints a bare array of `{id, text}`; `kata show`
+    // prints `{comments: [{id, body}], comments_truncated}`. A reader that only knew one of
+    // them would work on one tracker and silently see no comments on the other.
+    out(
+      `${JSON.stringify(
+        kata
+          ? {
+              comments: comments.map(c => ({ body: c.text, id: c.id })),
+              comments_truncated: false,
+            }
+          : comments
+      )}\n`
+    );
+    return 0;
+  }
+
+  if (verb === 'export') {
+    // `tracker.stage-export`'s textual mirror: one JSON record per line, as `.beads/issues.jsonl`
+    // holds them, so `trd-cli beads-stage` has a real export to scope.
+    out(exportJsonl(issueList(state)));
+    return 0;
+  }
+
+  if (verb === 'script') {
+    // `package-runner.run-script` as a real package runner answers it: the script's own output,
+    // and the script's own exit code. A FAILING suite prints to stderr, which is where the
+    // toolchain runner reads a non-zero exit's detail from -- a reader that only looked at
+    // stdout would lose the failing file names.
+    const suite = (state.control || {}).suite || {};
+    const exitCode = Number(suite.exitCode || 0);
+    const output =
+      typeof suite.output === 'string' ? suite.output : `> ${argv[1]}\n\nTests passed\n`;
+    if (exitCode === 0) out(output);
+    else err(output);
+    return exitCode;
+  }
+
+  if (verb === 'test-run') {
+    const control = state.control || {};
+    if (control.failTestRunner === true) {
+      err(`stub ${STUB_BIN}: test-run crashed\n`);
+      return 2;
+    }
+    const result = control.testResult || { failed: 0, passed: 0, total: 0, success: true };
+    const body = {
+      duration: 1,
+      failed: Number(result.failed || 0),
+      failures: Array.isArray(result.failures) ? result.failures : [],
+      passed: Number(result.passed || 0),
+      skipped: Number(result.skipped || 0),
+      success: result.success !== false,
+      total: Number(result.total || 0),
+    };
+    if (control.testResultShape) Object.assign(body, control.testResultShape);
+    out(`${JSON.stringify(body)}\n`);
+    // A failing SUITE is exit 1, not a crash -- exactly what the shipped runner scripts do and
+    // why `test-runner.run` declares `successExitCodes: [0, 1]`.
+    return body.success ? 0 : 1;
+  }
+
+  return null;
+}
+
+/** The issues as the tracked `.beads/issues.jsonl` export holds them. */
+function exportJsonl(issues) {
+  return issues
+    .map(issue =>
+      `${JSON.stringify({
+        id: issue.id,
+        labels: Array.isArray(issue.labels) ? issue.labels : [],
+        status: issue.status,
+        title: issue.title,
+        type: issue.type,
+      })}\n`
+    )
+    .join('');
 }
 
 /**
@@ -254,7 +399,12 @@ function capabilityTable(declare, createParse, exposeDependencies) {
   const on = key => declare[key] !== false;
   const idParse = { format: 'json', root: '$', map: { id: '$.id' } };
   const table = {
-    'tracker.list': { run: [STUB_BIN, 'list'] },
+    // `filter` is the category's own selector; `all` is the one value that makes a kata-shaped
+    // tracker list closed work too, which is how a finished phase can ever look finished.
+    'tracker.list': {
+      run: [STUB_BIN, 'list'],
+      variants: { filter: { all: [STUB_BIN, 'list', '--all'], '*': [STUB_BIN, 'list'] } },
+    },
     // Modelled on `adapter-tracker-beads/adapter.yaml` :68-98, plus the one field no shipped
     // tracker maps today: `dependencies`. `exposeDependencies: false` drops it again, which is
     // exactly what a reader of live edges meets on the shipped beads and kata adapters.
@@ -284,6 +434,17 @@ function capabilityTable(declare, createParse, exposeDependencies) {
     'tracker.comment': { run: [STUB_BIN, 'comment', '${id}', '${text}'], parse: idParse },
     'tracker.close': { run: [STUB_BIN, 'close', '${id}'], parse: idParse },
   };
+  // Modelled on `adapter-tracker-beads/adapter.yaml` :338 (`br comments list`) and
+  // `adapter-tracker-kata/adapter.yaml` :457 (`kata close --done -m <reason> --commit <sha>`):
+  // both are OPTIONAL capabilities, so a tracker that lacks either is a shape the verb meets.
+  if (on('comments')) table['tracker.comments'] = { run: [STUB_BIN, 'comments', '${id}'] };
+  if (on('closeWithReason')) {
+    table['tracker.close-with-reason'] = {
+      run: [STUB_BIN, 'close-with-reason', '${id}', '${reason}', '${commit}'],
+      parse: idParse,
+    };
+  }
+  if (on('stageExport')) table['tracker.stage-export'] = { run: [STUB_BIN, 'export'] };
   if (on('findByKey')) table['tracker.find-by-key'] = { run: [STUB_BIN, 'find-by-key', '${key}'] };
   if (on('createDetailed')) {
     table['tracker.create-detailed'] = {
@@ -352,6 +513,8 @@ function createTrackerStub(root, options = {}) {
     exposeDependencies = true,
     issues = [],
     listDependencies = true,
+    packageRunner = true,
+    packageRunnerExtraArg = false,
     workGraph = 'builtin',
   } = options;
   const kata = adapter === 'kata';
@@ -407,6 +570,98 @@ function createTrackerStub(root, options = {}) {
   );
   fs.writeFileSync(path.join(adapterDir, 'SKILL.md'), `# ${adapter}\n`);
 
+  // The test runner is a SEPARATE adapter, as it is in a real workspace: its own manifest, its
+  // own allowlist, its own category. `declare.testRunner: false` still ships and names the
+  // adapter but declares no capability, which is what a project whose runner cannot run a
+  // suite looks like to the gate. (Omitting the adapter entirely would not model that: the
+  // category would fall back to the SHIPPED `default` runner and the gate would reach a real
+  // one.)
+  const testRunnerAdapter = 'fixture-test-runner';
+  const runnerDir = path.join(root, 'packages', 'fixture-pkg', 'skills', testRunnerAdapter);
+  fs.mkdirSync(runnerDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(runnerDir, 'adapter.yaml'),
+    yaml.dump({
+      adapter: testRunnerAdapter,
+      version: '1.0.0',
+      categories: ['test-runner'],
+      contract: { 'test-runner': '1.0' },
+      binaries: [STUB_BIN],
+      allowlist: [{ bin: STUB_BIN, sub: [...TEST_RUNNER_SUBCOMMANDS] }],
+      env: [],
+      health: [{ id: 'runner-version', run: [STUB_BIN, '--version'], timeoutMs: 5000 }],
+      detect: [],
+      capabilities:
+        declare.testRunner === false
+          ? {}
+          : {
+              'test-runner.run': {
+                // The shipped runner scripts exit 1 for a FAILING suite, not a crash, so the
+                // adapter must opt in the same way `adapter-test-runner-default` does.
+                successExitCodes: [0, 1],
+                run: [STUB_BIN, 'test-run', '${file}'],
+                variants: {
+                  framework: {
+                    '*': [STUB_BIN, 'test-run', '${file}', '--framework', '${framework}'],
+                  },
+                },
+                parse: {
+                  format: 'json',
+                  root: '$',
+                  map: {
+                    duration: '$.duration',
+                    failed: '$.failed',
+                    failures: { path: '$.failures', default: [] },
+                    passed: '$.passed',
+                    skipped: { path: '$.skipped', optional: true },
+                    success: '$.success',
+                    total: '$.total',
+                  },
+                },
+              },
+            },
+    })
+  );
+  fs.writeFileSync(path.join(runnerDir, 'SKILL.md'), `# ${testRunnerAdapter}\n`);
+
+  // The package runner is a third adapter, for the same reason: `verify` runs the WHOLE suite
+  // through `package-runner.run-script`, which is a different category from the per-phase
+  // `test-runner.run` the gate uses, and a scenario must be able to fail one without the other.
+  const packageRunnerAdapter = 'fixture-package-runner';
+  const packageRunnerDir = path.join(root, 'packages', 'fixture-pkg', 'skills', packageRunnerAdapter);
+  fs.mkdirSync(packageRunnerDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRunnerDir, 'adapter.yaml'),
+    yaml.dump({
+      adapter: packageRunnerAdapter,
+      version: '1.0.0',
+      categories: ['package-runner'],
+      contract: { 'package-runner': '1.0' },
+      binaries: [STUB_BIN],
+      allowlist: [{ bin: STUB_BIN, sub: [...PACKAGE_RUNNER_SUBCOMMANDS] }],
+      env: [],
+      health: [{ id: 'package-runner-version', run: [STUB_BIN, '--version'], timeoutMs: 5000 }],
+      detect: [],
+      capabilities:
+        declare.packageRunner === false
+          ? {}
+          : {
+              'package-runner.run-script': {
+                // Both arguments, as the shipped npm adapter declares them: a caller that
+                // forgets `args` gets `INVALID_ARG` from the runner, here as it would there.
+                run: packageRunnerExtraArg
+                  ? // An adapter asking for a value the category's contract never declares: the
+                    // runner refuses the call rather than running it, which is the gate a verb
+                    // must hand back untouched.
+                    [STUB_BIN, 'script', '${script}', '${args}', '${unsupplied}']
+                  : [STUB_BIN, 'script', '${script}', '${args}'],
+                parse: { format: 'text', map: { output: '$' } },
+              },
+            },
+    })
+  );
+  fs.writeFileSync(path.join(packageRunnerDir, 'SKILL.md'), `# ${packageRunnerAdapter}\n`);
+
   const configFile = path.join(root, '.ensemble', 'toolchain.yaml');
   fs.mkdirSync(path.dirname(configFile), { recursive: true });
   // Naming this adapter for `work-graph` too keeps the shipped `auto` sentinel out of the way:
@@ -414,9 +669,12 @@ function createTrackerStub(root, options = {}) {
   // capabilities, which is what an adapter that cannot answer them looks like to the runner.
   fs.writeFileSync(
     configFile,
-    workGraph === 'unavailable'
-      ? `tracker: ${adapter}\nwork-graph: ${adapter}\n`
-      : `tracker: ${adapter}\n`
+    [
+      `tracker: ${adapter}\n`,
+      workGraph === 'unavailable' ? `work-graph: ${adapter}\n` : '',
+      `test-runner: ${testRunnerAdapter}\n`,
+      packageRunner === false ? '' : `package-runner: ${packageRunnerAdapter}\n`,
+    ].join('')
   );
 
   const read = () => readState(statePath);
@@ -522,6 +780,78 @@ function createTrackerStub(root, options = {}) {
       state.control = { ...(state.control || {}), stripShowDependenciesFor: ids };
       writeState(statePath, state);
     },
+    /**
+     * Put the beads a scaffold would have created straight into the stub, from
+     * `trd-cli scaffold-calls`' own plan. A scenario that is about the GATE should not pay for
+     * a whole scaffold run first, and seeding from the same plan the scaffold obeys keeps the
+     * two in step: the titles, types and labels are the planner's, not the test's.
+     *
+     * @param {{creates: Array<{args: object, kind: string, titlePrefix: string}>}} plan
+     * @returns {Record<string, string>} the created id of every title prefix
+     */
+    seedFromPlan: plan => {
+      const state = read();
+      const idByPrefix = {};
+      for (const create of (plan && plan.creates) || []) {
+        const id = `st-${(state.seq || 0) + 1}`;
+        state.seq = (state.seq || 0) + 1;
+        idByPrefix[create.titlePrefix] = id;
+        state.issues = issueList(state).concat({
+          dependencies: [],
+          description: create.args.description,
+          external_ref: create.args.externalKey,
+          id,
+          labels: String(create.args.labels || '')
+            .split(',')
+            .filter(part => part.length > 0),
+          priority: create.args.priority,
+          status: 'open',
+          title: create.args.title,
+          type: create.args.type,
+        });
+      }
+      writeState(statePath, state);
+      return idByPrefix;
+    },
+    /** The export text `tracker.stage-export` answers, as `.beads/issues.jsonl` holds it. */
+    exportText: () => exportJsonl(issueList(read())),
+    /** Every comment stored on one issue, in the order they were added. */
+    commentsOn: id => {
+      const issue = issueList(read()).find(candidate => candidate.id === id);
+      return issue && Array.isArray(issue.comments) ? issue.comments : [];
+    },
+    /** The `{commit, reason}` a `close-with-reason` stored, or null. */
+    closureOf: id => {
+      const issue = issueList(read()).find(candidate => candidate.id === id);
+      return (issue && issue.closure) || null;
+    },
+    /** What the next `test-runner.run` reports. */
+    setTestResult: result => {
+      const state = read();
+      state.control = { ...(state.control || {}), testResult: result };
+      writeState(statePath, state);
+    },
+    /** Make `test-runner.run` answer a result the contract does not allow. */
+    setTestResultShape: shape => {
+      const state = read();
+      state.control = { ...(state.control || {}), testResultShape: shape };
+      writeState(statePath, state);
+    },
+    /** What the next `package-runner.run-script` prints, and the exit code it ends on. */
+    setSuite: ({ exitCode, output }) => {
+      const state = read();
+      state.control = { ...(state.control || {}), suite: { exitCode, output } };
+      writeState(statePath, state);
+    },
+    /** Make the test runner crash, as an unusable runner would. */
+    failTestRunner: () => {
+      const state = read();
+      state.control = { ...(state.control || {}), failTestRunner: true };
+      writeState(statePath, state);
+    },
+    /** The whole stub state, so a scenario can restore it and prove a re-run changed nothing. */
+    snapshot: () => fs.readFileSync(statePath, 'utf8'),
+    restore: text => fs.writeFileSync(statePath, text),
     /** Make the list carry a row that is not an issue at all, as a malformed tracker would. */
     nullRowInList: () => {
       const state = read();
@@ -543,10 +873,23 @@ function createTrackerStub(root, options = {}) {
  * @returns {string} the TRD markdown
  */
 function fixtureTrd(options = {}) {
-  const { interPhaseDepends = false, synth = true } = options;
+  const {
+    interPhaseDepends = false,
+    prd = false,
+    satisfies = {},
+    synth = true,
+    targetFiles = false,
+  } = options;
+  // A `Target File` line only when a scenario needs one: the default output stays byte-identical
+  // to what PR 2 and PR 3's suites already pin.
+  const target = file => (targetFiles ? [`  - Target File: ${file}`] : []);
+  // Same rule for `[satisfies REQ-NNN]`: only the scenarios that cross-check a PRD carry it, so
+  // the default TRD is still the one the earlier suites parse.
+  const sat = id => (satisfies[id] ? ` [satisfies ${satisfies[id]}]` : '');
   const lines = [
     '---',
     'status: In Progress',
+    ...(prd ? ['prd: docs/PRD/PRD-fixture.md'] : []),
     'design_readiness_score: 4.5',
     '---',
     '',
@@ -560,7 +903,7 @@ function fixtureTrd(options = {}) {
     '',
     '**Shippable State:** widgets can be stored',
     '',
-    '- [ ] **TRD-001**: Create widget storage (2h)',
+    `- [ ] **TRD-001**: Create widget storage (2h)${sat('TRD-001')}`,
     '  - Implementation AC:',
     '    - [ ] Storage accepts widgets',
   ];
@@ -568,14 +911,16 @@ function fixtureTrd(options = {}) {
   lines.push(
     '',
     '- [ ] **TRD-001-TEST**: Widget storage tests (1h) [depends: TRD-001]',
+    ...target('tests/widget-store.test.js'),
     '  - Test AC:',
     '    - [ ] Scenario: storing a widget keeps it',
     '',
-    '- [ ] **TRD-002**: Read widget storage (2h) [depends: TRD-001]',
+    `- [ ] **TRD-002**: Read widget storage (2h) [depends: TRD-001]${sat('TRD-002')}`,
     '  - Implementation AC:',
     '    - [ ] Storage returns widgets',
     '',
     '- [ ] **TRD-002-TEST**: Widget read tests (1h) [depends: TRD-002]',
+    ...target('tests/widget-read.test.js'),
     '  - Test AC:',
     '    - [ ] Scenario: reading a stored widget returns it',
     '',
@@ -585,15 +930,16 @@ function fixtureTrd(options = {}) {
     '',
     `- [ ] **TRD-003**: Delete widget storage (2h) [depends: ${
       interPhaseDepends ? 'TRD-002-TEST' : 'TRD-002'
-    }]`,
+    }]${sat('TRD-003')}`,
     '  - Implementation AC:',
     '    - [ ] Storage deletes widgets',
     '',
     '- [ ] **TRD-003-TEST**: Widget deletion tests (1h) [depends: TRD-003]',
+    ...target('tests/widget-delete.test.js'),
     '  - Test AC:',
     '    - [ ] Scenario: deleting a widget removes it',
     '',
-    '- [ ] **TRD-004**: Report widget storage (2h) [depends: TRD-003]',
+    `- [ ] **TRD-004**: Report widget storage (2h) [depends: TRD-003]${sat('TRD-004')}`,
     '  - Implementation AC:',
     '    - [ ] Storage reports widget counts',
     '',
@@ -605,10 +951,54 @@ function fixtureTrd(options = {}) {
   return lines.join('\n');
 }
 
+/**
+ * The PRD `fixtureTrd({prd: true})` points at: three requirements the fixture TRD's tasks
+ * satisfy, one per MoSCoW priority that matters, so a scenario can show a `Could` requirement
+ * stays informational while a `Must` one does not.
+ *
+ * @param {{noPriorities?: boolean, unsatisfied?: boolean}} [options]
+ *   `unsatisfied` adds a fourth `Must` requirement no task satisfies, which is the one case
+ *   Step 3 must report; `noPriorities` strips every MoSCoW line, which is the coverage sanity
+ *   check's own case.
+ * @returns {string} the PRD markdown
+ */
+function fixturePrd(options = {}) {
+  const { noPriorities = false, unsatisfied = false } = options;
+  const priority = word => (noPriorities ? [] : [`**Priority:** ${word}`, '']);
+  const lines = [
+    '# PRD: Widget Engine',
+    '',
+    '## Requirements',
+    '',
+    '### REQ-001: Store widgets',
+    '',
+    ...priority('Must'),
+    'Widgets can be stored.',
+    '',
+    '### REQ-002: Delete widgets',
+    '',
+    ...priority('Should'),
+    'Widgets can be deleted.',
+    '',
+    '### REQ-003: Report widgets',
+    '',
+    ...priority('Could'),
+    'Widget counts can be reported.',
+    '',
+  ];
+  if (unsatisfied) {
+    lines.push('### REQ-004: Audit widgets', '', ...priority('Must'), 'Widget edits are audited.', '');
+  }
+  return lines.join('\n');
+}
+
 module.exports = {
+  PACKAGE_RUNNER_SUBCOMMANDS,
   STUB_BIN,
   SUBCOMMANDS,
+  TEST_RUNNER_SUBCOMMANDS,
   createTrackerStub,
+  fixturePrd,
   fixtureTrd,
   runStubCli,
 };

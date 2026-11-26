@@ -26,6 +26,12 @@ const { currentBranch, localBranches, remoteDefaultBranch, switchTo } = require(
 const { resolveInteractivity } = require('../interactivity');
 const { runToolchain, runTrd, toolchainFailure } = require('../cli-json');
 const { requireTrd, slugOf } = require('../trd-source');
+const {
+  effectiveStacked,
+  readPrPlan,
+  readSavedChoices,
+  rewriteForReuse,
+} = require('../pr-plan');
 
 /** The two topology sentences the reference prints, verbatim (SKILL.md:27). */
 const TOPOLOGY = Object.freeze({
@@ -35,81 +41,6 @@ const TOPOLOGY = Object.freeze({
 
 function flag(input, key) {
   return input[key] === true;
-}
-
-/**
- * The choices a previous run saved in the TRD's frontmatter (SKILL.md:23).
- * @param {object} call the dispatcher's call object
- * @param {string} trdPath project-relative
- * @returns {{branchName: string, stackedPrs: boolean|null, useProposed: boolean}|object}
- */
-function readSavedChoices(call, trdPath) {
-  const result = runTrd(call, ['choices-read', trdPath]);
-  if (!result.json) {
-    return unavailable(
-      'CHOICES_UNREADABLE',
-      `trd-cli choices-read produced no JSON result (exit ${result.exitCode})${
-        result.stderr ? `: ${result.stderr.trim()}` : ''
-      }`
-    );
-  }
-  if (typeof result.json.error === 'string') {
-    return refused('CHOICES_UNREADABLE', result.json.error);
-  }
-  const choices = result.json.choices || {};
-  return {
-    branchName: typeof choices.branch_name === 'string' ? choices.branch_name : '',
-    stackedPrs: typeof choices.stacked_prs === 'boolean' ? choices.stacked_prs : null,
-    useProposed: choices.use_proposed === true,
-  };
-}
-
-/**
- * Whether this run plans stacked PRs (SKILL.md:24): the environment toggle wins, then the saved
- * choice, then `false`.
- * @param {object} env
- * @param {boolean|null} saved
- * @returns {boolean}
- */
-function effectiveStacked(env, saved) {
-  const raw = env && env.ENSEMBLE_USE_STACKED_PRS;
-  if (typeof raw === 'string') {
-    const value = raw.trim().toLowerCase();
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-  }
-  return saved === true;
-}
-
-/**
- * The PR plan, from the one CLI that owns it.
- * @param {object} call the dispatcher's call object
- * @param {string} trdPath project-relative
- * @param {boolean} stacked
- * @returns {{actions: object[], branchFirst: string, slug: string, stacked: boolean}|object}
- */
-function readPrPlan(call, trdPath, stacked) {
-  const result = runTrd(call, ['pr-plan', trdPath, ...(stacked ? ['--stacked'] : [])]);
-  if (!result.json) {
-    return unavailable(
-      'PR_PLAN_UNREADABLE',
-      `trd-cli pr-plan produced no JSON result (exit ${result.exitCode})${
-        result.stderr ? `: ${result.stderr.trim()}` : ''
-      }`
-    );
-  }
-  if (typeof result.json.error === 'string') {
-    return refused('PR_PLAN_FAILED', result.json.error);
-  }
-  if (result.json.ok !== true) {
-    return refused('PR_PLAN_FAILED', `trd-cli pr-plan refused '${trdPath}'`);
-  }
-  return {
-    actions: Array.isArray(result.json.actions) ? result.json.actions : [],
-    branchFirst: String(result.json.branchFirst || ''),
-    slug: String(result.json.slug || ''),
-    stacked: result.json.stacked === true,
-  };
 }
 
 /**
@@ -203,36 +134,6 @@ function resolveIntent(context) {
     resolvedBy: 'non-interactive-proposed',
     useProposed: true,
   };
-}
-
-/**
- * Reuse mode: the whole build runs on one existing branch, so every per-phase branch and parent
- * link in the plan is replaced and only the completion entry opens a PR (SKILL.md:28).
- * @param {{actions: object[], branch: string, slug: string, trdPath: string}} input
- * @returns {object[]} the rewritten actions
- */
-function rewriteForReuse({ actions, branch, slug, trdPath }) {
-  const rewritten = [];
-  for (const action of actions) {
-    if (action.kind === 'completion') continue;
-    rewritten.push({
-      ...action,
-      appendNextBranch: '',
-      branch,
-      createPr: false,
-      parentBranch: '',
-    });
-  }
-  rewritten.push({
-    appendNextBranch: '',
-    branch,
-    createPr: true,
-    kind: 'completion',
-    parentBranch: '',
-    proposeTitle: `Implement ${slug} (${path.basename(trdPath)})`,
-    summaryKind: 'single',
-  });
-  return rewritten;
 }
 
 /**

@@ -20,7 +20,8 @@ const {
   normalizeLineEndings,
   scanFrontmatter,
 } = require('../trd-parser');
-const { refused } = require('./result');
+const { refused, unavailable } = require('./result');
+const { runTrd } = require('./cli-json');
 const { resolveCallerPath } = require('./validate');
 
 /** Where a TRD lives, the one directory `trd list` scans. */
@@ -165,13 +166,80 @@ function requireTrd(call) {
   return { path: toProjectRelative(call.projectRoot, absolute) };
 }
 
+/**
+ * The TRD as `trd-cli parse` reads it -- the one parser in this repository.
+ *
+ * A verb that needs the task list, the phase numbers or a task's target files asks the CLI
+ * rather than re-implementing the parser: a second reading of the same markdown is a second
+ * answer waiting to disagree with the first.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {string} trdPath project-relative
+ * @returns {object} the parsed TRD, or a tagged engine result
+ */
+function readParsedTrd(call, trdPath) {
+  const result = runTrd(call, ['parse', trdPath]);
+  if (!result.json) {
+    return unavailable(
+      'TRD_PARSE_UNREADABLE',
+      `trd-cli parse produced no JSON result (exit ${result.exitCode})${
+        result.stderr ? `: ${result.stderr.trim()}` : ''
+      }`
+    );
+  }
+  if (typeof result.json.error === 'string') {
+    return refused('TRD_PARSE_FAILED', result.json.error);
+  }
+  if (result.json.ok !== true || !result.json.trd) {
+    return refused('TRD_PARSE_FAILED', `trd-cli parse refused '${trdPath}'`);
+  }
+  return result.json.trd;
+}
+
+/**
+ * TRD-014: where a TRD's PRD reference points, resolved the way `trd-cli.js`'s own
+ * `resolvePrd()` resolves it (`lib/trd-cli.js:189`): the reference as given from the project
+ * root, then relative to the TRD's own directory.
+ *
+ * A reference that escapes the project root, names a directory, or names nothing is not a PRD:
+ * the caller records that as a gap rather than reading a file the operator did not mean.
+ *
+ * @param {string} projectRoot
+ * @param {string} trdPath the TRD, relative to the project root or absolute
+ * @param {string} prdReference the TRD's own `prdReference`
+ * @returns {string|null} an absolute path inside the project root, or null
+ */
+function resolvePrdPath(projectRoot, trdPath, prdReference) {
+  if (typeof prdReference !== 'string' || prdReference.trim() === '') return null;
+  const trdDir = path.dirname(path.resolve(projectRoot, trdPath));
+  const candidates = [prdReference, path.join(trdDir, prdReference)];
+  for (const candidate of candidates) {
+    let resolved;
+    try {
+      resolved = resolveCallerPath(projectRoot, candidate);
+    } catch {
+      continue;
+    }
+    let stat;
+    try {
+      stat = fs.statSync(resolved);
+    } catch {
+      continue;
+    }
+    if (stat.isFile()) return resolved;
+  }
+  return null;
+}
+
 module.exports = {
   TRD_DIR,
   discoverTrds,
   hasMasterTaskList,
   hasTaskLine,
   readFrontmatter,
+  readParsedTrd,
   requireTrd,
+  resolvePrdPath,
   slugOf,
   toProjectRelative,
 };

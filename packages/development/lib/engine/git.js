@@ -54,6 +54,35 @@ function lsFiles(call) {
 }
 
 /**
+ * The paths already in the index.
+ *
+ * A verb that is about to make a checkpoint commit must know what someone else staged first:
+ * committing an unrelated staged file under this TRD's checkpoint message would put a change
+ * nobody reviewed into a commit nobody expects it in.
+ *
+ * @param {object} call the dispatcher's call object
+ * @returns {string[]|object} project-relative paths, or a tagged engine result
+ */
+function stagedPaths(call) {
+  const out = git(call, ['diff', '--cached', '--name-only', '-z']);
+  if (typeof out !== 'string') return out;
+  return out.split('\0').filter(line => line.length > 0);
+}
+
+/**
+ * Stage one path.
+ *
+ * `--` ends the option list, so a path that begins with a dash is a path here, never a flag.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {string} relPath project-relative
+ * @returns {string|object} git's stdout, or a tagged engine result
+ */
+function stagePath(call, relPath) {
+  return git(call, ['add', '--', relPath]);
+}
+
+/**
  * The branch `HEAD` is on.
  * @param {object} call the dispatcher's call object
  * @returns {string|object} the branch name, `''` on a detached HEAD, or a tagged engine result
@@ -108,4 +137,13 @@ function switchTo(call, name) {
   return git(call, ['switch', name]);
 }
 
-module.exports = { currentBranch, git, localBranches, lsFiles, remoteDefaultBranch, switchTo };
+module.exports = {
+  currentBranch,
+  git,
+  localBranches,
+  lsFiles,
+  remoteDefaultBranch,
+  stagePath,
+  stagedPaths,
+  switchTo,
+};

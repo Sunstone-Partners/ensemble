@@ -337,6 +337,399 @@ function resetTaskFailed(beadId, detail) {
   return `ERROR: could not set bead ${beadId} to open: ${detail}`;
 }
 
+// ---------------------------------------------------------------------------
+// TRD-013: the quality gate.
+//
+// `skills/ensemble-implement-trd-tasks/references/phase-4-quality-gate.md`
+// ---------------------------------------------------------------------------
+
+/**
+ * The result the gate records on a phase's story, verbatim from
+ * `skills/ensemble-implement-trd-tasks/references/phase-4-quality-gate.md:9`.
+ *
+ * `PASS|FAIL` is the TEST run's result, not the gate's verdict: an informational strategy still
+ * records `FAIL` for a failing suite, because the comment is the evidence of what the tests did.
+ *
+ * @param {boolean} success whether the suite passed
+ * @param {number} passed
+ * @param {number} total
+ * @param {string} strategy
+ * @returns {string}
+ */
+function qualityGateComment(success, passed, total, strategy) {
+  return `Quality gate result: ${success ? 'PASS' : 'FAIL'} | passed: ${passed}/${total} | strategy: ${strategy}`;
+}
+
+/**
+ * The checkpoint commit's subject, verbatim from `phase-4-quality-gate.md:10`.
+ * @param {string} beadPrefix the story's `[trd:...]` prefix word
+ * @param {number} phaseN
+ * @param {number} passed
+ * @param {number} total
+ * @returns {string}
+ */
+function checkpointCommit(beadPrefix, phaseN, passed, total) {
+  return `chore(${beadPrefix} ${phaseN}): checkpoint (tests pass; passed ${passed}/${total})`;
+}
+
+/**
+ * The same checkpoint, when the gate recorded a failing suite as informational. Authored in the
+ * shape of `checkpointCommit` (`phase-4-quality-gate.md:10`): the reference has one subject
+ * because it only commits after a pass, and a commit that says "tests pass" when they did not
+ * would make the history lie.
+ * @param {string} beadPrefix
+ * @param {number} phaseN
+ * @param {number} passed
+ * @param {number} total
+ * @returns {string}
+ */
+function checkpointCommitInformational(beadPrefix, phaseN, passed, total) {
+  return `chore(${beadPrefix} ${phaseN}): checkpoint (informational gate; passed ${passed}/${total})`;
+}
+
+/**
+ * The same checkpoint, when the operator chose `skip` over a failing suite. Authored for the
+ * same reason as `checkpointCommitInformational`.
+ * @param {string} beadPrefix
+ * @param {number} phaseN
+ * @param {number} passed
+ * @param {number} total
+ * @returns {string}
+ */
+function checkpointCommitSkipped(beadPrefix, phaseN, passed, total) {
+  return `chore(${beadPrefix} ${phaseN}): checkpoint (gate skipped; passed ${passed}/${total})`;
+}
+
+/**
+ * The note the reference prints when `tracker.close-with-reason` is not available, verbatim from
+ * `phase-4-quality-gate.md:10`.
+ * @param {string} id the story bead
+ * @returns {string}
+ */
+function closeWithReasonFallback(id) {
+  return `(NOT_ALLOWED: use tracker.close --arg id=${id})`;
+}
+
+/**
+ * No bead of this TRD exists at all. Authored: this verb's caller is a maintainer running
+ * `ensemble`, so it names the verb that creates them rather than the slash command
+ * `notScaffolded` names.
+ * @param {string} slug
+ * @returns {string}
+ */
+function gateNotScaffolded(slug) {
+  return `no beads exist for TRD '${slug}'; run ensemble implement scaffold first`;
+}
+
+/**
+ * A phase is complete but has no story to record the gate on. Authored: the reference assumes
+ * the story exists (`phase-4-quality-gate.md:7`, "story = its story bead") and says nothing
+ * about its absence, so the message names the exact title prefix that is missing.
+ * @param {number} phaseN
+ * @param {string} slug
+ * @param {string} prFormat `phase` or `pr`
+ * @returns {string}
+ */
+function storyNotFound(phaseN, slug, prFormat) {
+  return `phase ${phaseN} of TRD '${slug}' has no story bead '[trd:${slug}:${prFormat}:${phaseN}]'`;
+}
+
+/**
+ * The PR plan says nothing usable about this phase. Authored: `GATE_ACTION = PR_ACTIONS[N]`
+ * (`phase-4-quality-gate.md:10`) has two documented branches, `createPr == false` and
+ * `createPr == true`, and a third answer must stop rather than pick one.
+ * @param {number} phaseN
+ * @returns {string}
+ */
+function gateActionMissing(phaseN) {
+  return `the PR plan has no gate action for phase ${phaseN}, or its createPr is neither true nor false`;
+}
+
+/**
+ * The project has no usable test runner. Authored: the reference runs `test-runner.run`
+ * (`phase-4-quality-gate.md:8`) and never contemplates its absence, and a gate that passed
+ * because no tests could run is a check that cannot fail (Constitution Rule 7).
+ * @param {string} detail what the toolchain reported
+ * @returns {string}
+ */
+function testRunnerUnavailable(detail) {
+  return `test-runner.run is unavailable: ${detail}`;
+}
+
+/**
+ * The test run itself failed. Authored in the pattern of `testRunnerUnavailable`.
+ * @param {string} detail
+ * @returns {string}
+ */
+function testRunFailed(detail) {
+  return `test-runner.run failed: ${detail}`;
+}
+
+/**
+ * The runner answered something the category contract does not allow. Authored: the reference
+ * parses `{success,passed,failed,skipped,total,duration,failures}` (`phase-4-quality-gate.md:8`)
+ * and a missing count would silently become zero, which reads as a pass.
+ * @returns {string}
+ */
+const TEST_RESULT_INVALID =
+  'test-runner.run returned a result without a boolean success or non-negative integer passed, failed and total';
+
+/**
+ * The gate failed. Authored around the reference's own rule (`phase-4-quality-gate.md:9`: "Not
+ * passed under tdd/refactor/bug-fix: print failures and pause for the user") and TRD:95's error
+ * code `TESTS_FAILED`; the failures are named so the refusal says what to fix.
+ * @param {number} phaseN
+ * @param {{failed: number, failures: string[], strategy: string, total: number}} detail
+ * @returns {string}
+ */
+function testsFailed(phaseN, { failed, failures, strategy, total }) {
+  const named = failures.length > 0 ? `: ${failures.join('; ')}` : '';
+  return `quality gate failed for phase ${phaseN}: ${failed} of ${total} test(s) failed under strategy ${strategy}${named}`;
+}
+
+/** What a non-interactive run under a pausing strategy adds to `testsFailed`. Authored. */
+const ON_FAILURE_HINT = '; in an interactive run pass --on-failure fix, skip or abort';
+
+/**
+ * The operator chose `abort`. Authored from the reference's `fix / skip / abort` pause
+ * (`phase-4-quality-gate.md:9`), which names the options and no text.
+ * @param {number} phaseN
+ * @returns {string}
+ */
+function gateAborted(phaseN) {
+  return `quality gate aborted for phase ${phaseN} by --on-failure abort`;
+}
+
+/**
+ * The result could not be recorded. Authored: the reference records before it closes
+ * (`phase-4-quality-gate.md:9` then :10), so a failed record stops the run rather than closing
+ * a story whose evidence was never written.
+ * @param {string} id the story bead
+ * @param {string} detail
+ * @returns {string}
+ */
+function commentFailed(id, detail) {
+  return `recording the quality gate result on story ${id} failed: ${detail}`;
+}
+
+/**
+ * The composed closure reason is shorter than policy allows. Authored: the reference's own
+ * floor is the literal `>=40-char reason` of `phase-4-quality-gate.md:10`, which this engine
+ * makes a policy value (`closure_reason_min_length`) rather than a constant.
+ * @param {string} id the story bead
+ * @param {number} length the reason's length
+ * @param {number} min the policy minimum
+ * @returns {string}
+ */
+function closureReasonTooShort(id, length, min) {
+  return `the closure reason for ${id} is ${length} characters; closure_reason_min_length is ${min}`;
+}
+
+/**
+ * The close itself failed. Authored in the pattern of `createFailed`.
+ * @param {string} id the story bead
+ * @param {string} detail
+ * @returns {string}
+ */
+function storyCloseFailed(id, detail) {
+  return `closing story ${id} failed: ${detail}`;
+}
+
+/**
+ * Someone else's work is already staged. Authored: `beads-stage` scopes the EXPORT to this TRD
+ * (`phase-4-quality-gate.md:10`) but cannot unstage a file somebody added by hand, and the
+ * checkpoint commit would carry it.
+ * @param {string[]} paths the foreign paths
+ * @returns {string}
+ */
+function stagedForeignPaths(paths) {
+  return `the index already holds paths this commit must not carry: ${paths.join(', ')}; unstage them and re-run`;
+}
+
+/**
+ * Staging this TRD's beads failed after the story was already closed. Authored: the close
+ * happens before the stage in the reference's own order (`phase-4-quality-gate.md:10`), so the
+ * message says what was already done and the exact commands that finish it.
+ * @param {string} slug
+ * @param {string} detail
+ * @returns {string}
+ */
+function beadsStageFailed(slug, detail) {
+  return `trd-cli beads-stage failed: ${detail}; the story is closed, finish with: trd-cli beads-stage --match "[trd:${slug}" then workflow.commit`;
+}
+
+/**
+ * The checkpoint commit failed after the story was already closed. Authored for the same reason
+ * as `beadsStageFailed`.
+ * @param {string} slug
+ * @param {string} detail
+ * @returns {string}
+ */
+function commitFailed(slug, detail) {
+  return `workflow.commit failed: ${detail}; the story is closed, finish with: trd-cli beads-stage --match "[trd:${slug}" then workflow.commit`;
+}
+
+/**
+ * `workflow.merge-base` answered no sha. Authored: the reference reads HEAD_SHA from it
+ * (`phase-4-quality-gate.md:10`) and a close recorded against an empty commit would point at
+ * nothing.
+ */
+const HEAD_UNRESOLVED = 'workflow.merge-base returned no HEAD sha';
+
+/**
+ * Why a passing phase's story was closed. Authored: the reference requires a reason of at least
+ * 40 characters (`phase-4-quality-gate.md:10`) and supplies no text, so this states the two
+ * facts that justify the close -- the tests and the task beads.
+ * @param {number} phaseN
+ * @param {{passed: number, slug: string, strategy: string, total: number}} detail
+ * @returns {string}
+ */
+function closureReasonPassed(phaseN, { passed, slug, strategy, total }) {
+  return `Quality gate passed for phase ${phaseN} of TRD ${slug}: ${passed}/${total} tests under strategy ${strategy}; every task bead in the phase is closed.`;
+}
+
+/**
+ * Why a phase whose tests failed under an informational strategy was still closed. Authored in
+ * the pattern of `closureReasonPassed`: the reason must not claim a pass that did not happen.
+ * @param {number} phaseN
+ * @param {{failed: number, slug: string, strategy: string, total: number}} detail
+ * @returns {string}
+ */
+function closureReasonInformational(phaseN, { failed, slug, strategy, total }) {
+  return `Quality gate recorded ${failed} of ${total} failing test(s) for phase ${phaseN} of TRD ${slug} as informational under strategy ${strategy}; every task bead in the phase is closed.`;
+}
+
+/**
+ * Why a phase the operator chose to skip over was closed. Authored in the pattern of
+ * `closureReasonPassed`; it names the choice, so the history says who decided.
+ * @param {number} phaseN
+ * @param {{failed: number, slug: string, total: number}} detail
+ * @returns {string}
+ */
+function closureReasonSkipped(phaseN, { failed, slug, total }) {
+  return `Quality gate skipped for phase ${phaseN} of TRD ${slug} after ${failed} of ${total} failing test(s), by operator choice; every task bead in the phase is closed.`;
+}
+
+/**
+ * What happens next in stacked mode. Authored from `phase-4-quality-gate.md:11`, which keeps the
+ * story open and runs a pre-PR test gate and a local review -- both later verbs' work.
+ * @param {string} id the story bead
+ * @param {string} branch the phase's branch
+ * @returns {string}
+ */
+function stackedNext(id, branch) {
+  return `story ${id} stays open: run the pre-PR test run and local review on branch ${branch} next`;
+}
+
+/** No phase is waiting for a gate. Authored. */
+const NO_GATE_CANDIDATE = 'no complete phase is waiting for a quality gate';
+
+/**
+ * completion-verification/SKILL.md:84 -- the skill writes this reason inside a shell-quoted
+ * string, so the file spells the inner quotes `\"`; the text the skill prints is this one.
+ */
+const PARSE_FAILED_CLI = 'node "$TRD_CLI" parse exited non-zero or returned malformed JSON';
+
+/** completion-verification/SKILL.md:93 */
+const TASKS_BY_ID_EMPTY = 'tasksById is empty';
+
+/** completion-verification/SKILL.md:272 */
+const VERDICT_COMPLETE = '**VERDICT: COMPLETE (0 gaps)**';
+
+/**
+ * phase-5-completion.md:8
+ * @param {number} gapCount
+ * @param {string} reportPath
+ * @returns {string}
+ */
+function completionFailed(gapCount, reportPath) {
+  return `COMPLETION VERIFICATION FAILED: ${gapCount} gap(s) found. Report: ${reportPath}`;
+}
+
+/**
+ * phase-5-completion.md:9
+ * @param {string} reportPath
+ * @returns {string}
+ */
+function completionPassed(reportPath) {
+  return `Completion verification: PASSED (0 gaps). Report: ${reportPath}`;
+}
+
+/**
+ * completion-verification/SKILL.md:97
+ * @param {number} parsed how many tasks the parser returned
+ * @param {number} independent how many task-shaped checkbox lines a raw grep found
+ * @returns {string}
+ */
+function parseCountMismatch(parsed, independent) {
+  return `deterministic parser found ${parsed} task(s) but a raw grep of the TRD file found ${independent} task-shaped checkbox line(s) — the parser silently missed real tasks (check for a formatting deviation such as a missing **bold** wrap around a task id)`;
+}
+
+/**
+ * completion-verification/SKILL.md:89
+ * @param {string} warning
+ * @returns {string}
+ */
+function parserWarning(warning) {
+  return `parser warning: '${warning}'`;
+}
+
+/**
+ * completion-verification/SKILL.md:143
+ * @param {string} prdReference
+ * @returns {string}
+ */
+function prdUnresolvable(prdReference) {
+  return `PRD reference '${prdReference}' could not be resolved to a file`;
+}
+
+/**
+ * completion-verification/SKILL.md:176
+ * @param {string} prdPath the resolved PRD path
+ * @param {number} count how many REQ ids it holds
+ * @returns {string}
+ */
+function reqPriorityUnparsed(prdPath, count) {
+  return `${prdPath}: ${count} REQ(s), none with a MoSCoW priority`;
+}
+
+/**
+ * completion-verification/SKILL.md:261
+ * @param {string} req
+ * @param {string} priority
+ * @returns {string}
+ */
+function reqUnsatisfied(req, priority) {
+  return `${req} (${priority}): no closed satisfying task`;
+}
+
+/**
+ * completion-verification/SKILL.md:255
+ * @param {string} id
+ * @returns {string}
+ */
+function taskStillOpen(id) {
+  return `${id}: still open`;
+}
+
+/**
+ * completion-verification/SKILL.md:258
+ * @param {string} id the implementation task whose test pair is open
+ * @returns {string}
+ */
+function testPairOpen(id) {
+  return `${id} closed without ${id}-TEST closed`;
+}
+
+/**
+ * completion-verification/SKILL.md:278
+ * @param {number} gapCount
+ * @returns {string}
+ */
+function verdictIncomplete(gapCount) {
+  return `**VERDICT: INCOMPLETE (${gapCount} gaps found)**`;
+}
+
 module.exports = {
   BRANCH_FLAGS_EXCLUSIVE,
   DETACHED_HEAD,
@@ -345,16 +738,36 @@ module.exports = {
   GIT_TOWN_EXIT_REASONS,
   GENERATE_ONLY_CONFLICT,
   GENERATE_ONLY_REQUIRES_WORKSTREAM,
+  HEAD_UNRESOLVED,
   MULTIPLE_TRDS,
+  NO_GATE_CANDIDATE,
+  ON_FAILURE_HINT,
+  PARSE_FAILED_CLI,
   PLAN_EXECUTE_EXCLUSIVE,
   PR_BACKEND_UNRESOLVED,
   RESET_TASK_AMBIGUOUS,
   RESET_TASK_NOT_FOUND,
+  TASKS_BY_ID_EMPTY,
+  TEST_RESULT_INVALID,
+  VERDICT_COMPLETE,
   WORKTREE_DIRTY,
   agentNotRegistered,
   ambiguousKey,
   beadContextFailed,
+  beadsStageFailed,
   branchNotFound,
+  checkpointCommit,
+  checkpointCommitInformational,
+  checkpointCommitSkipped,
+  closeWithReasonFallback,
+  closureReasonInformational,
+  closureReasonPassed,
+  closureReasonSkipped,
+  closureReasonTooShort,
+  commentFailed,
+  commitFailed,
+  completionFailed,
+  completionPassed,
   createFailed,
   createNoId,
   depArgsFailed,
@@ -364,15 +777,34 @@ module.exports = {
   failedWarning,
   foremanTaggingFailed,
   foremanTaggingIncomplete,
+  gateAborted,
+  gateActionMissing,
+  gateNotScaffolded,
   gitTownUnusable,
   labelFailed,
   labelsWarning,
   lookupFailed,
   notScaffolded,
+  parseCountMismatch,
+  parserWarning,
+  prdUnresolvable,
+  qualityGateComment,
   referencesWarning,
+  reqPriorityUnparsed,
+  reqUnsatisfied,
   resetTaskFailed,
   resetTaskNotFound,
   scaffoldPlanFailed,
+  stackedNext,
+  stagedForeignPaths,
+  storyCloseFailed,
+  storyNotFound,
+  taskStillOpen,
+  testPairOpen,
+  testRunFailed,
+  testRunnerUnavailable,
+  testsFailed,
+  verdictIncomplete,
   workGraphFindings,
   unavailableWarning,
 };
