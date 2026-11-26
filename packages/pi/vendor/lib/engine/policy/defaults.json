@@ -1,4 +1,5 @@
 {
+  "closure_reason_min_length": 40,
   "constitution_methodology": {
     "characterization-first": "characterization",
     "flexible": "flexible",
@@ -20,5 +21,9 @@
     "spike": "test-after",
     "tech debt": "refactor",
     "untested": "characterization"
+  },
+  "strategy_gate": {
+    "characterization": "informational",
+    "flexible": "informational"
   }
 }

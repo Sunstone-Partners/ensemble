@@ -37,24 +37,14 @@ const {
   slugOf,
   toProjectRelative,
 } = require('../trd-source');
-const {
-  extractDesignReadinessScore,
-  getFrontmatterField,
-  normalizeLineEndings,
-  parseTRD,
-} = require('../../trd-parser');
+const { extractDesignReadinessScore, parseTRD } = require('../../trd-parser');
+const { resolveStrategy } = require('../strategy');
 const { hasDotnetProject } = require('../../trd-cli');
 
 const MD_RE = /\.md$/i;
 
 /** The TRD status that makes a document the obvious candidate when nothing was named. */
 const IN_PROGRESS = 'In Progress';
-
-/** Where the repository declares its development methodology. */
-const CONSTITUTION_FILE = path.join('docs', 'standards', 'constitution.md');
-
-/** The constitution line the methodology is read from. */
-const METHODOLOGY_RE = /Development Methodology:?\**\s*(.+)/i;
 
 /** The note a dirty tree gets on a resume, instead of the refusal a fresh run gets. */
 const WORKTREE_RESUME_NOTE =
@@ -267,82 +257,6 @@ function readEpic(call, slug) {
   }
 
   return { ...counts, epicId: epics.length === 1 ? epics[0] : null };
-}
-
-/**
- * The methodology the repository's constitution declares, mapped through policy.
- * @param {string} projectRoot
- * @param {object} table the `constitution_methodology` policy value
- * @returns {string|null} a strategy, or `null` when the constitution says nothing usable
- */
-function constitutionStrategy(projectRoot, table) {
-  let text;
-  try {
-    text = fs.readFileSync(path.join(projectRoot, CONSTITUTION_FILE), 'utf8');
-  } catch {
-    return null;
-  }
-  for (const line of normalizeLineEndings(text).split('\n')) {
-    const match = METHODOLOGY_RE.exec(line);
-    if (!match) continue;
-    const word = match[1]
-      .replace(/\*/g, '')
-      .trim()
-      .split(/[\s—–-]+/)[0]
-      .toLowerCase();
-    const mapped = table[word];
-    if (typeof mapped === 'string') return mapped;
-  }
-  return null;
-}
-
-/**
- * The strategy the TRD's own words suggest, through the policy detection table.
- * @param {{summary: string, title: string}} parsed
- * @param {object} table the `strategy_detection` policy value
- * @returns {string|null}
- */
-function detectStrategy(parsed, table) {
-  const haystack = `${parsed.title || ''}\n${parsed.summary || ''}`.toLowerCase();
-  for (const keyword of Object.keys(table)) {
-    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`\\b${escaped}\\b`).test(haystack)) return table[keyword];
-  }
-  return null;
-}
-
-/**
- * Step 1.5's strategy precedence, in order.
- * @param {{frontmatter: object|null, parsed: object, policy: object, projectRoot: string,
- *   strategyArgument: string|undefined, warnings: string[]}} input
- * @returns {{source: string, strategy: string}}
- */
-function resolveStrategy({
-  frontmatter,
-  parsed,
-  policy,
-  projectRoot,
-  strategyArgument,
-  warnings,
-}) {
-  if (strategyArgument !== undefined) return { source: 'argument', strategy: strategyArgument };
-
-  const declared = getFrontmatterField(frontmatter, 'strategy');
-  if (declared != null) {
-    const value = String(declared).trim();
-    if (STRATEGIES.includes(value)) return { source: 'trd', strategy: value };
-    warnings.push(
-      `TRD frontmatter 'strategy' is not one of ${STRATEGIES.join(', ')} ('${value}'); ignored`
-    );
-  }
-
-  const fromConstitution = constitutionStrategy(projectRoot, policy.constitution_methodology);
-  if (fromConstitution !== null) return { source: 'constitution', strategy: fromConstitution };
-
-  const detected = detectStrategy(parsed, policy.strategy_detection);
-  if (detected !== null) return { source: 'detection', strategy: detected };
-
-  return { source: 'default', strategy: policy.default_strategy };
 }
 
 /**

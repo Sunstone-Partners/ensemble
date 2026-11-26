@@ -171,6 +171,106 @@ describe('policy resolution', () => {
   });
 });
 
+/**
+ * TRD-013 (TRD-2026-d571763f): the two keys the quality gate reads. Both are policy rather than
+ * TypeScript because a maintainer changes how long a closure reason must be, and which strategy
+ * treats a failing gate as informational, without editing the engine (Constitution Rule 8).
+ */
+describe('the quality gate keys are policy', () => {
+  test('both keys are reported with their shipped defaults', () => {
+    const root = makeRoot();
+
+    const { envelope, exitCode } = runIn(root, ['engine', 'policy']);
+
+    expect(exitCode).toBe(0);
+    expect(envelope.data.policy.closure_reason_min_length).toEqual({
+      source: 'default',
+      value: defaults.closure_reason_min_length,
+    });
+    expect(envelope.data.policy.strategy_gate).toEqual({
+      source: 'default',
+      value: defaults.strategy_gate,
+    });
+  });
+
+  test('the shipped strategy_gate makes characterization and flexible informational', () => {
+    const root = makeRoot();
+
+    const { values } = loadPolicy({ projectRoot: root });
+
+    expect(values.strategy_gate).toEqual({
+      characterization: 'informational',
+      flexible: 'informational',
+    });
+    expect(values.closure_reason_min_length).toBe(40);
+  });
+
+  test('a closure_reason_min_length of 0 is refused naming the key', () => {
+    const root = makeRoot();
+    writeEngineYaml(root, 'closure_reason_min_length: 0\n');
+
+    const { envelope, exitCode } = runIn(root, ['engine', 'policy']);
+
+    expect(exitCode).toBe(2);
+    expect(envelope.error.code).toBe('POLICY_INVALID_VALUE');
+    expect(envelope.error.message).toContain('closure_reason_min_length');
+  });
+
+  test('a closure_reason_min_length of 501 is refused naming the key', () => {
+    const root = makeRoot();
+    writeEngineYaml(root, 'closure_reason_min_length: 501\n');
+
+    const { envelope, exitCode } = runIn(root, ['engine', 'policy']);
+
+    expect(exitCode).toBe(2);
+    expect(envelope.error.code).toBe('POLICY_INVALID_VALUE');
+    expect(envelope.error.message).toContain('closure_reason_min_length');
+  });
+
+  test('a non-integer closure_reason_min_length is refused naming the key', () => {
+    const root = makeRoot();
+    writeEngineYaml(root, 'closure_reason_min_length: 40.5\n');
+
+    const { envelope, exitCode } = runIn(root, ['engine', 'policy']);
+
+    expect(exitCode).toBe(2);
+    expect(envelope.error.code).toBe('POLICY_INVALID_VALUE');
+    expect(envelope.error.message).toContain('closure_reason_min_length');
+  });
+
+  test('a strategy_gate key outside the strategy list is refused naming the key', () => {
+    const root = makeRoot();
+    writeEngineYaml(root, 'strategy_gate:\n  whatever: informational\n');
+
+    const { envelope, exitCode } = runIn(root, ['engine', 'policy']);
+
+    expect(exitCode).toBe(2);
+    expect(envelope.error.code).toBe('POLICY_INVALID_VALUE');
+    expect(envelope.error.message).toContain('strategy_gate');
+  });
+
+  test('a strategy_gate value outside blocking/informational is refused naming the key', () => {
+    const root = makeRoot();
+    writeEngineYaml(root, 'strategy_gate:\n  tdd: advisory\n');
+
+    const { envelope, exitCode } = runIn(root, ['engine', 'policy']);
+
+    expect(exitCode).toBe(2);
+    expect(envelope.error.code).toBe('POLICY_INVALID_VALUE');
+    expect(envelope.error.message).toContain('strategy_gate');
+  });
+
+  test('a repository can make tdd informational', () => {
+    const root = makeRoot();
+    writeEngineYaml(root, 'strategy_gate:\n  tdd: informational\n');
+
+    const { sources, values } = loadPolicy({ projectRoot: root });
+
+    expect(values.strategy_gate).toEqual({ tdd: 'informational' });
+    expect(sources.strategy_gate).toBe('repo');
+  });
+});
+
 describe('policy schema shape (Rule 8)', () => {
   test('the shipped defaults validate against the policy schema', () => {
     const ajv = new Ajv({ allErrors: true, strict: false });

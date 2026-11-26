@@ -14,9 +14,11 @@ const SPECS = [
   require('../verbs/implement-bead-health').spec,
   require('../verbs/implement-branch').spec,
   require('../verbs/implement-env').spec,
+  require('../verbs/implement-gate').spec,
   require('../verbs/implement-resume').spec,
   require('../verbs/implement-scaffold').spec,
   require('../verbs/implement-team').spec,
+  require('../verbs/implement-verify').spec,
 ];
 
 /**

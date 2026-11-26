@@ -72,6 +72,12 @@ function strategyTable(description) {
 const POLICY_SCHEMA = Object.freeze({
   additionalProperties: false,
   properties: {
+    closure_reason_min_length: {
+      description: 'the minimum length of a closure reason',
+      maximum: 500,
+      minimum: 1,
+      type: 'integer',
+    },
     constitution_methodology: strategyTable(
       'constitution methodology to implementation strategy'
     ),
@@ -105,6 +111,14 @@ const POLICY_SCHEMA = Object.freeze({
       type: 'integer',
     },
     strategy_detection: strategyTable('keyword to implementation strategy, applied in order'),
+    // Keyed on the strategy rather than on a free list of strategies, so a repository can say
+    // what a failing gate means for each one without the engine owning that answer.
+    strategy_gate: {
+      additionalProperties: { enum: ['blocking', 'informational'], type: 'string' },
+      description: 'per strategy, whether a failing quality gate blocks or is informational',
+      propertyNames: { enum: [...STRATEGIES], maxLength: 40, type: 'string' },
+      type: 'object',
+    },
   },
   required: [],
   type: 'object',
