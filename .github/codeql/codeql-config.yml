@@ -1,0 +1,7 @@
+name: ensemble CodeQL config
+
+# packages/skills is generated output: byte-identical copies of library code that is scanned at its source path
+# (packages/*/lib, packages/*/skills, ...). `npm run generate:skills:check` fails when the bundle differs from its
+# sources, so excluding the copies leaves nothing unscanned and stops every finding being reported twice.
+paths-ignore:
+  - packages/skills/**

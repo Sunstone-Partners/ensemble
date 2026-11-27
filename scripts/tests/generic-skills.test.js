@@ -174,8 +174,8 @@ test('relocated installed tools use only installed modules, retain data/adapter 
   const originalBundle = `${bundle}-moved`;
   fs.renameSync(bundle, originalBundle);
   const guard = path.join(work, 'guard.cjs');
-  write(work, 'guard.cjs', `const Module=require('module');const path=require('path');const original=Module._resolveFilename;Module._resolveFilename=function(...args){const found=original.apply(this,args);if(path.isAbsolute(found)&&!found.startsWith(${JSON.stringify(support + path.sep)}))throw new Error('Module escaped standalone install: '+found);return found;};`);
-  const run = (rel, args) => spawnSync(process.execPath, ['--require', guard, path.join(support, rel), ...args], { cwd: target, encoding: 'utf8', env: { ...process.env, NODE_PATH: '' } });
+  write(work, 'guard.cjs', `const Module=require('module');const path=require('path');const root=process.env.ENSEMBLE_GUARD_ROOT+path.sep;const original=Module._resolveFilename;Module._resolveFilename=function(...args){const found=original.apply(this,args);if(path.isAbsolute(found)&&!found.startsWith(root))throw new Error('Module escaped standalone install: '+found);return found;};`);
+  const run = (rel, args) => spawnSync(process.execPath, ['--require', guard, path.join(support, rel), ...args], { cwd: target, encoding: 'utf8', env: { ...process.env, NODE_PATH: '', ENSEMBLE_GUARD_ROOT: support } });
   write(target, 'sample.md', '---\ndocument_id: PRD-2026-sample\nstatus: Draft\n---\n# Sample\n\n### REQ-001: A requirement\n\n- **AC-001-1:** Given a project, when a tool runs, then an artifact exists.\n');
   const generated = run('packages/product/lib/prd-cli.js', ['generate-features', path.join(target, 'sample.md'), '--out', path.join(target, 'features'), '--json']);
   expect({ status: generated.status, stderr: generated.stderr }).toEqual({ status: 0, stderr: '' });
