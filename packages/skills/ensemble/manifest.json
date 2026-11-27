@@ -417,6 +417,9 @@
     "implement-branch.js": [
       "packages/development/lib/engine/verbs/implement-branch.js"
     ],
+    "implement-close.js": [
+      "packages/development/lib/engine/verbs/implement-close.js"
+    ],
     "implement-env.js": [
       "packages/development/lib/engine/verbs/implement-env.js"
     ],
