@@ -1,0 +1,34 @@
+{
+  "pullRequestId": 42,
+  "codeReviewId": 42,
+  "status": "active",
+  "createdBy": {
+    "displayName": "Jane Example",
+    "id": "00000000-0000-0000-0000-000000000001"
+  },
+  "creationDate": "2026-10-20T15:04:00.0000000Z",
+  "title": "Add Azure DevOps host adapter",
+  "description": "Implements TRD-040 host capabilities for az repos pr.",
+  "sourceRefName": "refs/heads/feature/trd-040-azure-devops-host-adapter",
+  "targetRefName": "refs/heads/main",
+  "mergeStatus": "succeeded",
+  "isDraft": false,
+  "url": "https://dev.azure.com/sunstone-partners/ensemble/_apis/git/repositories/ensemble/pullRequests/42",
+  "supportsIterations": true,
+  "reviewers": [
+    {
+      "displayName": "Jane Reviewer",
+      "id": "00000000-0000-0000-0000-000000000002",
+      "vote": 10,
+      "isRequired": true,
+      "isFlagged": false
+    },
+    {
+      "displayName": "John Reviewer",
+      "id": "00000000-0000-0000-0000-000000000003",
+      "vote": 0,
+      "isRequired": false,
+      "isFlagged": false
+    }
+  ]
+}

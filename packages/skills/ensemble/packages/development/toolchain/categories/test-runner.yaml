@@ -1,0 +1,20 @@
+category: test-runner
+version: "1.0"
+
+# Capability ids use the single-dot, hyphenated convention established by host.yaml/
+# workflow.yaml (TRD-2026-8d825f54 TRD-035).
+
+capabilities:
+  # Normalized output shape matches what packages/xunit/skills/xunit/run-test.sh already prints
+  # (`{success, passed, failed, skipped, total, duration, failures[]}`) -- the most complete
+  # of the five shipped per-language runners (TRD-2026-8d825f54 TRD-043). `framework` selects
+  # which per-language runner an adapter dispatches to (e.g. `adapter-test-runner-default`'s
+  # `variants` block, TRD-010); `config`/`coverage` are accepted here for adapters that choose
+  # to honor them, though the shipped default adapter does not reference either (see its own
+  # SKILL.md "Known limits").
+  test-runner.run:
+    description: Run the project's unit/integration test suite for one framework.
+    inputs: [file, framework, config, coverage]
+    outputs: [success, passed, failed, skipped, total, duration, failures]
+    required: true
+    sideEffect: false

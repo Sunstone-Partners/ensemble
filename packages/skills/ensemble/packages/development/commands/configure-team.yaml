@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:configure-team
+  description: Analyze TRD complexity and auto-configure team roles, agent assignments, and marketplace plugins
+  version: 1.1.5
+  lastUpdated: "2026-08-04"
+  category: planning
+  output_path: ensemble/configure-team.md
+  source: sunstone
+  model: high
+  argument_hint: "[trd-path] [--team] [--no-team]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-configure-team/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-configure-team

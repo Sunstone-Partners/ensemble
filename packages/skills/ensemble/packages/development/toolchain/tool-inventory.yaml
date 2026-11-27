@@ -1,0 +1,187 @@
+# Tool inventory (TRD-2026-8d825f54 TRD-047/TRD-048): every tool binary Ensemble knows maps to
+# EXACTLY ONE of the 14 toolchain categories. Shared command/agent/skill sources must reach
+# these tools through capabilities (`node "$TOOLCHAIN_CLI" run <category>.<capability>`), never
+# by naming the binary; `scripts/lint-provider-refs.js` flags a binary named in command
+# position and `scripts/check-taxonomy-coverage.js` fails on a tool mapped twice, on a
+# command-position token in a fenced block that is in neither this file nor `ignoredCommands`,
+# and on a category with no existing default adapter.
+#
+# Placement rule: a binary listed in a shipped adapter's `binaries[]` lives here under the
+# category of the adapter that wraps it; where several adapters share a binary the category
+# is chosen by the primary use of that binary (comments below). `ignoredCommands` entries are
+# never also listed under a category.
+
+# GitHub CLI; `az` (Azure DevOps repos/PRs) is host. The Azure Boards adapter also lists `az`,
+# but a binary maps to one category and the host use (change requests) is the primary one.
+host:
+  - gh
+  - az
+
+# `git` serves workflow (branching/commit/push), worktree and several others through the
+# plain-git adapters; TRD interpretation I1 makes plain git operations `workflow.*`.
+workflow:
+  - git
+  - git-town
+
+# worktree operations are served by `git` (listed under workflow); no distinct binary.
+worktree: []
+
+# Issue-tracker CLIs. `kata` also serves the `work-graph` category, but a binary maps to one
+# category and the tracker use is primary: the adapter is selected as `tracker: kata`, and the
+# `work-graph: auto` default resolves to that same adapter's work-graph capabilities.
+tracker:
+  - br
+  - jira
+  - linearis
+  - kata
+
+work-graph:
+  - bv
+
+ci-local:
+  - act
+
+review:
+  - coderabbit
+
+lint:
+  - reviewdog
+
+# Language runtimes the default test-runner adapter shells out to. `node` is package-runner
+# (below); `bash` is a generic script launcher and lives in ignoredCommands.
+test-runner:
+  - python3
+  - python
+  - elixir
+  - ruby
+  - jest
+  - pytest
+  - mix
+  - dotnet
+
+# `npx playwright` is how the e2e-quality adapter runs, but `npx` is the package runner itself.
+e2e-quality: []
+
+container-deploy:
+  - docker
+  - docker-compose
+  - kubectl
+  - helm
+
+iac:
+  - terraform
+
+# Vendor platform CLIs documented by infrastructure skills (no shipped adapter yet).
+platform-cloud:
+  - aws
+  - railway
+  - vercel
+  - supabase
+
+# `node` is mapped here because it executes package/script entry points; invoking an Ensemble
+# internal CLI (`node "$TRD_CLI" ...`, variable ending `_CLI`) is exempted by the lint.
+package-runner:
+  - npm
+  - npx
+  - node
+  - pip
+  - bundle
+  - brew
+  - yay
+  - scoop
+  - nix-env
+
+# Generic shell words that belong to no category: never a lint violation and never an
+# UNMAPPED_TOOL. `cat` is also in the beads adapter's binaries[] but is a plain file reader.
+# `bash`/`sh` only launch scripts and are generic.
+ignoredCommands:
+  - bash
+  - sh
+  - zsh
+  - cat
+  - echo
+  - printf
+  - grep
+  - egrep
+  - ls
+  - mkdir
+  - rmdir
+  - touch
+  - test
+  - cd
+  - rm
+  - cp
+  - mv
+  - ln
+  - sed
+  - awk
+  - jq
+  - head
+  - tail
+  - wc
+  - sort
+  - uniq
+  - tr
+  - cut
+  - xargs
+  - tee
+  - diff
+  - find
+  - curl
+  - date
+  - pwd
+  - export
+  - set
+  - source
+  - read
+  - exit
+  - return
+  - 'true'
+  - 'false'
+  - sleep
+  - wait
+  - basename
+  - dirname
+  - mktemp
+  - env
+  - sudo
+  - chmod
+  - open
+
+# System utilities documented in skill reference fenced blocks (installers, services, DNS,
+# database servers); they are OS tooling, not a toolchain category.
+  - wget
+  - dpkg
+  - rpm
+  - systemctl
+  - usermod
+  - dig
+  - stat
+  - gunicorn
+  - mongod
+  - psql
+
+# Non-command tokens that appear first on a line inside a shell-tagged fence: CLI help-output
+# rows and sub-command listings (`railway`/`vercel` references), JS/C# snippets, provider
+# names and placeholders. They are prose, not invocations.
+  - const
+  - new
+  - delete
+  - list
+  - add
+  - update
+  - attach
+  - detach
+  - pull
+  - inspect
+  - move
+  - buy
+  - transfer-in
+  - import
+  - issue
+  - switch
+  - invite
+  - production
+  - gcp
+  - azure
+  - generate-test.cs

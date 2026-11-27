@@ -1,0 +1,16 @@
+metadata:
+  name: ensemble:reinstall-plugins
+  description: Force-refresh installed plugins by uninstalling and reinstalling them, picking up marketplace content that version-gated updates miss
+  version: 1.0.0
+  lastUpdated: "2026-08-21"
+  category: configuration
+  output_path: ensemble/reinstall-plugins.md
+  source: sunstone
+  argument_hint: "[--all | <filter>]"
+  allowed_tools:
+    - Bash
+    - AskUserQuestion
+
+# Skill-backed command: the prompt is packages/core/skills/ensemble-reinstall-plugins/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-reinstall-plugins

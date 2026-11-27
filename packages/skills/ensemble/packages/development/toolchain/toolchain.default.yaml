@@ -1,0 +1,20 @@
+# Shipped default adapter for each of the 14 toolchain categories
+# (TRD-2026-8d825f54 TRD-003, PRD REQ-009).
+#
+# `resolveCategory()` in packages/development/lib/toolchain/config.js falls back to this file
+# when no project config, user config, env-compat input or detection signal selects a category's
+# adapter.
+host: github
+workflow: plain-git
+worktree: plain-git
+tracker: beads
+work-graph: auto
+ci-local: act
+review: coderabbit
+lint: reviewdog
+test-runner: default
+e2e-quality: playwright
+container-deploy: docker-kubectl
+iac: terraform
+platform-cloud: aws
+package-runner: npm

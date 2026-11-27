@@ -1,0 +1,102 @@
+adapter: aws
+version: "1.0.0"
+
+categories:
+  - platform-cloud
+
+contract:
+  platform-cloud: "1.0"
+
+# The only binary any capability or health check below invokes.
+binaries:
+  - aws
+
+# `ec2 describe-instances`/`ecs update-service` are this bead's two real, wired subcommands.
+# `sts get-caller-identity` backs the `aws-identity-reachable` health check
+# (`packages/infrastructure/skills/aws/SKILL.md`'s own documented "confirm the account with
+# aws sts get-caller-identity before applying"). `--version` exists purely so the
+# `aws-installed` health check passes `validateAllowlist`.
+allowlist:
+  - bin: aws
+    sub:
+      - "ec2 describe-instances"
+      - "ecs update-service"
+      - "sts get-caller-identity"
+      - "--version"
+
+# Name only (PRD REQ-022/REQ-023), never a literal value. `AWS_PROFILE` is the real, documented
+# way the `aws` CLI selects a named profile from `~/.aws/credentials`/`~/.aws/config` for
+# non-interactive auth (`packages/infrastructure/skills/aws/SKILL.md`'s own "Auth: use
+# AWS_PROFILE/SSO or the CI role from the environment").
+env:
+  - AWS_PROFILE
+
+health:
+  - id: aws-installed
+    run: ["aws", "--version"]
+    timeoutMs: 5000
+  - id: aws-identity-reachable
+    run: ["aws", "sts", "get-caller-identity", "--output", "json"]
+    timeoutMs: 10000
+
+# aws is the SHIPPED DEFAULT for `platform-cloud` (toolchain.default.yaml), not remote-detected
+# -- per TRD interpretation I2, a shipped default with no detect signal at all never turns some
+# other adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error.
+detect: []
+
+capabilities:
+  # aws ec2 describe-instances --instance-ids <resource> --output json: the `aws` CLI has no
+  # single generic "describe any resource" verb (confirmed against its own documented command
+  # tree: every AWS service has its own `describe-*`/`get-*`/`list-*` subcommands, each shaped
+  # around that service's own resource model) -- `ec2 describe-instances` is picked as one
+  # concrete, real, documented read call: `resource` is interpreted as an EC2 instance id
+  # (`i-xxxxxxxxxxxxxxxxx`), the most common "check a cloud resource's status" need this
+  # category's own description ("Read the status/details of a resource hosted on the
+  # platform/cloud provider") maps onto. `status` (the contract's sole declared output) is
+  # mapped from the first matched instance's `State.Name` field (EC2's own real, documented
+  # `InstanceState.Name` enum: pending/running/shutting-down/terminated/stopping/stopped) --
+  # see SKILL.md "Known limits" for why only EC2 instances are reachable through this
+  # capability as declared. Never executed live (no reachable AWS account/credentials in this
+  # environment).
+  platform-cloud.get-resource:
+    run:
+      - aws
+      - ec2
+      - describe-instances
+      - "--instance-ids"
+      - "${resource}"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        status: "$.Reservations[0].Instances[0].State.Name"
+
+  # aws ecs update-service --service <service> --task-definition <image> --force-new-deployment
+  # --output json: real, documented `aws ecs update-service` flags. `aws ecs` has no flag that
+  # accepts a raw container image reference directly -- an ECS service's running containers are
+  # always driven by a task definition (family:revision or full ARN), which is itself the
+  # artifact that references a container image, so `${image}` is interpreted here as the
+  # task-definition identifier to deploy (the closest real, documented ECS deploy primitive to
+  # this category contract's generic `image` input) -- see SKILL.md "Known limits".
+  # `--force-new-deployment` (a real, documented flag) ensures ECS actually rolls new tasks even
+  # when the task-definition revision is unchanged. `status` (the contract's sole declared
+  # output) maps from `UpdateService`'s own real, documented response shape
+  # (`{service: {status, ...}}`, e.g. "ACTIVE"/"DRAINING"/"INACTIVE"). Never executed live
+  # (side-effecting, no reachable AWS account/credentials or ECS service in this environment).
+  platform-cloud.deploy-service:
+    run:
+      - aws
+      - ecs
+      - update-service
+      - "--service"
+      - "${service}"
+      - "--task-definition"
+      - "${image}"
+      - "--force-new-deployment"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        status: "$.service.status"

@@ -1,0 +1,96 @@
+adapter: coderabbit
+version: "1.0.0"
+
+categories:
+  - review
+
+contract:
+  review: "1.0"
+
+# `adapter-manifest-schema.json`'s `binaries` and `allowlist` both declare `minItems: 1` (no
+# zero-binaries adapter is schema-valid), and `packages/development/lib/toolchain/resolve.js`
+# has no cross-adapter-delegation primitive a manifest could declare instead of a real binary
+# (its own doc comment: `requireCapabilities`/`lookupContractCapability` only check an already-
+# resolved adapter's OWN declared capabilities; there is no "call through to another category's
+# adapter" mechanism anywhere in `runner.js` or `resolve.js`). The real, honest binary this
+# adapter invokes is the official `coderabbit` CLI (`~/.local/bin/coderabbit`, v0.9.0) itself --
+# specifically its `pullrequest` subcommand ("Inspect a CodeRabbit-reviewed GitHub pull
+# request"), not a direct call to CodeRabbit's own review-trigger API and not a re-
+# implementation of `adapter-host-github`'s `gh pr checks`/`gh pr view` calls. See this
+# manifest's own `review.get-review-state`/`review.list-open-threads` capabilities below and
+# SKILL.md "Known limits" for exactly what was live-verified.
+binaries:
+  - coderabbit
+
+allowlist:
+  - bin: coderabbit
+    sub:
+      - pullrequest
+      - doctor
+
+env: []
+
+# `coderabbit doctor` is the CLI's own official readiness/health-check subcommand (auth,
+# storage, service reachability). Live-verified on this machine (v0.9.0): "8 passed, 1
+# warnings, 0 failed" (the one warning is about an unrelated browser-sign-in fallback, not a
+# failure), completing in ~1.1s.
+health:
+  - id: coderabbit-doctor
+    run: ["coderabbit", "doctor"]
+    timeoutMs: 15000
+
+# coderabbit is the SHIPPED DEFAULT for `review` (toolchain.default.yaml), not remote-detected
+# -- per TRD interpretation I2, a shipped default with no detect signal at all never turns some
+# other unrelated adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error. `detect: []` is
+# schema-valid (no `minItems` on `detect`).
+detect: []
+
+capabilities:
+  # coderabbit pullrequest <id> --show-prompts --agent: real, documented flags (`coderabbit
+  # pullrequest --help`: "Print the consolidated prompt for AI agents", `--agent` = "Output
+  # newline-delimited JSON for agent integrations"). This is the closest real CLI surface to an
+  # overall "review state" for a CodeRabbit-reviewed PR; there is no separate "status" verb.
+  # `parse.format: lines` splits the NDJSON stdout into one raw (still unparsed) JSON-text line
+  # per record; no `map` is declared (`mapOutput`'s own documented "when map is omitted, the
+  # array of lines is returned directly" behavior), since the CLI's `--help` documents no field
+  # names for this NDJSON shape and no sample success response was reachable to verify one
+  # against (see SKILL.md "Known limits") -- `id`/`state`/`threads` are not fabricated. Live
+  # invocation against this repository's real PR #190 returned a real, unedited single-line
+  # JSON error envelope (`{"type":"error","errorType":"review","message":"This pull request is
+  # not available in the active CodeRabbit organization...","recoverable":false}`), confirming
+  # the binary, auth, network path and argv all work end-to-end; this repository/org has no
+  # CodeRabbit-reviewed PR currently accessible to this CLI session to verify a success-path
+  # response shape.
+  review.get-review-state:
+    run:
+      - coderabbit
+      - pullrequest
+      - "${id}"
+      - "--show-prompts"
+      - "--agent"
+    parse:
+      format: lines
+
+  # coderabbit pullrequest <id> --show-threads --agent: real, documented flags (`coderabbit
+  # pullrequest --help`: "Print CodeRabbit inline review-thread roots as JSON", `--agent` =
+  # NDJSON). Same `parse.format: lines`, no `map`, same reasoning as `review.get-review-state`
+  # above. Live invocation against this repository's real PR #190 returned the same real,
+  # unedited error envelope as above (org mismatch, not a fabricated/synthetic response).
+  review.list-open-threads:
+    run:
+      - coderabbit
+      - pullrequest
+      - "${id}"
+      - "--show-threads"
+      - "--agent"
+    parse:
+      format: lines
+
+# `review.request-review` (optional) is intentionally NOT declared: CodeRabbit has no CLI verb
+# to trigger a new automated review pass on an existing PR (`coderabbit --help`'s own command
+# list has no such subcommand; the real, documented way to retrigger CodeRabbit is a PR comment
+# such as `@coderabbitai review`, or CodeRabbit's own auto-review-on-push behavior, neither of
+# which this toolchain's `run[]`-argv-template mechanism can express as a `coderabbit` CLI
+# invocation) -- this optional capability carries no documented `fallback`, so a caller
+# requesting it against this adapter gets `UNAVAILABLE` with no fallback, the correct, honest
+# outcome (same convention `adapter-workflow-plain-git`'s omitted `workflow.sync`/`ship` use).

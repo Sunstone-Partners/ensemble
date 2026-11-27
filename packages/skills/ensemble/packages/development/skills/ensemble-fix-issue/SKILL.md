@@ -1,0 +1,90 @@
+---
+name: ensemble-fix-issue
+description: "Lightweight workflow for bug fixes and small issues"
+disable-model-invocation: true
+metadata:
+  version: "1.5.0"
+  category: implementation
+---
+
+Orchestrate a bug fix workflow from analysis to PR, delegating to specialized agents.
+Resumable and checkpointed: a run's stage and outcome are recorded via ISSUE_RUN_INDEX_CLI after each of the 3 named phases, so a later invocation can resume, report status, or abandon it.
+
+## Constraints
+
+- GitHub only (no GitLab/Bitbucket); GitHub CLI (gh) must be installed and authenticated
+- Foreman mode: FOREMAN = true when `--foreman` is present or env FOREMAN_TASK_TITLE is non-empty (FOREMAN_SOURCE = flag|env, flag wins); same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it; `--foreman` below means it.
+
+## Capabilities
+
+**Required:** host.change-request-create, host.change-request-view, host.change-request-list, workflow.branch-create, workflow.merge-base, workflow.commit, workflow.push
+
+## Run Index CLI
+
+Resolve ISSUE_RUN_INDEX_CLI (RELATIVE_PATH packages/development/lib/issue-run-index-cli.js) via tool-path-resolution before the first call (a resume resolves it first). `node "$ISSUE_RUN_INDEX_CLI" <subcommand>` takes one JSON payload on stdin and prints `{ok:true, run}` (`run` null if none) or `{ok:false, code, message}` (halts the step unless a step handles the code). Subcommands: create {issueDescription}; find-active; load {runId}; abandon {runId, reason}; complete {runId}; mutate {runId, expectedRevision, patch}. A patch is an ordered op list applied in ONE revision-checked call, timestamps stamped by the CLI: setStage {stage}; setStageOutcome {kind?, detail?}; appendArtifact {type, path}; appendBeadRef {ref}; setPrApprovedAt {value} (value is "now" or null). expectedRevision is the latest result's `revision`; a stale one returns REVISION_CONFLICT.
+
+## Arguments
+
+- **`description`** (string, optional): Issue description (free text or omit if using --issue)
+- **`issue`** (number, optional): GitHub issue number (e.g., --issue 34)
+- **`branch`** (string, optional): Custom branch name (default auto-generated)
+- **`skip-tests`** (boolean, optional, default: `false`): Skip test validation (not recommended)
+- **`draft-pr`** (boolean, optional, default: `false`): Create draft PR instead of ready-for-review
+- **`interactive`** (boolean, optional, default: `false`): Enable detailed user interviews during planning
+- **`foreman`** (boolean, optional, default: `false`): Foreman-native non-interactive mode -- skip the user interview and always auto-commit + create the PR without pausing for confirmation. With FOREMAN_ARTIFACT_PATH set and non-empty, also write the phase report to that exact path (creating parent directories); never invent or alter it; an unset path is not an error.
+- **`status`** (boolean, optional, default: `false`): Show the active/most-recent issue run's stage, outcome, and references without advancing it.
+- **`abandon`** (boolean, optional, default: `false`): Abandon the project's active/paused issue run after explicit confirmation.
+
+## Workflow
+
+Work through the phases in numbered order. Each phase's full instructions are in its own file under `references/`, in this skill's directory: open the file with your file-reading tool (not a shell command) when you reach that phase and follow it exactly. Resolve the paths below relative to this SKILL.md.
+
+| Phase | Instructions | Steps |
+|---|---|---|
+| 1. Entry Point Resolution | `references/phase-1-entry-point-resolution.md` | Start New Run or Resume Active Run; --status -- Read-Only Run Report; --abandon -- Explicit Confirmation Required |
+| 2. Analysis & Planning | `references/phase-2-analysis-and-planning.md` | Codebase Analysis; Collaborative Planning; User Interview (Conditional); Record Stage Checkpoint |
+| 3. Execution | `references/phase-3-execution.md` | Branch Creation; Task List Generation; Task Execution; Record Stage Checkpoint |
+| 4. Validation & Delivery | `references/phase-4-validation-and-delivery.md` | Test Validation; Local Review and Batch Fix; PR Creation; Remote Review Disposition; Record Stage Checkpoint |
+
+## Expected Output
+
+**Format:** Pull Request
+
+**Structure:**
+
+- **Git Branch**: fix/issue-{num}-{slug} branch
+- **Code Changes**: Fix with test coverage
+- **Pull Request**: PR with problem, solution, changes, and test plan
+
+## Expected Input
+
+- **description**: Issue description or GitHub issue number
+- **examples**:
+  - /ensemble:fix-issue "Fix timeout bug in auth flow"
+  - /ensemble:fix-issue --issue 34
+  - /ensemble:fix-issue --issue 34 --foreman
+
+## Validation
+
+- **required_tools**:
+  - Bash
+  - Read
+  - Write
+  - Edit
+  - Grep
+  - Glob
+  - Task
+  - TodoWrite
+- **required_agents**:
+  - product-management-orchestrator
+  - tech-lead-orchestrator
+  - infrastructure-orchestrator
+  - backend-developer
+  - frontend-developer
+  - infrastructure-developer
+  - test-runner
+  - git-workflow
+- **required_external**:
+  - toolchain-cli (packages/development/lib/toolchain-cli.js)
+  - git (version 2.0+)
+  - gh (GitHub CLI, authenticated; --issue lookup only)

@@ -1,0 +1,61 @@
+---
+name: ensemble-implement-trd-tasks
+description: "Implement TRD with beads project management — persistent bead hierarchy, dependency-aware execution via toolchain-cli tracker/work-graph capabilities, and cross-session resumability"
+disable-model-invocation: true
+metadata:
+  version: "3.2.0"
+  category: implementation
+---
+
+Parse a TRD, scaffold a beads hierarchy (epic -> stories -> tasks), delegate
+execution to /ensemble:beads-build, then run quality gates, PR review, completion verification, epic closure. This command owns closure: beads-build always runs
+with --defer-completion.
+
+Rules:
+- Never hand-parse a TRD; parse/plan/status come only from `node "$TRD_CLI"` JSON.
+- Scheduling is delegated to beads-build (work-graph.ready (graph-aware parallel tracks) or plan order when that is unavailable). Never read tracker storage directly.
+- Every `node "$TOOLCHAIN_CLI"` `run`/`confirm-*` call carries `--run-id "$RUN_ID" $NON_INTERACTIVE_ARGS --json`.
+- Never stage broadly (no blanket, directory or auto-staging commit). Stage beads only via `node "$TRD_CLI" beads-stage --match "[trd:<TRD_SLUG>"`; every commit is `node "$TOOLCHAIN_CLI" run workflow.commit --arg message="<message>"`.
+- PR_REVIEW_SKILL = packages/development/skills/pr-review-cycle/SKILL.md (via tool-path-resolution); pr-review-cycle calls read it.
+- FULL_TEST_COMMAND = `node "$TOOLCHAIN_CLI" run package-runner.run-script --arg script=test --run-id "$RUN_ID" $NON_INTERACTIVE_ARGS --json`: the Pre-PR test gate (non-ok or non-zero fails) and the pr-review-cycle TEST_COMMAND.
+- In every `tracker.list` result the issue list is `data` parsed as JSON if an array, else its `.issues` array.
+- Scaffold goes only to @beads-scaffold-specialist (never backend-developer); no product code is written.
+- Kata (0.23.0+, `.kata.toml`): `implement-trd-tasks-reference/reference/kata-starting-point.md`.
+- Branch intent, PR creation, workstream mode, resume/recovery detail: `implement-trd-tasks-reference` skill; read the section a step names.
+
+Terminal states: HALT (error printed, nothing runs), EXIT (early exit done), COMPLETE (epic closed, reported).
+
+## Capabilities
+
+**Required:** tracker.list, tracker.create, tracker.comment, tracker.close, test-runner.run, package-runner.run-script, workflow.commit, workflow.merge-base
+**Optional:** work-graph.plan, work-graph.ready, tracker.create-detailed, tracker.find-by-key, work-graph.graph-health, tracker.stage-export, tracker.comments, tracker.dep-add, tracker.sync, tracker.close-with-reason
+
+## Arguments
+
+- **`workstream`** (boolean, optional, default: `false`): With two or more TRD paths, generate one normalized executable workstream TRD (node "$TRD_CLI" create-workstream-trd) and implement that single TRD.
+- **`generate-only`** (boolean, optional, default: `false`): Only with --workstream and two or more TRD paths (replaces the removed /ensemble:create-workstream-trd). Generate the workstream TRD, report, and EXIT before any tracker/git/branch/scaffold/commit/PR side effect. Accepts --out <path> and --allow-invalid.
+- **`foreman`** (boolean, optional, default: `false`): Force non-interactive mode (INTERACTIVE=false) for Foreman orchestration: `--foreman` or non-empty env FOREMAN_TASK_TITLE (same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it); `--foreman` below means it. No HALT behavior changes: unresolved branch intent, unresolved PR backend and failed completion verification still HALT. When FOREMAN_ARTIFACT_PATH is set and non-empty, also write the phase report to that exact path; never alter it.
+
+## Workflow
+
+Work through the phases in numbered order. Each phase's full instructions are in its own file under `references/`, in this skill's directory: open the file with your file-reading tool (not a shell command) when you reach that phase and follow it exactly. Resolve paths relative to this SKILL.md.
+
+| Phase | Instructions | Steps |
+|---|---|---|
+| 1. Preflight | `references/phase-1-preflight.md` | Arguments and early exits; Tools; Git-town, PR backend and working tree; TRD selection and validation; Resume detection, staleness gate, strategy; Branch intent and feature branch; Team roster and agent aliases |
+| 2. Scaffold | `references/phase-2-scaffold.md` | Plan and create beads; Work-graph analysis and handoff |
+| 3. Execute | `references/phase-3-execute.md` | Delegate to beads-build |
+| 4. Quality Gate | `references/phase-4-quality-gate.md` | Per-phase gate |
+| 5. Completion | `references/phase-5-completion.md` | Completion verification; PR review completion check; Epic closure and TRD checkboxes; Completion report |
+
+## Expected Output
+
+**Format:** Beads hierarchy, feature branch(es) and PR(s), closed beads with quality-gate comments, TRD checkboxes synced, completion verification report and requirement satisfaction report
+
+**Structure:**
+
+- **Workstream TRD (--workstream --generate-only)**: Generated workstream TRD under docs/TRD/workstreams/ (or the --out path)
+
+## Expected Input
+
+- **format**: Technical Requirements Document (TRD) with a Master Task List

@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:author-playwright-tests
+  description: Interactive, post-implementation Playwright test-authoring session grounded in shipped code and PRD acceptance criteria
+  version: 2.7.0
+  lastUpdated: "2026-08-27"
+  category: testing
+  output_path: ensemble/author-playwright-tests.md
+  source: sunstone
+  argument_hint: "[story-or-pr-reference]"
+
+# Skill-backed command: the prompt is packages/e2e-testing/skills/ensemble-author-playwright-tests/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-author-playwright-tests

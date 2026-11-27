@@ -1,0 +1,74 @@
+adapter: reviewdog
+version: "1.0.0"
+
+categories:
+  - lint
+
+contract:
+  lint: "1.0"
+
+# Bare `reviewdog` (no `-f`/`-diff` describing a single linter) reads the repo's own root
+# `.reviewdog.yml`, which already declares named `runner:` entries for `eslint` and
+# `markdownlint` (`cmd: npx eslint .` / `cmd: markdownlint .`) -- this is the documented
+# "Optional: .reviewdog.yml for bare reviewdog invocation" local-dev convenience
+# (setup-reviewdog-legacy-monorepo skill), the one path that runs every configured linter
+# through a SINGLE process this adapter's single `run[]` template can invoke (this engine has
+# no shell/pipe support to chain `eslint . | reviewdog -f=eslint ...` the way this repo's own
+# `.github/workflows/reviewdog.yml` CI jobs do via separate reviewdog/action-* steps).
+binaries:
+  - reviewdog
+
+allowlist:
+  - bin: reviewdog
+    sub:
+      # `-diff` is passed as its own argv element with the value as a SEPARATE following
+      # element (`-diff git diff main`, Go `flag` package's space-separated form -- live-
+      # verified identical to the `-diff=value` form), not one combined `-diff=...` token:
+      # `matchesSubcommandWords` splits a `sub` entry on spaces and matches each resulting
+      # word against a SEPARATE argv array element, so a single argv token that itself
+      # contains spaces (as `-diff=git diff main` would be, written as one YAML string) can
+      # never match no matter how it is split. A one-word `sub` entry matching just the bare
+      # `-diff` flag is therefore the correct, minimal allowlist entry; the trailing
+      # `git diff main -reporter=local -filter-mode=added -fail-level=none` argv elements are
+      # unconstrained by it (same convention `tracker.show`'s `sub: [show]` uses for its own
+      # trailing, unconstrained `${id}`/`--json` arguments).
+      - "-diff"
+      - "-version"
+
+env: []
+
+health:
+  - id: reviewdog-installed
+    run: ["reviewdog", "-version"]
+    timeoutMs: 5000
+
+# "reviewdog" is the shipped default for `lint` (toolchain.default.yaml), not remote-detected,
+# per TRD interpretation I2 (same convention `adapter-workflow-plain-git`/
+# `adapter-tracker-beads` use).
+detect: []
+
+capabilities:
+  # reviewdog -diff "git diff main" -reporter=local -filter-mode=added -fail-level=none:
+  # every flag live-verified against this repository's own real root `.reviewdog.yml`
+  # (reviewdog 0.21.2): it ran both the `eslint` and `markdownlint` named runners and printed
+  # real `file:line:col message` findings to stdout, exit code 0 (`-fail-level=none`, this
+  # repo's own CI convention: advisory only, never blocks). `-reporter=rdjson` was also tried
+  # for a structured `parse` block, but it concatenates one JSON document PER named runner
+  # (two back-to-back JSON objects for `eslint`+`markdownlint`, confirmed live: a single
+  # `JSON.parse` over the combined stdout fails with "Extra data" at the second object's
+  # start) -- there is no single well-formed JSON document this engine's `format: json` could
+  # parse, so no `parse` block is declared; `status`/`findings` (the category's two declared
+  # outputs) are left unmapped, the raw `-reporter=local` text returned as `data`, the same
+  # disclosed convention `adapter-workflow-plain-git`'s `workflow.push` uses. `files` (the
+  # category's declared input) is NOT referenced: the configured `.reviewdog.yml` runner
+  # commands scan the whole repo (`npx eslint .`, `markdownlint .`) regardless of any specific
+  # file list, the same "declared input, not referenced by this run template" convention
+  # `adapter-workflow-plain-git`'s `workflow.branch-create` uses for `baseBranch`.
+  lint.report-findings:
+    run:
+      - reviewdog
+      - "-diff"
+      - "git diff main"
+      - "-reporter=local"
+      - "-filter-mode=added"
+      - "-fail-level=none"

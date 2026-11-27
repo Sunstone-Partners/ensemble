@@ -1,0 +1,20 @@
+category: container-deploy
+version: "1.0"
+
+capabilities:
+  container-deploy.deploy:
+    description: Build and deploy a container workload to its target environment.
+    inputs: [target, image]
+    outputs: [status, url]
+    required: true
+    sideEffect: true
+
+  container-deploy.build-image:
+    description: >-
+      Build a container image from the project's build context (and optionally push it to a
+      registry). A real side effect: disk writes to the local image store, and possibly a
+      network push to a remote registry.
+    inputs: [context, tag]
+    outputs: [status, image]
+    required: false
+    sideEffect: true

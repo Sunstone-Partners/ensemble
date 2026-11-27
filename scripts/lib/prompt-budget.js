@@ -28,7 +28,7 @@ const yaml = require('js-yaml');
 const { isSkillBacked, resolveSkillFile, listSkillReferences } = require('./skill-backed-command');
 
 const CEILINGS = { command: 2500, agent: 1200, skill: 1500 };
-const EXCLUDED_PACKAGES = new Set(['pi', 'codex', 'opencode']);
+const EXCLUDED_PACKAGES = new Set(['pi', 'codex', 'opencode', 'skills']);
 const BASELINE_PATH = path.join(__dirname, '..', 'prompt-budget-baseline.json');
 
 function countWords(text) {

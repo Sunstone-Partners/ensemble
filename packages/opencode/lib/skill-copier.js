@@ -23,7 +23,7 @@ const path = require('path');
 // source at `packages/development/skills/adapter-tracker-beads/`, a false positive the
 // SkillCopier's own collision check (`execute()` above) would wrongly treat as two different
 // packages shipping the same adapter name.
-const ADAPTER_SOURCE_EXCLUDED_PACKAGES = new Set(['pi', 'full']);
+const ADAPTER_SOURCE_EXCLUDED_PACKAGES = new Set(['pi', 'full', 'skills']);
 /** Normalize CRLF/CR to LF so frontmatter delimiter checks can assume '\n'. */
 function normalizeLineEndings(text) {
   return String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');

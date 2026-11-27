@@ -1,0 +1,15 @@
+metadata:
+  name: ensemble:generate-reqnroll-bindings
+  description: Scaffold a runnable Reqnroll + xUnit test project (features, step stubs, project files) from a PRD
+  version: 1.0.0
+  lastUpdated: "2026-06-29"
+  category: testing
+  output_path: ensemble/generate-reqnroll-bindings.md
+  source: sunstone
+  model: low
+  argument_hint: "[prd-path] [--out <dir>] [--sut <csproj>] [--dry-run] [--force]"
+  visibility: hidden
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-generate-reqnroll-bindings/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-generate-reqnroll-bindings

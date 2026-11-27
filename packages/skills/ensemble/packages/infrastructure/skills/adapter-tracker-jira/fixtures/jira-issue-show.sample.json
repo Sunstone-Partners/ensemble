@@ -1,0 +1,9 @@
+{
+  "key": "VA-2228",
+  "summary": "Fix login timeout bug",
+  "description": "Users are logged out after 5 minutes of inactivity instead of the configured 30.",
+  "issueType": "Bug",
+  "status": "In Review",
+  "priority": "High",
+  "labels": ["backend", "auth"]
+}

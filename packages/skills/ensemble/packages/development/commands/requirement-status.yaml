@@ -1,0 +1,18 @@
+metadata:
+  name: ensemble:requirement-status
+  description: On-demand requirement satisfaction report — TRD checkbox rollups plus bead status and req-verified tokens
+  version: 3.0.0
+  lastUpdated: "2026-10-23"
+  category: implementation
+  output_path: ensemble/requirement-status.md
+  source: sunstone
+  model: medium
+  argument_hint: "[trd-path-or-slug]"
+  capabilities:
+    required:
+      - tracker.list
+      - tracker.comments
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-requirement-status/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-requirement-status

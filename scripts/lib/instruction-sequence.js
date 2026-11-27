@@ -24,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
-const GENERATED_PACKAGE_DIRS = new Set(['pi', 'full', 'codex', 'opencode']);
+const GENERATED_PACKAGE_DIRS = new Set(['pi', 'full', 'codex', 'opencode', 'skills']);
 
 const TOOL_BINARIES = ['git town', 'git-town', 'git', 'br', 'bv', 'gh', 'az', 'act', 'coderabbit', 'npm'];
 

@@ -1,0 +1,101 @@
+adapter: docker-kubectl
+version: "1.0.0"
+
+categories:
+  - container-deploy
+
+contract:
+  container-deploy: "1.0"
+
+# This bead's own two real binaries -- `docker` to build the image, `kubectl` to deploy it to a
+# cluster. No other binary is invoked by any capability or health check below.
+binaries:
+  - docker
+  - kubectl
+
+# `build`/`push` (docker) and `set image` (kubectl) are the subcommands this adapter's own
+# capabilities actually invoke. `push` is declared but NOT wired to any capability below --
+# `container-deploy.build-image`'s run template only builds (see SKILL.md "Known limits" for
+# why a single capability cannot chain `docker build` and `docker push` into one argv, `run[]`
+# being a single non-shell-interpreted argv, TRD-010), reserved for a future push-only
+# capability, the same "declared but unwired" convention `adapter-host-github` uses for its own
+# unused `api` entry. `apply` (kubectl) is likewise declared but unwired, reserved for a future
+# manifest-based deploy capability. `--version`/`version` are extra entries (beyond what the
+# wired capabilities need) purely so the `docker-installed`/`kubectl-installed` health checks
+# pass `validateAllowlist`.
+allowlist:
+  - bin: docker
+    sub:
+      - build
+      - push
+      - "--version"
+  - bin: kubectl
+    sub:
+      - "set image"
+      - apply
+      - version
+
+# Neither `docker` nor `kubectl` reads a single named credential env var of its own -- `docker`
+# uses the ambient Docker context/daemon socket, `kubectl` uses the ambient kubeconfig
+# (`~/.kube/config` or `$KUBECONFIG`, neither of which is a credential VALUE this manifest could
+# honestly name), matching `adapter-workflow-plain-git`'s own empty `env: []`.
+env: []
+
+health:
+  - id: docker-installed
+    run: ["docker", "--version"]
+    timeoutMs: 5000
+  - id: kubectl-installed
+    run: ["kubectl", "version", "--client"]
+    timeoutMs: 5000
+
+# docker-kubectl is the SHIPPED DEFAULT for `container-deploy` (toolchain.default.yaml), not
+# remote-detected -- per TRD interpretation I2, a shipped default with no detect signal at all
+# never turns some other adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error.
+detect: []
+
+capabilities:
+  # docker build -t <tag> <context>: real, documented `docker build` flags. Only builds --
+  # does NOT also push: `run[]` is a single argv spawned once (TRD-010, never shell-interpreted,
+  # so `docker build ... && docker push ...` cannot be expressed as one template), and this
+  # category contract declares no second "registry"/"push" input to drive a second
+  # capability-internal step. See SKILL.md "Known limits": a caller needing the built image
+  # pushed to a registry must do so separately (e.g. a future `container-deploy.push`
+  # capability, or `docker build` with a tag that is itself a registry-qualified reference
+  # followed by a manual `docker push`). Never executed live (side-effecting: would build a
+  # real image against this repository's Docker daemon, and no Docker daemon is reachable in
+  # this environment).
+  container-deploy.build-image:
+    run:
+      - docker
+      - build
+      - "-t"
+      - "${tag}"
+      - "${context}"
+
+  # kubectl set image deployment/<target> <target>=<image> --record=false: real, documented
+  # `kubectl set image` usage. `${target}` is used BOTH as the deployment name and (per the
+  # single-container-per-deployment convention many simple workloads follow) as the container
+  # name within that deployment -- `kubectl set image` has no "update every container" wildcard,
+  # and the category contract declares no separate `container` input, so this is a disclosed
+  # assumption, not a fabricated shape (see SKILL.md "Known limits"). `--record=false` is a
+  # real, documented flag suppressing the deprecated change-cause annotation `kubectl` would
+  # otherwise try to write. `parse.format: text` + `map.status: "$"` captures `kubectl set
+  # image`'s own one-line human confirmation (e.g. "deployment.apps/myapp image updated") as
+  # the declared `status` output -- a full one-to-one match for that one field. `url` is never
+  # populated: `kubectl set image` has no concept of an externally reachable URL (that would
+  # come from a Service/Ingress this capability never queries) -- see SKILL.md "Known limits".
+  # Never executed live (side-effecting: would mutate a real cluster deployment, and no
+  # reachable Kubernetes cluster/context exists in this environment).
+  container-deploy.deploy:
+    run:
+      - kubectl
+      - set
+      - image
+      - "deployment/${target}"
+      - "${target}=${image}"
+      - "--record=false"
+    parse:
+      format: text
+      map:
+        status: "$"

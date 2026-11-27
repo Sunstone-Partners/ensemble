@@ -1,0 +1,17 @@
+category: package-runner
+version: "1.0"
+
+capabilities:
+  package-runner.run-script:
+    description: Run a package/build-tool script (for example an npm/yarn/pnpm script).
+    inputs: [script, args]
+    outputs: [status, output]
+    required: true
+    sideEffect: false
+
+  package-runner.install:
+    description: Install the project's declared dependencies.
+    inputs: [args]
+    outputs: [status, output]
+    required: false
+    sideEffect: false

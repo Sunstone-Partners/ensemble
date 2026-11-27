@@ -1,0 +1,97 @@
+category: host
+version: "1.0"
+
+# Capability ids use the single-dot, hyphenated convention established by the already-shipped
+# tracker.yaml/work-graph.yaml contracts (e.g. tracker.dep-add, tracker.set-status,
+# work-graph.graph-health), not the TRD-035 prose's incidental two-dot spelling
+# (host.change-request.create) and not this file's earlier PR-1 scaffold camelCase
+# (host.openChangeRequest) -- see TRD-2026-8d825f54 TRD-035.
+
+capabilities:
+  host.auth-status:
+    description: Report whether the resolved host CLI is authenticated.
+    inputs: [scope]
+    outputs: [authenticated]
+    required: true
+    sideEffect: false
+
+  host.change-request-create:
+    description: Open a change request (pull/merge request) from a pushed branch.
+    inputs: [baseBranch, headBranch, title, description]
+    outputs: [id, url, state, baseBranch, headBranch]
+    required: true
+    sideEffect: true
+
+  host.change-request-view:
+    description: Read a single change request, including its state and checks.
+    inputs: [id]
+    outputs: [id, url, state, baseBranch, headBranch, checks]
+    required: true
+    sideEffect: false
+
+  host.change-request-list:
+    description: List change requests, optionally filtered (for example by state or branch).
+    inputs: [filter]
+    outputs: [items]
+    required: true
+    sideEffect: false
+
+  host.change-request-checks:
+    description: Read the status checks attached to a change request.
+    inputs: [id]
+    outputs: [id, checks]
+    required: true
+    sideEffect: false
+
+  host.change-request-threads:
+    description: >-
+      List review comment threads on a change request. Optional, not required: not every
+      shipped host adapter has a PR-comment-thread CLI surface (for example Azure DevOps'
+      `az repos pr` allowlist, TRD-040, has none), and there is no generic cross-tool
+      fallback for review threads, so this carries no `fallback` field.
+    inputs: [id]
+    outputs: [id, threads]
+    required: false
+    sideEffect: false
+
+  host.change-request-reviews:
+    description: >-
+      Read the review state of a change request: the host's review decision, mergeability,
+      the LATEST decisive review per reviewer with the reviewer's host-reported account type
+      (`authorType`: `Bot` or `User`, never inferred from a name), and the UNRESOLVED review
+      threads (`{path, body}`). Optional, not required: not every host adapter has a
+      review-state CLI surface (Azure DevOps' `az repos pr` allowlist has none), and there is
+      no generic cross-tool fallback, so this carries no `fallback` field. A caller that gates
+      on review state (`/ensemble:pr-merge`) MUST fail closed when this resolves
+      `UNAVAILABLE` or returns `ok:false`, never treat it as "no reviews".
+    inputs: [id]
+    outputs: [id, reviewDecision, mergeable, mergeStateStatus, reviews, threads]
+    required: false
+    sideEffect: false
+
+  host.change-request-merge:
+    description: >-
+      Merge a change request once its checks pass. `method` (optional, TRD-2026-8d825f54 PR 9
+      fix round, item 2) selects the normalized merge strategy (squash|merge|rebase); omitted
+      defaults to `squash`, preserving behavior from before this input existed. Not every
+      adapter supports every method -- an adapter without a given method declared in its own
+      `variants.method` fails the call closed with `NOT_ALLOWED`, never silently falling back
+      to a different strategy or passing the caller's value through unvalidated. Adding this
+      as an optional input to an EXISTING capability (not a new capability) needs no contract
+      version bump: `checkCompat`/`checkAdditiveOnly` (`contracts.js`) gate capability-level
+      `required`/removal/addition only, never a capability's own `inputs` list.
+    inputs: [id, method]
+    outputs: [id, state]
+    required: true
+    sideEffect: true
+
+  host.change-request-link-work-item:
+    description: >-
+      Link a change request to a tracker work item. Optional: GitHub has no native
+      work-item-linking capability (only Azure DevOps' `az repos pr work-item add` does,
+      TRD-040/TRD-041), and there is no generic cross-tool fallback, so this carries no
+      `fallback` field.
+    inputs: [id, workItemId]
+    outputs: [id, workItemId]
+    required: false
+    sideEffect: true

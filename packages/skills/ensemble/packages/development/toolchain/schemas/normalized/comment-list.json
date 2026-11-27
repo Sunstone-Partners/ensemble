@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sunstonepartners.com/schemas/normalized/comment-list.json",
+  "title": "Ensemble Normalized Comment List Schema",
+  "description": "Schema for the toolchain's normalized 'comment list' shape (TRD-2026-8d825f54 TRD-012/TRD-033, PRD REQ-002, REQ-022). A tracker-category adapter capability that returns a work item's comments (`tracker.comments`) maps its tool's raw stdout into this shape via packages/development/lib/toolchain/mapping.js#mapOutput. packages/development/lib/toolchain/runner.js's CAPABILITY_NORMALIZED_SCHEMA selects this schema for 'tracker.comments' specifically, the same way it selects work-item-list.json for 'tracker.list' -- see that schema's own description for why this must be a separate schema from work-item.json's single-item, 'id'-required shape.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["comments"],
+  "properties": {
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "description": "Comments on the work item, in source-tool order; the same unconstrained-beyond-'object' shape work-item.json's own 'comments' property documents (TRD-012's Implementation AC and System Architecture section document only that 'comments[]' exists, not a normalized comment shape)."
+    }
+  }
+}

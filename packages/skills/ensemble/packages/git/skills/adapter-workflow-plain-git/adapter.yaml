@@ -1,0 +1,200 @@
+adapter: plain-git
+version: "1.0.0"
+
+categories:
+  - workflow
+
+contract:
+  workflow: "1.0"
+
+# TRD-036's own directed allowlist for plain-git: status, commit, push, log, diff, merge-base,
+# remote, switch, branch. `branch` is declared but not wired to any capability below (reserved;
+# same "declared but unused" convention `adapter-host-github`'s `api` entry and
+# `adapter-workflow-git-town`'s `append` entry use). `"--version"` is one extra entry beyond
+# TRD-036's nine, added purely so the `git-installed` health check passes `validateAllowlist`
+# (same convention as the other two adapters in this bead).
+binaries:
+  - git
+
+allowlist:
+  - bin: git
+    sub:
+      - status
+      - commit
+      - push
+      - log
+      - diff
+      - merge-base
+      - remote
+      - switch
+      - branch
+      - "--version"
+
+env: []
+
+health:
+  - id: git-installed
+    run: ["git", "--version"]
+    timeoutMs: 5000
+
+# plain-git is the SHIPPED DEFAULT for `workflow` (toolchain.default.yaml), not remote-detected
+# (unlike `host: github`'s `remote_url_matches` signal) -- per TRD interpretation I2, a shipped
+# default with NO detect signal at all never turns an unrelated adapter's unmatched signal into
+# an `AMBIGUOUS_PROVIDER` error; it simply falls through to this default. `detect: []` is
+# schema-valid (no `minItems` on `detect`).
+detect: []
+
+capabilities:
+  # git switch -c <name>: TRD-036's own directed allowlist includes `switch` specifically for
+  # this (plain git has no `git-town hack`-equivalent single verb, `switch -c` is the real,
+  # documented way to create-and-check-out a new branch). `baseBranch` is unreferenced: this
+  # template always branches off the CURRENT HEAD (the caller must already be on the intended
+  # base), rather than pass a possibly-empty `${baseBranch}` positional that `git switch -c`
+  # would reject if empty (there is no declared default for this input at the generic category
+  # level -- `runner.js#buildCapabilityArgv` always passes an empty `inputs` map to
+  # `resolveArg`, so every referenced placeholder must always have a real value supplied). No
+  # `parse` block: `git switch -c` prints nothing to stdout on success.
+  workflow.branch-create:
+    run:
+      - git
+      - switch
+      - "-c"
+      - "${name}"
+
+  # git status --porcelain: the real, well-known, scriptable way to report working-tree
+  # clean/dirty state. Live-verified against this repository's own (clean) working tree: empty
+  # stdout. `scope` is unreferenced. `parse.format: lines` turns stdout into an array of
+  # non-empty porcelain lines (one raw `XY path` entry per changed file; an empty array when
+  # clean -- `mapOutput`'s own documented "a single trailing empty element...is trimmed, then
+  # every remaining empty line is dropped" behavior for `'lines'` format handles the empty-
+  # stdout case exactly). `files` maps to that array; `clean` is left unmapped -- see SKILL.md
+  # "Known limits" for why (no boolean/length-check primitive in `mapping.js`'s grammar).
+  workflow.status:
+    run:
+      - git
+      - status
+      - "--porcelain"
+    parse:
+      format: lines
+      map:
+        files: "$"
+
+  # git commit -m <message>: the category contract's one required generic commit primitive.
+  # No `parse` block: `git commit`'s own stdout (a one-line `[branch <short-sha>] <message>`
+  # summary plus a change-stat line) has no regex/string-split primitive in `mapping.js`'s
+  # dotted-path grammar to extract a SHA, so `sha` (the sole declared output) is left unmapped
+  # rather than fabricated.
+  workflow.commit:
+    run:
+      - git
+      - commit
+      - "-m"
+      - "${message}"
+
+  # git push -u origin HEAD: the category contract's one required generic push primitive. A
+  # bare `git push` fails on a brand-new branch (`fatal: The current branch X has no upstream
+  # branch`), which is exactly what every caller pushes first, so the template names the remote
+  # and sets the upstream. `HEAD` (the current branch, the category's documented meaning of
+  # "push the current branch") is used rather than `${branch}`: it works when the caller passes
+  # no `branch` (a referenced placeholder with no value is `INVALID_ARG`, and no manifest-level
+  # default is possible, see `workflow.log`), and since the caller's `branch` value never
+  # reaches git, no arg can smuggle in a `+refspec` (a force push; `resolveArg` rejects only a
+  # leading `-`). `branch` is therefore unreferenced. No `--force`/`+` anywhere in the template.
+  # `-u`/`origin`/`HEAD` are flags and positionals after the allowlisted `push` subcommand, so
+  # the allowlist is unchanged. No `parse` block: `git push`'s real output (including any
+  # host-provided "create a pull request" hint) goes to stderr, which `mapOutput` never sees on
+  # a successful invocation.
+  workflow.push:
+    run:
+      - git
+      - push
+      - "-u"
+      - origin
+      - HEAD
+
+  # git push -u origin HEAD: plain git has NO native "open a change request" concept at all (unlike git-town's
+  # `propose`, which delegates to a configured host CLI/API) -- the real, honest prerequisite
+  # action a plain-git workflow performs before a human or a `host.change-request-create` call
+  # opens the actual pull request is pushing the branch. This capability is therefore a
+  # deliberate alias of `workflow.push`'s own run template (not a separate mechanism) -- see
+  # SKILL.md "Known limits" for why this is a disclosed semantic gap, not a working "propose"
+  # implementation. `headBranch`/`baseBranch`/`title` are unreferenced; no `parse` block.
+  workflow.propose:
+    run:
+      - git
+      - push
+      - "-u"
+      - origin
+      - HEAD
+
+  # git log --oneline -n <limit> <ref>: real, documented `git log` flags. Both `${ref}` and
+  # `${limit}` must always be supplied (optional category input, but `runner.js#
+  # buildCapabilityArgv` always passes an empty `inputs` map to `resolveArg`, so there is no
+  # way to declare a default at the manifest level -- every referenced placeholder always
+  # requires a real caller-supplied value). `parse.format: lines` yields one raw `<short-sha>
+  # <subject>` string per commit (`git log --oneline`'s own real, documented format); `commits`
+  # maps to that array -- not reshaped into `{sha, message}` objects (no delimiter-split
+  # primitive in `mapping.js`'s dotted-path grammar to pull the two apart safely when a subject
+  # itself contains whitespace).
+  workflow.log:
+    run:
+      - git
+      - log
+      - "--oneline"
+      - "-n"
+      - "${limit}"
+      - "${ref}"
+    parse:
+      format: lines
+      map:
+        commits: "$"
+
+  # git diff <ref>: real, documented `git diff` usage; the whole trimmed diff text maps
+  # directly onto the category contract's sole declared output (`text`) with no reshaping
+  # needed -- a full one-to-one match, unlike most other capabilities in this bead.
+  workflow.diff:
+    run:
+      - git
+      - diff
+      - "${ref}"
+    parse:
+      format: text
+      map:
+        text: "$"
+
+  # git merge-base <refA> <refB>: real, documented `git merge-base` usage; its single-line SHA
+  # output maps directly onto the category contract's sole declared output (`sha`) -- another
+  # full one-to-one match. Live-verified against this repository: `git merge-base HEAD dev`
+  # printed a real 40-character SHA.
+  workflow.merge-base:
+    run:
+      - git
+      - merge-base
+      - "${refA}"
+      - "${refB}"
+    parse:
+      format: text
+      map:
+        sha: "$"
+
+  # git remote get-url <remote>: real, documented `git remote get-url` usage; its single-line
+  # URL output maps directly onto the category contract's sole declared output (`url`) -- a
+  # full one-to-one match. Live-verified against this repository: `git remote get-url origin`
+  # printed the real configured origin URL.
+  workflow.remote-url:
+    run:
+      - git
+      - remote
+      - get-url
+      - "${remote}"
+    parse:
+      format: text
+      map:
+        url: "$"
+
+# `workflow.sync`/`workflow.ship` (both optional) are intentionally NOT declared: plain git has
+# no native "sync with ancestors" or "ship/merge into parent" verb within TRD-036's own directed
+# allowlist for this adapter (no `pull`/`fetch`/`merge` subcommand is listed), and both
+# capabilities carry no documented `fallback`, so a caller requesting either against this
+# adapter gets `UNAVAILABLE` with no fallback -- the correct, honest outcome (same convention
+# `adapter-host-github`'s omitted `host.change-request-link-work-item` uses).

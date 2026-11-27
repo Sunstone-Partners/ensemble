@@ -1,0 +1,15 @@
+metadata:
+  name: ensemble:new-feature
+  description: >-
+    Resumable, checkpointed workflow from an idea through PRD, TRD, bead
+    planning, and approved implementation, with an optional PR.
+  version: 1.0.0
+  lastUpdated: "2026-09-30"
+  category: implementation
+  model: medium
+  output_path: ensemble/new-feature.md
+  source: sunstone
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-new-feature/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-new-feature

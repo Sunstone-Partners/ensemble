@@ -1,0 +1,139 @@
+Command
+    az repos pr : Manage Azure DevOps pull requests.
+
+        This command requires the azure-devops extension.
+
+Subgroups:
+    policy             : Manage Azure DevOps pull request policies.
+    reviewer           : Manage reviewers of a pull request.
+    work-item          : Manage work items associated with a pull request.
+
+Commands:
+    create             : Create a pull request.
+    list               : List pull requests.
+    reactivate          : Reactivate an abandoned pull request.
+    set-vote            : Set a reviewer's vote on a pull request.
+    show                : Get the details of a pull request.
+    update              : Update a pull request.
+
+Command
+    az repos pr create : Create a pull request.
+
+    Arguments
+        --auto-complete             : Set the PR to complete automatically when all policies have
+                                       passed and the source branch can be merged into the target
+                                       branch.
+        --bypass-policy             : Bypass any required policies when completing the pull
+                                       request.
+        --delete-source-branch      : Delete the source branch once the pull request completes.
+        --description -d            : Description for the pull request.
+        --draft                     : Create the pull request as a draft.
+        --org --organization        : Azure DevOps organization URL.
+        --project -p                : Name or ID of the project.
+        --repository -r             : Name or ID of the repository.
+        --reviewers                 : Space-separated list of reviewers to assign to the pull
+                                       request.
+        --source-branch -s [Required] : Name of the source branch.
+        --target-branch -t          : Name of the target branch. If unspecified, defaults to the
+                                       repository's default branch.
+        --title                     : Title for the pull request. Defaults to the source branch
+                                       name if not supplied.
+        --work-items                : Space-separated list of work items IDs to link to the pull
+                                       request.
+        --query                     : JMESPath query string.
+        --output -o                 : Output format.
+
+Command
+    az repos pr show : Get the details of a pull request.
+
+    Arguments
+        --id [Required]             : ID of the pull request.
+        --open                      : Open the pull request in the default web browser.
+        --org --organization        : Azure DevOps organization URL.
+        --query                     : JMESPath query string.
+        --output -o                 : Output format.
+
+Command
+    az repos pr list : List pull requests.
+
+    Arguments
+        --creator                   : Limit results to pull requests created by this user.
+        --include-links             : Include Pull Request links in the output.
+        --org --organization        : Azure DevOps organization URL.
+        --project -p                : Name or ID of the project.
+        --repository -r             : Name or ID of the repository.
+        --reviewer                  : Limit results to pull requests that have this reviewer.
+        --source-branch             : Limit results to pull requests from this source branch.
+        --status                    : Limit results to pull requests with this status. Allowed
+                                       values: abandoned, active, all, completed, notSet.
+                                       Default: active.
+        --target-branch             : Limit results to pull requests with this target branch.
+        --top                       : Maximum number of pull requests to list.
+        --query                     : JMESPath query string.
+        --output -o                 : Output format.
+
+Command
+    az repos pr update : Update a pull request.
+
+    Arguments
+        --auto-complete             : Set the PR to complete automatically when all policies have
+                                       passed and the source branch can be merged into the target
+                                       branch.
+        --bypass-policy             : Bypass any required policies when completing the pull
+                                       request.
+        --delete-source-branch      : Delete the source branch once the pull request completes.
+        --description -d            : New description for the pull request.
+        --draft                     : Publish the pull request as a draft, or take it out of
+                                       draft mode if already published.
+        --id [Required]             : ID of the pull request.
+        --org --organization        : Azure DevOps organization URL.
+        --status                    : Set the new status of the pull request. Allowed values:
+                                       abandoned, active, completed.
+        --title                     : New title for the pull request.
+        --query                     : JMESPath query string.
+        --output -o                 : Output format.
+
+Command
+    az repos pr set-vote : Set a reviewer's vote on a pull request.
+
+    Arguments
+        --id [Required]             : ID of the pull request.
+        --vote [Required]           : Vote on the pull request. Allowed values: approve,
+                                       approve-with-suggestions, no-vote, reject,
+                                       wait-for-author.
+        --org --organization        : Azure DevOps organization URL.
+
+Command
+    az repos pr work-item add : Link work items to a pull request.
+
+    Arguments
+        --id [Required]             : ID of the pull request.
+        --org --organization        : Azure DevOps organization URL.
+        --work-items [Required]     : Space-separated list of work item IDs to link.
+
+Command
+    az account show : Get the details of a subscription.
+
+    Arguments
+        --query                     : JMESPath query string.
+        --output -o                 : Output format.
+
+Command
+    az devops configure : Configure Azure DevOps CLI defaults.
+
+    Arguments
+        --defaults                  : Space-separated 'name=value' pairs for 'organization' and
+                                       'project'.
+        --list                      : List the configured defaults.
+
+Command
+    az extension show : Show the details of an extension.
+
+    Arguments
+        --name [Required]           : Name of the extension.
+
+Command
+    az : Microsoft Azure CLI.
+
+    Global Arguments
+        --version                   : Show the version and exit.

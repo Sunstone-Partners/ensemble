@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:trd
+  description: Dispatch to a TRD-authoring, analysis, or implementation subcommand by keyword
+  version: 1.1.0
+  lastUpdated: "2026-10-17"
+  category: planning
+  output_path: ensemble/trd.md
+  source: sunstone
+  argument_hint: "<create|refine|implement|analyze|complexity|validate|verify|status|graph> [subcommand args...]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-trd/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-trd

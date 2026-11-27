@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sunstonepartners.com/schemas/normalized/change-request.json",
+  "title": "Ensemble Normalized Change Request Schema",
+  "description": "Schema for the toolchain's normalized 'change request' shape (TRD-2026-8d825f54 TRD-035, PRD REQ-001, REQ-002). A host-category adapter capability that returns a change request (for example 'host.change-request-view') maps its tool's raw stdout into this shape via packages/development/lib/toolchain/mapping.js#mapOutput; the runner validates the mapped value against this schema before handing it back to a caller, and rejects a mismatch as BAD_OUTPUT without passing the data on (PRD REQ-002 AC-002-2). Only 'id' and 'state' are required: a sample missing 'state' is expected to fail validation. 'additionalProperties' is left true at the top level because adapters may surface tool-specific fields beyond this normalized core (same policy as work-item.json).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "state"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The change request's id in its source tool, for example a GitHub PR number or an Azure DevOps pull request id."
+    },
+    "url": {
+      "type": "string",
+      "description": "A fully-qualified external reference (URL) to the change request in its source tool, when the tool exposes one."
+    },
+    "state": {
+      "type": "string",
+      "description": "The change request's lifecycle state, as reported by its source tool. Not constrained to an enum because hosts define their own, incompatible state vocabularies (for example GitHub's 'OPEN'/'MERGED'/'CLOSED' versus Azure DevOps' 'active'/'completed'/'abandoned'); adapters normalize their tool's raw state string via a capability's own parse.statusMap, the same way work-item.json's 'status' field documents."
+    },
+    "baseBranch": {
+      "type": "string",
+      "description": "The branch the change request targets."
+    },
+    "headBranch": {
+      "type": "string",
+      "description": "The branch the change request proposes to merge."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One status check on the change request. Its shape is intentionally unconstrained beyond 'object' (this schema's own choice) because the TRD documents only that 'checks[]' exists on the change request, not a normalized check shape."
+      },
+      "description": "Status checks attached to the change request, in source-tool order."
+    }
+  }
+}

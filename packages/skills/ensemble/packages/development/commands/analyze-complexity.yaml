@@ -1,0 +1,17 @@
+metadata:
+  name: ensemble:analyze-complexity
+  description: Score work complexity and choose an adaptive Ensemble planning route
+  version: 1.1.0
+  lastUpdated: "2026-09-29"
+  category: planning
+  output_path: ensemble/analyze-complexity.md
+  source: sunstone
+  model: medium
+  argument_hint: "[work-description] [--bead <id>] [--route simple|medium|complex] [--no-adaptive-planning] [--foreman]"
+  capabilities:
+    required:
+      - tracker.show
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-analyze-complexity/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-analyze-complexity

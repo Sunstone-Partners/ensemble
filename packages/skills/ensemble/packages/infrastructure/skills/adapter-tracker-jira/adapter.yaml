@@ -1,0 +1,298 @@
+adapter: jira
+version: "1.0.0"
+
+# PR 8 independent review item 2 / finding 2: this manifest previously also declared
+# `categories: [tracker, work-graph]` with `contract: {work-graph: "2.0"}`, but implements NO
+# `work-graph.*` capability below -- that combination made
+# `work-graph-resolve.js#resolveWorkGraphAdapter`'s `trackerProvidesWorkGraph` check (which
+# only inspects `manifest.categories.includes('work-graph')`, never whether any work-graph.*
+# capability is actually declared) incorrectly select THIS adapter as the work-graph.ready/
+# work-graph.plan provider for `tracker: jira`, instead of falling through to the shipped
+# `work-graph-links-fallback` builtin (TRD-027/I7) -- confirmed live:
+# `preflight --require work-graph.ready` under `tracker: jira` failed `UNAVAILABLE` ("adapter
+# 'jira' does not declare required capability 'work-graph.ready'") before this fix, and passes
+# (via the builtin fallback) after it. Declaring only `tracker` here is the fix; see
+# `adapter-tracker-azure-boards/adapter.yaml`, which never made this claim in the first place.
+
+categories:
+  - tracker
+
+contract:
+  tracker: "1.0"
+
+binaries:
+  - jira
+
+allowlist:
+  - bin: jira
+    sub:
+      - issues
+      - comments
+      - "--version"
+
+# The `jira` command this adapter invokes ships with the `full` bundle
+# (`packages/full/bin/jira`): a dependency-free Node script (node builtins plus
+# global `fetch`) implementing exactly the subcommands, flags and JSON shapes
+# below. Only the `full` bundle ships it (the Pi and Codex bundles mirror this
+# manifest but contain no `bin/`), and the host must put the bundle's `bin/` on
+# PATH; otherwise a `jira` must be provided on PATH some other way.
+# Authentication is Jira Cloud REST v3 basic auth through these environment
+# variables; the manifest's `env:` list is what
+# `packages/development/lib/toolchain/runner.js#buildChildEnv` forwards to the
+# child process, so a name missing here never reaches the binary.
+#
+# The legacy `ATLASSIAN_*` names stay declared alongside the `JIRA_*` ones so a setup
+# that already exported them (they were this adapter's only declared names before)
+# does not silently lose its credentials. The bundled `packages/full/bin/jira` reads
+# `ATLASSIAN_SITE_URL` and `ATLASSIAN_AUTH_TOKEN` ("email:token") as fallbacks for
+# `JIRA_BASE_URL` and `JIRA_EMAIL` + `JIRA_API_TOKEN`.
+env:
+  # Jira Cloud site, e.g. https://your-site.atlassian.net
+  - JIRA_BASE_URL
+  # Account e-mail used as the basic-auth user
+  - JIRA_EMAIL
+  # Atlassian API token (https://id.atlassian.com/manage-profile/security/api-tokens)
+  - JIRA_API_TOKEN
+  # Default project key for `jira issues create` (`tracker.create` declares no
+  # `project` input, so the project comes from the environment)
+  - JIRA_PROJECT_KEY
+  # Legacy aliases, read by the bundled `jira` command as fallbacks
+  - ATLASSIAN_SITE_URL
+  - ATLASSIAN_AUTH_TOKEN
+  - ATLASSIAN_CLOUD_ID
+
+health:
+  # `jira --version` must print this client's marker (`jira <x.y.z> (ensemble-client)`): the
+  # version probe reads it with `versionPattern`, so a DIFFERENT `jira` first on PATH (for
+  # example the unrelated jira-cli) fails here as HEALTH_FAILED instead of failing later with
+  # confusing output.
+  - id: jira-installed
+    run: ["jira", "--version"]
+    minVersion: "1.0.0"
+    versionPattern: '^jira (\d+\.\d+\.\d+) \(ensemble-client\)'
+    timeoutMs: 5000
+  - id: jira-auth
+    run: ["jira", "issues", "list", "--limit", "1"]
+    timeoutMs: 10000
+
+detect: []
+
+# Status vocabulary
+# ---------------
+# The `statusMap` blocks below are Jira Cloud's default "Simplified Workflow"
+# vocabulary. A repository whose workflow uses other status names ("Code
+# Review", "QA Testing", ...) extends this adapter from its own
+# `.ensemble/toolchain.yaml` instead of duplicating the whole adapter:
+#
+#   adapters:
+#     jira:
+#       statusMap:    # read direction: provider status name -> normalized status
+#         "Code Review": in_progress
+#       statusNames:  # write direction: normalized status -> provider status name
+#         open: Backlog
+#
+# `statusMap` extends the read side; a provider status with no entry still
+# fails `BAD_OUTPUT`, and the error names the `adapters.jira.statusMap` key to
+# set. `statusNames` replaces the provider status name this adapter writes for
+# a normalized status (the defaults below stay in place when it is absent).
+# See `packages/development/lib/toolchain/status-overrides.js` and
+# `packages/development/lib/toolchain/config.js#resolveAdapterOverrides`.
+
+capabilities:
+  # jira issues read <KEY>: `packages/infrastructure/skills/jira/SKILL.md`'s own jq examples
+  # (lines ~290-300) document the issue JSON as a FLAT object (never array-wrapped the way
+  # `br show` is) carrying at least `.key` (the issue id), `.summary` and `.status` (a plain
+  # status-name string, e.g. "In Review", per that file's "Update Issue State" workflow
+  # example); `root` is omitted (defaults to `$`, the whole parsed document). The real `jira`
+  # CLI's exact field names for `description`/issue type/priority/labels were never
+  # independently captured live (no `jira` binary is installed in this environment -- see
+  # SKILL.md "Known limits"); this adapter follows the one documented REST-API-shaped
+  # convention Atlassian's own Jira Cloud API uses for these fields (`description`,
+  # `issuetype`/here spelled the CLI's own camelCase `issueType`, `priority`, `labels`) as the
+  # most direct mapping consistent with the jq examples' flat-object shape.
+  tracker.show:
+    run: ["jira", "issues", "read", "${id}"]
+    parse:
+      format: json
+      map:
+        id: "$.key"
+        title: "$.summary"
+        description: "$.description"
+        type: "$.issueType"
+        status: "$.status"
+        priority: "$.priority"
+        labels: "$.labels"
+      statusMap:
+        # Jira Cloud's default "Simplified Workflow" status names (the only ones this
+        # adapter's source SKILL.md names: "In Review" appears in its own "Update Issue
+        # State" example). "To Do"/"Backlog"/"Open" have not started, so they normalize to
+        # "open"; "In Progress"/"In Review" are active work, so they normalize to
+        # "in_progress"; "Done"/"Closed" are terminal, so they normalize to "closed".
+        To Do: open
+        Backlog: open
+        Open: open
+        In Progress: in_progress
+        In Review: in_progress
+        Done: closed
+        Closed: closed
+
+  # jira issues list: SKILL.md's own jq example (`jira issues list --limit 10 | jq -r '.[] |
+  # "\(.key): \(.summary)"'`) documents a bare top-level array, never a wrapper object, of the
+  # same flat-object shape `tracker.show` is independently documented from (`.key`/`.summary`/
+  # `.status`). `parse.map: {items: "$"}` + `parse.arrayMap.items` (TRD-033's per-item
+  # filter+reshape mechanism) renames each raw item's `.key`/`.summary`/`.status` into
+  # `.id`/`.title`/`.status`, so `packages/development/lib/trd-cli.js#getBeadCounts` and
+  # `packages/development/lib/beads-label.js#ensureLabel` (both of which filter by `.title`/
+  # match on `.id`) receive real, name-consistent items instead of raw `.key`/`.summary` text
+  # they would never find (PR 8 independent review item 5 / finding 5). `status` is NOT run
+  # through `statusMap`: `mapOutput`'s `statusMap` only ever translates ONE top-level `status`
+  # field, never a per-item array value (`mapping.js`'s own documented limit) -- each listed
+  # item's `.status` therefore stays in Jira's own raw vocabulary (e.g. "To Do"), a documented,
+  # accepted gap: status-keyed counting over a `tracker.list` result (as opposed to id/title
+  # matching, which this fix does correctly handle) stays approximate under this adapter until
+  # a future task adds per-item status translation to the mapping engine. Validated against
+  # `work-item-list.json` (`CAPABILITY_NORMALIZED_SCHEMA['tracker.list']`,
+  # `packages/development/lib/toolchain/runner.js`), not the single-work-item schema. The
+  # category contract's `filter` input has no corresponding `jira issues list` flag this
+  # SKILL.md documents (only `--limit`/`--project`), so it is not substituted into this run
+  # template, matching `adapter-tracker-beads`'s own `tracker.list` precedent of using only a
+  # fixed argv.
+  tracker.list:
+    run: ["jira", "issues", "list"]
+    parse:
+      format: json
+      map:
+        items: "$"
+      arrayMap:
+        items:
+          source: "$"
+          item:
+            id: "$.key"
+            title: "$.summary"
+            status: "$.status"
+
+  # jira issues create "Title" --type ... --description ...: SKILL.md's "Create Issue Options"
+  # section documents `--project` as a required-looking flag in its own worked example, but
+  # the `tracker` category contract declares only `[title, description, type]` as
+  # `tracker.create`'s inputs -- there is no `project` value this run template could
+  # substitute (TRD-032 names no additional input either). This mirrors the title's own
+  # positional-argument placement in that same example (`jira issues create "Title" ...`).
+  # No real `jira issues create` JSON was captured live; `map: {id: "$.key"}` follows the
+  # same flat-object convention `tracker.show` is independently documented from (the "Get
+  # created issue key" jq example: `jira issues create "Title" --project VA | jq -r '.key'`).
+  tracker.create:
+    run: ["jira", "issues", "create", "${title}", "--type", "${type}", "--description", "${description}"]
+    parse:
+      format: json
+      map:
+        id: "$.key"
+
+  # jira issues update <KEY> --summary <fields>: PR 8 independent review item 1/3 fix. Status
+  # transitions now go exclusively through the new `tracker.set-status` capability below (see
+  # its own comment); `tracker.update`'s single opaque "fields" input is repurposed to this
+  # adapter's own choice of destination for NON-status field edits, matching the category
+  # contract's doc note (`tracker.update` remains required:true, so every adapter must still
+  # implement SOME interpretation of "fields" -- beads uses `--notes`, azure-boards uses
+  # `--title`, this adapter uses `--summary`, the Jira CLI's own documented "rename the issue"
+  # flag per SKILL.md's "Update Issue Options" list). Unlike the old `--status ${fields}`
+  # template this replaces, `--summary` takes arbitrary free text with no status vocabulary to
+  # validate against, so there is no silent-success-on-garbage-input failure mode here the way
+  # there was for status (PR 8 review finding 3: "jira tracker.update never validates the
+  # substituted status value" -- fixed by removing status from this capability's job entirely,
+  # not by adding validation to a slot that should never have carried status in the first
+  # place). No real `jira issues update` JSON was captured live; `map: {id: "$.key"}` follows
+  # the same flat-object convention as `tracker.show`/`tracker.create`.
+  tracker.update:
+    run: ["jira", "issues", "update", "${id}", "--summary", "${fields}"]
+    parse:
+      format: json
+      map:
+        id: "$.key"
+
+  # jira issues update <KEY> --status <provider-status-name>: PR 8 independent review item 1
+  # fix (TRD-2026-8d825f54 PR 8 "A"). One fixed, provider-native status-name literal per
+  # `variants` entry (TRD-010's selector mechanism,
+  # `packages/development/lib/toolchain/runner.js#selectTemplate`) -- never a caller-supplied
+  # value substituted into `--status` (that was finding 1's whole problem: a caller-supplied
+  # JSON-object string silently reaching `--status` verbatim). The three normalized values map
+  # to this adapter's OWN documented `statusMap` vocabulary above/below: open -> "To Do" (the
+  # vocabulary's first not-started entry), in_progress -> "In Progress", closed -> "Done"
+  # (matching `tracker.close`'s own existing fixed "Done" literal exactly, so closing via
+  # either capability reaches the identical provider state). An unknown `status` value (not
+  # one of open/in_progress/closed) is rejected `NOT_ALLOWED` by `selectTemplate` before any
+  # process spawns -- no real `jira` binary exists in this environment to confirm the exact
+  # transition succeeds server-side (Jira Cloud workflows can restrict which status
+  # transitions are legal from a given current status; this adapter cannot verify that without
+  # a live instance -- see SKILL.md "Known limits"), so this capability can still fail
+  # TOOL_FAILED on a workflow that forbids the transition, exactly as `tracker.close`'s
+  # existing "Done" literal already can.
+  tracker.set-status:
+    run: ["jira", "issues", "update", "${id}", "--status", "${status}"]
+    variants:
+      status:
+        open: ["jira", "issues", "update", "${id}", "--status", "To Do"]
+        in_progress: ["jira", "issues", "update", "${id}", "--status", "In Progress"]
+        closed: ["jira", "issues", "update", "${id}", "--status", "Done"]
+    parse:
+      format: json
+      map:
+        id: "$.key"
+        status: "$.status"
+      statusMap:
+        To Do: open
+        Backlog: open
+        Open: open
+        In Progress: in_progress
+        In Review: in_progress
+        Done: closed
+        Closed: closed
+
+  # jira issues update <KEY> --status Done: the category contract's `tracker.close` declares
+  # only `[id]` as an input (no status value to substitute), so "Done" -- Jira Cloud's
+  # standard terminal status name, also in this adapter's own `statusMap` below -- is a fixed
+  # literal in the run template, exactly as TRD-032 directs ("status through `jira issues
+  # update --status`" to a Done status).
+  tracker.close:
+    run: ["jira", "issues", "update", "${id}", "--status", "Done"]
+    parse:
+      format: json
+      map:
+        id: "$.key"
+        status: "$.status"
+      statusMap:
+        To Do: open
+        Backlog: open
+        Open: open
+        In Progress: in_progress
+        In Review: in_progress
+        Done: closed
+        Closed: closed
+
+  # jira comments create <KEY> --body <text>: SKILL.md's "Comments" section documents this
+  # exact command shape. No real `jira comments create` JSON was captured live; `map: {id:
+  # "$.id"}` follows the Jira Cloud REST API's own documented comment-object convention (a
+  # comment has its own `id`, distinct from the issue `key` `tracker.show`/`tracker.create`
+  # map), the category contract's `tracker.comment` declaring only `[id]` as an output.
+  tracker.comment:
+    run: ["jira", "comments", "create", "${id}", "--body", "${text}"]
+    parse:
+      format: json
+      map:
+        id: "$.id"
+
+  # jira comments list <KEY>: SKILL.md's "Comments" section documents this exact command
+  # shape; by analogy with `jira issues list`'s own documented bare-array shape, this returns
+  # a bare array of comment objects. `parse.map: {comments: "$"}` wraps that bare array under
+  # the normalized `comments` key (PR 8 independent review item 5 / finding 5) -- no reshaping
+  # needed here (unlike `tracker.list` above): `comment-list.json`'s own `comments[]` items
+  # schema has no required per-item fields (`work-item.json`'s own `comments` property
+  # documents the same "unconstrained beyond object" shape), so the raw comment objects pass
+  # through unchanged. Validated against `comment-list.json`
+  # (`CAPABILITY_NORMALIZED_SCHEMA['tracker.comments']`), not the single-work-item schema.
+  tracker.comments:
+    run: ["jira", "comments", "list", "${id}"]
+    parse:
+      format: json
+      map:
+        comments: "$"
+

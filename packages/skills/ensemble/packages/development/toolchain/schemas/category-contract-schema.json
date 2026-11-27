@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sunstonepartners.com/schemas/category-contract-schema.json",
+  "title": "Ensemble Tool Category Contract Schema",
+  "description": "Schema for packages/development/toolchain/categories/<category>.yaml: the versioned capability contract for one of the 14 tool categories (host, workflow, worktree, tracker, work-graph, ci-local, review, lint, test-runner, e2e-quality, container-deploy, iac, platform-cloud, package-runner). Each capability states its inputs, normalized outputs and whether it is required or optional (PRD REQ-002, AC-002-1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["category", "version", "capabilities"],
+  "properties": {
+    "category": {
+      "type": "string",
+      "enum": [
+        "host",
+        "workflow",
+        "worktree",
+        "tracker",
+        "work-graph",
+        "ci-local",
+        "review",
+        "lint",
+        "test-runner",
+        "e2e-quality",
+        "container-deploy",
+        "iac",
+        "platform-cloud",
+        "package-runner"
+      ],
+      "description": "One of the 14 taxonomy categories; must match the file's own base name."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "The contract's own 'major.minor' version, independent of other categories and of Ensemble's release version (PRD REQ-003)."
+    },
+    "capabilities": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Named capabilities of this category, keyed by capability id (for example 'tracker.show').",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inputs", "outputs", "required"],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Human-readable summary of what the capability does."
+          },
+          "inputs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Named inputs the capability accepts."
+          },
+          "outputs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Named fields of the capability's normalized output."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether a conforming adapter for this category must implement the capability."
+          },
+          "sideEffect": {
+            "type": "boolean",
+            "description": "Whether invoking the capability has an externally visible side effect (write outside the local working tree)."
+          },
+          "fallback": {
+            "type": "string",
+            "description": "Id of the documented fallback used when an optional capability is absent from the resolved adapter (REQ-004)."
+          },
+          "addedInMinor": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The minor version, within the capability's major, in which this capability was added (PRD REQ-003); absent means it shipped with the major's first minor."
+          }
+        }
+      }
+    }
+  }
+}

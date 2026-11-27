@@ -1,0 +1,30 @@
+metadata:
+  name: ensemble:pr-merge
+  description: Drive an open PR to green and merged by dispatching one subagent per failing CI check and unresolved review thread, routed through the correct orchestrator
+  version: 2.4.2
+  lastUpdated: "2026-11-10"
+  category: git
+  output_path: ensemble/pr-merge.md
+  source: sunstone
+  model: high
+  argument_hint: "[pr-number-or-url] [--max-rounds=N] [--dry-run] [--foreman] [--method=squash|merge|rebase]"
+  capabilities:
+    required:
+      - host.change-request-view
+      - host.change-request-checks
+      - host.change-request-merge
+      - host.change-request-reviews
+    optional:
+      - host.change-request-threads
+  allowed_tools:
+    - Read
+    - Bash
+    - Task
+    - Grep
+    - Glob
+    - TodoWrite
+    - AskUserQuestion
+
+# Skill-backed command: the prompt is packages/git/skills/ensemble-pr-merge/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-pr-merge

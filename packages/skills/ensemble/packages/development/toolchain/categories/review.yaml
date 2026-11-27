@@ -1,0 +1,27 @@
+# Capability ids use the single-dot, hyphenated convention established by the already-shipped
+# tracker.yaml/work-graph.yaml contracts (e.g. tracker.dep-add, work-graph.graph-health).
+
+category: review
+version: "1.0"
+
+capabilities:
+  review.get-review-state:
+    description: Read the automated review state of a change request.
+    inputs: [id]
+    outputs: [id, state, threads]
+    required: true
+    sideEffect: false
+
+  review.list-open-threads:
+    description: List currently open (unresolved) automated review comment threads on a change request.
+    inputs: [id]
+    outputs: [id, threads]
+    required: true
+    sideEffect: false
+
+  review.request-review:
+    description: Request a new automated review pass on a change request.
+    inputs: [id]
+    outputs: [id]
+    required: false
+    sideEffect: true

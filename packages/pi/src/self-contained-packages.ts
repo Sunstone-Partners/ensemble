@@ -48,4 +48,4 @@ export const SELF_CONTAINED_PI_PACKAGES: Record<string, true> = { assessment: tr
  *
  * @module ensemble-pi/self-contained-packages
  */
-export const MIRROR_PACKAGES: Record<string, true> = { pi: true, full: true };
+export const MIRROR_PACKAGES: Record<string, true> = { pi: true, full: true, skills: true };

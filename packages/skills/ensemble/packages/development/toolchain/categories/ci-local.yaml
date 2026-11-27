@@ -1,0 +1,20 @@
+# Capability ids use the single-dot, hyphenated convention established by the already-shipped
+# tracker.yaml/work-graph.yaml contracts (e.g. tracker.dep-add, work-graph.graph-health).
+
+category: ci-local
+version: "1.0"
+
+capabilities:
+  ci-local.run-workflow:
+    description: Run a repository's CI workflow(s) locally.
+    inputs: [workflow]
+    outputs: [status, logs]
+    required: true
+    sideEffect: false
+
+  ci-local.list-jobs:
+    description: List the jobs defined by the repository's local CI workflow(s), without running them.
+    inputs: [workflow]
+    outputs: [jobs]
+    required: false
+    sideEffect: false

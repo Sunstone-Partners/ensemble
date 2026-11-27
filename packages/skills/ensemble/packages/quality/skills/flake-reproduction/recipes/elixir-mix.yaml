@@ -1,0 +1,47 @@
+# Worked example: Elixir with mix and ExUnit. Verified in the Foreman repository
+# (packages/foreman_server) on 2026-10-27. Paths, names and numbers are examples; other stacks
+# copy stack-template.yaml. Plain text only (no backticks): this file is data, not prose.
+stack: elixir-mix
+verified_in: Foreman repository, packages/foreman_server, 2026-10-27
+ci_command: mix test --partitions 4 --warnings-as-errors ... (run in packages/foreman_server)
+handle:
+  printed_where: 'log line "Running ExUnit with seed: N, max_cases: 8"; the seed is the replay handle'
+  set_with: mix test --seed N
+partition:
+  select_with: MIX_TEST_PARTITION=<n> together with --partitions 4
+  membership: |
+    Round-robin over the sorted test files, so it shifts when a test file is added or removed.
+    The single-partition local suite cannot hit partition or order dependent failures.
+    Reproduce against the FAILING commit's test tree: create a scratch worktree at that commit,
+    run from packages/foreman_server inside it, and remove the worktree afterwards.
+  replay_command: MIX_TEST_PARTITION=<n> mix test --partitions 4 --seed N --max-cases 8 --warnings-as-errors
+deterministic_order: mix test --seed 0 <polluter>_test.exs <victim>_test.exs  (file order, no shuffling)
+concurrency_option: --max-cases N
+private_database: |
+  ExUnit convention: suffix the test database name with MIX_TEST_PARTITION in the test config,
+  so each partition gets its own database. Check that the project's test config does, and give
+  every concurrent capture run a distinct value. Not verified for this repository's config.
+bounded_pool: Keep the Ecto pool size and --max-cases fixed while capturing; do not raise either to speed it up.
+warnings_as_errors_tests: |
+  mix test --warnings-as-errors. CI applies it to test files: a type-checker warning in a test
+  file failed CI while mix compile --warnings-as-errors on the library passed. The local gate
+  must run the test form.
+hygiene_guards:
+  - name: ProjectionLeakGuard
+    message: "Test modules left non-terminal runs with hand-written ids in the shared store"
+    fix: |
+      The message names the ids and the file that typed them. The run is guard-only. Mint unique
+      ids or reset in on_exit, and write down why it was intermittent.
+capture_example: |
+  RUNS=150 STOP_AFTER=2 BURNERS=0 OUT_DIR=tmp/flake-capture ./capture-loop.sh -- mix test path/to/suspect_test.exs
+  RUNS=150 STOP_AFTER=2 BURNERS=2 OUT_DIR=tmp/flake-capture-loaded ./capture-loop.sh -- mix test path/to/suspect_test.exs
+  ExUnit picks a fresh seed per run; each failing log keeps the seed line, which is the handle for the record.
+worked_case: |
+  All four tests of one end-to-end file timed out at 60 s in CI partition 3 (seed 897239).
+  Replaying that seed and partition on the failing commit's tree reproduced it exactly.
+  Cause (observed): an earlier test in the same partition crashed a named singleton
+  (ProjectionStore), so the live dispatcher was never re-subscribed and the victim tests waited
+  on an empty mailbox. The deterministic pair (polluter then victim, seed 0) reproduces it.
+  Lesson: when every test of one file fails the same way with an empty mailbox, suspect
+  shared-singleton pollution (crashed or suspended named processes, global counters) from an
+  earlier module in the partition.

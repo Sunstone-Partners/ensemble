@@ -7,7 +7,8 @@
  * Runs the reference validator (`skills-ref`) over every skill directory ensemble ships:
  *
  *   source     packages/<pkg>/skills/**   (every directory that holds a SKILL.md)
- *   generated  packages/pi/skills/**      and  packages/codex/.codex/skills/**
+ *   generated  packages/pi/skills/**, packages/codex/.codex/skills/**,
+ *              packages/skills/skills/** (strict: no host extension exemption)
  *
  * `packages/full/skills/*` is a symlink farm onto the source skills and is skipped, as are
  * test fixtures (`fixtures/`), `node_modules/` and `__tests__/`.
@@ -30,7 +31,7 @@ const ROOT = path.resolve(__dirname, '..');
 const PACKAGES_DIR = path.join(ROOT, 'packages');
 
 /** Packages that are mirrors of other skills, not sources. */
-const EXCLUDED_SOURCE_PACKAGES = new Set(['full']);
+const EXCLUDED_SOURCE_PACKAGES = new Set(['full', 'skills']);
 const SKIPPED_DIR_NAMES = new Set(['fixtures', 'node_modules', '__tests__']);
 const EXTENSION_KEYS = new Set([
   'user-invocable',
@@ -77,6 +78,7 @@ function collectSkillDirs(packagesDir = PACKAGES_DIR) {
     dirs.push(...findSkillDirs(path.join(packagesDir, pkg.name, 'skills')));
   }
   dirs.push(...findSkillDirs(path.join(packagesDir, 'codex', '.codex', 'skills')));
+  dirs.push(...findSkillDirs(path.join(packagesDir, 'skills', 'skills')));
   return [...new Set(dirs)].sort();
 }
 
@@ -94,16 +96,17 @@ function filterTolerated(skillDir, errors) {
 }
 
 /** Spec errors for one skill directory ([] when valid). */
-async function validateSkillDir(skillDir) {
+async function validateSkillDir(skillDir, { strict = skillDir.startsWith(path.join(PACKAGES_DIR, 'skills') + path.sep) } = {}) {
   const { validate } = await import('skills-ref');
-  return filterTolerated(skillDir, await validate(skillDir));
+  const errors = await validate(skillDir);
+  return strict ? errors : filterTolerated(skillDir, errors);
 }
 
 async function run(packagesDir = PACKAGES_DIR) {
   const dirs = collectSkillDirs(packagesDir);
   const failures = [];
   for (const dir of dirs) {
-    const errors = await validateSkillDir(dir);
+    const errors = await validateSkillDir(dir, { strict: dir.startsWith(path.join(packagesDir, 'skills', 'skills') + path.sep) });
     if (errors.length > 0) failures.push({ dir: path.relative(ROOT, dir), errors });
   }
   return { checked: dirs.length, failures };

@@ -1,0 +1,161 @@
+adapter: default
+version: "1.0.0"
+
+categories:
+  - test-runner
+
+contract:
+  test-runner: "1.0"
+
+# One interpreter per shipped per-language runner script (TRD-2026-8d825f54 TRD-043):
+# packages/jest/skills/jest/run-test.js (node), packages/pytest/skills/pytest/run-test.py (python3),
+# packages/exunit/skills/exunit/run-test.exs (elixir, per its own `#!/usr/bin/env elixir` shebang --
+# NOT mix/dotnet), packages/xunit/skills/xunit/run-test.sh (bash, per its own `#!/usr/bin/env bash`
+# shebang -- it shells out to `dotnet`/`node` itself, internal to the script, not part of this
+# adapter's own argv), packages/rspec/skills/rspec/run-test.rb (ruby).
+binaries:
+  - node
+  - python3
+  - elixir
+  - bash
+  - ruby
+
+allowlist:
+  - bin: node
+    sub:
+      - "packages/jest/skills/jest/run-test.js"
+      - "--version"
+  - bin: python3
+    sub:
+      - "packages/pytest/skills/pytest/run-test.py"
+      - "--version"
+  - bin: elixir
+    sub:
+      - "packages/exunit/skills/exunit/run-test.exs"
+      - "--version"
+  - bin: bash
+    sub:
+      - "packages/xunit/skills/xunit/run-test.sh"
+      - "--version"
+  - bin: ruby
+    sub:
+      - "packages/rspec/skills/rspec/run-test.rb"
+      - "--version"
+
+env: []
+
+health:
+  - id: node-installed
+    run: ["node", "--version"]
+    timeoutMs: 5000
+  # The three interpreter checks below are conditional on the project's detected
+  # language: this adapter ships one runner script per language, so a repository
+  # that is not a Python/Ruby/Elixir project has no reason to have those
+  # interpreters installed, and requiring them made `preflight --require
+  # test-runner.run` fail with MISSING_BINARY in every non-Python/Ruby/Elixir
+  # repo. `node` and `bash` stay unconditional: they back the jest and xunit
+  # runners, which are the defaults.
+  - id: python3-installed
+    run: ["python3", "--version"]
+    timeoutMs: 5000
+    when:
+      languages: ["python"]
+  - id: elixir-installed
+    run: ["elixir", "--version"]
+    timeoutMs: 5000
+    when:
+      languages: ["elixir"]
+  - id: bash-installed
+    run: ["bash", "--version"]
+    timeoutMs: 5000
+  - id: ruby-installed
+    run: ["ruby", "--version"]
+    timeoutMs: 5000
+    when:
+      languages: ["ruby"]
+
+# "default" is the shipped default for `test-runner` (toolchain.default.yaml), not
+# remote-detected, per TRD interpretation I2: a shipped default with no detect signal at all
+# never turns some other unrelated adapter's unmatched signal into an `AMBIGUOUS_PROVIDER`
+# error (same convention as `adapter-workflow-plain-git`/`adapter-tracker-beads`).
+detect: []
+
+capabilities:
+  # `framework` (TRD-2026-8d825f54 TRD-005/TRD-010 `variants`) selects which per-language
+  # runner script this capability dispatches to; an unknown value throws `NOT_ALLOWED` before
+  # any process spawns (`runner.js#selectTemplate`, confirmed live against this manifest -- see
+  # SKILL.md). The base `run[]` below (reachable only when `framework` is entirely omitted) is
+  # a verbatim copy of the `jest` variant -- the same "base equals one named variant" disclosed
+  # convention `adapter-host-github`'s `host.change-request-merge` (`method`) already uses, not
+  # a separate implicit default framework.
+  #
+  # `config`/`coverage` (both declared category-contract inputs) are NOT referenced by any
+  # variant below: only jest (`--config`, `--coverage`), pytest (`-c`) and rspec (`--options`)
+  # accept a config flag at all, xunit has no config flag (only `--coverage`), and exunit has
+  # neither -- there is no single way to reference either placeholder across all five variants
+  # that would not make it a MANDATORY value for every single call (every referenced
+  # `${name}` placeholder must always be supplied, `runner.js#buildCapabilityArgv` passes an
+  # empty `inputs` map to `resolveArg`, so no manifest-level default is possible). This mirrors
+  # `host.change-request-list`'s own disclosed `filter` gap: each script's own default behavior
+  # (no custom config path, no coverage collection) is relied on instead -- see SKILL.md "Known
+  # limits".
+  #
+  # `successExitCodes: [0, 1]` (TRD-2026-8d825f54 PR 10 fix round, item 3): every one of the
+  # five per-language runner scripts (see each script's own `process.exit`/`sys.exit`/
+  # `System.halt`/`exit`) exits 1 to report a FAILING test suite, not a crash -- without this
+  # opt-in, `runner.js#runCapability` mapped ANY non-zero exit to `TOOL_FAILED` before ever
+  # parsing stdout, so a failing suite could never surface the normalized `{success:false,
+  # passed, failed, failures[]}` this capability's own category contract promises; callers
+  # (for example `implement-trd-tasks.yaml`'s test step) must read `data.success`, not the
+  # envelope's `ok` field, to learn whether the suite passed. An exit code outside `[0, 1]`, a
+  # signal, a timeout, or stdout that fails to parse as JSON at all still resolves
+  # `TOOL_FAILED` exactly as before (`runner.js`'s own header documents the full distinction).
+  # `parse.map` covers only the six fields EVERY one of the five scripts' own JSON always
+  # includes (`success`, `passed`, `failed`, `total`, `duration`, `failures`) -- `parse` is one
+  # block shared across every variant (the manifest schema has no per-variant `parse`), and
+  # `mapOutput` throws `BAD_OUTPUT` when a mapped path is absent from the actual JSON
+  # (`mapping.js`'s own documented "every path must resolve to a present value" rule).
+  # `skipped` is declared as a category-contract output but is NEVER populated by
+  # `packages/jest/skills/jest/run-test.js` or `packages/exunit/skills/exunit/run-test.exs` (neither
+  # script's own result object has a `skipped` key at all) -- mapping it here would throw
+  # `BAD_OUTPUT` on every jest/exunit call, so it is left unmapped for all five variants rather
+  # than mapped for only some -- see SKILL.md "Known limits".
+  test-runner.run:
+    successExitCodes: [0, 1]
+    run:
+      - node
+      - packages/jest/skills/jest/run-test.js
+      - "--file"
+      - "${file}"
+    variants:
+      framework:
+        jest:
+          - node
+          - packages/jest/skills/jest/run-test.js
+          - "--file"
+          - "${file}"
+        pytest:
+          - python3
+          - packages/pytest/skills/pytest/run-test.py
+          - "--file=${file}"
+        exunit:
+          - elixir
+          - packages/exunit/skills/exunit/run-test.exs
+          - "--file=${file}"
+        xunit:
+          - bash
+          - packages/xunit/skills/xunit/run-test.sh
+          - "--file=${file}"
+        rspec:
+          - ruby
+          - packages/rspec/skills/rspec/run-test.rb
+          - "--file=${file}"
+    parse:
+      format: json
+      map:
+        success: "$.success"
+        passed: "$.passed"
+        failed: "$.failed"
+        total: "$.total"
+        duration: "$.duration"
+        failures: "$.failures"

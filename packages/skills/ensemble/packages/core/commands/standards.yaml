@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:standards
+  description: Dispatch to a coding-standards subcommand by keyword (discover, inject, fold)
+  version: 1.0.0
+  lastUpdated: "2026-10-17"
+  category: analysis
+  output_path: ensemble/standards.md
+  source: sunstone
+  argument_hint: "<discover|inject|fold> [subcommand args...]"
+
+# Skill-backed command: the prompt is packages/core/skills/ensemble-standards/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-standards

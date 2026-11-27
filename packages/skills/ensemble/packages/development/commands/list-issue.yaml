@@ -1,0 +1,19 @@
+metadata:
+  name: ensemble:list-issue
+  description: List open Beads issues for triage via the toolchain-cli tracker abstraction (tracker.list / work-graph.plan)
+  version: 2.0.0
+  lastUpdated: "2026-10-23"
+  category: implementation
+  output_path: ensemble/list-issue.md
+  source: sunstone
+  model: low
+  argument_hint: "[--ranked | --robot-triage]"
+  capabilities:
+    required:
+      - tracker.list
+    optional:
+      - work-graph.plan
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-list-issue/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-list-issue

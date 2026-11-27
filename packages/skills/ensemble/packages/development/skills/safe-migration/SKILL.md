@@ -1,0 +1,36 @@
+---
+name: safe-migration
+description: Use when changing a database schema, public API contract, or upgrading a dependency (especially a major version); not for ordinary code refactors or new tables with no existing data.
+---
+
+# Safe Migration
+
+Record the plan in the TRD under a `## Migration Plan` section (create it if absent) before touching anything.
+
+## Sequencing: expand -> migrate -> contract
+
+Each phase is its own commit/PR and must be deployable and revertable alone.
+
+1. **Expand**: add the new column/table/endpoint/field alongside the old. Old code keeps working.
+2. **Migrate**: backfill data and move readers/writers to the new shape. Prefer a feature flag for the read switch; dual-write old and new while both exist, and compare results before cutting reads over.
+3. **Contract**: remove the old shape only after the new one has run in production for at least one release and nothing reads the old one (verify with grep and logs, not memory).
+
+## Gates before destructive or irreversible steps
+
+Destructive = `DROP`, `TRUNCATE`, column type narrowing, `DELETE`/`UPDATE` without a recoverable copy, removing an API field, deleting a flag or config.
+
+- **Rollback file required**: write `docs/migrations/<date>-<slug>-rollback.md` (or a `down` migration/script) stating the exact commands to undo, and how data is restored (backup name, snapshot id). Do not run the destructive step until this file exists and the user has seen its path.
+- **Dry-run on a copy**: run the migration against a restored copy or snapshot of production-shaped data; record row counts before/after and timing in the Migration Plan.
+- Irreversible data changes need explicit user approval each time; approval of the plan is not approval of the contract phase.
+
+## Dependency upgrades
+
+- One work item per major bump: `node "$TOOLCHAIN_CLI" run tracker.create --run-id "$RUN_ID" --arg title="Upgrade <pkg> X -> Y" --arg type=task --arg description="<breaking changes>" --json`; never batch majors.
+- Read the changelog/release notes between the versions; list breaking changes in the bead.
+- Run the full test suite before the bump (baseline) and after; a baseline that is already red must be reported, not fixed silently.
+- Lockfile-only changes get their own commit, separate from the code adaptations they require.
+- Minor/patch bumps may be grouped when the suite is green before and after.
+
+## Output
+
+Report: phase reached, rollback file path, dry-run evidence, and any step skipped with the reason.

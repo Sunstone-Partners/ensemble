@@ -1,0 +1,68 @@
+adapter: act
+version: "1.0.0"
+
+categories:
+  - ci-local
+
+contract:
+  ci-local: "1.0"
+
+# `-W`, `-l` and `--version` are the only `act` flags this adapter's capabilities and health
+# check invoke (`act -W .github/workflows/test.yml`, `act -l`, `act --version`, per
+# `packages/git/skills/act-local-ci/SKILL.md`'s own documented flags and `act --help`'s real,
+# confirmed output on this machine, act v0.2.89).
+binaries:
+  - act
+
+allowlist:
+  - bin: act
+    sub:
+      - "-W"
+      - "-l"
+      - "--version"
+
+env: []
+
+# Live-verified: `act --version` printed `act version 0.2.89` on this machine.
+health:
+  - id: act-installed
+    run: ["act", "--version"]
+    timeoutMs: 5000
+
+# act is the SHIPPED DEFAULT for `ci-local` (toolchain.default.yaml), not remote-detected -- per
+# TRD interpretation I2, a shipped default with no detect signal at all never turns some other
+# unrelated adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error. `detect: []` is
+# schema-valid (no `minItems` on `detect`).
+detect: []
+
+capabilities:
+  # act -W <workflow>: real, documented `-W, --workflows string  path to workflow file(s)` flag
+  # (`act --help`, also `packages/git/skills/act-local-ci/SKILL.md`'s own `act -W
+  # .github/workflows/test.yml` example). No `parse` block: `act` prints human-readable,
+  # multi-line job/step progress text to stdout (interleaved with Docker pull/run logs), not a
+  # single field either declared output (`status`, `logs`) could honestly be mapped from with
+  # `mapping.js`'s dotted-path grammar -- see SKILL.md "Known limits". Never executed live
+  # (side-effecting: would spin up real Docker containers and run this repository's actual CI
+  # workflow steps).
+  ci-local.run-workflow:
+    run:
+      - act
+      - "-W"
+      - "${workflow}"
+
+  # act -l: real, documented `-l, --list  list workflows` flag. `workflow` is unreferenced
+  # (lists every workflow/job this repository defines; there is no per-workflow-scoped listing
+  # flag act documents). No `parse` block: `act -l`'s own output is a formatted, column-aligned
+  # text table (`Stage  Job ID  Job name  Workflow name  Workflow file  Events`), not JSON --
+  # confirmed live: `act -l` and `act -l --json` produce the identical table (`--json` only
+  # affects run-log formatting, not `-l`'s own listing output) -- see SKILL.md "Known limits".
+  # Live-verified against this repository: printed every real job defined across this
+  # repository's actual `.github/workflows/*.yml` files (for example `implement`,
+  # `claude-review`, `eslint`, `markdownlint`).
+  ci-local.list-jobs:
+    run:
+      - act
+      - "-l"
+
+# No capability other than the two above is declared: `act` has no further flag this adapter's
+# contract needs for `ci-local`.

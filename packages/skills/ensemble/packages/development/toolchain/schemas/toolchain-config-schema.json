@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ensemble Toolchain Config",
+  "description": "Schema for both the project-level (.ensemble/toolchain.yaml) and user-level ($XDG_CONFIG_HOME/ensemble/toolchain.yaml) toolchain adapter-selection files (TRD-2026-8d825f54 TRD-003, PRD REQ-009). Each of the 14 toolchain categories may optionally select an adapter by name; a config file need not set every category.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": { "type": "string" },
+    "workflow": { "type": "string" },
+    "worktree": { "type": "string" },
+    "tracker": { "type": "string" },
+    "work-graph": { "type": "string" },
+    "ci-local": { "type": "string" },
+    "review": { "type": "string" },
+    "lint": { "type": "string" },
+    "test-runner": { "type": "string" },
+    "e2e-quality": { "type": "string" },
+    "container-deploy": { "type": "string" },
+    "iac": { "type": "string" },
+    "platform-cloud": { "type": "string" },
+    "package-runner": { "type": "string" },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "short": { "type": "integer", "minimum": 1 },
+        "long": { "type": "integer", "minimum": 1 }
+      },
+      "description": "Per-project adapter call bounds in ms by timeout class (TRD-2026-6995dc96 TRD-028, PRD REQ-017). Overrides each adapter manifest's own `timeouts`."
+    },
+    "trustedRepoAdapters": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "adapters": {
+      "type": "object",
+      "description": "Per-adapter overrides keyed by adapter id (e.g. `adapters: { jira: { statusMap: {...}, statusNames: {...} } }`). Lets a repository extend an adapter's status vocabulary without duplicating the adapter.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "statusMap": {
+            "type": "object",
+            "description": "Provider status name -> normalized status (open|in_progress|closed). Read direction: how a provider's own status name is normalized.",
+            "additionalProperties": { "type": "string", "enum": ["open", "in_progress", "closed"] }
+          },
+          "statusNames": {
+            "type": "object",
+            "description": "Normalized status -> provider status name. Write direction: which provider status name is written for a normalized status.",
+            "additionalProperties": false,
+            "properties": {
+              "open": { "type": "string", "minLength": 1, "pattern": "^[^-]" },
+              "in_progress": { "type": "string", "minLength": 1, "pattern": "^[^-]" },
+              "closed": { "type": "string", "minLength": 1, "pattern": "^[^-]" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

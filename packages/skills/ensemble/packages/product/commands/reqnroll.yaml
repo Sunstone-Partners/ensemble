@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:reqnroll
+  description: Dispatch to a PRD-to-Reqnroll acceptance-test subcommand by keyword (features, feature-drift, bindings, binding-drift, tdd)
+  version: 1.0.0
+  lastUpdated: "2026-10-17"
+  category: testing
+  output_path: ensemble/reqnroll.md
+  source: sunstone
+  argument_hint: "<features|feature-drift|bindings|binding-drift|tdd> [subcommand args...]"
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-reqnroll/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-reqnroll

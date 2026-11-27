@@ -1,0 +1,188 @@
+{
+ "repository": "Sunstone-Partners/ensemble",
+ "base": "dev",
+ "capturedOn": "2026-10-21",
+ "query": "gh pr list --state merged --base dev --limit 30; hosted CI wait = latest check-run completed_at - earliest started_at on the PR head; bot-review wait = first coderabbit review submittedAt - PR createdAt",
+ "prs": [
+  {
+   "number": 187,
+   "openedAt": "2026-10-21T11:22:25Z",
+   "mergedAt": "2026-10-21T12:58:03Z",
+   "ciWaitMs": 184000
+  },
+  {
+   "number": 186,
+   "openedAt": "2026-10-21T00:55:52Z",
+   "mergedAt": "2026-10-21T13:19:16Z",
+   "ciWaitMs": 176000
+  },
+  {
+   "number": 185,
+   "openedAt": "2026-10-21T00:55:50Z",
+   "mergedAt": "2026-10-21T13:19:06Z",
+   "ciWaitMs": 179000
+  },
+  {
+   "number": 184,
+   "openedAt": "2026-10-21T00:55:48Z",
+   "mergedAt": "2026-10-21T13:19:00Z",
+   "ciWaitMs": 179000
+  },
+  {
+   "number": 183,
+   "openedAt": "2026-10-21T00:55:46Z",
+   "mergedAt": "2026-10-21T13:20:15Z",
+   "ciWaitMs": 189000
+  },
+  {
+   "number": 181,
+   "openedAt": "2026-10-20T16:14:48Z",
+   "mergedAt": "2026-10-21T00:39:07Z",
+   "ciWaitMs": 169000
+  },
+  {
+   "number": 180,
+   "openedAt": "2026-10-19T00:21:30Z",
+   "mergedAt": "2026-10-19T00:24:37Z",
+   "ciWaitMs": 364000
+  },
+  {
+   "number": 178,
+   "openedAt": "2026-10-18T20:52:40Z",
+   "mergedAt": "2026-10-18T20:57:14Z",
+   "ciWaitMs": 153000
+  },
+  {
+   "number": 177,
+   "openedAt": "2026-10-18T19:19:38Z",
+   "mergedAt": "2026-10-18T20:59:26Z",
+   "ciWaitMs": 161000
+  },
+  {
+   "number": 176,
+   "openedAt": "2026-10-18T13:43:12Z",
+   "mergedAt": "2026-10-18T19:07:45Z",
+   "ciWaitMs": 149000
+  },
+  {
+   "number": 175,
+   "openedAt": "2026-10-17T13:55:36Z",
+   "mergedAt": "2026-10-21T12:51:25Z",
+   "ciWaitMs": 161000
+  },
+  {
+   "number": 173,
+   "openedAt": "2026-10-17T13:04:17Z",
+   "mergedAt": "2026-10-17T13:10:02Z",
+   "ciWaitMs": 155000
+  },
+  {
+   "number": 171,
+   "openedAt": "2026-10-17T07:29:57Z",
+   "mergedAt": "2026-10-17T07:34:35Z",
+   "ciWaitMs": 165000
+  },
+  {
+   "number": 170,
+   "openedAt": "2026-10-17T07:21:05Z",
+   "mergedAt": "2026-10-17T07:25:09Z",
+   "ciWaitMs": 111000
+  },
+  {
+   "number": 169,
+   "openedAt": "2026-10-16T22:38:13Z",
+   "mergedAt": "2026-10-16T22:52:04Z",
+   "ciWaitMs": 169000
+  },
+  {
+   "number": 168,
+   "openedAt": "2026-10-16T22:24:13Z",
+   "mergedAt": "2026-10-16T22:36:54Z",
+   "ciWaitMs": 157000
+  },
+  {
+   "number": 167,
+   "openedAt": "2026-10-15T20:50:14Z",
+   "mergedAt": "2026-10-15T21:01:17Z",
+   "ciWaitMs": 145000
+  },
+  {
+   "number": 166,
+   "openedAt": "2026-10-15T20:49:01Z",
+   "mergedAt": "2026-10-15T20:55:23Z",
+   "ciWaitMs": 148000
+  },
+  {
+   "number": 165,
+   "openedAt": "2026-10-15T18:53:03Z",
+   "mergedAt": "2026-10-15T18:56:38Z",
+   "ciWaitMs": 146000
+  },
+  {
+   "number": 162,
+   "openedAt": "2026-10-15T18:20:20Z",
+   "mergedAt": "2026-10-17T06:53:05Z",
+   "ciWaitMs": 165000
+  },
+  {
+   "number": 161,
+   "openedAt": "2026-10-15T17:16:03Z",
+   "mergedAt": "2026-10-17T06:33:37Z",
+   "ciWaitMs": 126000
+  },
+  {
+   "number": 160,
+   "openedAt": "2026-10-15T16:57:48Z",
+   "mergedAt": "2026-10-15T17:10:51Z",
+   "ciWaitMs": 753000
+  },
+  {
+   "number": 159,
+   "openedAt": "2026-10-15T15:28:45Z",
+   "mergedAt": "2026-10-15T17:22:10Z",
+   "ciWaitMs": 158000
+  },
+  {
+   "number": 158,
+   "openedAt": "2026-10-15T15:28:42Z",
+   "mergedAt": "2026-10-15T17:22:01Z",
+   "ciWaitMs": 132000
+  },
+  {
+   "number": 157,
+   "openedAt": "2026-10-15T15:28:40Z",
+   "mergedAt": "2026-10-15T17:21:52Z",
+   "ciWaitMs": 127000
+  },
+  {
+   "number": 156,
+   "openedAt": "2026-10-15T15:28:36Z",
+   "mergedAt": "2026-10-15T17:21:43Z",
+   "ciWaitMs": 87000
+  },
+  {
+   "number": 155,
+   "openedAt": "2026-10-15T10:35:49Z",
+   "mergedAt": "2026-10-17T06:33:33Z",
+   "ciWaitMs": 93000
+  },
+  {
+   "number": 153,
+   "openedAt": "2026-10-14T15:41:45Z",
+   "mergedAt": "2026-10-14T15:43:33Z",
+   "ciWaitMs": 86000
+  },
+  {
+   "number": 151,
+   "openedAt": "2026-10-14T15:38:55Z",
+   "mergedAt": "2026-10-14T15:40:44Z",
+   "ciWaitMs": 94000
+  },
+  {
+   "number": 150,
+   "openedAt": "2026-10-12T22:56:00Z",
+   "mergedAt": "2026-10-13T00:48:03Z",
+   "ciWaitMs": 83000
+  }
+ ]
+}

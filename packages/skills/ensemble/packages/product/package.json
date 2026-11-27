@@ -1,0 +1,30 @@
+{
+  "name": "@sunstone-partners/ensemble-product",
+  "version": "7.0.2",
+  "description": "Product management agents and workflows (PRD creation, analysis)",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": "jest --passWithNoTests",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "product",
+    "prd",
+    "planning",
+    "ensemble"
+  ],
+  "author": "Sunstone Partners",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sunstone-Partners/ensemble.git",
+    "directory": "packages/product"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "peerDependencies": {
+    "@sunstone-partners/ensemble-core": "^6.0.0"
+  }
+}

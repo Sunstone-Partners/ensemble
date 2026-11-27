@@ -1,0 +1,93 @@
+category: workflow
+version: "1.0"
+
+# Capability ids use the single-dot, hyphenated convention established by the already-shipped
+# tracker.yaml/work-graph.yaml contracts (e.g. tracker.dep-add, work-graph.graph-health).
+#
+# TRD-035's prose groups workflow.status/commit/push/log/diff/merge-base/remote-url under a
+# `vcs.*` label ("plain-git vcs.status|commit|push|log|diff|merge-base|remote-url"), and
+# TRD-039's text later refers to `vcs.commit`/`vcs.push`. There is no `vcs` category in
+# category-contract-schema.json's 14-category enum (only `workflow` covers branch/VCS
+# operations) -- these are `workflow.*` capabilities, not a separate `vcs` category, and they
+# carry no `vcs-` prefix because the category name already disambiguates them.
+#
+# TRD-039 implementer: when refactoring fix-issue.yaml's `vcs.commit`/`vcs.push` references,
+# reuse these exact `workflow.commit`/`workflow.push` ids -- do not reintroduce a `vcs` category.
+
+capabilities:
+  workflow.branch-create:
+    description: Create a new branch following the configured branching strategy.
+    inputs: [name, baseBranch]
+    outputs: [name]
+    required: true
+    sideEffect: true
+
+  workflow.sync:
+    description: Sync the current branch with its parent/trunk.
+    inputs: [branch]
+    outputs: [branch, ahead, behind]
+    required: false
+    sideEffect: true
+
+  workflow.propose:
+    description: Propose the current branch for integration (open a change request / submit for review).
+    inputs: [headBranch, baseBranch, title]
+    outputs: [id, url]
+    required: true
+    sideEffect: true
+
+  workflow.ship:
+    description: Ship (land/merge) a proposed branch per the configured branching strategy.
+    inputs: [branch]
+    outputs: [branch, status]
+    required: false
+    sideEffect: true
+
+  workflow.status:
+    description: Report the working tree's clean/dirty state and changed files.
+    inputs: [scope]
+    outputs: [clean, files]
+    required: true
+    sideEffect: false
+
+  workflow.commit:
+    description: Commit staged changes with the given message.
+    inputs: [message]
+    outputs: [sha]
+    required: true
+    sideEffect: true
+
+  workflow.push:
+    description: Push the current branch to its remote.
+    inputs: [branch]
+    outputs: [branch]
+    required: true
+    sideEffect: true
+
+  workflow.log:
+    description: Read commit log entries, optionally scoped to a ref and bounded by a limit.
+    inputs: [ref, limit]
+    outputs: [commits]
+    required: false
+    sideEffect: false
+
+  workflow.diff:
+    description: Read a diff against a ref.
+    inputs: [ref]
+    outputs: [text]
+    required: false
+    sideEffect: false
+
+  workflow.merge-base:
+    description: Find the common ancestor commit of two refs.
+    inputs: [refA, refB]
+    outputs: [sha]
+    required: false
+    sideEffect: false
+
+  workflow.remote-url:
+    description: Read the URL of a configured remote.
+    inputs: [remote]
+    outputs: [url]
+    required: false
+    sideEffect: false

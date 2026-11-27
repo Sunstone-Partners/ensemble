@@ -1,0 +1,120 @@
+adapter: plain-git
+version: "1.0.0"
+
+categories:
+  - worktree
+
+contract:
+  worktree: "1.0"
+
+# Only the `worktree` subcommand is ever invoked -- no other git subcommand is needed for
+# create/list/remove/prune, so the allowlist (and the health check below) deliberately use
+# `git worktree list` itself rather than a separate `git --version` entry (unlike
+# `adapter-workflow-plain-git`'s own extra `"--version"` allowlist entry), keeping this
+# adapter's allowlist to exactly one subcommand word: `worktree`.
+binaries:
+  - git
+
+allowlist:
+  - bin: git
+    sub:
+      - worktree
+
+env: []
+
+# `git worktree list` both proves `git` is installed and that the real repository this adapter
+# runs against has at least a main worktree registered -- a strictly more useful smoke check
+# than a bare `git --version` would be, and it stays inside the single-subcommand allowlist
+# above. Live-verified against this repository: printed this checkout's own worktree plus
+# several other real local worktrees.
+health:
+  - id: git-worktree-available
+    run: ["git", "worktree", "list"]
+    timeoutMs: 5000
+
+# plain-git is the SHIPPED DEFAULT for `worktree` (toolchain.default.yaml), not remote-detected
+# -- per TRD interpretation I2, a shipped default with no detect signal at all never turns some
+# other adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error. `detect: []` is
+# schema-valid (no `minItems` on `detect`).
+detect: []
+
+capabilities:
+  # git worktree add <path> <branch>: real, documented `git worktree add` syntax (`git worktree
+  # add [-f] [--detach] ... [(-b | -B) <new-branch>] <path> [<commit-ish>]` per `git worktree add
+  # -h`) -- there is no `git worktree create` subcommand, `add` is the real verb. `branch` is
+  # passed as the positional `<commit-ish>` (checking out that existing branch in the new
+  # worktree), matching the category contract's pre-existing `worktree.create` shape (`branch`,
+  # `path` inputs, both required at call time). No `parse` block: on success `git worktree add`
+  # prints human-readable progress lines (for example "Preparing worktree (checking out
+  # '<branch>')" followed by a `HEAD is now at <sha> <subject>` line), not a single field either
+  # declared output (`path`, `branch`) could honestly be mapped from -- see SKILL.md "Known
+  # limits". Never executed live (side-effecting: would create a real worktree directory and
+  # checkout against this repository).
+  worktree.create:
+    run:
+      - git
+      - worktree
+      - add
+      - "${path}"
+      - "${branch}"
+
+  # git worktree remove <worktree>: real, documented `git worktree remove` syntax (`git worktree
+  # remove [-f] <worktree>` per `git worktree remove -h`). No `parse` block: `git worktree
+  # remove` prints nothing to stdout on success. Never executed live (side-effecting: would
+  # delete a real worktree directory).
+  worktree.remove:
+    run:
+      - git
+      - worktree
+      - remove
+      - "${path}"
+
+  # git worktree list (no --porcelain): real, documented human-readable form (`git worktree
+  # list [-v | --porcelain [-z]]` per `git worktree list -h`) -- deliberately NOT `--porcelain`
+  # (TRD-2026-8d825f54 PR 10 fix round, item 5): `--porcelain`'s own real output is MULTI-LINE
+  # BLOCKS per worktree (a `worktree <path>` line, then `HEAD <sha>`, then `branch <ref>` or
+  # `detached`, separated by blank lines), and `mapping.js`'s `'lines'` format has no per-block
+  # grouping primitive, so it used to flatten every worktree's 3-4 lines into one shared array
+  # with no boundary between worktrees. Plain `git worktree list` (no flag) instead prints
+  # exactly ONE line per worktree (`<path>  <sha> [<branch>]` or `<path>  <sha> (bare)`/
+  # `(detached HEAD)`), so `parse.format: lines` + `map: {worktrees: "$"}` already yields one
+  # `worktrees` array entry per worktree with no engine change needed -- `scope` is unreferenced
+  # (plain git has no per-path-scoped worktree listing; it always lists every registered
+  # worktree). Each entry is still a raw text line, not a parsed `{path, branch, head}` object
+  # (see SKILL.md "Known limits"). Live-verified against this repository's own real worktrees
+  # (this checkout plus several real `/private/tmp/*` worktrees, each printed as one line).
+  worktree.list:
+    run:
+      - git
+      - worktree
+      - list
+    parse:
+      format: lines
+      map:
+        worktrees: "$"
+
+  # git worktree prune --verbose: real, documented `git worktree prune` syntax (`git worktree
+  # prune [-n] [-v] [--expire <expire>]` per `git worktree prune -h`). `--verbose` is always
+  # passed so a successful prune's removed-worktree lines are captured rather than silently
+  # discarded; `scope` is unreferenced (real `git worktree prune` takes no path argument, only
+  # flags). `parse.format: lines` + `map: {pruned: "$"}` returns one array entry per
+  # `--verbose`-reported removal; an empty array is the real result when nothing is stale (not
+  # fabricated -- `mapOutput`'s own documented trailing-newline/empty-line handling for `'lines'`
+  # naturally yields `[]` for empty stdout). Live-verified against this repository with `git
+  # worktree prune --verbose --dry-run`: printed nothing (no stale worktree administrative
+  # files currently exist here), a real, non-fabricated empty result; `--dry-run` itself is not
+  # part of this capability's run template (it would suppress the real removal this capability
+  # is declared `sideEffect: true` for).
+  worktree.prune:
+    run:
+      - git
+      - worktree
+      - prune
+      - "--verbose"
+    parse:
+      format: lines
+      map:
+        pruned: "$"
+
+# No command under packages/*/commands/**/*.yaml references any `worktree.*` capability id yet
+# (this adapter is not wired into any command by this bead).

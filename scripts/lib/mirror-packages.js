@@ -18,7 +18,7 @@ const path = require('path');
  * generator drifting apart is how the gap stayed open in the first place. The Pi generator
  * is TypeScript and keeps its own copy in `packages/pi/src/self-contained-packages.ts`.
  */
-const MIRROR_PACKAGES = new Set(['pi', 'full']);
+const MIRROR_PACKAGES = new Set(['pi', 'full', 'skills']);
 
 /**
  * The package a file under `packages/` belongs to.

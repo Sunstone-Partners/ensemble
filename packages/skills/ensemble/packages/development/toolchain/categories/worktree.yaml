@@ -1,0 +1,38 @@
+# Capability ids use the single-dot, hyphenated convention established by the already-shipped
+# tracker.yaml/work-graph.yaml contracts (e.g. tracker.dep-add, work-graph.graph-health).
+#
+# `worktree.create` keeps its exact pre-existing shape (sideEffect:true, `branch` input):
+# scripts/tests/toolchain-ledger-real-process.test.js and toolchain-ledger.test.js already call
+# `worktree.create` with `sideEffect: true` and a `branch` argument.
+
+category: worktree
+version: "1.0"
+
+capabilities:
+  worktree.create:
+    description: Create a worktree for a branch.
+    inputs: [branch, path]
+    outputs: [path, branch]
+    required: true
+    sideEffect: true
+
+  worktree.remove:
+    description: Remove a previously created worktree.
+    inputs: [path]
+    outputs: [path]
+    required: false
+    sideEffect: true
+
+  worktree.list:
+    description: List existing worktrees.
+    inputs: [scope]
+    outputs: [worktrees]
+    required: true
+    sideEffect: false
+
+  worktree.prune:
+    description: Remove administrative metadata for worktrees whose working directories no longer exist.
+    inputs: [scope]
+    outputs: [pruned]
+    required: false
+    sideEffect: true

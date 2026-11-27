@@ -76,7 +76,7 @@ const RESTRICTED_CATEGORIES = [
  * plus `validateFullSkillsMirror`'s additional `pkg !== 'full'`, unioned into one set here
  * since this check (unlike those) has no reason to ever walk any of the four.
  */
-const EXCLUDED_PACKAGES = new Set(['pi', 'codex', 'full', 'opencode']);
+const EXCLUDED_PACKAGES = new Set(['pi', 'codex', 'full', 'opencode', 'skills']);
 
 /**
  * Every adapter directory shipped by a real source package: `<packagesDir>/<pkg>/skills/

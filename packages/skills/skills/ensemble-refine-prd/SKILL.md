@@ -1,0 +1,12 @@
+---
+name: ensemble-refine-prd
+description: Refine and enhance existing PRD with stakeholder feedback and additional detail, or from a meeting summary with --from-meeting
+---
+
+<!-- DO NOT EDIT - Generated from authoritative package sources by npm run generate:skills -->
+
+First read [the execution contract](../../ensemble/CONTRACT.md).
+
+Read and follow [the full skill](../../ensemble/packages/product/skills/ensemble-refine-prd/SKILL.md); its relative resources resolve against that file. Pass the user's input as ARGUMENTS.
+
+Required/optional capabilities: see ../../ensemble/manifest.json for this skill and check the concrete operations before execution.

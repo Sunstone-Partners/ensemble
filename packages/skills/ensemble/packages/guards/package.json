@@ -1,0 +1,37 @@
+{
+  "name": "@sunstone-partners/ensemble-guards",
+  "version": "5.2.1",
+  "description": "Enforcement hooks: protected-branch, bypass-flag and br-close-evidence guards plus opt-in DoD stop gate",
+  "author": {
+    "name": "Sunstone Partners",
+    "email": "info@sunstonepartners.com",
+    "url": "https://github.com/Sunstone-Partners"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sunstone-Partners/ensemble.git",
+    "directory": "packages/guards"
+  },
+  "homepage": "https://github.com/Sunstone-Partners/ensemble/tree/main/packages/guards#readme",
+  "bugs": {
+    "url": "https://github.com/Sunstone-Partners/ensemble/issues"
+  },
+  "keywords": ["claude-code", "hook", "guards", "enforcement", "ensemble"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "jest --runInBand"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "files": [
+    ".claude-plugin/",
+    "hooks/",
+    "lib/",
+    "README.md",
+    "CHANGELOG.md"
+  ]
+}

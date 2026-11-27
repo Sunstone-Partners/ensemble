@@ -1,0 +1,473 @@
+adapter: beads
+version: "1.0.0"
+
+categories:
+  - tracker
+  - work-graph
+
+contract:
+  tracker: "1.0"
+  work-graph: "2.0"
+
+binaries:
+  - br
+  - bv
+  - cat
+
+allowlist:
+  - bin: br
+    sub:
+      - show
+      - list
+      - create
+      - update
+      - close
+      - comments
+      - dep
+      - label
+      - sync
+      - "--version"
+  - bin: bv
+    sub:
+      - "--robot-plan"
+      - "--robot-insights"
+      - "--version"
+  - bin: cat
+    sub:
+      - ".beads/issues.jsonl"
+
+env: []
+
+health:
+  - id: br-version
+    run: ["br", "--version"]
+    timeoutMs: 5000
+  - id: bv-version
+    run: ["bv", "--version"]
+    timeoutMs: 5000
+
+detect: []
+
+# TRD-2026-6995dc96 TRD-028 (PRD REQ-017): per-class call bounds in ms. Read-only capabilities are
+# `timeoutClass: short`; writes and whole-backlog traversals are `long`. Both are 60000, the one
+# bound beads has always run under, so this declaration changes no effective timeout. A project's
+# `timeouts` in .ensemble/toolchain.yaml overrides either.
+timeouts:
+  short: 60000
+  long: 60000
+
+capabilities:
+  # br show <id> --json: confirmed live (br 0.6.0) to print a single-element JSON array
+  # (`[{...}]`), never a bare object -- `root: "$[0]"` unwraps that one element. br's own
+  # `br schema commands` envelope map documents this as the general convention for
+  # single-entity commands ("show": shape=array, items_at=".", notes: "a single requested ID
+  # yields one element"); priority is intentionally not mapped because br reports it as a
+  # JSON number while the normalized work-item schema requires a string and this adapter's
+  # shared mapping engine (packages/development/lib/toolchain/mapping.js) has no type-cast
+  # operator to stringify it (see that module's own doc comment).
+  tracker.show:
+    run: ["br", "show", "${id}", "--json"]
+    parse:
+      format: json
+      root: "$[0]"
+      map:
+        id: "$.id"
+        title: "$.title"
+        description:
+          path: "$.description"
+          optional: true
+        type: "$.issue_type"
+        status: "$.status"
+        labels:
+          path: "$.labels"
+          default: []
+      statusMap:
+        open: open
+        in_progress: in_progress
+        closed: closed
+        # br also reports "deferred" and "in_review" on this workspace's live data (neither
+        # is in the normalized {open,in_progress,closed} vocabulary); deferred work has not
+        # started, so it normalizes to "open", and in_review work is still active, so it
+        # normalizes to "in_progress".
+        deferred: open
+        in_review: in_progress
+    timeoutClass: short
+
+  # br list --all --limit 0 --json: confirmed live (br 0.6.0) to wrap results as
+  # `{issues:[...], total, limit, offset, has_more}` (matching `br schema commands`'
+  # "list" entry: shape=object, items_at=".issues"). This capability deliberately declares
+  # NO `parse` block: every tracker.* capability that declares one gets its mapped value
+  # Ajv-validated against the single-work-item schema
+  # (packages/development/toolchain/schemas/normalized/work-item.json, required: ["id"]) by
+  # packages/development/lib/toolchain/runner.js's CATEGORY_NORMALIZED_SCHEMA, applied per
+  # CATEGORY rather than per capability; a list result (`{items:[...]}`, no top-level "id")
+  # can never satisfy that gate (verified empirically: runCapability always returns
+  # BAD_OUTPUT "missing required property 'id'" for a mapped list shape). `data` is
+  # therefore the raw `br list` JSON text; a caller parses it directly, same as
+  # `trd-cli.js#getBeadCounts` already does (`Array.isArray(parsed) ? parsed :
+  # parsed.issues || []`, defending against the older-br bare-array shape this adapter's
+  # declarative mapping engine cannot itself branch on -- see "Known limits" in SKILL.md).
+  # `--limit 0` (unlimited) previously crashed on this repo's own real `.beads/` database
+  # (~3.4 MB of JSON, confirmed live) against Node's `execFile` 1 MiB default `maxBuffer`;
+  # fixed at the engine level (not here) via
+  # packages/development/lib/toolchain/runner.js's `DEFAULT_MAX_BUFFER_BYTES` (64 MiB),
+  # applied to every capability's child process, not specific to this one (TRD-024 reviewer
+  # round 2, P2). A zero-exit error envelope on stdout (e.g. a stale-DB-guard conflict) is
+  # also now fail-closed as `TOOL_FAILED` by that same runner.js layer, not silently
+  # `ok:true`, for this capability and `tracker.comments`/`tracker.label`/`tracker.sync`
+  # below (reviewer round 2, P1).
+  tracker.list:
+    run: ["br", "list", "--all", "--limit", "0", "--json"]
+    timeoutClass: short
+
+  # Find-by-key. `br list` has NO filter on `external_ref` (captured live: `--desc-contains`
+  # and `br search` do not see it), so this lists EVERY bead in the workspace (closed ones
+  # included, `--all`) and the caller-side exact match on each item's `external_ref` against
+  # the key happens in lib/tracker-findings.js#findByKey -- the manifest's declarative mapping
+  # cannot filter. It is deliberately NOT scoped by label: br enforces `external_ref`
+  # uniqueness across the whole workspace whatever the label (captured live: a second bead
+  # with the same key under another label is refused, exit 7, `CONFIG_ERROR ... already
+  # exists`; br-create-duplicate-key.error.json), so a label-scoped list can miss the bead
+  # that holds the key and a find-then-create then fails with an opaque duplicate error. Every
+  # listed item carries its own `labels`, so the caller judges scope. Known limit (captured
+  # live): a DELETED bead (status `tombstone`) still holds its key but neither `--all` nor
+  # `--status all` lists it (only `--status tombstone` does), so such a key reads as not found
+  # and creating it is refused. `${key}` is a declared contract input but deliberately absent
+  # from argv. Raw `{issues:[...]}` stdout, no `parse` block, same reason as tracker.list.
+  tracker.find-by-key:
+    run: ["br", "list", "--all", "--limit", "0", "--json"]
+    timeoutClass: short
+
+  # br create --json: CAPTURED LIVE (br 0.6.0, scratch workspace under ~/.omp, never this
+  # repo's own .beads/; stored under scripts/tests/fixtures/toolchain/adapter-tracker-beads-
+  # samples/br-create-*.sample.json). It prints a BARE issue object, NOT an array-of-one like
+  # `show`/`update`/`close` -- the earlier `root: "$[0]"` here was an inference from `br schema
+  # commands` and was wrong: it made every real `tracker.create` fail `BAD_OUTPUT: mapOutput:
+  # path '$[0]' indexes '[0]' into a non-array value` AFTER the bead had already been created.
+  tracker.create:
+    run: ["br", "create", "--title", "${title}", "--type", "${type}", "-d", "${description}", "--json"]
+    parse:
+      format: json
+      root: "$"
+      map:
+        id: "$.id"
+    timeoutClass: long
+
+  # br create with labels, priority and an external dedupe key in ONE call (captured live,
+  # br-create-detailed.sample.json). `-l` takes a comma-separated list, `-p` a 0-4 number,
+  # `--external-ref` any string (it is br's only per-issue free-form key field; `br list` has
+  # no filter on it, see tracker.find-by-key). Every placeholder is mandatory (runner.js
+  # resolveArg); an empty string is accepted by br for labels/externalKey (captured live), but
+  # the caller-side wrapper (lib/tracker-findings.js) refuses an empty key. Output is the same
+  # bare issue object as tracker.create.
+  tracker.create-detailed:
+    run:
+      - br
+      - create
+      - "--title"
+      - "${title}"
+      - "--type"
+      - "${type}"
+      - "-d"
+      - "${description}"
+      - "-l"
+      - "${labels}"
+      - "-p"
+      - "${priority}"
+      - "--external-ref"
+      - "${externalKey}"
+      - "--json"
+    parse:
+      format: json
+      root: "$"
+      map:
+        id: "$.id"
+    timeoutClass: long
+
+  # br update <id> --notes <fields> --json: the category contract's single "fields" input
+  # is one opaque value, but br update takes one flag per field (--title/-d/-s/-p/...); this
+  # adapter's run template is a fixed argv (packages/development/lib/toolchain/runner.js
+  # `buildArgv` substitutes named placeholders into a static template, it cannot expand one
+  # input into a variable set of flags). `--notes` is the most general-purpose textual field br
+  # exposes (never touches the description), so "fields" is treated as the new notes text.
+  # CAPTURED LIVE (br 0.6.0): `--notes` REPLACES the whole notes field (two `--notes` calls
+  # leave only the second text); it is NOT additive, contrary to this entry's earlier comment.
+  # Callers that must keep history use tracker.update-detailed (`--append-notes`) or
+  # tracker.comment. Not changed here: refine-beads depends on this capability as shipped.
+  tracker.update:
+    run: ["br", "update", "${id}", "--notes", "${fields}", "--json"]
+    parse:
+      format: json
+      root: "$[0]"
+      map:
+        id: "$.id"
+    timeoutClass: long
+
+  # br update <id> --status <open|in_progress> --json / br close <id> --json: confirmed LIVE
+  # (br 0.6.0, disposable /tmp workspace, never this repo's own .beads/) that `br update
+  # --status closed` is REFUSED with a non-zero exit and a VALIDATION_FAILED error envelope
+  # ("refusing to close via `br update --status closed`: terminal-state transitions must go
+  # through `br close` so close-policy ... is enforced") -- `br update -s/--status <STATUS>`'s
+  # own `--help` text documents this explicitly ("Terminal states (closed, tombstone) are
+  # refused"). The three `variants` below (TRD-010's per-capability selector mechanism,
+  # `packages/development/lib/toolchain/runner.js#selectTemplate`) therefore route `status:
+  # closed` to `br close` and `open`/`in_progress` to `br update --status <value>`; the base
+  # `run[]` template below (identical to the `open`/`in_progress` variant) is reachable only
+  # when `status` is entirely absent from the call, in which case buildArgv's own unresolved-
+  # placeholder check rejects it as INVALID_ARG before any process spawns -- `status` is
+  # effectively mandatory even though the category contract carries no per-input `required`
+  # metadata (see runner.js's own "Design note" on why). `br update --status open --json` /
+  # `br update --status in_progress --json` and `br close --json` all confirmed live to
+  # return the same array-of-one shape (`[{"id":...,"status":...}]`) `tracker.close` above
+  # already documents, so this entry reuses that exact parse/statusMap convention.
+  tracker.set-status:
+    run: ["br", "update", "${id}", "--status", "${status}", "--json"]
+    variants:
+      status:
+        open: ["br", "update", "${id}", "--status", "open", "--json"]
+        in_progress: ["br", "update", "${id}", "--status", "in_progress", "--json"]
+        closed: ["br", "close", "${id}", "--json"]
+    parse:
+      format: json
+      root: "$[0]"
+      map:
+        id: "$.id"
+        status: "$.status"
+      statusMap:
+        open: open
+        in_progress: in_progress
+        closed: closed
+        deferred: open
+        in_review: in_progress
+    timeoutClass: long
+
+  tracker.close:
+    run: ["br", "close", "${id}", "--json"]
+    parse:
+      format: json
+      root: "$[0]"
+      map:
+        id: "$.id"
+        status: "$.status"
+      statusMap:
+        open: open
+        in_progress: in_progress
+        closed: closed
+        deferred: open
+        in_review: in_progress
+    timeoutClass: long
+
+  # br update <id> --title/--description/--priority/--append-notes --json (captured live,
+  # br-update-detailed.sample.json): array-of-one `[{"id","title","status","priority",
+  # "assignee","owner","updated_at","notes":{"appended","applied","chars_before",
+  # "chars_after","text"}}]`. `--append-notes` really appends (newline-joined); labels and
+  # status are deliberately NOT flags here, so a re-review never drops a label an operator
+  # added (br's `--add-label` rejects a comma list and, on any invalid label, fails the WHOLE
+  # update -- captured live -- so labels go through tracker.label instead).
+  tracker.update-detailed:
+    run:
+      - br
+      - update
+      - "${id}"
+      - "--title"
+      - "${title}"
+      - "--description"
+      - "${description}"
+      - "--priority"
+      - "${priority}"
+      - "--append-notes"
+      - "${notes}"
+      - "--json"
+    parse:
+      format: json
+      root: "$[0]"
+      map:
+        id: "$.id"
+    timeoutClass: long
+
+  # br close <id> --reason <why> --transition-comment <text> --json (captured live,
+  # br-close-with-reason.sample.json): `[{"id","title","status":"closed","closed_at",
+  # "close_reason"}]`. br has no commit flag, so the resolving commit is recorded as a
+  # comment committed atomically with the close (`br comments list` shows it); `--reason`
+  # holds the human reason. `br close` may still refuse (open dependencies, close policy):
+  # that surfaces as TOOL_FAILED with br's own message, never as ok:true.
+  tracker.close-with-reason:
+    run:
+      - br
+      - close
+      - "${id}"
+      - "--reason"
+      - "${reason}"
+      - "--transition-comment"
+      - "closed at commit ${commit}"
+      - "--json"
+    parse:
+      format: json
+      root: "$[0]"
+      map:
+        id: "$.id"
+        status: "$.status"
+      statusMap:
+        open: open
+        in_progress: in_progress
+        closed: closed
+        deferred: open
+        in_review: in_progress
+    timeoutClass: long
+
+  # `br comments add <id> <text> --json` returns a bare comment object (confirmed live, `br`
+  # 0.6.0: `{"id":454,"issue_id":"...","author":"...","text":"...","created_at":"..."}`) whose
+  # `id` is the new COMMENT's own numeric id, not the issue id -- it is not a work-item shape
+  # at all. `root: "$[0]"` previously indexed into that bare object and failed every call with
+  # `BAD_OUTPUT: mapOutput: path '$[0]' indexes '[0]' into a non-array value`; fixing the root
+  # to `"$"` then failed `CATEGORY_NORMALIZED_SCHEMA`'s `work-item.json` validation instead
+  # (`id: must be string`, since `br` reports the comment id as a JSON number and this
+  # category has no dedicated `tracker.comment` entry in `runner.js#CAPABILITY_NORMALIZED_SCHEMA`
+  # to validate against something other than `work-item.json`). Same class of mismatch as
+  # `tracker.list`/`tracker.comments` below; same remedy: no `parse` block, so `runCapability`
+  # leaves `data` as raw, Ajv-unvalidated stdout text instead of forcing it through a schema
+  # shaped for a different kind of entity.
+  tracker.comment:
+    run: ["br", "comments", "add", "${id}", "${text}", "--json"]
+    timeoutClass: long
+
+  # br comments list <id> --json: `br schema commands` documents this as shape="array",
+  # items_at="." (a bare array of comment objects, empty when there are none). No `parse`
+  # block for the same CATEGORY_NORMALIZED_SCHEMA reason as tracker.list above: the declared
+  # output is [comments], never "id".
+  tracker.comments:
+    run: ["br", "comments", "list", "${id}", "--json"]
+    timeoutClass: short
+
+  # br dep add/remove --json: CAPTURED LIVE (br 0.6.0, br-dep-add.sample.json /
+  # br-dep-remove.sample.json): a bare `{"status":"ok","issue_id","depends_on_id","type",
+  # "action"}` object with NO `id` field and no array wrapper. The earlier `root: "$[0]"` /
+  # `id: "$.id"` was inferred and could never map a real response (BAD_OUTPUT after the edge
+  # was already written); the issue the edge belongs to is `issue_id`.
+  tracker.dep-add:
+    run: ["br", "dep", "add", "${id}", "${dependsOnId}", "--type", "${type}", "--json"]
+    parse:
+      format: json
+      root: "$"
+      map:
+        id: "$.issue_id"
+    timeoutClass: long
+
+  tracker.dep-remove:
+    run: ["br", "dep", "remove", "${id}", "${dependsOnId}", "--json"]
+    parse:
+      format: json
+      root: "$"
+      map:
+        id: "$.issue_id"
+    timeoutClass: long
+
+  # br label add <ids> -l <labels> --json: no `parse` block, same CATEGORY_NORMALIZED_SCHEMA
+  # reason as tracker.list -- the declared output is [ids, labels], never "id".
+  tracker.label:
+    run: ["br", "label", "add", "${ids}", "-l", "${labels}", "--json"]
+    timeoutClass: long
+
+  # br sync --flush-only --json: "Flush pending local tracker state to durable storage" is
+  # exactly br sync's own --flush-only mode ("Export database to JSONL (safe by default)").
+  # No `parse` block, same CATEGORY_NORMALIZED_SCHEMA reason as tracker.list -- the declared
+  # output is [status], never "id".
+  tracker.sync:
+    run: ["br", "sync", "--flush-only", "--json"]
+    timeoutClass: long
+
+  # bv --robot-plan --format json: confirmed live (bv v0.25.2) to group ready work into
+  # parallel "tracks" (`plan.tracks[].items[]`), already ordered and already containing only
+  # actionable (unblocked) items -- `plan.total_actionable` exactly equals the sum of every
+  # track's item count in this workspace's live data, confirming blocked work never appears
+  # in `tracks`. The dotted-path mapping engine (mapping.js) has no flatten/concat operator,
+  # so it cannot concatenate every track's items into one array; this capability surfaces
+  # `plan.tracks[0].items` (bv's own highest-impact track, in bv's own item order) rather
+  # than silently re-sorting or fabricating a combined ordering. A caller wanting every
+  # actionable item across every track should run `bv --robot-plan --format json` directly
+  # and flatten `plan.tracks[].items[]` itself (bv's own `usage_hints` documents the
+  # equivalent jq filter).
+  #
+  # Empty plan: confirmed live (bv v0.26.0, scratch .beads fixture) an epic with nothing
+  # actionable (all closed, or only blocked work) emits `"tracks": []` with total_actionable 0.
+  # `emptyWhen` maps an empty/null/absent `plan.tracks` to `items: []` (ok:true) so the caller
+  # reaches its own empty-plan handling; a missing `plan`, a non-array `tracks` or a track
+  # without `items` is still BAD_OUTPUT.
+  #
+  # The category contract's `scope` input (work-graph.yaml) is NOT substituted into this run
+  # template: it has no `${scope}` placeholder, so a caller-supplied `scope` value is simply
+  # never passed to `bv`. Confirmed live: `bv --robot-plan --scope <value>` errors "unknown
+  # flag: --scope" (bv has no scope/label filtering flag at all, on any subcommand this
+  # template uses) -- there is no bv invocation this run template could substitute a scope
+  # value into that bv would actually honor. Label-scoping for callers that need it (e.g.
+  # beads-build-wave.yaml Step 3b) is therefore implemented independently, by filtering a
+  # separate `tracker.list` result client-side, never by this capability.
+
+  # cat .beads/issues.jsonl: TRD-026's `tracker.stage-export` is a read-only textual mirror of
+  # the literal file `beads-stage.js` used to read directly via `fs.readFileSync` before this
+  # capability existed -- `cat` on the exact tracked path returns the live working-tree
+  # content unchanged, matching that prior direct read byte-for-byte. The allowlist entry
+  # below is deliberately a LITERAL path (`.beads/issues.jsonl`), not a generic `cat`
+  # subcommand: this adapter's allowlist only ever grants exactly the arguments a declared
+  # capability's `run[]` template can produce, and this template has no `${file}` placeholder
+  # to substitute -- its one real caller (`beads-stage.js#stageBeadsExport`) always resolves
+  # this capability only for the default `.beads/issues.jsonl` path; a caller overriding
+  # `file` bypasses this capability and falls back to its own direct `fs.readFileSync`, never
+  # reaching `cat` with any other argument. No `parse` block, same CATEGORY_NORMALIZED_SCHEMA
+  # reason as `tracker.list`/`tracker.comments`/`tracker.label`/`tracker.sync` above: raw
+  # JSONL text has no top-level `id`, so a `parse` block mapping it to `{text:...}` would
+  # always fail the per-category Ajv work-item gate (`runner.js#CATEGORY_NORMALIZED_SCHEMA`);
+  # `data` is therefore the raw file text, exactly as `beads-stage.js` consumed it before.
+  tracker.stage-export:
+    run: ["cat", ".beads/issues.jsonl"]
+    timeoutClass: long
+  work-graph.ready:
+    run: ["bv", "--robot-plan", "--format", "json"]
+    # `scope` is a bead label: when supplied, bv plans only that label\'s subgraph (a repo-wide
+    # plan reads tracks[0], which can belong to another TRD). `*` is the runner\'s catch-all variant.
+    variants:
+      scope:
+        "*": ["bv", "--robot-plan", "--label", "${scope}", "--format", "json"]
+    parse:
+      format: json
+      root: "$.plan.tracks[0].items"
+      emptyWhen: "$.plan.tracks"
+      map:
+        items: "$"
+    timeoutClass: short
+
+  # Same command and the same single-track limitation as work-graph.ready above.
+  # orderingSource/dependencyAware are intentionally left unmapped: mapOutput's `map` values
+  # are dotted paths resolved against bv's real JSON, never literal constants, and bv's JSON
+  # has no field directly answering "is this ordering dependency-aware" -- fabricating one
+  # through a dotted-path trick would misrepresent bv's actual output, so this adapter omits
+  # both fields rather than invent them (normalized-output fields are legitimately optional;
+  # work-graph has no Ajv schema gate at all, unlike tracker).
+  work-graph.plan:
+    run: ["bv", "--robot-plan", "--format", "json"]
+    # `scope` is a bead label: when supplied, bv plans only that label\'s subgraph (a repo-wide
+    # plan reads tracks[0], which can belong to another TRD). `*` is the runner\'s catch-all variant.
+    variants:
+      scope:
+        "*": ["bv", "--robot-plan", "--label", "${scope}", "--format", "json"]
+    parse:
+      format: json
+      root: "$.plan.tracks[0].items"
+      emptyWhen: "$.plan.tracks"
+      map:
+        items: "$"
+    timeoutClass: long
+
+  # bv --robot-insights --format json: "status" is bv's own per-metric computation-status
+  # object (PageRank/Betweenness/.../Cycles -> {state, ms?}); "findings" is bv's own
+  # dependency-cycle list (`.Cycles`), the exact "cycles" example the category contract
+  # names ("dependency-graph health signals, for example cycles, stale blockers").
+  work-graph.graph-health:
+    run: ["bv", "--robot-insights", "--format", "json"]
+    parse:
+      format: json
+      root: "$"
+      map:
+        status: "$.status"
+        findings: "$.Cycles"
+    timeoutClass: long

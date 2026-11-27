@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:validate-requirements
+  description: Pre-implementation traceability gate — validates REQ-NNN coverage and TEST task pairing between PRD and TRD
+  version: 2.0.0
+  lastUpdated: "2026-10-20"
+  category: planning
+  output_path: ensemble/validate-requirements.md
+  source: sunstone
+  model: medium
+  argument_hint: "[prd-path] [trd-path]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-validate-requirements/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-validate-requirements

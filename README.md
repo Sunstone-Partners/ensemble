@@ -1,6 +1,6 @@
-# Ensemble Plugins
+# Ensemble Skills
 
-Modular plugin ecosystem for AI coding agents (Claude Code first, plus Pi/Oh My Pi, OpenCode and Codex CLI). Ensemble packages a spec-driven workflow (PRD, TRD, Beads task graph, implementation, PR) together with framework skills, specialist agents and repository assessments. Install only the packages you need, or the full bundle.
+Runtime-neutral skills and supporting tools for AI coding agents. Ensemble packages a spec-driven workflow (PRD, TRD, Beads task graph, implementation, PR) together with framework skills, specialist instructions and repository assessments. Start with [INSTALL.md](INSTALL.md) to install into a project without provider APIs. Existing Claude Code, Pi/Oh My Pi, OpenCode and Codex integrations remain available.
 
 ![The Spec-Driven Factory: Ensemble Plugin Ecosystem](docs/images/ensemble-architecture.png)
 
@@ -25,6 +25,20 @@ Current release: **8.1.0** (`ensemble-full`). Each package is versioned independ
 - [Documentation and links](#documentation-and-links)
 
 ## Quick start
+
+Point your agent at this repository and ask it to follow [INSTALL.md](INSTALL.md).
+
+```sh
+npm ci
+npm run generate:skills
+npm run install:skills -- /absolute/path/to/your-project
+```
+
+Then ask it to read `.agents/skills/ensemble-create-prd/SKILL.md` in your project
+and pass your product description as ARGUMENTS. The installed contract explains
+capability checks, tool paths and independent-review requirements.
+
+### Claude Code integration
 
 In Claude Code:
 
