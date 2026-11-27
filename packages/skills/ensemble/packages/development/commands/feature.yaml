@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:feature
+  description: Dispatch to the feature-lifecycle workflow by keyword (new, resume, status, abandon)
+  version: 1.0.0
+  lastUpdated: "2026-10-06"
+  category: implementation
+  output_path: ensemble/feature.md
+  source: sunstone
+  argument_hint: "<new|resume|status|abandon> [args...]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-feature/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-feature

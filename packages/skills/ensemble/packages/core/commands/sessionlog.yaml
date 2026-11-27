@@ -1,0 +1,12 @@
+metadata:
+  name: ensemble:sessionlog
+  description: Save a structured session transcript to SessionLogs with key decisions, commands, and resolutions
+  version: 1.0.0
+  lastUpdated: "2026-03-08"
+  category: documentation
+  output_path: ensemble/sessionlog.md
+  source: sunstone
+
+# Skill-backed command: the prompt is packages/core/skills/ensemble-sessionlog/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-sessionlog

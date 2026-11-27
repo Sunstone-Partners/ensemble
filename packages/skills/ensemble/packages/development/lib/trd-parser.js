@@ -1,0 +1,1137 @@
+'use strict';
+
+/**
+ * Deterministic TRD parser.
+ *
+ * Extracts the "Scaffold Pass 1-7 + 4b/4c" parsing logic from
+ * packages/development/commands/implement-trd-tasks.yaml into a pure,
+ * tested function. NO side effects, NO shell, NO br/git calls.
+ *
+ * The only external dependency is js-yaml, used solely to parse the
+ * optional frontmatter block.
+ *
+ * @typedef {Object} ParsedTRD
+ * @property {string} title
+ * @property {string} summary
+ * @property {string|null} prdReference
+ * @property {number|null} designReadinessScore
+ * @property {string|null} status
+ * @property {boolean} prFormat
+ * @property {Phase[]} phases
+ * @property {Object.<string,Task>} tasksById
+ * @property {string[]} warnings
+ * @property {string|null} architectureDecision  prose from ## 1. Architecture Decision
+ * @property {string[]} keyTechnicalDecisions     entries from ### Key Technical Decisions
+ *
+ * @typedef {Object} Phase
+ * @property {number} n
+ * @property {string} title
+ * @property {string|null} shippableState
+ * @property {string[]} taskIds
+ *
+ * @typedef {Object} Task
+ * @property {string} id
+ * @property {number} phaseN
+ * @property {string} description
+ * @property {boolean} isTest
+ * @property {number|null} hourEstimate
+ * @property {string[]} satisfies
+ * @property {string|null} verifies
+ * @property {string[]} validatesAcs
+ * @property {string[]} dependsOn
+ * @property {string[]} targetFiles
+ * @property {string[]} actions
+ * @property {string[]} implementationAc
+ * @property {string[]} testAc
+ * @property {string[]} nestedSubitems
+ * @property {string[]} testSubitems
+ * @property {string|null} proofOfRequirement
+ * @property {string} [syntheticKind] ac-validation | cross-cutting
+ */
+
+let yaml = null;
+try {
+  // eslint-disable-next-line global-require
+  yaml = require('js-yaml');
+} catch {
+  yaml = null; // frontmatter score will be unavailable but parser still runs
+}
+
+// ---------------------------------------------------------------------------
+// Regular expressions (shared)
+// ---------------------------------------------------------------------------
+
+// Top-level task line: "- [ ] **TRD-001**: Description" / "- [ ] **TRD-001** — Description"
+// Accepts colon, em dash (—), en dash (–), or hyphen as separator after the bold id.
+// The bold id may carry a "-TEST" or "-TEST-S<k>" suffix.
+const TASK_LINE_RE = /^(\s*)- \[[ xX]\]\s+\*\*(TRD-[A-Za-z0-9-]+)\*\*\s*[-—–:]?\s*(.*)$/;
+
+// Any checklist line (used to detect nested sub-items).
+const CHECKLIST_LINE_RE = /^\s*- \[[ xX]\]\s+(.*)$/;
+
+// Boundary headings within the Master Task List scope.
+const PR_HEADING_RE = /^###\s+PR\s+(\d+)\s*:?\s*(.*)$/i;
+const PHASE_HEADING_RE = /^###\s+Phase\s+(\d+)\s*:?\s*(.*)$/i;
+const SPRINT_HEADING_RE = /^###\s+Sprint\s+(\d+)\s*:?\s*(.*)$/i;
+
+// Test keyword detection for sub-items. Intentionally BROAD: recall over
+// precision. A false-positive synthesized test bead is cheaper to close than
+// a missed test. (See Pass 4c prose in implement-trd-tasks.yaml.)
+const TEST_KEYWORDS = [
+  'integration test',
+  'unit test',
+  'test',
+  'spec',
+  'e2e',
+  'coverage',
+  'jest',
+  'pytest',
+  'rspec',
+  'exunit',
+  'xunit',
+  'playwright',
+];
+
+/** Normalize CRLF/CR to LF so every downstream regex can assume '\n'. */
+function normalizeLineEndings(text) {
+  return String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+// ---------------------------------------------------------------------------
+// Frontmatter
+// ---------------------------------------------------------------------------
+
+/**
+ * Split off a leading YAML frontmatter block.
+ * @returns {{frontmatter: Object|null, body: string}}
+ */
+function parseSimpleFrontmatter(raw) {
+  const out = {};
+  for (const line of String(raw || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const m = trimmed.match(/^([^:]+):\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].trim();
+    let value = m[2].trim();
+    const commentIndex = value.search(/\s+#/);
+    if (commentIndex !== -1) value = value.slice(0, commentIndex).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    } else if (/^-?\d+(?:\.\d+)?$/.test(value)) {
+      value = Number(value);
+    } else if (/^(true|false)$/i.test(value)) {
+      value = /^true$/i.test(value);
+    }
+    out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function splitFrontmatter(md) {
+  if (!md.startsWith('---')) {
+    return { frontmatter: null, body: md };
+  }
+  // Find the closing --- on its own line.
+  const lines = md.split('\n');
+  let end = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) {
+    return { frontmatter: null, body: md };
+  }
+  const raw = lines.slice(1, end).join('\n');
+  let frontmatter = null;
+  if (yaml) {
+    try {
+      const loaded = yaml.load(raw);
+      if (loaded && typeof loaded === 'object') frontmatter = loaded;
+    } catch {
+      frontmatter = null;
+    }
+  }
+  if (!frontmatter) frontmatter = parseSimpleFrontmatter(raw);
+  const body = lines.slice(end + 1).join('\n');
+  return { frontmatter, body };
+}
+
+/**
+ * Parse a markdown file that may have a title or comment (an H1, an HTML comment) before the
+ * frontmatter block, which splitFrontmatter does not accept: several TRDs in docs/TRD/ are laid out
+ * that way. Strategy:
+ * 1. Find first `---` on its own line → frontmatter start
+ * 2. Find second `---` on its own line → frontmatter end
+ * 3. If yaml is available, use it; otherwise fall back to parseSimpleFrontmatter
+ * Returns { frontmatter, body, yamlFailed } where yamlFailed=true when the
+ * yaml parser threw (indicating the frontmatter uses non-standard syntax
+ * such as bold-keyed lines).
+ *
+ * @param {string} md
+ * @returns {{frontmatter: Object|null, body: string, yamlFailed: boolean}}
+ */
+function scanFrontmatter(md) {
+  const lines = md.split('\n');
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      if (start === -1) start = i;
+      else if (start !== -1 && end === -1) { end = i; break; }
+    }
+  }
+  if (start === -1 || end === -1) {
+    return { frontmatter: null, body: md, yamlFailed: false };
+  }
+  const raw = lines.slice(start + 1, end).join('\n');
+  let frontmatter = null;
+  let yamlFailed = false;
+  if (yaml) {
+    try {
+      const loaded = yaml.load(raw);
+      if (loaded && typeof loaded === 'object') frontmatter = loaded;
+    } catch {
+      yamlFailed = true;
+    }
+  }
+  if (!frontmatter) { frontmatter = parseSimpleFrontmatter(raw); yamlFailed = true; }
+  const body = lines.slice(end + 1).join('\n');
+  return { frontmatter, body, yamlFailed };
+}
+
+/** Frontmatter keys that carry the PRD a TRD was derived from, in priority order. */
+const PRD_REFERENCE_KEYS = ['prd_reference', 'prd', 'source_prd'];
+/**
+ * Frontmatter key carrying the source PRD's file path for TRDs whose
+ * `prd_reference` holds a document id instead of a path. Looked up with the
+ * same case/spacing tolerance as PRD_REFERENCE_KEYS.
+ */
+const PRD_PATH_KEYS = ['prd_path'];
+
+const normalizeKey = (k) => String(k).trim().toLowerCase().replace(/[\s_-]+/g, '_');
+
+/**
+ * Read a frontmatter field by any of `names` (tried in order), ignoring case and
+ * treating spaces, hyphens and underscores alike, so `Document ID`, `document-id`
+ * and `document_id` are one key. TRD authors use all of these spellings.
+ * @returns {*} the first non-null value found, else undefined
+ */
+function getFrontmatterField(frontmatter, ...names) {
+  if (!frontmatter) return undefined;
+  const byKey = new Map();
+  for (const key of Object.keys(frontmatter)) {
+    if (!byKey.has(normalizeKey(key))) byKey.set(normalizeKey(key), frontmatter[key]);
+  }
+  for (const name of names) {
+    const v = byKey.get(normalizeKey(name));
+    if (v != null) return v;
+  }
+  return undefined;
+}
+
+/**
+ * Extract the design readiness score from frontmatter, accepting
+ * `design_readiness_score`, `Design Readiness Score` and similar spellings.
+ * @returns {number|null}
+ */
+function extractDesignReadinessScore(frontmatter) {
+  const n = parseFloat(String(getFrontmatterField(frontmatter, 'design_readiness_score')));
+  return Number.isNaN(n) ? null : n;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 1 / Pass 2: title + summary
+// ---------------------------------------------------------------------------
+
+function extractTitle(lines) {
+  for (const line of lines) {
+    const m = line.match(/^#\s+(.*)$/);
+    if (m) return m[1].trim();
+  }
+  return '';
+}
+
+/**
+ * First non-empty prose paragraph after the H1. Skips "Based on PRD:",
+ * blockquotes, and horizontal rules. Truncates to 500 chars.
+ */
+function extractSummary(lines) {
+  let h1Index = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#\s+/.test(lines[i])) {
+      h1Index = i;
+      break;
+    }
+  }
+  if (h1Index === -1) return '';
+
+  for (let i = h1Index + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    if (/^based on prd:/i.test(trimmed)) continue;
+    if (/^prd:/i.test(trimmed)) continue;
+    if (trimmed.startsWith('>')) continue; // blockquote
+    if (/^-{3,}$/.test(trimmed)) continue; // horizontal rule
+    if (/^#{1,6}\s/.test(trimmed)) break; // hit another heading before prose
+    return trimmed.slice(0, 500);
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// Architecture decision and key technical decisions
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the ## 1. Architecture Decision section prose.
+ * End boundary is the next ## heading (e.g. ## Master Task List) or EOF.
+ * Returns null when the section is absent.
+ */
+function extractArchitectureDecision(lines) {
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+(?:\d+\.\s+)?Architecture/i.test(lines[i])) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return null;
+
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    // Stop at ### Key Technical Decisions (exclusive boundary for that subsection),
+    // a top-level ## heading, or a horizontal rule.
+    if (/^###\s+Key\s+Technical\s+Decisions/i.test(lines[i]) ||
+        /^##\s/.test(lines[i]) ||
+        /^---/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+
+  // Strip the section heading and trailing blank lines.
+  const section = lines.slice(start + 1, end);
+  while (section.length && section[0].trim() === '') section.shift();
+  while (section.length && section[section.length - 1].trim() === '') section.pop();
+  return section.join('\n') || null;
+}
+
+/**
+ * Extract numbered entries from ### Key Technical Decisions.
+ * Each entry starts with "N. " where N is a number, and captures up to the
+ * next numbered entry, a horizontal-rule separator, or the next ##/### heading.
+ * Trailing blank lines are stripped from each entry.
+ * Returns an empty array when the subsection is absent.
+ */
+function extractKeyTechnicalDecisions(lines) {
+  let sectionStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^###\s+Key\s+Technical\s+Decisions/i.test(lines[i])) {
+      sectionStart = i;
+      break;
+    }
+  }
+  if (sectionStart === -1) return [];
+
+  // Find end of this subsection: next ---, any ##/### heading, or EOF.
+  let sectionEnd = lines.length;
+  for (let i = sectionStart + 1; i < lines.length; i++) {
+    if (/^---/.test(lines[i]) || /^#{2,3}\s/.test(lines[i])) {
+      sectionEnd = i;
+      break;
+    }
+  }
+
+  const decisions = [];
+  const numbered = /^(\d+)\.\s+(.*)/;
+  let i = sectionStart + 1;
+
+  // Skip leading blank lines.
+  while (i < sectionEnd && lines[i].trim() === '') i++;
+
+  while (i < sectionEnd) {
+    const m = lines[i].match(numbered);
+    if (!m) {
+      // Append non-blank non-numbered continuation to the last entry.
+      if (decisions.length > 0 && lines[i].trim() !== '') {
+        decisions[decisions.length - 1] += '\n' + lines[i];
+      }
+      i++;
+      continue;
+    }
+    // Each numbered line is a new entry — push it directly.
+    decisions.push(lines[i]);
+    i++;
+  }
+
+  // Strip trailing blank lines from the final entry.
+  if (decisions.length > 0) {
+    decisions[decisions.length - 1] = decisions[decisions.length - 1].replace(/\n+$/, '');
+  }
+
+  return decisions;
+}
+// ---------------------------------------------------------------------------
+// Pass 3: PRD reference
+// ---------------------------------------------------------------------------
+
+function looksLikePath(s) {
+  if (!s) return false;
+  return s.includes('/') || /\.md$/i.test(s);
+}
+
+/**
+ * PRD reference, priority:
+ *   (1) docs/PRD/*.md markdown link or bare path anywhere
+ *   (2) "Based on PRD: <path>"
+ *   (3) "PRD: <path>"
+ *   (4) frontmatter prd_reference / prd / source_prd, when path-shaped
+ *   (5) frontmatter prd_path
+ *
+ * (5) exists because a TRD may record its source PRD as a document id in
+ * `prd_reference` (`PRD-2026-<uuid>`) and the actual path in a sibling
+ * `prd_path`. looksLikePath() rejects the bare id, so without this fallback
+ * such a TRD silently parses as "no PRD linked" and PRD-cross-checking
+ * callers (completion-verification Step 3, `trd-cli verify`) skip it.
+ * Body references keep winning, so an in-document path stays authoritative.
+ */
+function extractPrdReference(body, frontmatter) {
+  // Priority 1: docs/PRD/*.md path (markdown link target or bare).
+  const docsPrd = body.match(/docs\/PRD\/[^\s)>'"]+\.md/i);
+  if (docsPrd && looksLikePath(docsPrd[0])) {
+    return docsPrd[0];
+  }
+
+  // Priority 2: "Based on PRD: <path>"
+  const basedOn = body.match(/Based on PRD:\s*\[?([^\]\s)>'"]+)/i);
+  if (basedOn && looksLikePath(basedOn[1])) {
+    return basedOn[1];
+  }
+
+  // Priority 3: "PRD: <path>"
+  const prdLine = body.match(/(?:^|\n)\s*PRD:\s*\[?([^\]\s)>'"]+)/i);
+  if (prdLine && looksLikePath(prdLine[1])) {
+    return prdLine[1];
+  }
+
+  // Frontmatter fallback.
+  const fmRef = getFrontmatterField(frontmatter, ...PRD_REFERENCE_KEYS);
+  if (fmRef && looksLikePath(String(fmRef))) {
+    return String(fmRef);
+  }
+
+  // prd_reference may hold the PRD's document id rather than a path; the path
+  // then lives in the sibling prd_path key.
+  const fmPath = getFrontmatterField(frontmatter, ...PRD_PATH_KEYS);
+  if (fmPath && looksLikePath(String(fmPath))) {
+    return String(fmPath);
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Master Task List scoping (Pass 3 scope)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns { startLine, endLine, found } describing the slice of `lines`
+ * that belongs to the Master Task List section. endLine is exclusive.
+ */
+function findMasterTaskListScope(lines) {
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+Master Task List\s*$/i.test(lines[i].trim())) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) {
+    return { startLine: 0, endLine: lines.length, found: false };
+  }
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i]) && !/^###/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return { startLine: start + 1, endLine: end, found: true };
+}
+
+// ---------------------------------------------------------------------------
+// Annotation extraction helpers (Pass 6 / 7)
+// ---------------------------------------------------------------------------
+
+function extractSatisfies(text) {
+  // A Set, because reading every id in a bracket makes repeats reachable that
+  // the old single-match read could not produce: `[satisfies REQ-001, REQ-001]`
+  // would now yield two entries. verify-requirements-evidence.js indexes task
+  // ids by REQ, so a duplicate puts the same task twice in one requirement's
+  // evidence chain. Insertion order is preserved, so document order still holds.
+  const out = new Set();
+  const re = /\[satisfies\s+([^\]]+)\]/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    // A single [satisfies ...] may list several REQ ids, or carry one
+    // INFRA/ARCH token. Matching without /g kept only the first id and dropped
+    // the rest silently, so traceability under-reported what the TRD named.
+    const token = m[1].trim();
+    const reqMatches = token.match(/REQ-\d+/gi);
+    if (reqMatches) {
+      for (const req of reqMatches) {
+        out.add(req.toUpperCase());
+      }
+    } else if (/^(INFRA|ARCH)$/i.test(token)) {
+      out.add(token.toUpperCase());
+    } else {
+      out.add(token);
+    }
+  }
+  return Array.from(out);
+}
+
+function extractVerifies(text) {
+  const m = text.match(/\[verifies\s+(TRD-[A-Za-z0-9-]+)\]/i);
+  return m ? m[1] : null;
+}
+
+function extractValidatesAcs(text) {
+  // "Validates PRD ACs: AC-001-1, AC-002-2, ..."
+  const m = text.match(/Validates PRD ACs?:\s*([^\n]+)/i);
+  if (!m) return [];
+  const acs = m[1].match(/AC-\d+(?:-\d+|[a-z])?/gi);
+  return acs ? acs.map((a) => a.toUpperCase()) : [];
+}
+
+function extractInlineDepends(text) {
+  const out = [];
+  const re = /\[depends:\s*([^\]]+)\]/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const ids = m[1].match(/[a-z0-9][a-z0-9-]*#(?:TRD-[A-Za-z0-9-]+|PR-\d+)|TRD-[A-Za-z0-9-]+/gi);
+    if (ids) ids.forEach((id) => out.push(id));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 4b: body field extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip a markdown link wrapper / backticks / surrounding punctuation from a
+ * captured file path.
+ */
+function cleanFilePath(raw) {
+  return raw
+    .trim()
+    .replace(/^[`'"]+|[`'"]+$/g, '')
+    .replace(/[.,;]+$/, '')
+    .trim();
+}
+
+/**
+ * Extract Target File(s) from body lines. Handles:
+ *   "Target File: `path`"  /  "Target Files: a, b"  /  "File: path"
+ */
+function extractTargetFiles(bodyLines) {
+  const files = [];
+  for (const line of bodyLines) {
+    const m = line.match(/^\s*-?\s*(?:Target Files?|File)\s*:\s*(.+)$/i);
+    if (m) {
+      // Multiple files may be comma-separated (and individually backticked).
+      const parts = m[1].split(',');
+      for (const p of parts) {
+        const cleaned = cleanFilePath(p);
+        if (cleaned) files.push(cleaned);
+      }
+    }
+  }
+  return files;
+}
+
+/**
+ * Extract a numbered list that appears under an "Actions:" label.
+ * Returns the raw text of each numbered item (number stripped).
+ */
+function extractLabeledNumberedList(bodyLines, label) {
+  const out = [];
+  let inSection = false;
+  let sectionIndent = -1;
+  const labelRe = new RegExp(`^\\s*-?\\s*${label}\\s*:?\\s*$`, 'i');
+  for (const line of bodyLines) {
+    if (labelRe.test(line)) {
+      inSection = true;
+      sectionIndent = line.search(/\S/);
+      continue;
+    }
+    if (!inSection) continue;
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    const numbered = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (numbered) {
+      out.push(numbered[2].trim());
+      continue;
+    }
+    // A new label-ish line at the same indent ends the section.
+    const indent = line.search(/\S/);
+    if (indent <= sectionIndent && /^\s*-?\s*[A-Z][A-Za-z ]+:\s*$/.test(line)) {
+      inSection = false;
+    } else if (indent <= sectionIndent && !numbered) {
+      // dedented non-numbered content ends the numbered run
+      inSection = false;
+    }
+  }
+  return out;
+}
+
+/**
+ * Extract checklist items ("- [ ]" / "- [x]") that appear under a labeled
+ * block such as "Implementation AC:" / "Test AC:" (an optional trailing
+ * "checklist" is accepted, matching create-trd). Stops at the next labeled
+ * block at the same or lesser indent.
+ */
+function extractLabeledChecklist(bodyLines, label) {
+  const out = [];
+  let inSection = false;
+  let labelIndent = -1;
+  const labelRe = new RegExp(`^(\\s*)-?\\s*${label}(?:\\s+checklist)?\\s*:?\\s*$`, 'i');
+  for (const line of bodyLines) {
+    const labelMatch = line.match(labelRe);
+    if (labelMatch) {
+      inSection = true;
+      labelIndent = line.search(/\S/);
+      continue;
+    }
+    if (!inSection) continue;
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    const indent = line.search(/\S/);
+    // AC items must be nested DEEPER than the label. A checklist or bullet at
+    // the same-or-lesser indent is a sibling of the label (e.g. a loose nested
+    // sub-item, or the next labeled block) and terminates the section — it is
+    // NOT an AC entry.
+    if (indent <= labelIndent) {
+      inSection = false;
+      continue;
+    }
+    const checklist = line.match(CHECKLIST_LINE_RE);
+    if (checklist) {
+      out.push(checklist[1].trim());
+      continue;
+    }
+    // Plain bullet items also count as AC entries under the label.
+    const bullet = line.match(/^\s*-\s+(.*)$/);
+    if (bullet) {
+      out.push(bullet[1].trim());
+      continue;
+    }
+  }
+  return out;
+}
+
+function extractProofOfRequirement(bodyLines) {
+  for (const line of bodyLines) {
+    const m = line.match(/^\s*-?\s*Proof of requirement\s*:\s*(.+)$/i);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+/**
+ * Extract dependsOn from a body: from "Dependencies:" lines and inline
+ * [depends: TRD-NNN] annotations. Also accepts source-qualified cross-TRD
+ * references: <trd-slug>#TRD-NNN and <trd-slug>#PR-N. De-duplicates,
+ * preserves document order.
+ */
+function extractDependsOn(bodyText, bodyLines) {
+  const out = [];
+  const seen = new Set();
+  const push = (id) => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  };
+
+  // Inline [depends: TRD-NNN] (anywhere in body, incl. task line).
+  for (const id of extractInlineDepends(bodyText)) push(id);
+
+  // "Dependencies: TRD-001, TRD-002" lines.
+  for (const line of bodyLines) {
+    const m = line.match(/^\s*-?\s*Dependencies?\s*:\s*(.+)$/i);
+    if (m) {
+      const ids = m[1].match(/[a-z0-9][a-z0-9-]*#(?:TRD-[A-Za-z0-9-]+|PR-\d+)|TRD-[A-Za-z0-9-]+/gi);
+      if (ids) ids.forEach((id) => push(id));
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 4c: nested sub-item classification
+// ---------------------------------------------------------------------------
+
+function isTestSubitem(text) {
+  const lower = text.toLowerCase();
+  return TEST_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+// ---------------------------------------------------------------------------
+// Core task body parsing (Pass 4 / 4b / 4c / 6 / 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a Task object from its line index range within `scopeLines`.
+ */
+function buildTask(id, taskLineText, bodyLines, phaseN) {
+  const rawMarkdown = [taskLineText, ...bodyLines].join('\n');
+  const bodyText = rawMarkdown;
+  const fullText = bodyText;
+
+  // Description = the task-line remainder, but stripped of trailing
+  // annotations so it stays readable (we keep the human prose).
+  let description = taskLineText
+    .replace(/\[satisfies\s+[^\]]+\]/gi, '')
+    .replace(/\[verifies\s+[^\]]+\]/gi, '')
+    .replace(/\[depends:\s*[^\]]+\]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Drop a trailing "(Nh)" estimate from the readable description? Keep it —
+  // it is part of the human-readable task text. Just normalize whitespace.
+
+  const isTest = /-TEST(-S\d+)?$/i.test(id);
+
+  // hourEstimate from "(Nh)" (decimal allowed).
+  let hourEstimate = null;
+  const hourMatch = taskLineText.match(/\((\d+(?:\.\d+)?)h\)/i);
+  if (hourMatch) hourEstimate = parseFloat(hourMatch[1]);
+
+  // Annotations (task line + body).
+  const satisfies = extractSatisfies(fullText);
+  const verifies = extractVerifies(fullText);
+  const validatesAcs = extractValidatesAcs(fullText);
+  const dependsOn = extractDependsOn(fullText, bodyLines);
+
+  // Body fields.
+  const targetFiles = extractTargetFiles(bodyLines);
+  const actions = extractLabeledNumberedList(bodyLines, 'Actions');
+  const implementationAc = extractLabeledChecklist(bodyLines, 'Implementation AC');
+  const testAc = extractLabeledChecklist(bodyLines, 'Test AC');
+  const proofOfRequirement = extractProofOfRequirement(bodyLines);
+
+  // nestedSubitems: LOOSE nested checklist work-items that have no structured
+  // home — i.e. "- [ ]"/"- [x]" lines in the body that are NOT themselves a
+  // top-level **TRD-** task AND were NOT already captured in actions /
+  // implementationAc / testAc. AC-block items already live in
+  // implementationAc/testAc; including them here would (a) double-count and
+  // (b) leak AC lines mentioning a test keyword into testSubitems, producing
+  // spurious synthesized test beads downstream.
+  const claimed = new Set([...actions, ...implementationAc, ...testAc]);
+  const nestedSubitems = [];
+  for (const line of bodyLines) {
+    if (TASK_LINE_RE.test(line)) continue; // another top-level task — excluded
+    const cl = line.match(CHECKLIST_LINE_RE);
+    if (cl) {
+      const text = cl[1].trim();
+      if (claimed.has(text)) continue; // already captured in an AC/Actions block
+      nestedSubitems.push(text);
+    }
+  }
+  const testSubitems = nestedSubitems.filter(isTestSubitem);
+
+  return {
+    id,
+    phaseN,
+    description,
+    isTest,
+    hourEstimate,
+    satisfies,
+    verifies,
+    validatesAcs,
+    dependsOn,
+    targetFiles,
+    actions,
+    implementationAc,
+    testAc,
+    nestedSubitems,
+    testSubitems,
+    proofOfRequirement,
+    rawMarkdown,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Acceptance criteria + cross-cutting extraction
+// ---------------------------------------------------------------------------
+
+const AC_ID_RE = /\bAC-\d+(?:-\d+|[a-z])?\b/i;
+const XC_HEADING_RE = /^#{3,4}\s+(XC-\d+)\s*:?\s*(.*)$/i;
+
+function cleanAcText(text) {
+  return String(text || '')
+    .replace(/^\s*-\s*/, '')
+    .replace(/^\s*\[[ xX]\]\s*/, '')
+    .replace(/^\s*(?:AC-\d+(?:-\d+|[a-z])?)\s*:?\s*/i, '')
+    .trim();
+}
+
+function extractAcceptanceCriteria(lines) {
+  const out = [];
+  const seen = new Set();
+  let inSection = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^##\s+Acceptance Criteria\s*$/i.test(trimmed) || /^##\s+Requirements Validation\s*$/i.test(trimmed)) {
+      inSection = true;
+      continue;
+    }
+    if (inSection && /^##\s+/.test(trimmed)) break;
+    if (!inSection) continue;
+    const m = line.match(AC_ID_RE);
+    if (!m) continue;
+    const id = m[0].toUpperCase();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, text: cleanAcText(line) });
+  }
+  return out;
+}
+
+function extractCrossCuttingRequirements(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(XC_HEADING_RE);
+    if (!m) continue;
+    const id = m[1].toUpperCase();
+    const title = m[2].trim() || 'Cross-cutting requirement';
+    const body = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^#{1,4}\s+/.test(lines[j])) break;
+      const t = lines[j].trim();
+      if (t) body.push(t);
+    }
+    out.push({ id, title, text: body.join(' ') });
+  }
+  return out;
+}
+
+function addSyntheticValidationTasks(tasksById, phases, allLines, warnings) {
+  const acceptanceCriteria = extractAcceptanceCriteria(allLines);
+  const crossCuttingRequirements = extractCrossCuttingRequirements(allLines);
+  const phaseNums = phases.map((p) => Number(p.n)).filter(Number.isFinite).sort((a, b) => a - b);
+  const lastPhaseN = phaseNums.length ? phaseNums[phaseNums.length - 1] : 1;
+  const phaseByN = new Map(phases.map((p) => [Number(p.n), p]));
+  const defaultPhase = phaseByN.get(lastPhaseN) || phases[0];
+  const existingTaskIds = Object.keys(tasksById).filter((id) => /^TRD-/i.test(id));
+
+  for (const ac of acceptanceCriteria) {
+    if (Object.prototype.hasOwnProperty.call(tasksById, ac.id)) continue;
+    const blockers = existingTaskIds.filter((tid) => {
+      const task = tasksById[tid];
+      return task && Array.isArray(task.validatesAcs) && task.validatesAcs.includes(ac.id);
+    });
+    tasksById[ac.id] = {
+      id: ac.id,
+      phaseN: lastPhaseN,
+      description: `Verify ${ac.id}: ${ac.text || 'Acceptance criterion'}`,
+      isTest: true,
+      hourEstimate: null,
+      satisfies: [],
+      verifies: blockers[0] || null,
+      validatesAcs: [ac.id],
+      dependsOn: blockers,
+      targetFiles: [],
+      actions: [
+        `Locate code artifacts that implement ${ac.id}`,
+        `Add or update executable tests that prove ${ac.id}`,
+        `Run the relevant unit/integration tests and record command output`,
+      ],
+      implementationAc: [],
+      testAc: [
+        `No tests for ${ac.id} are disabled via .FIXME, .DISABLED, or .STUB`,
+        `Relevant tests for ${ac.id} execute and pass`,
+        `Any introduced .FIXME/.DISABLED/.STUB production file blocks closure`,
+      ],
+      nestedSubitems: [],
+      testSubitems: [],
+      proofOfRequirement: `Executable validation for ${ac.id}`,
+      syntheticKind: 'ac-validation',
+    };
+    if (defaultPhase) defaultPhase.taskIds.push(ac.id);
+  }
+
+  for (const xc of crossCuttingRequirements) {
+    if (Object.prototype.hasOwnProperty.call(tasksById, xc.id)) continue;
+    tasksById[xc.id] = {
+      id: xc.id,
+      phaseN: lastPhaseN,
+      description: `${xc.id}: ${xc.title}`,
+      isTest: false,
+      hourEstimate: null,
+      satisfies: ['ARCH'],
+      verifies: null,
+      validatesAcs: [],
+      dependsOn: existingTaskIds,
+      targetFiles: [],
+      actions: [xc.text || `Implement and verify cross-cutting requirement ${xc.id}`],
+      implementationAc: [
+        'Cross-cutting behavior is implemented across every affected domain/handler/event path',
+        'Evidence is recorded in bead comments before closure',
+      ],
+      testAc: [],
+      nestedSubitems: [],
+      testSubitems: [],
+      proofOfRequirement: `Cross-cutting verification for ${xc.id}`,
+      syntheticKind: 'cross-cutting',
+    };
+    if (defaultPhase) defaultPhase.taskIds.push(xc.id);
+  }
+
+  if (acceptanceCriteria.length) warnings.push(`Generated ${acceptanceCriteria.length} acceptance-criteria validation task(s)`);
+  if (crossCuttingRequirements.length) warnings.push(`Generated ${crossCuttingRequirements.length} cross-cutting requirement task(s)`);
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a TRD markdown string into a structured ParsedTRD object.
+ * Never throws on malformed input — problems are collected into `warnings`.
+ *
+ * @param {string} markdownString
+ * @returns {ParsedTRD}
+ */
+function parseTRD(markdownString) {
+  const warnings = [];
+  // CRLF safety: every heading/task-line regex below is `$`-anchored, and JS
+  // regex treats `\r` as its own line terminator that `.` cannot consume —
+  // so a lone trailing `\r` (CRLF source, the norm for this repo's own
+  // Windows-authored TRDs) makes those regexes fail to match at all, even
+  // though the line trimmed correctly. packages/e2e-testing/lib/prd-ac-parser.js
+  // hit the identical class of bug in the sibling PRD parser and fixed it the
+  // same way: normalize line endings once, up front, before any line-based
+  // regex runs.
+  const md = normalizeLineEndings(typeof markdownString === 'string' ? markdownString : '');
+
+  const { frontmatter, body } = splitFrontmatter(md);
+  const designReadinessScore = extractDesignReadinessScore(frontmatter);
+  const statusField = getFrontmatterField(frontmatter, 'status');
+  const status = statusField != null ? String(statusField) : null;
+
+  const allLines = body.split('\n');
+
+  // Pass 1 / 2.
+  const title = extractTitle(allLines);
+  const summary = extractSummary(allLines);
+
+  // Architecture decision prose + key technical decisions (Pass 1).
+  const architectureDecision = extractArchitectureDecision(allLines);
+  const keyTechnicalDecisions = extractKeyTechnicalDecisions(allLines);
+
+  // Pass 3 PRD reference (whole body).
+  const prdReference = extractPrdReference(body, frontmatter);
+
+  // Pass 3 scope: the Master Task List section.
+  const scope = findMasterTaskListScope(allLines);
+  if (!scope.found) {
+    warnings.push('No "## Master Task List" heading found — parsing entire document as task scope');
+  }
+  const scopeLines = allLines.slice(scope.startLine, scope.endLine);
+
+  // Pass 3 boundary detection within scope.
+  // Identify all boundary headings and their kinds.
+  const boundaries = [];
+  let prFormat = false;
+  let sawPR = false;
+  let sawPhase = false;
+  let sawSprint = false;
+
+  for (let i = 0; i < scopeLines.length; i++) {
+    const line = scopeLines[i];
+    let m;
+    if ((m = line.match(PR_HEADING_RE))) {
+      boundaries.push({ lineIndex: i, n: parseInt(m[1], 10), title: m[2].trim(), kind: 'PR' });
+      sawPR = true;
+    } else if ((m = line.match(PHASE_HEADING_RE))) {
+      boundaries.push({ lineIndex: i, n: parseInt(m[1], 10), title: m[2].trim(), kind: 'Phase' });
+      sawPhase = true;
+    } else if ((m = line.match(SPRINT_HEADING_RE))) {
+      boundaries.push({ lineIndex: i, n: parseInt(m[1], 10), title: m[2].trim(), kind: 'Sprint' });
+      sawSprint = true;
+    }
+  }
+
+  // Detection priority: PR > Phase > Sprint > synthesize.
+  let activeBoundaries;
+  if (sawPR) {
+    prFormat = true;
+    activeBoundaries = boundaries.filter((b) => b.kind === 'PR');
+  } else if (sawPhase) {
+    prFormat = false;
+    activeBoundaries = boundaries.filter((b) => b.kind === 'Phase');
+  } else if (sawSprint) {
+    prFormat = false;
+    activeBoundaries = boundaries.filter((b) => b.kind === 'Sprint');
+  } else {
+    prFormat = false;
+    activeBoundaries = []; // synthesized below
+  }
+
+  // Build phases.
+  const phases = [];
+  if (activeBoundaries.length === 0) {
+    phases.push({ n: 1, title: 'Implementation', shippableState: null, taskIds: [], _startLine: 0 });
+  } else {
+    for (const b of activeBoundaries) {
+      // Shippable State: next non-empty line after the heading.
+      let shippableState = null;
+      for (let j = b.lineIndex + 1; j < scopeLines.length; j++) {
+        const t = scopeLines[j].trim();
+        if (t === '') continue;
+        const sm = t.match(/^\*\*Shippable State:\*\*\s*(.*)$/i);
+        if (sm) shippableState = sm[1].trim();
+        break; // only inspect the first non-empty line
+      }
+      if (prFormat && shippableState === null) {
+        warnings.push(`PR ${b.n} (${b.title}) is missing a Shippable State line`);
+      }
+      phases.push({
+        n: b.n,
+        title: b.title,
+        shippableState,
+        taskIds: [],
+        _startLine: b.lineIndex,
+      });
+    }
+  }
+
+  // Helper: find the phase a given scope-line index belongs to (most recent
+  // preceding boundary heading).
+  function phaseForLine(lineIndex) {
+    if (activeBoundaries.length === 0) return phases[0];
+    let chosen = phases[0];
+    for (const p of phases) {
+      if (p._startLine <= lineIndex) chosen = p;
+      else break;
+    }
+    return chosen;
+  }
+
+  // Pass 4 / 4b / 4c / 6 / 7: walk scope lines, collect task line ranges.
+  const tasksById = {};
+  const taskOrder = [];
+
+  // First, find all top-level task line indices within scope.
+  const taskLineIndices = [];
+  for (let i = 0; i < scopeLines.length; i++) {
+    if (TASK_LINE_RE.test(scopeLines[i])) {
+      taskLineIndices.push(i);
+    }
+  }
+
+  for (let t = 0; t < taskLineIndices.length; t++) {
+    const startIdx = taskLineIndices[t];
+    const taskLine = scopeLines[startIdx];
+    const m = taskLine.match(TASK_LINE_RE);
+    const id = m[2];
+    const descRemainder = taskLine; // pass whole line; buildTask strips annotations
+
+    // Body = lines from after the task line up to (excluding):
+    //   - next top-level task line, OR
+    //   - next "### " heading, OR
+    //   - next "## " heading, OR
+    //   - EOF of scope.
+    let bodyEnd = scopeLines.length;
+    for (let j = startIdx + 1; j < scopeLines.length; j++) {
+      const line = scopeLines[j];
+      if (TASK_LINE_RE.test(line)) {
+        bodyEnd = j;
+        break;
+      }
+      if (/^###\s/.test(line) || /^##\s/.test(line)) {
+        bodyEnd = j;
+        break;
+      }
+    }
+    const bodyLines = scopeLines.slice(startIdx + 1, bodyEnd);
+
+    const phase = phaseForLine(startIdx);
+    const task = buildTask(id, descRemainder, bodyLines, phase.n);
+
+    if (Object.prototype.hasOwnProperty.call(tasksById, id)) {
+      warnings.push(`Duplicate task id: ${id}`);
+      // Keep the first occurrence; do not overwrite.
+    } else {
+      tasksById[id] = task;
+      taskOrder.push(id);
+      phase.taskIds.push(id);
+    }
+  }
+
+  if (taskOrder.length === 0) {
+    warnings.push('No tasks found in the TRD');
+  }
+
+  addSyntheticValidationTasks(tasksById, phases, allLines, warnings);
+
+  // Strip the internal _startLine helper before returning.
+  const cleanPhases = phases.map((p) => ({
+    n: p.n,
+    title: p.title,
+    shippableState: p.shippableState,
+    taskIds: p.taskIds,
+  }));
+
+  const documentIdField = getFrontmatterField(frontmatter, 'document_id');
+  const documentId = documentIdField != null ? String(documentIdField) : null;
+  const labelField = getFrontmatterField(frontmatter, 'label');
+  const label = labelField != null ? String(labelField) : null;
+  const kindField = getFrontmatterField(frontmatter, 'kind');
+  const kind = kindField != null ? String(kindField).toLowerCase() : 'trd';
+
+  // Capabilities a (foundational) TRD provides. Accept a YAML list or a
+  // comma-separated string; normalize to a trimmed, non-empty string array.
+  let capabilities = [];
+  const capabilitiesField = getFrontmatterField(frontmatter, 'capabilities');
+  if (capabilitiesField != null) {
+    const raw = Array.isArray(capabilitiesField)
+      ? capabilitiesField
+      : String(capabilitiesField).split(',');
+    capabilities = raw.map((c) => String(c).trim()).filter(Boolean);
+  }
+
+  return {
+    title,
+    summary,
+    documentId,
+    label,
+    kind,
+    capabilities,
+    prdReference,
+    designReadinessScore,
+    status,
+    prFormat,
+    phases: cleanPhases,
+    tasksById,
+    warnings,
+    architectureDecision,
+    keyTechnicalDecisions,
+  };
+}
+
+module.exports = {
+  parseTRD,
+  normalizeLineEndings,
+  scanFrontmatter,
+  extractDesignReadinessScore,
+  getFrontmatterField,
+  PRD_REFERENCE_KEYS,
+  PRD_PATH_KEYS,
+};

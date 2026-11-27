@@ -1,0 +1,1521 @@
+{
+  "schema": 1,
+  "skills": {
+    "anthropic": "skills/anthropic/SKILL.md",
+    "langgraph": "skills/langgraph/SKILL.md",
+    "openai": "skills/openai/SKILL.md",
+    "perplexity": "skills/perplexity/SKILL.md",
+    "weaviate": "skills/weaviate/SKILL.md",
+    "ai-readiness-diagnostic-report": "skills/ai-readiness-diagnostic-report/SKILL.md",
+    "architecture-overview-report": "skills/architecture-overview-report/SKILL.md",
+    "assess-ai-readiness": "skills/assess-ai-readiness/SKILL.md",
+    "assess-architect": "skills/assess-architect/SKILL.md",
+    "assess-cicd": "skills/assess-cicd/SKILL.md",
+    "assess-code-quality": "skills/assess-code-quality/SKILL.md",
+    "assess-config": "skills/assess-config/SKILL.md",
+    "assess-purpose": "skills/assess-purpose/SKILL.md",
+    "assess-repo": "skills/assess-repo/SKILL.md",
+    "assess-security": "skills/assess-security/SKILL.md",
+    "assess-team": "skills/assess-team/SKILL.md",
+    "assess-team-dimension": "skills/assess-team-dimension/SKILL.md",
+    "assess-testing": "skills/assess-testing/SKILL.md",
+    "assessment-report-suite": "skills/assessment-report-suite/SKILL.md",
+    "assessment-scoring-conflation-audit": "skills/assessment-scoring-conflation-audit/SKILL.md",
+    "ensemble-assess": "skills/ensemble-assess/SKILL.md",
+    "blazor": "skills/blazor/SKILL.md",
+    "adapter-package-runner-npm": "skills/adapter-package-runner-npm/SKILL.md",
+    "detect-stack": "skills/detect-stack/SKILL.md",
+    "ensemble-discover-standards": "skills/ensemble-discover-standards/SKILL.md",
+    "ensemble-fold-prompt": "skills/ensemble-fold-prompt/SKILL.md",
+    "ensemble-inject-standards": "skills/ensemble-inject-standards/SKILL.md",
+    "ensemble-reinstall-plugins": "skills/ensemble-reinstall-plugins/SKILL.md",
+    "ensemble-sessionlog": "skills/ensemble-sessionlog/SKILL.md",
+    "ensemble-standards": "skills/ensemble-standards/SKILL.md",
+    "adapter-lint-reviewdog": "skills/adapter-lint-reviewdog/SKILL.md",
+    "adapter-test-runner-default": "skills/adapter-test-runner-default/SKILL.md",
+    "adapter-tracker-beads": "skills/adapter-tracker-beads/SKILL.md",
+    "adapter-tracker-kata": "skills/adapter-tracker-kata/SKILL.md",
+    "completion-verification": "skills/completion-verification/SKILL.md",
+    "ensemble-analyze-complexity": "skills/ensemble-analyze-complexity/SKILL.md",
+    "ensemble-analyze-requirements": "skills/ensemble-analyze-requirements/SKILL.md",
+    "ensemble-beads-build": "skills/ensemble-beads-build/SKILL.md",
+    "ensemble-beads-build-wave": "skills/ensemble-beads-build-wave/SKILL.md",
+    "ensemble-configure-team": "skills/ensemble-configure-team/SKILL.md",
+    "ensemble-create-trd": "skills/ensemble-create-trd/SKILL.md",
+    "ensemble-feature": "skills/ensemble-feature/SKILL.md",
+    "ensemble-fix-issue": "skills/ensemble-fix-issue/SKILL.md",
+    "ensemble-implement-bead": "skills/ensemble-implement-bead/SKILL.md",
+    "ensemble-implement-trd-tasks": "skills/ensemble-implement-trd-tasks/SKILL.md",
+    "ensemble-issue": "skills/ensemble-issue/SKILL.md",
+    "ensemble-list-issue": "skills/ensemble-list-issue/SKILL.md",
+    "ensemble-new-feature": "skills/ensemble-new-feature/SKILL.md",
+    "ensemble-onboard": "skills/ensemble-onboard/SKILL.md",
+    "ensemble-refine-trd": "skills/ensemble-refine-trd/SKILL.md",
+    "ensemble-requirement-status": "skills/ensemble-requirement-status/SKILL.md",
+    "ensemble-retro": "skills/ensemble-retro/SKILL.md",
+    "ensemble-trd": "skills/ensemble-trd/SKILL.md",
+    "ensemble-trd-dependency-graph": "skills/ensemble-trd-dependency-graph/SKILL.md",
+    "ensemble-validate-requirements": "skills/ensemble-validate-requirements/SKILL.md",
+    "ensemble-verify-requirements": "skills/ensemble-verify-requirements/SKILL.md",
+    "implement-trd-tasks-reference": "skills/implement-trd-tasks-reference/SKILL.md",
+    "local-ci-gate": "skills/local-ci-gate/SKILL.md",
+    "pr-merge-trace": "skills/pr-merge-trace/SKILL.md",
+    "pr-review-cycle": "skills/pr-review-cycle/SKILL.md",
+    "pr-review-eval": "skills/pr-review-eval/SKILL.md",
+    "pr-review-explainer": "skills/pr-review-explainer/SKILL.md",
+    "pr-review-request": "skills/pr-review-request/SKILL.md",
+    "pr-review-sweep": "skills/pr-review-sweep/SKILL.md",
+    "safe-migration": "skills/safe-migration/SKILL.md",
+    "staleness-gate": "skills/staleness-gate/SKILL.md",
+    "tool-path-resolution": "skills/tool-path-resolution/SKILL.md",
+    "dotnet": "skills/dotnet/SKILL.md",
+    "a11y-perf-checks": "skills/a11y-perf-checks/SKILL.md",
+    "adapter-e2e-quality-playwright": "skills/adapter-e2e-quality-playwright/SKILL.md",
+    "ensemble-author-playwright-tests": "skills/ensemble-author-playwright-tests/SKILL.md",
+    "smoke-test-runner": "skills/smoke-test-runner/SKILL.md",
+    "writing-playwright-tests": "skills/writing-playwright-tests/SKILL.md",
+    "exunit": "skills/exunit/SKILL.md",
+    "act-local-ci": "skills/act-local-ci/SKILL.md",
+    "adapter-ci-local-act": "skills/adapter-ci-local-act/SKILL.md",
+    "adapter-host-github": "skills/adapter-host-github/SKILL.md",
+    "adapter-workflow-git-town": "skills/adapter-workflow-git-town/SKILL.md",
+    "adapter-workflow-plain-git": "skills/adapter-workflow-plain-git/SKILL.md",
+    "adapter-worktree-plain-git": "skills/adapter-worktree-plain-git/SKILL.md",
+    "changelog-generator": "skills/changelog-generator/SKILL.md",
+    "ensemble-pr-merge": "skills/ensemble-pr-merge/SKILL.md",
+    "ensemble-release": "skills/ensemble-release/SKILL.md",
+    "git-town": "skills/git-town/SKILL.md",
+    "adapter-container-deploy-docker-kubectl": "skills/adapter-container-deploy-docker-kubectl/SKILL.md",
+    "adapter-host-azure-devops": "skills/adapter-host-azure-devops/SKILL.md",
+    "adapter-iac-terraform": "skills/adapter-iac-terraform/SKILL.md",
+    "adapter-platform-cloud-aws": "skills/adapter-platform-cloud-aws/SKILL.md",
+    "adapter-tracker-azure-boards": "skills/adapter-tracker-azure-boards/SKILL.md",
+    "adapter-tracker-jira": "skills/adapter-tracker-jira/SKILL.md",
+    "aws": "skills/aws/SKILL.md",
+    "flyio": "skills/flyio/SKILL.md",
+    "helm": "skills/helm/SKILL.md",
+    "jira": "skills/jira/SKILL.md",
+    "kubernetes": "skills/kubernetes/SKILL.md",
+    "linear": "skills/linear/SKILL.md",
+    "railway": "skills/railway/SKILL.md",
+    "supabase": "skills/supabase/SKILL.md",
+    "vercel": "skills/vercel/SKILL.md",
+    "jest": "skills/jest/SKILL.md",
+    "nestjs": "skills/nestjs/SKILL.md",
+    "phoenix": "skills/phoenix/SKILL.md",
+    "ensemble-check-binding-drift": "skills/ensemble-check-binding-drift/SKILL.md",
+    "ensemble-check-feature-drift": "skills/ensemble-check-feature-drift/SKILL.md",
+    "ensemble-create-prd": "skills/ensemble-create-prd/SKILL.md",
+    "ensemble-generate-feature-tests": "skills/ensemble-generate-feature-tests/SKILL.md",
+    "ensemble-generate-reqnroll-bindings": "skills/ensemble-generate-reqnroll-bindings/SKILL.md",
+    "ensemble-prd": "skills/ensemble-prd/SKILL.md",
+    "ensemble-refine-prd": "skills/ensemble-refine-prd/SKILL.md",
+    "ensemble-reqnroll": "skills/ensemble-reqnroll/SKILL.md",
+    "ensemble-reqnroll-tdd": "skills/ensemble-reqnroll-tdd/SKILL.md",
+    "pytest": "skills/pytest/SKILL.md",
+    "adapter-review-coderabbit": "skills/adapter-review-coderabbit/SKILL.md",
+    "flake-reproduction": "skills/flake-reproduction/SKILL.md",
+    "incident-triage": "skills/incident-triage/SKILL.md",
+    "pr-review-remediation": "skills/pr-review-remediation/SKILL.md",
+    "threat-model": "skills/threat-model/SKILL.md",
+    "rails": "skills/rails/SKILL.md",
+    "react": "skills/react/SKILL.md",
+    "reqnroll": "skills/reqnroll/SKILL.md",
+    "rspec": "skills/rspec/SKILL.md",
+    "xunit": "skills/xunit/SKILL.md"
+  },
+  "commands": {
+    "assess": "ensemble-assess",
+    "ensemble:assess": "ensemble-assess",
+    "discover-standards": "ensemble-discover-standards",
+    "ensemble:discover-standards": "ensemble-discover-standards",
+    "fold-prompt": "ensemble-fold-prompt",
+    "ensemble:fold-prompt": "ensemble-fold-prompt",
+    "inject-standards": "ensemble-inject-standards",
+    "ensemble:inject-standards": "ensemble-inject-standards",
+    "reinstall-plugins": "ensemble-reinstall-plugins",
+    "ensemble:reinstall-plugins": "ensemble-reinstall-plugins",
+    "sessionlog": "ensemble-sessionlog",
+    "ensemble:sessionlog": "ensemble-sessionlog",
+    "standards": "ensemble-standards",
+    "ensemble:standards": "ensemble-standards",
+    "analyze-complexity": "ensemble-analyze-complexity",
+    "ensemble:analyze-complexity": "ensemble-analyze-complexity",
+    "analyze-requirements": "ensemble-analyze-requirements",
+    "ensemble:analyze-requirements": "ensemble-analyze-requirements",
+    "beads-build-wave": "ensemble-beads-build-wave",
+    "ensemble:beads-build-wave": "ensemble-beads-build-wave",
+    "beads-build": "ensemble-beads-build",
+    "ensemble:beads-build": "ensemble-beads-build",
+    "configure-team": "ensemble-configure-team",
+    "ensemble:configure-team": "ensemble-configure-team",
+    "create-trd": "ensemble-create-trd",
+    "ensemble:create-trd": "ensemble-create-trd",
+    "feature": "ensemble-feature",
+    "ensemble:feature": "ensemble-feature",
+    "fix-issue": "ensemble-fix-issue",
+    "ensemble:fix-issue": "ensemble-fix-issue",
+    "implement-bead": "ensemble-implement-bead",
+    "ensemble:implement-bead": "ensemble-implement-bead",
+    "implement-trd-tasks": "ensemble-implement-trd-tasks",
+    "ensemble:implement-trd-tasks": "ensemble-implement-trd-tasks",
+    "issue": "ensemble-issue",
+    "ensemble:issue": "ensemble-issue",
+    "list-issue": "ensemble-list-issue",
+    "ensemble:list-issue": "ensemble-list-issue",
+    "new-feature": "ensemble-new-feature",
+    "ensemble:new-feature": "ensemble-new-feature",
+    "onboard": "ensemble-onboard",
+    "ensemble:onboard": "ensemble-onboard",
+    "refine-trd": "ensemble-refine-trd",
+    "ensemble:refine-trd": "ensemble-refine-trd",
+    "requirement-status": "ensemble-requirement-status",
+    "ensemble:requirement-status": "ensemble-requirement-status",
+    "retro": "ensemble-retro",
+    "ensemble:retro": "ensemble-retro",
+    "trd-dependency-graph": "ensemble-trd-dependency-graph",
+    "ensemble:trd-dependency-graph": "ensemble-trd-dependency-graph",
+    "trd": "ensemble-trd",
+    "ensemble:trd": "ensemble-trd",
+    "validate-requirements": "ensemble-validate-requirements",
+    "ensemble:validate-requirements": "ensemble-validate-requirements",
+    "verify-requirements": "ensemble-verify-requirements",
+    "ensemble:verify-requirements": "ensemble-verify-requirements",
+    "author-playwright-tests": "ensemble-author-playwright-tests",
+    "ensemble:author-playwright-tests": "ensemble-author-playwright-tests",
+    "pr-merge": "ensemble-pr-merge",
+    "ensemble:pr-merge": "ensemble-pr-merge",
+    "release": "ensemble-release",
+    "ensemble:release": "ensemble-release",
+    "check-binding-drift": "ensemble-check-binding-drift",
+    "ensemble:check-binding-drift": "ensemble-check-binding-drift",
+    "check-feature-drift": "ensemble-check-feature-drift",
+    "ensemble:check-feature-drift": "ensemble-check-feature-drift",
+    "create-prd": "ensemble-create-prd",
+    "ensemble:create-prd": "ensemble-create-prd",
+    "generate-feature-tests": "ensemble-generate-feature-tests",
+    "ensemble:generate-feature-tests": "ensemble-generate-feature-tests",
+    "generate-reqnroll-bindings": "ensemble-generate-reqnroll-bindings",
+    "ensemble:generate-reqnroll-bindings": "ensemble-generate-reqnroll-bindings",
+    "prd": "ensemble-prd",
+    "ensemble:prd": "ensemble-prd",
+    "refine-prd": "ensemble-refine-prd",
+    "ensemble:refine-prd": "ensemble-refine-prd",
+    "reqnroll-tdd": "ensemble-reqnroll-tdd",
+    "ensemble:reqnroll-tdd": "ensemble-reqnroll-tdd",
+    "reqnroll": "ensemble-reqnroll",
+    "ensemble:reqnroll": "ensemble-reqnroll"
+  },
+  "roles": {
+    "ensemble-orchestrator": "roles/ensemble-orchestrator.md",
+    "advisor": "roles/advisor.md",
+    "architect": "roles/architect.md",
+    "backend-developer": "roles/backend-developer.md",
+    "beads-build-wave": "roles/beads-build-wave.md",
+    "beads-scaffold-specialist": "roles/beads-scaffold-specialist.md",
+    "documentation-specialist": "roles/documentation-specialist.md",
+    "frontend-developer": "roles/frontend-developer.md",
+    "tech-lead-orchestrator": "roles/tech-lead-orchestrator.md",
+    "dotnet-backend-expert": "roles/dotnet-backend-expert.md",
+    "playwright-tester": "roles/playwright-tester.md",
+    "git-workflow": "roles/git-workflow.md",
+    "build-orchestrator": "roles/build-orchestrator.md",
+    "deployment-orchestrator": "roles/deployment-orchestrator.md",
+    "helm-chart-specialist": "roles/helm-chart-specialist.md",
+    "infrastructure-developer": "roles/infrastructure-developer.md",
+    "infrastructure-orchestrator": "roles/infrastructure-orchestrator.md",
+    "infrastructure-specialist": "roles/infrastructure-specialist.md",
+    "postgresql-specialist": "roles/postgresql-specialist.md",
+    "product-management-orchestrator": "roles/product-management-orchestrator.md",
+    "code-reviewer": "roles/code-reviewer.md",
+    "deep-debugger": "roles/deep-debugger.md",
+    "test-runner": "roles/test-runner.md",
+    "reqnroll-binding-specialist": "roles/reqnroll-binding-specialist.md"
+  },
+  "tools": {
+    "index.js": [
+      "packages/ai/lib/index.js",
+      "packages/assessment/lib/index.js",
+      "packages/blazor/lib/index.js",
+      "packages/core/lib/index.js",
+      "packages/development/lib/index.js",
+      "packages/dotnet/lib/index.js",
+      "packages/e2e-testing/lib/index.js",
+      "packages/exunit/lib/index.js",
+      "packages/git/lib/index.js",
+      "packages/infrastructure/lib/index.js",
+      "packages/jest/lib/index.js",
+      "packages/nestjs/lib/index.js",
+      "packages/phoenix/lib/index.js",
+      "packages/product/lib/index.js",
+      "packages/pytest/lib/index.js",
+      "packages/quality/lib/index.js",
+      "packages/rails/lib/index.js",
+      "packages/react/lib/index.js",
+      "packages/reqnroll/lib/index.js",
+      "packages/rspec/lib/index.js",
+      "packages/xunit/lib/index.js"
+    ],
+    "config-path.js": [
+      "packages/core/lib/config-path.js",
+      "packages/development/lib/toolchain/config-path.js"
+    ],
+    "context7-integration.js": [
+      "packages/core/lib/context7-integration.js"
+    ],
+    "detect-framework.js": [
+      "packages/core/lib/detect-framework.js"
+    ],
+    "framework-patterns.json": [
+      "packages/core/lib/framework-patterns.json"
+    ],
+    "opener.js": [
+      "packages/core/lib/refinement-review/opener.js"
+    ],
+    "overview.js": [
+      "packages/core/lib/refinement-review/overview.js"
+    ],
+    "server.js": [
+      "packages/core/lib/refinement-review/server.js"
+    ],
+    "session.js": [
+      "packages/core/lib/refinement-review/session.js"
+    ],
+    "tunnel.js": [
+      "packages/core/lib/refinement-review/tunnel.js"
+    ],
+    "app.js": [
+      "packages/core/lib/refinement-review/ui/app.js"
+    ],
+    "index.html": [
+      "packages/core/lib/refinement-review/ui/index.html"
+    ],
+    "markdown.js": [
+      "packages/core/lib/refinement-review/ui/markdown.js"
+    ],
+    "style.css": [
+      "packages/core/lib/refinement-review/ui/style.css"
+    ],
+    "bdd-mode.js": [
+      "packages/development/lib/bdd-mode.js"
+    ],
+    "bead-refs.js": [
+      "packages/development/lib/bead-refs.js"
+    ],
+    "beads-findings.js": [
+      "packages/development/lib/beads-findings.js"
+    ],
+    "beads-label.js": [
+      "packages/development/lib/beads-label.js"
+    ],
+    "beads-refine-cli.js": [
+      "packages/development/lib/beads-refine-cli.js"
+    ],
+    "beads-repair-plan.js": [
+      "packages/development/lib/beads-repair-plan.js"
+    ],
+    "beads-repair-verify.js": [
+      "packages/development/lib/beads-repair-verify.js"
+    ],
+    "beads-scope.js": [
+      "packages/development/lib/beads-scope.js"
+    ],
+    "beads-stage.js": [
+      "packages/development/lib/beads-stage.js"
+    ],
+    "complexity-analyzer.js": [
+      "packages/development/lib/complexity-analyzer.js"
+    ],
+    "cross-trd-deps.js": [
+      "packages/development/lib/cross-trd-deps.js"
+    ],
+    "doc-maintenance.js": [
+      "packages/development/lib/doc-maintenance.js"
+    ],
+    "agents.js": [
+      "packages/development/lib/engine/agents.js"
+    ],
+    "argv.js": [
+      "packages/development/lib/engine/argv.js"
+    ],
+    "cli-json.js": [
+      "packages/development/lib/engine/cli-json.js"
+    ],
+    "closure.js": [
+      "packages/development/lib/engine/closure.js"
+    ],
+    "describe.js": [
+      "packages/development/lib/engine/describe.js"
+    ],
+    "envelope.js": [
+      "packages/development/lib/engine/envelope.js"
+    ],
+    "git.js": [
+      "packages/development/lib/engine/git.js"
+    ],
+    "engine.js": [
+      "packages/development/lib/engine/groups/engine.js"
+    ],
+    "implement.js": [
+      "packages/development/lib/engine/groups/implement.js"
+    ],
+    "tool.js": [
+      "packages/development/lib/engine/groups/tool.js"
+    ],
+    "trd.js": [
+      "packages/development/lib/engine/groups/trd.js"
+    ],
+    "input.js": [
+      "packages/development/lib/engine/input.js"
+    ],
+    "interactivity.js": [
+      "packages/development/lib/engine/interactivity.js"
+    ],
+    "messages.js": [
+      "packages/development/lib/engine/messages.js"
+    ],
+    "mount.js": [
+      "packages/development/lib/engine/mount.js"
+    ],
+    "defaults.json": [
+      "packages/development/lib/engine/policy/defaults.json"
+    ],
+    "policy.js": [
+      "packages/development/lib/engine/policy.js"
+    ],
+    "pr-plan.js": [
+      "packages/development/lib/engine/pr-plan.js"
+    ],
+    "registry.js": [
+      "packages/development/lib/engine/registry.js"
+    ],
+    "result.js": [
+      "packages/development/lib/engine/result.js"
+    ],
+    "staleness.js": [
+      "packages/development/lib/engine/staleness.js"
+    ],
+    "strategy.js": [
+      "packages/development/lib/engine/strategy.js"
+    ],
+    "tracker.js": [
+      "packages/development/lib/engine/tracker.js"
+    ],
+    "trd-source.js": [
+      "packages/development/lib/engine/trd-source.js"
+    ],
+    "validate.js": [
+      "packages/development/lib/engine/validate.js",
+      "packages/development/lib/toolchain/validate.js"
+    ],
+    "implement-args.js": [
+      "packages/development/lib/engine/verbs/implement-args.js"
+    ],
+    "implement-bead-health.js": [
+      "packages/development/lib/engine/verbs/implement-bead-health.js"
+    ],
+    "implement-branch.js": [
+      "packages/development/lib/engine/verbs/implement-branch.js"
+    ],
+    "implement-close.js": [
+      "packages/development/lib/engine/verbs/implement-close.js"
+    ],
+    "implement-env.js": [
+      "packages/development/lib/engine/verbs/implement-env.js"
+    ],
+    "implement-gate.js": [
+      "packages/development/lib/engine/verbs/implement-gate.js"
+    ],
+    "implement-resume.js": [
+      "packages/development/lib/engine/verbs/implement-resume.js"
+    ],
+    "implement-scaffold.js": [
+      "packages/development/lib/engine/verbs/implement-scaffold.js"
+    ],
+    "implement-team.js": [
+      "packages/development/lib/engine/verbs/implement-team.js"
+    ],
+    "implement-verify.js": [
+      "packages/development/lib/engine/verbs/implement-verify.js"
+    ],
+    "verification.js": [
+      "packages/development/lib/engine/verification.js"
+    ],
+    "worktree.js": [
+      "packages/development/lib/engine/worktree.js"
+    ],
+    "ensemble-cli.js": [
+      "packages/development/lib/ensemble-cli.js"
+    ],
+    "estimate-actual.js": [
+      "packages/development/lib/estimate-actual.js"
+    ],
+    "issue-run-index-cli.js": [
+      "packages/development/lib/issue-run-index-cli.js"
+    ],
+    "local-ci-baseline.js": [
+      "packages/development/lib/local-ci-baseline.js"
+    ],
+    "local-ci-cli.js": [
+      "packages/development/lib/local-ci-cli.js"
+    ],
+    "local-ci-config.js": [
+      "packages/development/lib/local-ci-config.js"
+    ],
+    "local-ci-hosted.js": [
+      "packages/development/lib/local-ci-hosted.js"
+    ],
+    "local-ci-lock.js": [
+      "packages/development/lib/local-ci-lock.js"
+    ],
+    "local-ci-record.js": [
+      "packages/development/lib/local-ci-record.js"
+    ],
+    "local-ci-review.js": [
+      "packages/development/lib/local-ci-review.js"
+    ],
+    "local-ci-rollout.js": [
+      "packages/development/lib/local-ci-rollout.js"
+    ],
+    "local-ci-runner.js": [
+      "packages/development/lib/local-ci-runner.js"
+    ],
+    "local-ci-status.js": [
+      "packages/development/lib/local-ci-status.js"
+    ],
+    "local-ci-sweep-record.js": [
+      "packages/development/lib/local-ci-sweep-record.js"
+    ],
+    "local-ci-sweep.js": [
+      "packages/development/lib/local-ci-sweep.js"
+    ],
+    "local-ci-timing.js": [
+      "packages/development/lib/local-ci-timing.js"
+    ],
+    "parse-sub-state.js": [
+      "packages/development/lib/parse-sub-state.js"
+    ],
+    "phase-tracker.js": [
+      "packages/development/lib/phase-tracker.js"
+    ],
+    "pr-review-approvals.js": [
+      "packages/development/lib/pr-review-approvals.js"
+    ],
+    "pr-review-beads-cli.js": [
+      "packages/development/lib/pr-review-beads-cli.js"
+    ],
+    "pr-review-beads.js": [
+      "packages/development/lib/pr-review-beads.js"
+    ],
+    "pr-review-brief-files.js": [
+      "packages/development/lib/pr-review-brief-files.js"
+    ],
+    "pr-review-briefs.js": [
+      "packages/development/lib/pr-review-briefs.js"
+    ],
+    "pr-review-carry-hash-cli.js": [
+      "packages/development/lib/pr-review-carry-hash-cli.js"
+    ],
+    "pr-review-carry-hash.js": [
+      "packages/development/lib/pr-review-carry-hash.js"
+    ],
+    "pr-review-carry.js": [
+      "packages/development/lib/pr-review-carry.js"
+    ],
+    "pr-review-ci-tests.js": [
+      "packages/development/lib/pr-review-ci-tests.js"
+    ],
+    "pr-review-clear-cli.js": [
+      "packages/development/lib/pr-review-clear-cli.js"
+    ],
+    "pr-review-cli.js": [
+      "packages/development/lib/pr-review-cli.js"
+    ],
+    "pr-review-coverage.js": [
+      "packages/development/lib/pr-review-coverage.js"
+    ],
+    "pr-review-delta.js": [
+      "packages/development/lib/pr-review-delta.js"
+    ],
+    "pr-review-depth.js": [
+      "packages/development/lib/pr-review-depth.js"
+    ],
+    "pr-review-description.js": [
+      "packages/development/lib/pr-review-description.js"
+    ],
+    "pr-review-disposition.js": [
+      "packages/development/lib/pr-review-disposition.js"
+    ],
+    "pr-review-eval.js": [
+      "packages/development/lib/pr-review-eval.js"
+    ],
+    "pr-review-explainer-offer.js": [
+      "packages/development/lib/pr-review-explainer-offer.js"
+    ],
+    "pr-review-full.js": [
+      "packages/development/lib/pr-review-full.js"
+    ],
+    "pr-review-gate.js": [
+      "packages/development/lib/pr-review-gate.js"
+    ],
+    "pr-review-import-graph.js": [
+      "packages/development/lib/pr-review-import-graph.js"
+    ],
+    "pr-review-ledger.js": [
+      "packages/development/lib/pr-review-ledger.js"
+    ],
+    "pr-review-load.js": [
+      "packages/development/lib/pr-review-load.js"
+    ],
+    "pr-review-metrics.js": [
+      "packages/development/lib/pr-review-metrics.js"
+    ],
+    "pr-review-mode.js": [
+      "packages/development/lib/pr-review-mode.js"
+    ],
+    "pr-review-paths.js": [
+      "packages/development/lib/pr-review-paths.js"
+    ],
+    "pr-review-policy.js": [
+      "packages/development/lib/pr-review-policy.js"
+    ],
+    "pr-review-precheck.js": [
+      "packages/development/lib/pr-review-precheck.js"
+    ],
+    "pr-review-prepare-cli.js": [
+      "packages/development/lib/pr-review-prepare-cli.js"
+    ],
+    "pr-review-prepare.js": [
+      "packages/development/lib/pr-review-prepare.js"
+    ],
+    "pr-review-reachability.js": [
+      "packages/development/lib/pr-review-reachability.js"
+    ],
+    "pr-review-remote.js": [
+      "packages/development/lib/pr-review-remote.js"
+    ],
+    "pr-review-repo.js": [
+      "packages/development/lib/pr-review-repo.js"
+    ],
+    "pr-review-results.js": [
+      "packages/development/lib/pr-review-results.js"
+    ],
+    "pr-review-rules.js": [
+      "packages/development/lib/pr-review-rules.js"
+    ],
+    "pr-review-run-delta.js": [
+      "packages/development/lib/pr-review-run-delta.js"
+    ],
+    "pr-review-run-support.js": [
+      "packages/development/lib/pr-review-run-support.js"
+    ],
+    "pr-review-run.js": [
+      "packages/development/lib/pr-review-run.js"
+    ],
+    "pr-review-scope.js": [
+      "packages/development/lib/pr-review-scope.js"
+    ],
+    "pr-review-sizing.js": [
+      "packages/development/lib/pr-review-sizing.js"
+    ],
+    "pr-review-state.js": [
+      "packages/development/lib/pr-review-state.js"
+    ],
+    "pr-review-status.js": [
+      "packages/development/lib/pr-review-status.js"
+    ],
+    "pr-review-tier.js": [
+      "packages/development/lib/pr-review-tier.js"
+    ],
+    "pr-review-timing.js": [
+      "packages/development/lib/pr-review-timing.js"
+    ],
+    "pr-review-verify-assign.js": [
+      "packages/development/lib/pr-review-verify-assign.js"
+    ],
+    "pr-review-votes.js": [
+      "packages/development/lib/pr-review-votes.js"
+    ],
+    "pr-review-walltime.js": [
+      "packages/development/lib/pr-review-walltime.js"
+    ],
+    "pr-strategy.js": [
+      "packages/development/lib/pr-strategy.js"
+    ],
+    "prd-cli.js": [
+      "packages/development/lib/prd-cli.js",
+      "packages/product/lib/prd-cli.js"
+    ],
+    "prd-parser.js": [
+      "packages/development/lib/prd-parser.js"
+    ],
+    "quickstart-generator.js": [
+      "packages/development/lib/quickstart-generator.js"
+    ],
+    "review-eval-guard.js": [
+      "packages/development/lib/review-eval-guard.js"
+    ],
+    "review-precheck-cli.js": [
+      "packages/development/lib/review-precheck-cli.js"
+    ],
+    "review-prepare-runtime.js": [
+      "packages/development/lib/review-prepare-runtime.js"
+    ],
+    "review-recall-guard.js": [
+      "packages/development/lib/review-recall-guard.js"
+    ],
+    "review-record-runtime.js": [
+      "packages/development/lib/review-record-runtime.js"
+    ],
+    "review-run-cli.js": [
+      "packages/development/lib/review-run-cli.js"
+    ],
+    "issue-run-index.js": [
+      "packages/development/lib/run-index/fix-issue/issue-run-index.js"
+    ],
+    "types.js": [
+      "packages/development/lib/run-index/fix-issue/types.js",
+      "packages/development/lib/run-index/new-feature/types.js"
+    ],
+    "run-index.js": [
+      "packages/development/lib/run-index/new-feature/run-index.js"
+    ],
+    "run-index-core.js": [
+      "packages/development/lib/run-index/run-index-core.js"
+    ],
+    "run-index-cli-core.js": [
+      "packages/development/lib/run-index-cli-core.js"
+    ],
+    "run-index-cli.js": [
+      "packages/development/lib/run-index-cli.js"
+    ],
+    "run-trace.js": [
+      "packages/development/lib/run-trace.js"
+    ],
+    "scaffold-planner.js": [
+      "packages/development/lib/scaffold-planner.js"
+    ],
+    "team-defaults.js": [
+      "packages/development/lib/team-defaults.js"
+    ],
+    "adapter-module.js": [
+      "packages/development/lib/toolchain/adapter-module.js"
+    ],
+    "adapters.js": [
+      "packages/development/lib/toolchain/adapters.js"
+    ],
+    "work-graph-links-fallback.js": [
+      "packages/development/lib/toolchain/builtin/work-graph-links-fallback.js"
+    ],
+    "config.js": [
+      "packages/development/lib/toolchain/config.js"
+    ],
+    "confirm.js": [
+      "packages/development/lib/toolchain/confirm.js"
+    ],
+    "contracts.js": [
+      "packages/development/lib/toolchain/contracts.js"
+    ],
+    "coverage.js": [
+      "packages/development/lib/toolchain/coverage.js"
+    ],
+    "detect-stack.js": [
+      "packages/development/lib/toolchain/detect-stack.js"
+    ],
+    "detect.js": [
+      "packages/development/lib/toolchain/detect.js"
+    ],
+    "ledger.js": [
+      "packages/development/lib/toolchain/ledger.js"
+    ],
+    "mapping.js": [
+      "packages/development/lib/toolchain/mapping.js"
+    ],
+    "preflight.js": [
+      "packages/development/lib/toolchain/preflight.js"
+    ],
+    "resolve-guard.js": [
+      "packages/development/lib/toolchain/resolve-guard.js"
+    ],
+    "resolve.js": [
+      "packages/development/lib/toolchain/resolve.js"
+    ],
+    "run-id.js": [
+      "packages/development/lib/toolchain/run-id.js"
+    ],
+    "runner.js": [
+      "packages/development/lib/toolchain/runner.js"
+    ],
+    "state-dir.js": [
+      "packages/development/lib/toolchain/state-dir.js"
+    ],
+    "status-overrides.js": [
+      "packages/development/lib/toolchain/status-overrides.js"
+    ],
+    "work-graph-resolve.js": [
+      "packages/development/lib/toolchain/work-graph-resolve.js"
+    ],
+    "work-graph-scan.js": [
+      "packages/development/lib/toolchain/work-graph-scan.js"
+    ],
+    "toolchain-cli.js": [
+      "packages/development/lib/toolchain-cli.js"
+    ],
+    "tracker-findings.js": [
+      "packages/development/lib/tracker-findings.js"
+    ],
+    "trd-checks.js": [
+      "packages/development/lib/trd-checks.js"
+    ],
+    "trd-cli.js": [
+      "packages/development/lib/trd-cli.js"
+    ],
+    "trd-graph-cli.js": [
+      "packages/development/lib/trd-graph-cli.js"
+    ],
+    "trd-graph.js": [
+      "packages/development/lib/trd-graph.js"
+    ],
+    "trd-parser.js": [
+      "packages/development/lib/trd-parser.js"
+    ],
+    "verify-requirements-evidence.js": [
+      "packages/development/lib/verify-requirements-evidence.js"
+    ],
+    "workstream-planner.js": [
+      "packages/development/lib/workstream-planner.js"
+    ],
+    "workstream-status.js": [
+      "packages/development/lib/workstream-status.js"
+    ],
+    "workstream-trd.js": [
+      "packages/development/lib/workstream-trd.js"
+    ],
+    "ac-decision-loop.js": [
+      "packages/e2e-testing/lib/ac-decision-loop.js"
+    ],
+    "ac-gap-detector.js": [
+      "packages/e2e-testing/lib/ac-gap-detector.js"
+    ],
+    "ac-gap-task-filer.js": [
+      "packages/e2e-testing/lib/ac-gap-task-filer.js"
+    ],
+    "ado-sync-resilience.js": [
+      "packages/e2e-testing/lib/ado-sync-resilience.js"
+    ],
+    "ado-test-case-sync.js": [
+      "packages/e2e-testing/lib/ado-test-case-sync.js"
+    ],
+    "ado-test-plan.js": [
+      "packages/e2e-testing/lib/ado-test-plan.js"
+    ],
+    "ado-test-suite.js": [
+      "packages/e2e-testing/lib/ado-test-suite.js"
+    ],
+    "delegation-contract.js": [
+      "packages/e2e-testing/lib/delegation-contract.js"
+    ],
+    "e2e-framework.js": [
+      "packages/e2e-testing/lib/e2e-framework.js"
+    ],
+    "evidence-capture.js": [
+      "packages/e2e-testing/lib/evidence-capture.js"
+    ],
+    "grounded-marker-checker.js": [
+      "packages/e2e-testing/lib/grounded-marker-checker.js"
+    ],
+    "implementation-grounding.js": [
+      "packages/e2e-testing/lib/implementation-grounding.js"
+    ],
+    "manual-ac-tracker.js": [
+      "packages/e2e-testing/lib/manual-ac-tracker.js"
+    ],
+    "pr-state.js": [
+      "packages/e2e-testing/lib/pr-state.js"
+    ],
+    "prd-ac-parser.js": [
+      "packages/e2e-testing/lib/prd-ac-parser.js"
+    ],
+    "qa-env-guard.js": [
+      "packages/e2e-testing/lib/qa-env-guard.js"
+    ],
+    "req-batcher.js": [
+      "packages/e2e-testing/lib/req-batcher.js"
+    ],
+    "resume-scan.js": [
+      "packages/e2e-testing/lib/resume-scan.js"
+    ],
+    "session-logger.js": [
+      "packages/e2e-testing/lib/session-logger.js"
+    ],
+    "session-summary.js": [
+      "packages/e2e-testing/lib/session-summary.js"
+    ],
+    "spec-writer.js": [
+      "packages/e2e-testing/lib/spec-writer.js"
+    ],
+    "test-runner-mode.js": [
+      "packages/e2e-testing/lib/test-runner-mode.js"
+    ],
+    "traceability-tagger.js": [
+      "packages/e2e-testing/lib/traceability-tagger.js"
+    ],
+    "trd-task-parser.js": [
+      "packages/e2e-testing/lib/trd-task-parser.js"
+    ],
+    "generate-test.exs": [
+      "packages/exunit/lib/generate-test.exs"
+    ],
+    "run-test.exs": [
+      "packages/exunit/lib/run-test.exs"
+    ],
+    "guards.js": [
+      "packages/guards/lib/guards.js"
+    ],
+    "shell.js": [
+      "packages/guards/lib/shell.js"
+    ],
+    "generate-test.js": [
+      "packages/jest/lib/generate-test.js"
+    ],
+    "run-test.js": [
+      "packages/jest/lib/run-test.js"
+    ],
+    "drift.js": [
+      "packages/product/lib/drift.js"
+    ],
+    "feature-gen.js": [
+      "packages/product/lib/feature-gen.js"
+    ],
+    "prd-feature-parser.js": [
+      "packages/product/lib/prd-feature-parser.js"
+    ],
+    "prd-registry.js": [
+      "packages/product/lib/prd-registry.js"
+    ],
+    "reqnroll-cli.js": [
+      "packages/product/lib/reqnroll-cli.js"
+    ],
+    "reqnroll-gen.js": [
+      "packages/product/lib/reqnroll-gen.js"
+    ],
+    "reqnroll-run.js": [
+      "packages/product/lib/reqnroll-run.js"
+    ],
+    "generate-test.py": [
+      "packages/pytest/lib/generate-test.py"
+    ],
+    "run-test.py": [
+      "packages/pytest/lib/run-test.py"
+    ],
+    "generate-test.rb": [
+      "packages/rspec/lib/generate-test.rb"
+    ],
+    "run-test.rb": [
+      "packages/rspec/lib/run-test.rb"
+    ],
+    "generate-test.cs": [
+      "packages/xunit/lib/generate-test.cs"
+    ],
+    "run-test.sh": [
+      "packages/xunit/lib/run-test.sh"
+    ]
+  },
+  "capabilities": {
+    "anthropic": {
+      "required": [],
+      "optional": []
+    },
+    "langgraph": {
+      "required": [],
+      "optional": []
+    },
+    "openai": {
+      "required": [],
+      "optional": []
+    },
+    "perplexity": {
+      "required": [],
+      "optional": []
+    },
+    "weaviate": {
+      "required": [],
+      "optional": []
+    },
+    "ai-readiness-diagnostic-report": {
+      "required": [],
+      "optional": []
+    },
+    "architecture-overview-report": {
+      "required": [],
+      "optional": []
+    },
+    "assess-ai-readiness": {
+      "required": [],
+      "optional": []
+    },
+    "assess-architect": {
+      "required": [],
+      "optional": []
+    },
+    "assess-cicd": {
+      "required": [],
+      "optional": []
+    },
+    "assess-code-quality": {
+      "required": [],
+      "optional": []
+    },
+    "assess-config": {
+      "required": [],
+      "optional": []
+    },
+    "assess-purpose": {
+      "required": [],
+      "optional": []
+    },
+    "assess-repo": {
+      "required": [],
+      "optional": []
+    },
+    "assess-security": {
+      "required": [],
+      "optional": []
+    },
+    "assess-team": {
+      "required": [],
+      "optional": []
+    },
+    "assess-team-dimension": {
+      "required": [],
+      "optional": []
+    },
+    "assess-testing": {
+      "required": [],
+      "optional": []
+    },
+    "assessment-report-suite": {
+      "required": [],
+      "optional": []
+    },
+    "assessment-scoring-conflation-audit": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-assess": {
+      "required": [],
+      "optional": []
+    },
+    "blazor": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-package-runner-npm": {
+      "required": [],
+      "optional": []
+    },
+    "detect-stack": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-discover-standards": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-fold-prompt": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-inject-standards": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-reinstall-plugins": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-sessionlog": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-standards": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-lint-reviewdog": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-test-runner-default": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-tracker-beads": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-tracker-kata": {
+      "required": [],
+      "optional": []
+    },
+    "completion-verification": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-analyze-complexity": {
+      "required": [
+        "tracker.show"
+      ],
+      "optional": []
+    },
+    "ensemble-analyze-requirements": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-beads-build": {
+      "required": [
+        "tracker.close",
+        "tracker.comment",
+        "tracker.list",
+        "tracker.show",
+        "work-graph.ready",
+        "workflow.commit",
+        "workflow.remote-url",
+        "workflow.status"
+      ],
+      "optional": [
+        "host.change-request-create",
+        "tracker.close-with-reason",
+        "tracker.comments",
+        "tracker.sync",
+        "work-graph.plan",
+        "workflow.diff",
+        "workflow.merge-base",
+        "workflow.push"
+      ]
+    },
+    "ensemble-beads-build-wave": {
+      "required": [
+        "tracker.close",
+        "tracker.comment",
+        "tracker.set-status",
+        "tracker.show",
+        "work-graph.ready",
+        "workflow.commit",
+        "workflow.status"
+      ],
+      "optional": [
+        "tracker.close-with-reason",
+        "tracker.list",
+        "tracker.sync",
+        "work-graph.plan",
+        "workflow.merge-base"
+      ]
+    },
+    "ensemble-configure-team": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-create-trd": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-feature": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-fix-issue": {
+      "required": [
+        "host.change-request-create",
+        "host.change-request-list",
+        "host.change-request-view",
+        "workflow.branch-create",
+        "workflow.commit",
+        "workflow.merge-base",
+        "workflow.push"
+      ],
+      "optional": []
+    },
+    "ensemble-implement-bead": {
+      "required": [
+        "host.change-request-create",
+        "tracker.close",
+        "tracker.comment",
+        "tracker.set-status",
+        "tracker.show",
+        "workflow.branch-create",
+        "workflow.commit",
+        "workflow.push",
+        "workflow.status"
+      ],
+      "optional": [
+        "tracker.close-with-reason",
+        "tracker.sync",
+        "workflow.merge-base"
+      ]
+    },
+    "ensemble-implement-trd-tasks": {
+      "required": [
+        "package-runner.run-script",
+        "test-runner.run",
+        "tracker.close",
+        "tracker.comment",
+        "tracker.create",
+        "tracker.list",
+        "workflow.commit",
+        "workflow.merge-base"
+      ],
+      "optional": [
+        "tracker.close-with-reason",
+        "tracker.comments",
+        "tracker.create-detailed",
+        "tracker.dep-add",
+        "tracker.find-by-key",
+        "tracker.stage-export",
+        "tracker.sync",
+        "work-graph.graph-health",
+        "work-graph.plan",
+        "work-graph.ready"
+      ]
+    },
+    "ensemble-issue": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-list-issue": {
+      "required": [
+        "tracker.list"
+      ],
+      "optional": [
+        "work-graph.plan"
+      ]
+    },
+    "ensemble-new-feature": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-onboard": {
+      "required": [
+        "tracker.create"
+      ],
+      "optional": []
+    },
+    "ensemble-refine-trd": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-requirement-status": {
+      "required": [
+        "tracker.comments",
+        "tracker.list"
+      ],
+      "optional": []
+    },
+    "ensemble-retro": {
+      "required": [
+        "tracker.list",
+        "workflow.log"
+      ],
+      "optional": [
+        "host.change-request-list",
+        "tracker.create"
+      ]
+    },
+    "ensemble-trd": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-trd-dependency-graph": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-validate-requirements": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-verify-requirements": {
+      "required": [],
+      "optional": [
+        "tracker.comments",
+        "tracker.list"
+      ]
+    },
+    "implement-trd-tasks-reference": {
+      "required": [],
+      "optional": []
+    },
+    "local-ci-gate": {
+      "required": [],
+      "optional": []
+    },
+    "pr-merge-trace": {
+      "required": [],
+      "optional": []
+    },
+    "pr-review-cycle": {
+      "required": [],
+      "optional": []
+    },
+    "pr-review-eval": {
+      "required": [],
+      "optional": []
+    },
+    "pr-review-explainer": {
+      "required": [],
+      "optional": []
+    },
+    "pr-review-request": {
+      "required": [],
+      "optional": []
+    },
+    "pr-review-sweep": {
+      "required": [],
+      "optional": []
+    },
+    "safe-migration": {
+      "required": [],
+      "optional": []
+    },
+    "staleness-gate": {
+      "required": [],
+      "optional": []
+    },
+    "tool-path-resolution": {
+      "required": [],
+      "optional": []
+    },
+    "dotnet": {
+      "required": [],
+      "optional": []
+    },
+    "a11y-perf-checks": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-e2e-quality-playwright": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-author-playwright-tests": {
+      "required": [],
+      "optional": []
+    },
+    "smoke-test-runner": {
+      "required": [],
+      "optional": []
+    },
+    "writing-playwright-tests": {
+      "required": [],
+      "optional": []
+    },
+    "exunit": {
+      "required": [],
+      "optional": []
+    },
+    "act-local-ci": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-ci-local-act": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-host-github": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-workflow-git-town": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-workflow-plain-git": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-worktree-plain-git": {
+      "required": [],
+      "optional": []
+    },
+    "changelog-generator": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-pr-merge": {
+      "required": [
+        "host.change-request-checks",
+        "host.change-request-merge",
+        "host.change-request-reviews",
+        "host.change-request-view"
+      ],
+      "optional": [
+        "host.change-request-threads"
+      ]
+    },
+    "ensemble-release": {
+      "required": [],
+      "optional": []
+    },
+    "git-town": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-container-deploy-docker-kubectl": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-host-azure-devops": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-iac-terraform": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-platform-cloud-aws": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-tracker-azure-boards": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-tracker-jira": {
+      "required": [],
+      "optional": []
+    },
+    "aws": {
+      "required": [],
+      "optional": []
+    },
+    "flyio": {
+      "required": [],
+      "optional": []
+    },
+    "helm": {
+      "required": [],
+      "optional": []
+    },
+    "jira": {
+      "required": [],
+      "optional": []
+    },
+    "kubernetes": {
+      "required": [],
+      "optional": []
+    },
+    "linear": {
+      "required": [],
+      "optional": []
+    },
+    "railway": {
+      "required": [],
+      "optional": []
+    },
+    "supabase": {
+      "required": [],
+      "optional": []
+    },
+    "vercel": {
+      "required": [],
+      "optional": []
+    },
+    "jest": {
+      "required": [],
+      "optional": []
+    },
+    "nestjs": {
+      "required": [],
+      "optional": []
+    },
+    "phoenix": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-check-binding-drift": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-check-feature-drift": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-create-prd": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-generate-feature-tests": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-generate-reqnroll-bindings": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-prd": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-refine-prd": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-reqnroll": {
+      "required": [],
+      "optional": []
+    },
+    "ensemble-reqnroll-tdd": {
+      "required": [],
+      "optional": []
+    },
+    "pytest": {
+      "required": [],
+      "optional": []
+    },
+    "adapter-review-coderabbit": {
+      "required": [],
+      "optional": []
+    },
+    "flake-reproduction": {
+      "required": [],
+      "optional": []
+    },
+    "incident-triage": {
+      "required": [],
+      "optional": []
+    },
+    "pr-review-remediation": {
+      "required": [],
+      "optional": []
+    },
+    "threat-model": {
+      "required": [],
+      "optional": []
+    },
+    "rails": {
+      "required": [],
+      "optional": []
+    },
+    "react": {
+      "required": [],
+      "optional": []
+    },
+    "reqnroll": {
+      "required": [],
+      "optional": []
+    },
+    "rspec": {
+      "required": [],
+      "optional": []
+    },
+    "xunit": {
+      "required": [],
+      "optional": []
+    }
+  },
+  "excludedIntegrations": [
+    "Claude hooks",
+    "lifecycle-claude",
+    "permitter",
+    "runtime configuration"
+  ]
+}

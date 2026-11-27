@@ -65,7 +65,7 @@ const { discoverShippedAdapters } = require('./lib/default-only-check');
 const { resolveSkillFile, isSkillBacked, readSkillProse } = require('./lib/skill-backed-command');
 
 /** Generated/vendor package trees never scanned -- see module doc above. */
-const EXCLUDED_PACKAGES = new Set(['pi', 'full', 'codex', 'opencode']);
+const EXCLUDED_PACKAGES = new Set(['pi', 'full', 'codex', 'opencode', 'skills']);
 
 /** The three source subdirectories this lint scans under each real package. */
 const SOURCE_SUBDIRS = ['commands', 'agents', 'skills'];

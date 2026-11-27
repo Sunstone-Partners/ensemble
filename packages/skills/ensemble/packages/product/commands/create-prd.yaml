@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:create-prd
+  description: Create comprehensive Product Requirements Document with structured elicitation and adversarial review, or from a meeting summary with --from-meeting
+  version: 2.7.0
+  lastUpdated: "2026-10-17"
+  category: planning
+  output_path: ensemble/create-prd.md
+  source: sunstone
+  model: high
+  argument_hint: "[product-description] [--foreman] | --from-meeting <meeting-summary-or-path>"
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-create-prd/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-create-prd

@@ -1,0 +1,15 @@
+metadata:
+  name: ensemble:check-feature-drift
+  description: Detect drift between a PRD's acceptance criteria and its generated Gherkin feature files
+  version: 1.0.0
+  lastUpdated: "2026-06-29"
+  category: quality
+  output_path: ensemble/check-feature-drift.md
+  source: sunstone
+  model: low
+  argument_hint: "[prd-path] [--out <dir>]"
+  visibility: hidden
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-check-feature-drift/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-check-feature-drift

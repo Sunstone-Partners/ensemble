@@ -1,0 +1,26 @@
+{
+  "required": ["api", "database", "externalServices", "auth", "criticalPaths"],
+  "api": {
+    "baseUrl": "https://staging.example.com",
+    "retries": 1,
+    "endpoints": [{ "path": "/health", "method": "GET", "expectedStatus": 200, "sla": 500 }]
+  },
+  "database": {
+    "command": "psql \"$DATABASE_URL\" -tAc 'SELECT 1'",
+    "expectOutput": "1"
+  },
+  "externalServices": {
+    "services": [{ "name": "payments", "url": "https://status.example-payments.com/health", "expectedStatus": 200 }]
+  },
+  "auth": {
+    "baseUrl": "https://staging.example.com",
+    "login": { "path": "/api/login", "body": { "email": "smoke@example.com", "password": "from-your-secret-store" }, "tokenField": "token" },
+    "protected": { "path": "/api/me" }
+  },
+  "criticalPaths": {
+    "baseUrl": "https://staging.example.com",
+    "journeys": [
+      { "name": "checkout", "steps": [{ "path": "/api/cart" }, { "command": "npm run smoke:checkout" }] }
+    ]
+  }
+}

@@ -49,3 +49,14 @@ paths = [
 regexes = [
   '''^PR2-NO-SUCH-KEY$''',
 ]
+
+# The generated skills bundle manifest records a SHA-256 content hash per installed file, keyed by the file's path.
+# generic-api-key trips on a few of them because the path contains words like "auth". This is a whole-file entry: in
+# gitleaks 8.30.1 a path match on a top-level allowlist skips the file even with `condition = "AND"`, so a regex here
+# would not narrow it. The file is generated and `npm run generate:skills:check` fails if it is hand-edited, so nothing
+# can be pasted into it unnoticed.
+[[allowlists]]
+description = "Generated skills bundle manifest: SHA-256 content hashes keyed by file path"
+paths = [
+  '''^packages/skills/manifest\.json$''',
+]

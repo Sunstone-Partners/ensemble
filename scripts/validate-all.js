@@ -984,7 +984,7 @@ function validateFullSkillsMirror() {
   let checked = 0;
   let total = 0;
   const packageDirs = fs.readdirSync(PACKAGES_DIR, { withFileTypes: true })
-    .filter(e => e.isDirectory() && e.name !== 'pi' && e.name !== 'full');
+    .filter(e => e.isDirectory() && e.name !== 'pi' && e.name !== 'full' && e.name !== 'skills');
 
   for (const pkgEntry of packageDirs) {
     const pkgName = pkgEntry.name;
@@ -1033,7 +1033,7 @@ function validateFullCommandSkillsDirect(packagesDir = PACKAGES_DIR) {
 
   let checked = 0;
   for (const pkgEntry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
-    if (!pkgEntry.isDirectory() || ['full', 'pi', 'codex', 'opencode'].includes(pkgEntry.name)) continue;
+    if (!pkgEntry.isDirectory() || ['full', 'pi', 'codex', 'opencode', 'skills'].includes(pkgEntry.name)) continue;
     const skillsDir = path.join(packagesDir, pkgEntry.name, 'skills');
     if (!fs.existsSync(skillsDir)) continue;
     for (const skillEntry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
@@ -1243,7 +1243,7 @@ function validateAdapterIdCategoryUniqueness(packagesDir = PACKAGES_DIR) {
   let checked = 0;
 
   for (const pkg of fs.readdirSync(packagesDir)) {
-    if (pkg === 'pi' || pkg === 'codex' || pkg === 'opencode' || pkg === 'full') continue;
+    if (pkg === 'pi' || pkg === 'codex' || pkg === 'opencode' || pkg === 'full' || pkg === 'skills') continue;
     const skillsDir = path.join(packagesDir, pkg, 'skills');
     if (!fs.existsSync(skillsDir)) continue;
     for (const entry of fs.readdirSync(skillsDir)) {
@@ -1297,7 +1297,7 @@ function validateCapabilityInvocationDrift(packagesDir = PACKAGES_DIR) {
   const failures = [];
   let checked = 0;
   for (const pkg of fs.readdirSync(packagesDir)) {
-    if (pkg === 'pi' || pkg === 'codex' || pkg === 'opencode') continue;
+    if (pkg === 'pi' || pkg === 'codex' || pkg === 'opencode' || pkg === 'skills') continue;
     const dir = path.join(packagesDir, pkg, 'commands');
     if (!fs.existsSync(dir)) continue;
     for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.yaml'))) {
@@ -1449,7 +1449,7 @@ function main() {
   // Get all packages
   const packages = fs.readdirSync(PACKAGES_DIR).filter(name => {
     const stat = fs.statSync(path.join(PACKAGES_DIR, name));
-    return stat.isDirectory();
+    return stat.isDirectory() && name !== 'skills';
   });
 
   // Validate each package

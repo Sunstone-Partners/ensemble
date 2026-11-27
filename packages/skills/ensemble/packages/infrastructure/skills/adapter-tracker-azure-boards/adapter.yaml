@@ -1,0 +1,473 @@
+adapter: azure-boards
+version: "1.0.0"
+
+categories:
+  - tracker
+
+contract:
+  tracker: "1.0"
+
+binaries:
+  - az
+
+# TRD-033 names a 7-entry capability allowlist (binary-plus-subcommand level, matching the
+# multi-word `matchesSubcommandWords` support this wave's engine fix lands --
+# `packages/development/lib/toolchain/validate.js#matchesSubcommandWords`/
+# `packages/development/lib/toolchain/runner.js#matchesSubcommandWords`). This adapter adds two
+# MORE entries beyond those seven -- `--version` and `extension show` -- purely so the
+# `az-installed`/`az-devops-extension-installed` health checks below pass `validateAllowlist`
+# (that static validator checks every HEALTH check's `run`, not only capability `run[]`
+# templates; TRD-033's own Implementation AC 1 only requires "every capability template's `az`
+# subcommand pair appears in the allowlist", it says nothing about health checks needing no
+# additional entries). This mirrors `adapter-tracker-jira`'s own analogous `"--version"`
+# addition beyond its capability-only allowlist.
+allowlist:
+  - bin: az
+    sub:
+      - "boards work-item show"
+      - "boards work-item create"
+      - "boards work-item update"
+      - "boards query"
+      - "boards work-item relation add"
+      - "devops configure"
+      - "account show"
+      - "--version"
+      - "extension show"
+
+# Names only (PRD REQ-022/REQ-023), never a literal value. `AZURE_DEVOPS_EXT_PAT` is the one
+# credential the `az devops` extension itself documents reading from the environment
+# (`AZURE_DEVOPS_EXT_PAT`, consumed by the `azure-devops` CLI extension for non-interactive
+# auth) -- OPTIONAL, because `az login` (an interactive/device-code/service-principal login
+# this adapter never invokes itself) also authenticates the ambient `az` session this adapter's
+# every capability and health check shares; TRD-033 is explicit that organization and project
+# come from `az devops configure --defaults`, not an environment variable (Microsoft's own
+# Azure DevOps CLI documentation lists no such variable for either).
+env:
+  - AZURE_DEVOPS_EXT_PAT
+
+health:
+  - id: az-installed
+    run: ["az", "--version"]
+    timeoutMs: 5000
+  - id: az-devops-extension-installed
+    run: ["az", "extension", "show", "--name", "azure-devops"]
+    timeoutMs: 5000
+  # Organization and project come from `az devops configure --defaults` (TRD-033), never an
+  # env var; this health check's own stdout is inspected by the preflight caller for the
+  # presence of both defaults, not by this manifest (a `run[]`/`parse` pair has no conditional
+  # "field X is present" assertion capability).
+  - id: az-devops-defaults-configured
+    run: ["az", "devops", "configure", "--list"]
+    timeoutMs: 5000
+  # TRD-033's own verbatim text directs exactly this argv, including a `--top 1` flag. See
+  # SKILL.md "Known limits": the real `az boards query` command has no documented `--top`
+  # option (only `--id`/`--org`/`--path`/`--project`/`--team`/`--wiql`) -- this is kept
+  # literal to the TRD's directed text rather than silently "corrected" to an embedded
+  # `SELECT TOP 1 ...` WIQL clause, since no real `az` binary exists in this environment to
+  # confirm either form live.
+  - id: az-boards-reachable
+    run: ["az", "boards", "query", "--wiql", "SELECT [System.Id] FROM WorkItems", "--top", "1"]
+    timeoutMs: 10000
+
+# Azure DevOps Services (cloud) only -- the `azure-devops` CLI extension this adapter's every
+# capability depends on does not support Azure DevOps Server (TRD-033); `dev.azure.com` is the
+# modern org URL host, `visualstudio.com` the legacy (pre-rename) one some orgs still use.
+detect:
+  - signal: remote_url_matches
+    pattern: "dev\\.azure\\.com|visualstudio\\.com"
+
+capabilities:
+  # az boards work-item show --id <id> --expand relations --query "[...]" --output json: see
+  # SKILL.md "Known limits" ("Dotted Azure field names and relation reshaping vs. the engine")
+  # for the full story. In short: `az`'s own `--query` (real JMESPath) IS used to flatten the
+  # six scalar fields -- their REST names are dotted (`fields."System.Title"` etc, a single
+  # key literally containing a `.`, not a nested object `mapping.js`'s own dotted-path grammar
+  # could ever walk into) -- into a plain JSON ARRAY `[id, title, description, type, status,
+  # priority]` that `mapping.js`'s ordinary `$[N]` index paths then trivially pick apart.
+  # Deliberately NOT a JMESPath multi-select HASH (`{key: expr, ...}`): `packages/development/
+  # lib/toolchain/runner.js#buildArgv`'s placeholder substitution
+  # (`PLACEHOLDER_REPLACE_PATTERN = /\{([^{}]+)\}/g`) scans every `run[]` argv element for BARE
+  # `{...}` text and unconditionally treats ANY match as an unresolved `{name}` placeholder,
+  # throwing `INVALID_ARG` naming the JMESPath hash's own text as an unknown arg -- confirmed
+  # empirically while building this adapter; even the simplest `--query "{id: to_string(id)}"`
+  # fails this way. Square-bracket JMESPath (multi-select LIST `[...]`, filter `[?...]`, index
+  # access) is unaffected by that regex, so this run template uses ONLY `[...]`/function-call
+  # syntax, never `{...}`. `--expand relations` ensures `relations[]` is present at all (the
+  # real REST API's default work-item `GET` omits it unless expanded); `relations` itself (the
+  # bare, UNFILTERED, UNRESHAPED array) is the 7th list element -- filtering it down to just
+  # the `Predecessor`-named link and reshaping each into `{id, type}` happens in `mapping.js`'s
+  # new `arrayMap` (TRD-033; see that module's own header), not here, because THAT reshape
+  # (renaming `url`/`attributes.name` into `id`/`type`) is exactly the operation that would
+  # need a JMESPath hash if done here. `to_string(id)`/`to_string(...Priority)` turn the REST
+  # API's numeric fields into the strings the normalized schema requires; when a work item
+  # type has no Priority field at all, JMESPath's `to_string(null)` yields the 4-character
+  # string `"null"`, not an actual JSON null (see SKILL.md). `labels` (Azure's `System.Tags`, a
+  # semicolon-separated STRING, not an array) is deliberately NOT mapped: neither JMESPath (no
+  # `--query` function splits a string) nor `mapping.js` can turn it into the array shape the
+  # normalized schema wants -- see SKILL.md.
+  tracker.show:
+    run:
+      - az
+      - boards
+      - work-item
+      - show
+      - "--id"
+      - "${id}"
+      - "--expand"
+      - relations
+      - "--query"
+      - "[to_string(id), fields.\"System.Title\", fields.\"System.Description\", fields.\"System.WorkItemType\", fields.\"System.State\", to_string(fields.\"Microsoft.VSTS.Common.Priority\"), relations]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        title: "$[1]"
+        description: "$[2]"
+        type: "$[3]"
+        status: "$[4]"
+        priority: "$[5]"
+      statusMap:
+        # TRD-033 names exactly these three Azure Boards state names. New work has not
+        # started, so it normalizes to "open"; Active is in-flight work, so "in_progress";
+        # Closed is terminal, so "closed". Other common Azure Boards states ("Resolved",
+        # "Removed", process-template-specific states like "Done"/"To Do"/"Doing") are
+        # deliberately NOT in this map -- an unmapped raw status value is a fail-closed
+        # `BAD_OUTPUT` (`mapping.js#mapOutput`'s own documented "an unmapped value yields
+        # BAD_OUTPUT naming the value" behavior), not a guess. See SKILL.md "Known limits".
+        New: open
+        Active: in_progress
+        Closed: closed
+      # TRD-033 (PRD REQ-017's own documented fallback mechanism: "links give the fallback
+      # (dependencies[] from relations)"). `source: "$[6]"` is the raw, UNFILTERED relations
+      # array `--query` passed through untouched (see the run[] comment above for why the
+      # filter+reshape could not happen in `--query` itself). `filter` keeps only the
+      # `Predecessor`-named relation type (Azure's own `attributes.name`, e.g.
+      # "Predecessor"/"Successor"/"Parent"/"Child"); a relation missing `attributes.name`
+      # entirely (e.g. a hyperlink/attachment relation) is excluded, not an error (`mapping.js`
+      # `arrayMap`'s own documented "missing field on one item is an ordinary non-match"
+      # behavior). `item.id` is the relation's full `url` (e.g.
+      # `.../_apis/wit/workItems/456`), never a bare numeric id: Azure's REST relation object
+      # exposes no bare id, and there is no string-parsing function (`split`, regex) in either
+      # JMESPath's builtin set or `mapping.js`'s dotted-path grammar to pull `456` back out of
+      # the url -- see SKILL.md "Known limits".
+      arrayMap:
+        dependencies:
+          source: "$[6]"
+          filter:
+            path: "$.attributes.name"
+            equals: Predecessor
+          item:
+            id: "$.url"
+            type: "$.attributes.name"
+
+  # az boards query --wiql <DEFAULT_WIQL> --query "[].[...]" --output json: PR 8 independent
+  # review item 4/finding 4 fix. The category contract's `filter` input has NO default value
+  # (`tracker.yaml`'s `inputs: [filter]` carries no per-input type/default metadata at the
+  # contract level -- see `runner.js`'s own "Design note" on why), and every real caller of
+  # `tracker.list` in this repo (every shipped command's `run tracker.list --json`, and
+  # `work-graph-links-fallback.js#runWorkGraphCapability`'s own `runCapability(trackerManifest,
+  # 'tracker.list', {}, execOpts)`) calls it with NO `filter` arg at all -- confirmed live:
+  # before this fix, `toolchain-cli run work-graph.ready --json` under `tracker: azure-boards`
+  # failed `INVALID_ARG` ("'filter': no value supplied and the contract declares no default")
+  # before any `az` process spawned, because the OLD run template substituted `${filter}`
+  # directly into `--wiql`. This template now embeds a fixed, bounded default WIQL instead:
+  # `TOP 200` (a real WIQL clause, unlike `az boards query`'s own undocumented `--top` CLI
+  # flag -- see the `az-boards-reachable` health check's comment above) scoped to the
+  # configured default project (`@project`, a real, documented WIQL macro resolved from `az
+  # devops configure --defaults`, the same defaults source `az-devops-defaults-configured`
+  # checks). Deliberately NOT filtered by `[System.State]`: a closed item still matters to the
+  # work-graph fallback's own dependency-closure logic (`readyItemsFromDeps` needs to see a
+  # blocker's closed status, not just open items), so narrowing to open-only here would silently
+  # break that caller. `--query` flattens each raw `{id, fields:{...}}` REST work-item object
+  # into a 3-element `[id, title, state]` array per item (the SAME `--query`-flattening
+  # technique `tracker.show` above already uses for the identical dotted-field-name reason;
+  # `fields."System.Title"`/`fields."System.State"` are the same REST field names `tracker.show`
+  # maps), via JMESPath's `[].[expr1, expr2, expr3]` projection syntax (applies the bracketed
+  # expression list to EVERY element of the top-level array). `parse.arrayMap.items` (TRD-033)
+  # then renames each 3-element array into `{id, title, status}`, so
+  # `packages/development/lib/trd-cli.js#getBeadCounts` and
+  # `packages/development/lib/beads-label.js#ensureLabel` (both of which filter by `.title`/
+  # match on `.id`) receive real, name-consistent items instead of raw, numeric, unflattened
+  # `.id`/dotted `fields."System.Title"` values they would never find (PR 8 review item 5 /
+  # finding 5) -- in particular, a raw numeric `id` previously made
+  # `work-graph-links-fallback.js#fetchDetailedItems`'s own `typeof id !== 'string'` guard
+  # silently SKIP every item. `status` is NOT run through `statusMap`: `mapOutput`'s
+  # `statusMap` only ever translates ONE top-level `status` field, never a per-item array value
+  # (`mapping.js`'s own documented limit) -- each listed item's `.status` therefore stays in
+  # Azure's own raw vocabulary (e.g. "New"), a documented, accepted gap matching
+  # `adapter-tracker-jira`'s own `tracker.list` comment: status-keyed counting over a
+  # `tracker.list` result stays approximate under this adapter until a future task adds
+  # per-item status translation to the mapping engine; id/title matching (what
+  # `getBeadCounts`/`ensureLabel` actually need) IS correctly fixed by this change. Validated
+  # against `work-item-list.json` (`CAPABILITY_NORMALIZED_SCHEMA['tracker.list']`), not the
+  # single-work-item schema. No real `az boards query` JSON was captured live (no `az` binary
+  # is installed in this environment) -- see SKILL.md "Known limits" for this template's own
+  # unverified-against-live-tool caveat, same as every other capability in this manifest.
+  tracker.list:
+    run:
+      - az
+      - boards
+      - query
+      - "--wiql"
+      - "SELECT TOP 200 [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project"
+      - "--query"
+      - "[].[to_string(id), fields.\"System.Title\", fields.\"System.State\"]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        items: "$"
+      arrayMap:
+        items:
+          source: "$"
+          item:
+            id: "$[0]"
+            title: "$[1]"
+            status: "$[2]"
+
+  # az boards work-item create --type <type> --title <title> --description <description>
+  # --query "to_string(id)" --output json: real `az boards work-item create` flags
+  # (`--type`/`--title`/`--description`), matching the category contract's declared
+  # `tracker.create` inputs `[title, description, type]` one-for-one. `--query` here is a BARE
+  # function call (`to_string(id)`, no `{}`/`[]` at all), so `az` prints a single JSON STRING
+  # (e.g. `"stub-created-1"`), never an object -- `parse.map.id: "$"` copies that whole scalar
+  # value verbatim (`resolvePath`'s own documented "`$` alone resolves to the whole base
+  # value" rule), avoiding the `{id: to_string(id)}` hash form that trips
+  # `runner.js#buildArgv`'s placeholder regex (see `tracker.show`'s own comment above for the
+  # full explanation). No real `az` JSON was captured live (no `az` binary is installed in
+  # this environment).
+  tracker.create:
+    run:
+      - az
+      - boards
+      - work-item
+      - create
+      - "--type"
+      - "${type}"
+      - "--title"
+      - "${title}"
+      - "--description"
+      - "${description}"
+      - "--query"
+      - to_string(id)
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$"
+
+  # az boards work-item update --id <id> --title <fields> --query "to_string(id)"
+  # --output json: PR 8 independent review item 1/3 fix. Status transitions now go
+  # exclusively through the new `tracker.set-status` capability below (see its own comment);
+  # `tracker.update`'s single opaque "fields" input is repurposed to this adapter's own choice
+  # of destination for NON-status field edits (`tracker.update` remains required:true, so
+  # every adapter must still implement SOME interpretation of "fields" -- beads uses
+  # `--notes`, jira uses `--summary`, this adapter uses `--title`, the real, publicly
+  # documented `az boards work-item create`/`update` flag for renaming a work item, per this
+  # adapter's own `tracker.create` above and the Azure CLI's own documented command surface --
+  # see SKILL.md "Known limits" for the usual "no `az` binary installed, unverified against
+  # the live tool" caveat). Unlike the old `--state ${fields}` template this replaces,
+  # `--title` takes arbitrary free text with no status vocabulary to validate against, so
+  # there is no silent-success-on-garbage-input failure mode here the way there was for status
+  # (PR 8 review finding 3's jira-specific complaint applies by the same logic here: a status
+  # vocabulary slot should never have been an opaque caller-supplied string in the first
+  # place -- fixed by removing status from this capability's job entirely). `--query`/
+  # `parse.map` follow `tracker.create`'s own bare-scalar convention (see its comment above).
+  tracker.update:
+    run:
+      - az
+      - boards
+      - work-item
+      - update
+      - "--id"
+      - "${id}"
+      - "--title"
+      - "${fields}"
+      - "--query"
+      - to_string(id)
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$"
+
+  # az boards work-item update --id <id> --state <provider-status-name> --query
+  # "to_string(id)" --output json: PR 8 independent review item 1 fix (TRD-2026-8d825f54 PR 8
+  # "A"). One fixed, provider-native state-name literal per `variants` entry (TRD-010's
+  # selector mechanism, `packages/development/lib/toolchain/runner.js#selectTemplate`) --
+  # never a caller-supplied value substituted into `--state` (that was finding 1's whole
+  # problem under `adapter-tracker-jira`'s analogous template: a caller-supplied JSON-object
+  # string silently reaching a status flag verbatim; this adapter's own `tracker.update` had
+  # the identical `--state ${fields}` shape before this fix). The three normalized values map
+  # to this adapter's OWN documented `statusMap` vocabulary above/below (TRD-033's three named
+  # Azure Boards state names): open -> "New", in_progress -> "Active", closed -> "Closed"
+  # (matching `tracker.close`'s own existing fixed "Closed" literal exactly, so closing via
+  # either capability reaches the identical provider state). An unknown `status` value (not
+  # one of open/in_progress/closed) is rejected `NOT_ALLOWED` by `selectTemplate` before any
+  # process spawns -- no real `az` binary exists in this environment to confirm the exact
+  # transition succeeds server-side (a process template can restrict which state transitions
+  # are legal from a given current state; this adapter cannot verify that without a live
+  # instance -- see SKILL.md "Known limits"), so this capability can still fail TOOL_FAILED on
+  # a workflow that forbids the transition, exactly as `tracker.close`'s existing "Closed"
+  # literal already can. `--query`/`parse.map` follow `tracker.create`'s own bare-scalar
+  # convention.
+  tracker.set-status:
+    run:
+      - az
+      - boards
+      - work-item
+      - update
+      - "--id"
+      - "${id}"
+      - "--state"
+      - "${status}"
+      - "--query"
+      - "[to_string(id), fields.\"System.State\"]"
+      - "--output"
+      - json
+    variants:
+      status:
+        open:
+          - az
+          - boards
+          - work-item
+          - update
+          - "--id"
+          - "${id}"
+          - "--state"
+          - New
+          - "--query"
+          - "[to_string(id), fields.\"System.State\"]"
+          - "--output"
+          - json
+        in_progress:
+          - az
+          - boards
+          - work-item
+          - update
+          - "--id"
+          - "${id}"
+          - "--state"
+          - Active
+          - "--query"
+          - "[to_string(id), fields.\"System.State\"]"
+          - "--output"
+          - json
+        closed:
+          - az
+          - boards
+          - work-item
+          - update
+          - "--id"
+          - "${id}"
+          - "--state"
+          - Closed
+          - "--query"
+          - "[to_string(id), fields.\"System.State\"]"
+          - "--output"
+          - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        status: "$[1]"
+      statusMap:
+        New: open
+        Active: in_progress
+        Closed: closed
+
+  # az boards work-item update --id <id> --state Closed --query "[...]" --output json: the
+  # category contract's `tracker.close` declares only `[id]` as an input (no status value to
+  # substitute), so "Closed" -- the standard terminal state most Azure Boards process
+  # templates (Agile/Scrum/CMMI) use, also in this adapter's own `statusMap` above -- is a
+  # fixed literal, exactly as `adapter-tracker-jira`'s own `tracker.close` fixes "Done". This
+  # capability needs BOTH `id` AND `status`, so `--query` uses a JMESPath multi-select LIST
+  # (`[expr1, expr2]`, square brackets only, no `{}`) to produce a 2-element JSON array; `$[0]`/
+  # `$[1]` pick the two elements apart, the same leading-index syntax `tracker.show` uses for
+  # its own 7-element list. See SKILL.md "Known limits" for the Basic-process-template "Done"
+  # caveat TRD-033's own "state Closed/Done" phrasing alludes to.
+  tracker.close:
+    run:
+      - az
+      - boards
+      - work-item
+      - update
+      - "--id"
+      - "${id}"
+      - "--state"
+      - Closed
+      - "--query"
+      - "[to_string(id), fields.\"System.State\"]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        status: "$[1]"
+      statusMap:
+        New: open
+        Active: in_progress
+        Closed: closed
+
+  # az boards work-item update --id <id> --discussion <text> --query "to_string(id)"
+  # --output json: TRD-033 directs this exact mechanism ("tracker.comment (`az boards
+  # work-item update --discussion`)") -- Azure Boards has no separate "add comment" command;
+  # `--discussion` on the same `work-item update` command appends a discussion-thread comment.
+  # Reuses the same allowlist entry ("boards work-item update") `tracker.update`/
+  # `tracker.close` do, and the same bare-scalar `--query`/`parse.map` convention
+  # `tracker.create`/`tracker.update` use.
+  tracker.comment:
+    run:
+      - az
+      - boards
+      - work-item
+      - update
+      - "--id"
+      - "${id}"
+      - "--discussion"
+      - "${text}"
+      - "--query"
+      - to_string(id)
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$"
+
+  # az boards work-item relation add --id <id> --relation-type <type> --target-id
+  # <dependsOnId> --query "to_string(id)" --output json: TRD-033 directs this exact mechanism
+  # ("tracker.dep-add (`relation add --relation-type Predecessor`)"); `type` is the category
+  # contract's own declared `tracker.dep-add` input (`[id, dependsOnId, type]`), substituted
+  # rather than hardcoded, so a caller passes Azure's own relation-type vocabulary value
+  # (e.g. "Predecessor", "Successor", "Parent", "Child") through this generic slot -- the
+  # TRD's own worked example names "Predecessor" as the representative value a caller
+  # recording a dependency edge would pass, not a fixed literal this template bakes in.
+  # `--query`/`parse.map` follow `tracker.create`'s own bare-scalar convention.
+  tracker.dep-add:
+    run:
+      - az
+      - boards
+      - work-item
+      - relation
+      - add
+      - "--id"
+      - "${id}"
+      - "--relation-type"
+      - "${type}"
+      - "--target-id"
+      - "${dependsOnId}"
+      - "--query"
+      - to_string(id)
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$"

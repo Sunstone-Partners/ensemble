@@ -1,0 +1,15 @@
+metadata:
+  name: ensemble:check-binding-drift
+  description: Detect drift between a PRD's acceptance-criteria steps and the Reqnroll step bindings on disk
+  version: 1.0.0
+  lastUpdated: "2026-06-29"
+  category: testing
+  output_path: ensemble/check-binding-drift.md
+  source: sunstone
+  model: low
+  argument_hint: "[prd-path] [--out <dir>]"
+  visibility: hidden
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-check-binding-drift/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-check-binding-drift

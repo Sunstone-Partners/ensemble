@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:analyze-requirements
+  description: Pre-implementation cross-artifact consistency sweep — checks PRD<->TRD alignment before coding begins
+  version: 2.0.0
+  lastUpdated: "2026-10-20"
+  category: planning
+  output_path: ensemble/analyze-requirements.md
+  source: sunstone
+  model: medium
+  argument_hint: "[prd-path] [trd-path]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-analyze-requirements/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-analyze-requirements

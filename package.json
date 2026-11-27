@@ -4,7 +4,8 @@
   "private": true,
   "description": "Ensemble Plugin Ecosystem - Modular Claude Code plugins for development workflows",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "!packages/skills"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
@@ -34,6 +35,9 @@
     "release-notes": "node scripts/generate-release-notes.js",
     "release-notes:codex": "node scripts/generate-codex-release-notes.js",
     "publish:changed": "node scripts/publish-plugin.js",
+    "generate:skills": "node scripts/generate-skills/index.js",
+    "generate:skills:check": "node scripts/generate-skills/index.js --check",
+    "install:skills": "node scripts/install-skills-project.js",
     "evals": "node evals/run.js",
     "evals:coverage": "node evals/coverage.js",
     "evals:compare": "node evals/compare.js",

@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:assess
+  description: "Dispatch to a repository, team, config, or report assessment by keyword; repo --only <dimension> runs a single dimension"
+  version: 1.0.0
+  lastUpdated: "2026-10-17"
+  category: analysis
+  output_path: ensemble/assess.md
+  source: sunstone
+  argument_hint: "<repo|team|config|report> [--only <dimension>] [args...]"
+
+# Skill-backed command: the prompt is packages/assessment/skills/ensemble-assess/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-assess

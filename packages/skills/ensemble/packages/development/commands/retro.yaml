@@ -1,0 +1,21 @@
+metadata:
+  name: ensemble:retro
+  description: Post-release retrospective - estimate accuracy, PRD success-metric status, incidents, and proposed follow-ups
+  version: 2.0.0
+  lastUpdated: "2026-10-23"
+  category: planning
+  output_path: ensemble/retro.md
+  source: sunstone
+  model: medium
+  argument_hint: "--release vX.Y.Z | --since <ref>"
+  capabilities:
+    required:
+      - tracker.list
+      - workflow.log
+    optional:
+      - tracker.create
+      - host.change-request-list
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-retro/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-retro

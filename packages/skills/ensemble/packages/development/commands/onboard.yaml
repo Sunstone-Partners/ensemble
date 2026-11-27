@@ -1,0 +1,17 @@
+metadata:
+  name: ensemble:onboard
+  description: Onboard onto an existing (brownfield) codebase - architecture overview, exact build/test/lint commands, hotspots, optional debt backlog
+  version: 2.0.0
+  lastUpdated: "2026-10-23"
+  category: analysis
+  output_path: ensemble/onboard.md
+  source: sunstone
+  model: high
+  argument_hint: "[path]"
+  capabilities:
+    required:
+      - tracker.create
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-onboard/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-onboard

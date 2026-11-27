@@ -1,0 +1,85 @@
+adapter: npm
+version: "1.0.0"
+
+categories:
+  - package-runner
+
+contract:
+  package-runner: "1.0"
+
+# The only binary any capability or health check below invokes.
+binaries:
+  - npm
+
+# `run`/`install` are this bead's two real, wired subcommands (per the TRD's own "run-script,
+# install; npm" text). `"--version"` exists purely so the `npm-installed` health check passes
+# `validateAllowlist`.
+allowlist:
+  - bin: npm
+    sub:
+      - run
+      - install
+      - "--version"
+
+# npm reads no single named credential env var of its own for ordinary `run`/`install` usage
+# (registry auth tokens live in `.npmrc`, not a documented single env var this manifest could
+# honestly name), matching `adapter-workflow-plain-git`'s own empty `env: []`.
+env: []
+
+health:
+  - id: npm-installed
+    run: ["npm", "--version"]
+    timeoutMs: 5000
+
+# npm is the SHIPPED DEFAULT for `package-runner` (toolchain.default.yaml), not remote-detected
+# -- per TRD interpretation I2, a shipped default with no detect signal at all never turns some
+# other adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error.
+detect: []
+
+capabilities:
+  # npm run <script> -- <args>: real, documented `npm run` usage; `--` forwards everything after
+  # it to the script itself rather than to npm (npm's own documented convention for passing
+  # script arguments). `${args}` is a single contract input (one placeholder, one string value,
+  # per `resolveArg`'s own stringify-one-value behavior) -- a caller needing multiple
+  # space-separated arguments supplies them pre-joined into that one string. `parse.format:
+  # text` + `map.output: "$"` captures the script's own (arbitrary, script-defined) stdout as
+  # the declared `output` field -- a full one-to-one match for that field. `status` is never
+  # populated: a script's own free-text stdout has no structured success/failure field beyond
+  # the process exit code, which `runCapability` already turns into `ok:false`/`TOOL_FAILED` on
+  # non-zero exit, not a value this capability's own output could re-represent (see "Known
+  # limits"). Never executed live (would run an arbitrary, package-defined script with real
+  # side effects of its own, and this is a generic adapter with no specific script named).
+  package-runner.run-script:
+    run:
+      - npm
+      - run
+      - "${script}"
+      - "--"
+      - "${args}"
+    parse:
+      format: text
+      map:
+        output: "$"
+
+  # npm install: real, documented default usage -- installs every dependency declared in
+  # `package.json`/locked in `package-lock.json`, matching this category contract's own
+  # description ("Install the project's declared dependencies"). The contract's `args` input is
+  # unreferenced: `npm install` with no arguments is the common, safe, declared-dependencies-only
+  # case this capability's own description names, and the category contract declares no second
+  # "install a specific package" capability this template could reuse `${args}` for without
+  # risking a caller silently installing an UNDECLARED package instead of the project's own
+  # locked set -- the same "disclosed unreferenced input" convention
+  # `adapter-workflow-plain-git#workflow.branch-create` uses for its own unreferenced
+  # `baseBranch` (see "Known limits"). `parse.format: text` + `map.output: "$"` captures `npm
+  # install`'s own human-readable progress/summary text as the declared `output` field; `status`
+  # is never populated (same reasoning as `package-runner.run-script` above). Never executed
+  # live (would mutate this repository's real `node_modules`, a real side effect this bead does
+  # not take against the live working tree).
+  package-runner.install:
+    run:
+      - npm
+      - install
+    parse:
+      format: text
+      map:
+        output: "$"

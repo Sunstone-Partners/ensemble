@@ -1,0 +1,347 @@
+adapter: github
+version: "1.0.0"
+
+categories:
+  - host
+
+contract:
+  host: "1.0"
+
+# `gh` has no `--json`/`--jq` support on `pr create`/`pr merge` (confirmed live against gh
+# 2.103.0's own `--help` output for both subcommands, no network call needed) -- only
+# `pr view`/`pr list`/`pr checks`/`auth status` support structured output. `api graphql` is
+# wired to exactly one capability, `host.change-request-reviews` (review decision, reviewer
+# account type, unresolved review threads: GraphQL-only data); the allowlist permits only that
+# exact `api graphql` subcommand, never bare `api` (REST endpoints).
+binaries:
+  - gh
+
+# TRD-036's own directed 7-entry allowlist, plus one extra entry ("--version") purely so the
+# `gh-installed` health check below passes `validateAllowlist` (that static validator checks
+# every HEALTH check's `run` too, not only capability `run[]` templates) -- the same pattern
+# `adapter-tracker-azure-boards` uses for its own `"--version"`/`"extension show"` additions
+# beyond TRD-033's directed 7-entry list.
+allowlist:
+  - bin: gh
+    sub:
+      - "pr create"
+      - "pr view"
+      - "pr list"
+      - "pr checks"
+      - "pr merge"
+      - "auth status"
+      - "api graphql"
+      - "--version"
+
+# Name only (PRD REQ-022/REQ-023), never a literal value. `gh` itself reads `GH_TOKEN` (or
+# `GITHUB_TOKEN`) for non-interactive auth; this adapter's health checks below assume an
+# already-authenticated ambient `gh` session (`gh auth login`) OR this env var, never both
+# required at once.
+env:
+  - GH_TOKEN
+
+health:
+  - id: gh-installed
+    run: ["gh", "--version"]
+    timeoutMs: 5000
+  - id: gh-auth-status
+    run: ["gh", "auth", "status"]
+    timeoutMs: 10000
+
+# github is the shipped default host adapter (toolchain.default.yaml); detected by matching
+# the repo's origin remote against github.com (works for both the SSH
+# `git@github.com:owner/repo.git` and HTTPS `https://github.com/owner/repo.git` remote forms,
+# since `remote_url_matches` just runs `new RegExp(pattern).test(url)` against whichever form
+# is configured).
+detect:
+  - signal: remote_url_matches
+    pattern: "github\\.com"
+
+capabilities:
+  # gh auth status --hostname github.com --json hosts --jq
+  # '.hosts["github.com"][0].active': `gh auth status` has no plain `--json` shape giving a
+  # single boolean -- `--json hosts` returns `{hosts: {"<hostname>": [{active, state, ...}]}}`,
+  # keyed by a hostname STRING CONTAINING A LITERAL '.' (`"github.com"`), which the base
+  # dotted-path grammar cannot address (no quoting for a segment name containing '.', the same
+  # limitation `adapter-tracker-azure-boards` documents for Azure's `"System.Title"` field).
+  # `--jq` (gh's own real flag, confirmed via `gh auth status --help`) reshapes the JSON before
+  # `mapOutput` ever sees it, exactly like `az --query` does for azure-boards -- JMESPath/jq
+  # bracket indexing (`["github.com"]`) is unaffected by `runner.js#buildArgv`'s placeholder
+  # regex (only bare `{...}` trips it), so this is safe. Live-verified: `gh auth status
+  # --hostname github.com --json hosts --jq '.hosts["github.com"][0].active'` printed the bare
+  # scalar `true` against this adapter's own authenticated session (gh 2.103.0). `--hostname
+  # github.com` is a fixed literal (this adapter is github-only); the `scope` input is
+  # unreferenced (no per-scope auth concept in `gh auth status`'s own output).
+  host.auth-status:
+    run:
+      - gh
+      - auth
+      - status
+      - "--hostname"
+      - github.com
+      - "--json"
+      - hosts
+      - "--jq"
+      - '.hosts["github.com"][0].active'
+    parse:
+      format: json
+      map:
+        authenticated: "$"
+
+  # gh pr create --base <baseBranch> --head <headBranch> --title <title> --body <description>:
+  # real, documented `gh pr create` flags (confirmed via `gh pr create --help`), matching the
+  # category contract's four inputs one-for-one. `gh pr create` has NO `--json`/`--jq` flag
+  # (confirmed via its own `--help`, no "JSON FIELDS" section at all, unlike `pr view`/`pr
+  # list`/`pr checks`) -- "Upon success, the URL of the created pull request will be printed."
+  # is the whole documented output contract. This capability therefore maps only `url` (one of
+  # the five declared outputs); `id`/`state`/`baseBranch`/`headBranch` are not derivable from a
+  # bare URL string with no regex/string-split primitive in `mapping.js`'s dotted-path grammar
+  # (same class of gap as azure-boards' `dependencies[].id` full-URL limitation) -- see
+  # SKILL.md "Known limits". Not executed live (side-effecting: would open a real pull request
+  # against this repo).
+  host.change-request-create:
+    run:
+      - gh
+      - pr
+      - create
+      - "--base"
+      - "${baseBranch}"
+      - "--head"
+      - "${headBranch}"
+      - "--title"
+      - "${title}"
+      - "--body"
+      - "${description}"
+    parse:
+      format: text
+      map:
+        url: "$"
+
+  # gh pr view <id> --json number,url,state,baseRefName,headRefName,statusCheckRollup --jq
+  # '[(.number|tostring), .url, .state, .baseRefName, .headRefName, .statusCheckRollup]': the
+  # same JMESPath-hash-avoidance technique azure-boards uses for `az --query` applies verbatim
+  # to `gh --jq` -- `runner.js#buildArgv`'s placeholder regex treats ANY bare `{...}` in a
+  # `run[]` element as an unresolved `${name}` placeholder (confirmed for `az`; `gh --jq`'s own
+  # jq object-construction syntax uses the identical `{key: expr}` shape, so it is affected the
+  # same way), so this `--jq` filter uses ONLY `[...]` array construction, never `{...}`,
+  # pre-flattening the six fields into a plain JSON array that `parse.map`'s ordinary `$[N]`
+  # paths then index apart -- exactly `tracker.show`'s own convention. `(.number|tostring)`
+  # coerces GitHub's numeric PR number into the string `change-request.json`'s `id` field
+  # requires. Live-verified against a real merged PR in this repo (gh 2.103.0, PR #190):
+  # `fixtures/gh-pr-view.json` is the REAL, UNEDITED stdout this run template produces (not a
+  # synthetic fixture); feeding it through `mapOutput` with this exact `parse` block and
+  # validating the result against `packages/development/toolchain/schemas/normalized/
+  # change-request.json` with Ajv passes (AC-036-2, verified by hand, see this bead's report).
+  # `state` is normalized via `statusMap` (TRD-2026-8d825f54 PR 9 fix round, item 1): GitHub's
+  # own raw `OPEN`/`CLOSED`/`MERGED` vocabulary is translated into this adapter's own
+  # `open`/`closed`/`merged` normalized vocabulary (kept as three distinct terminal states,
+  # never collapsed -- unlike Azure DevOps, which has no separate "merged" state of its own);
+  # an unmapped raw `state` (any future GitHub value this adapter does not yet know about)
+  # fails closed with `BAD_OUTPUT` naming the value, never silently passed through raw.
+  # `change-request.json`'s own `state` field remains unconstrained to an enum at the SCHEMA
+  # level only because different hosts define different normalized vocabularies, not because
+  # an adapter's own output should stay unnormalized.
+  host.change-request-view:
+    run:
+      - gh
+      - pr
+      - view
+      - "${id}"
+      - "--json"
+      - "number,url,state,baseRefName,headRefName,statusCheckRollup"
+      - "--jq"
+      - "[(.number|tostring), .url, .state, .baseRefName, .headRefName, .statusCheckRollup]"
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        url: "$[1]"
+        state: "$[2]"
+        baseBranch: "$[3]"
+        headBranch: "$[4]"
+        checks: "$[5]"
+      statusMap:
+        OPEN: open
+        CLOSED: closed
+        MERGED: merged
+
+  # gh pr list --json number,url,state,baseRefName,headRefName --jq '[.[] |
+  # [(.number|tostring), .url, .state, .baseRefName, .headRefName]]': the category contract's
+  # `filter` input has no declared default (same "no per-input type/default metadata at the
+  # contract level" gap TRD-033's `tracker.list` fix documents) and `buildCapabilityArgv`
+  # always passes an EMPTY `inputs` map to `resolveArg` (TRD-010's own design, see
+  # `runner.js#buildCapabilityArgv`), so a `${filter}` placeholder would require every real
+  # caller to supply it, every time, with no fallback -- this template therefore has no
+  # `${filter}` placeholder at all, relying on `gh pr list`'s own documented default
+  # (`--state` defaults to `"open"`) rather than fabricate a filter value, mirroring
+  # `tracker.list`'s own fixed-default fix. `--jq`'s outer `[...]` wraps each inner
+  # `[.[] | [...]]` projection into one JSON array of arrays (one PR per element), which
+  # `parse.arrayMap` then reshapes into `{id, url, state, baseBranch, headBranch}` objects --
+  # the same `arrayMap` mechanism `adapter-tracker-azure-boards#tracker.list` uses. Live-
+  # verified (gh 2.103.0): `fixtures/gh-pr-list.json` is the real, unedited stdout for
+  # `--state all --limit 3` against this repo (the live default-`open` invocation returned an
+  # empty array for the branch this bead was developed on, which is also a valid, non-fabricated
+  # result -- see SKILL.md).
+  host.change-request-list:
+    run:
+      - gh
+      - pr
+      - list
+      - "--json"
+      - "number,url,state,baseRefName,headRefName"
+      - "--jq"
+      - "[.[] | [(.number|tostring), .url, .state, .baseRefName, .headRefName]]"
+    parse:
+      format: json
+      map:
+        items: "$"
+      arrayMap:
+        items:
+          source: "$"
+          item:
+            id: "$[0]"
+            url: "$[1]"
+            state:
+              path: "$[2]"
+              statusMap:
+                OPEN: open
+                CLOSED: closed
+                MERGED: merged
+            baseBranch: "$[3]"
+            headBranch: "$[4]"
+
+  # gh pr checks <id> --json name,state,bucket,description,link,completedAt,startedAt,event,
+  # workflow: every field `gh pr checks --help`'s own "JSON FIELDS" section documents. Unlike
+  # `pr view`, `pr checks`' JSON has no PR-number field at all (confirmed via its own `--help`:
+  # `bucket, completedAt, description, event, link, name, startedAt, state, workflow`, no
+  # `number`) -- there is no string-interpolation primitive in `mapping.js` to echo the `${id}`
+  # argument back into the mapped output, so this capability maps only `checks` (one of its two
+  # declared outputs); `id` is left unpopulated (a caller already has it, since it is the input
+  # it supplied) -- see SKILL.md "Known limits". Live-verified against real PR #190
+  # (`fixtures/gh-pr-checks.json`, real unedited stdout, gh 2.103.0).
+  host.change-request-checks:
+    run:
+      - gh
+      - pr
+      - checks
+      - "${id}"
+      - "--json"
+      - "name,state,bucket,description,link,completedAt,startedAt,event,workflow"
+    parse:
+      format: json
+      map:
+        checks: "$"
+
+  # gh pr view <id> --json number,comments --jq '[(.number|tostring), .comments]': GitHub's
+  # `gh` CLI has no CLI surface for diff-level REVIEW-THREAD comments (that is a GraphQL-only
+  # concept, `reviewThreads`, not exposed by any documented `gh pr` flag as of 2.103.0) -- the
+  # closest real, documented `gh` output is `pr view --json comments`, the PR's top-level
+  # ISSUE-level comment list (TRD-036's own suggested "gh pr view --json comments or similar").
+  # This is a genuine, disclosed approximation, not the same shape a true review-thread API
+  # would return (no per-thread `path`/`line`/`resolved` fields) -- see SKILL.md "Known
+  # limits". Live-verified against real PR #190, which happens to have zero comments
+  # (`fixtures/gh-pr-view-threads.json`, real unedited stdout `["190",[]]` -- an empty array is
+  # still a real, non-fabricated result).
+  host.change-request-threads:
+    run:
+      - gh
+      - pr
+      - view
+      - "${id}"
+      - "--json"
+      - "number,comments"
+      - "--jq"
+      - "[(.number|tostring), .comments]"
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        threads: "$[1]"
+
+  # gh api graphql (one call): review state of a change request for the pr-merge safety gate
+  # (REQ-015/AC-015-1, TRD-039). `gh pr view --json` cannot carry it: its review `author` has
+  # only `login` (no account type) and it exposes no review threads. GraphQL gives
+  # `reviewDecision`, `mergeable`, `mergeStateStatus`, the LATEST opinionated review per
+  # reviewer (`latestOpinionatedReviews`: APPROVED/CHANGES_REQUESTED/DISMISSED; a plain
+  # COMMENTED review is not decisive) with the author's account type (`__typename`: `Bot` or
+  # `User`, the host's own classification, never derived from a name), and `reviewThreads`
+  # (unresolved ones are selected by `--jq`, `isResolved|not`). `\{owner\}`/`\{repo\}` are gh's own
+  # current-repository placeholders; the runner treats a backslash-escaped brace as literal
+  # and a brace group containing whitespace (GraphQL selection sets) as literal text.
+  # `--jq` flattens to `[number, reviewDecision, mergeable, mergeStateStatus,
+  # [[login, accountType, state]...], [[path, body]...]]` (array construction only, the
+  # `host.change-request-view` convention). Limits: first 100 reviews / 100 threads, first
+  # comment of each thread (SKILL.md "Known limits"). Live-verified against real PR #189
+  # (`fixtures/gh-api-graphql-reviews.json`, real unedited stdout, gh 2.103.2): it has
+  # unresolved bot-authored (reviewdog) review threads and no decisive reviews.
+  host.change-request-reviews:
+    run:
+      - gh
+      - api
+      - graphql
+      - "-F"
+      - 'owner=\{owner\}'
+      - "-F"
+      - 'repo=\{repo\}'
+      - "-F"
+      - "number=${id}"
+      - "-f"
+      - 'query=query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { number reviewDecision mergeable mergeStateStatus latestOpinionatedReviews(first: 100) { nodes { state author { login __typename } } } reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { body path } } } } } } }'
+      - "--jq"
+      - '.data.repository.pullRequest | [(.number|tostring), .reviewDecision, .mergeable, .mergeStateStatus, [.latestOpinionatedReviews.nodes[] | [.author.login, .author.__typename, .state]], [.reviewThreads.nodes[] | select(.isResolved|not) | [.comments.nodes[0].path, .comments.nodes[0].body]]]'
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        reviewDecision: "$[1]"
+        mergeable: "$[2]"
+        mergeStateStatus: "$[3]"
+      arrayMap:
+        reviews:
+          source: "$[4]"
+          item:
+            author: "$[0]"
+            authorType: "$[1]"
+            state: "$[2]"
+        threads:
+          source: "$[5]"
+          item:
+            path: "$[0]"
+            body: "$[1]"
+
+  # gh pr merge <id> --squash/--merge/--rebase: `gh pr merge` has no `--json`/`--jq` flag
+  # (confirmed via its own `--help`, same gap as `pr create`) -- on success it prints a short
+  # human confirmation line (e.g. "✓ Squashed and merged pull request #<n> (<title>)"), never
+  # structured data, so this capability declares NO `parse` block at all rather than fabricate
+  # an `{id, state}` shape `mapping.js` cannot honestly build from free text (unlike
+  # `host.change-request-create`, there is no single field here -- neither `id` nor a
+  # normalized `state` enum value -- that a bare `map: {x: "$"}` could honestly represent);
+  # the runner returns the raw confirmation text as `data` (`mapAndValidateOutput`'s own
+  # documented `!cap.parse -> {data: stdout}` behavior). `method` (TRD-2026-8d825f54 PR 9 fix
+  # round, item 2; `host.yaml`'s own optional `method` input) selects one of `gh pr merge`'s
+  # three real, documented merge-strategy flags via `variants` (`runner.js#selectTemplate`):
+  # the base `run[]` below (also the `squash` variant, verbatim) is reachable both when
+  # `method` is entirely omitted (preserving this adapter's pre-existing behavior, this repo's
+  # own PR convention; see SKILL.md) and when a caller explicitly passes `method: squash`. An
+  # unsupported/unknown `method` value (anything other than these three fixed, manifest-
+  # declared literals) throws `NOT_ALLOWED` before any process spawns -- a caller's string is
+  # never substituted into the argv directly. Never executed live (side-effecting, would merge
+  # a real PR).
+  host.change-request-merge:
+    run:
+      - gh
+      - pr
+      - merge
+      - "${id}"
+      - "--squash"
+    variants:
+      method:
+        squash: ["gh", "pr", "merge", "${id}", "--squash"]
+        merge: ["gh", "pr", "merge", "${id}", "--merge"]
+        rebase: ["gh", "pr", "merge", "${id}", "--rebase"]
+
+# `host.change-request-link-work-item` is intentionally NOT declared: GitHub has no native
+# work-item-linking CLI surface (only Azure DevOps' `az repos pr work-item add` does, per
+# `host.yaml`'s own comment on this capability) and this optional capability carries no
+# `fallback` field, so omitting it entirely resolves `UNAVAILABLE` with no documented fallback
+# -- the correct, honest outcome per `lookupCapability`'s own documented behavior.

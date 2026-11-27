@@ -1,0 +1,27 @@
+category: work-graph
+version: "2.0"
+
+capabilities:
+  work-graph.ready:
+    description: List work items with no unresolved dependency, ordered for pickup.
+    inputs: [scope]
+    outputs: [items]
+    required: false
+    sideEffect: false
+    fallback: work-graph-links-fallback
+
+  work-graph.plan:
+    description: Order work items for sequential pickup, using dependency links when available.
+    inputs: [scope]
+    outputs: [items, orderingSource, dependencyAware]
+    required: false
+    sideEffect: false
+    fallback: work-graph-links-fallback
+
+  work-graph.graph-health:
+    description: Report dependency-graph health signals (for example cycles, stale blockers).
+    inputs: [scope]
+    outputs: [status, findings]
+    required: false
+    sideEffect: false
+    fallback: work-graph-links-fallback

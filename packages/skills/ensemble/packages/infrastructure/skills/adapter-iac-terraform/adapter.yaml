@@ -1,0 +1,100 @@
+adapter: terraform
+version: "1.0.0"
+
+categories:
+  - iac
+
+contract:
+  iac: "1.0"
+
+# The only binary any capability or health check below invokes.
+binaries:
+  - terraform
+
+# `plan`/`apply`/`destroy` are this bead's three real, wired subcommands (per the TRD's own
+# "plan, apply, destroy; terraform" text). `version` exists purely so the `terraform-installed`
+# health check passes `validateAllowlist`.
+allowlist:
+  - bin: terraform
+    sub:
+      - plan
+      - apply
+      - destroy
+      - version
+
+# Terraform itself reads no single named credential env var -- provider credentials (AWS, GCP,
+# Azure, ...) vary per configured provider and are each provider's own concern, not Terraform's,
+# matching `adapter-workflow-plain-git`'s own empty `env: []`.
+env: []
+
+health:
+  - id: terraform-installed
+    run: ["terraform", "version"]
+    timeoutMs: 5000
+
+# terraform is the SHIPPED DEFAULT for `iac` (toolchain.default.yaml), not remote-detected --
+# per TRD interpretation I2, a shipped default with no detect signal at all never turns some
+# other adapter's unmatched signal into an `AMBIGUOUS_PROVIDER` error. `detect: []` is also
+# required so a later bead's `UNKNOWN_ADAPTER` error message can legitimately name this
+# adapter's own id (`terraform`) as the one real `iac` adapter, per this bead's own
+# instructions.
+detect: []
+
+capabilities:
+  # terraform plan -input=false -no-color: real, documented `terraform plan` flags
+  # (`packages/infrastructure/skills/aws/SKILL.md`'s own non-interactive flow:
+  # "terraform plan -input=false -out=tfplan"; `-out` is omitted here since this category
+  # contract has no "planFile"/follow-up-apply-from-this-plan input to thread it through).
+  # `-input=false` makes this safe to run from a child process with no stdin (same rationale as
+  # `apply`/`destroy`'s own `-auto-approve` below). `workspace` is unreferenced: this capability
+  # assumes it is invoked with the process's cwd already set to the target Terraform root module
+  # (the same "caller must already be positioned correctly" convention
+  # `adapter-workflow-plain-git#workflow.branch-create` discloses for its own unreferenced
+  # `baseBranch`) -- `terraform`'s own `-chdir=<dir>` global flag must appear BEFORE the
+  # subcommand (`terraform -chdir=<dir> plan`), which would put a `${workspace}` placeholder in
+  # argv[1], breaking `validateAllowlist`/`denyRuntimeAllowlist`'s positional subcommand-word
+  # match against this adapter's own `allowlist` (both expect the literal subcommand word
+  # immediately after the binary). No `parse` block: `terraform plan`'s own human-readable
+  # summary (ending "Plan: N to add, M to change, K to destroy.") has no regex/string-split
+  # primitive in `mapping.js`'s dotted-path grammar to extract `status`/`changes` from free text
+  # without a `-json` flag this template does not pass (NDJSON line-stream output `mapping.js`'s
+  # grammar has no multi-line-decode primitive for) -- the raw plan text is returned as `data`
+  # instead of a fabricated shape. Never executed live (no reachable Terraform root module or
+  # provider credentials in this environment).
+  iac.plan:
+    run:
+      - terraform
+      - plan
+      - "-input=false"
+      - "-no-color"
+
+  # terraform apply -input=false -auto-approve: real, documented `terraform apply` flags.
+  # `-auto-approve` is REQUIRED here, not merely convenient: `terraform apply` with no
+  # `-auto-approve` and no `-input=false` prompts interactively on stdin for a "yes" confirmation
+  # before mutating infrastructure, which a child process spawned with no stdin
+  # (`runner.js#runCapability`, `execFile`, no pty) can never answer -- the call would hang until
+  # this adapter's own timeout killed it, never actually applying. `workspace` is unreferenced
+  # (same cwd-positioning convention as `iac.plan` above, same `-chdir`-ordering constraint). No
+  # `parse` block, same reasoning as `iac.plan` (free-text summary, no `-json`/no safe extraction
+  # primitive) -- `status` is never populated; raw apply output is returned as `data`. Never
+  # executed live (side-effecting, no reachable Terraform root module or provider credentials in
+  # this environment).
+  iac.apply:
+    run:
+      - terraform
+      - apply
+      - "-input=false"
+      - "-auto-approve"
+
+  # terraform destroy -input=false -auto-approve: real, documented `terraform destroy` flags,
+  # same `-auto-approve` necessity as `iac.apply` above (no interactive stdin confirmation is
+  # answerable by this adapter's child-process runner). `workspace` is unreferenced (same
+  # cwd-positioning convention). No `parse` block, same reasoning as `iac.plan`/`iac.apply`;
+  # `status` is never populated. Never executed live (side-effecting and irreversible, no
+  # reachable Terraform root module or provider credentials in this environment).
+  iac.destroy:
+    run:
+      - terraform
+      - destroy
+      - "-input=false"
+      - "-auto-approve"

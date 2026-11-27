@@ -1,0 +1,13 @@
+category: lint
+version: "1.0"
+
+# Capability ids use the single-dot, hyphenated convention established by host.yaml/
+# workflow.yaml (TRD-2026-8d825f54 TRD-035).
+
+capabilities:
+  lint.report-findings:
+    description: Run configured lint checks against a set of files and report findings.
+    inputs: [files]
+    outputs: [status, findings]
+    required: true
+    sideEffect: false

@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:refine-trd
+  description: Refine and enhance existing TRD with stakeholder feedback and additional detail
+  version: 2.7.0
+  lastUpdated: "2026-08-22"
+  category: planning
+  output_path: ensemble/refine-trd.md
+  source: sunstone
+  model: high
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-refine-trd/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-refine-trd

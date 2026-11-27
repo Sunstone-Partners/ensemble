@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:issue
+  description: Dispatch to an issue-management subcommand by keyword
+  version: 1.1.0
+  lastUpdated: "2026-10-06"
+  category: implementation
+  output_path: ensemble/issue.md
+  source: sunstone
+  argument_hint: "<fix|list|resume|status|abandon> [subcommand args...]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-issue/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-issue

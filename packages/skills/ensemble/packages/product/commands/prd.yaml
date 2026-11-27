@@ -1,0 +1,13 @@
+metadata:
+  name: ensemble:prd
+  description: Dispatch to a PRD-authoring or PRD-refinement subcommand by keyword
+  version: 1.1.0
+  lastUpdated: "2026-10-17"
+  category: planning
+  output_path: ensemble/prd.md
+  source: sunstone
+  argument_hint: "<create|refine> [subcommand args...]"
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-prd/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-prd

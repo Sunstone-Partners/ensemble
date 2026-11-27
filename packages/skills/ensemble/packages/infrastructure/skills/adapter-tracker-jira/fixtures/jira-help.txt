@@ -1,0 +1,49 @@
+# SYNTHETIC RECONSTRUCTION -- NOT a captured live `jira --help` run.
+#
+# No `jira` binary is installed in this environment and no live `--help` output for it
+# exists anywhere in this repo (TRD-2026-8d825f54 TRD-032 Implementation AC 4). This file was
+# built strictly from packages/infrastructure/skills/jira/SKILL.md's own documented command
+# list ("Quick Command Reference", "Decision Tree" and "Comments" sections) to give this
+# adapter's own tests something concrete to compare its `allowlist[].sub` entries against.
+# The real CLI's actual `--help` wording and subcommand set are unverified against the live
+# tool -- see this adapter's SKILL.md "Known limits".
+
+$ jira --help
+jira <command> [options]
+
+Commands:
+  issues      Manage Jira issues (read, list, search, create, update, fetch, transitions)
+  comments    Manage comments on a Jira issue (create, list)
+  projects    List Jira projects
+  users       List Jira users
+
+Options:
+  --version   Show the installed jira CLI version
+  --help      Show this help message
+
+$ jira issues --help
+jira issues <subcommand> [options]
+
+Subcommands:
+  read <ISSUE-KEY>              Read a single issue by key
+  list [--limit N] [--project KEY]
+                                 List recent issues
+  search "<query>" [--project KEY]
+                                 Search issues
+  create "<title>" --project KEY [--type ...] [--description ...] [--assignee ...]
+         [--priority ...] [--labels ...] [--parent ...]
+                                 Create a new issue
+  update <ISSUE-KEY> [--status ...] [--assignee ...] [--priority ...] [--labels ...]
+         [--summary ...]
+                                 Update an existing issue
+  fetch <ISSUE-KEY> --output <dir>
+                                 Fetch an issue and its complete hierarchy
+  transitions <ISSUE-KEY>       List available status transitions for an issue
+
+$ jira comments --help
+jira comments <subcommand> [options]
+
+Subcommands:
+  create <ISSUE-KEY> --body "<text>"
+                                 Add a comment to an issue
+  list <ISSUE-KEY>              List the comments on an issue

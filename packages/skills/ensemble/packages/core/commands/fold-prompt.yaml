@@ -1,0 +1,12 @@
+metadata:
+  name: ensemble:fold-prompt
+  description: Optimize CLAUDE.md for token efficiency, standards discovery, and progressive context loading
+  version: 2.0.1
+  lastUpdated: "2026-05-31"
+  category: analysis
+  output_path: ensemble/fold-prompt.md
+  source: sunstone
+
+# Skill-backed command: the prompt is packages/core/skills/ensemble-fold-prompt/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-fold-prompt

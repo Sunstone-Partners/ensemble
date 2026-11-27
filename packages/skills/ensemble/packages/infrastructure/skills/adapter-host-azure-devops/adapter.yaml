@@ -1,0 +1,384 @@
+adapter: azure-devops
+version: "1.0.0"
+
+categories:
+  - host
+
+contract:
+  host: "1.0"
+
+# TRD-040's own directed allowlist names 8 subcommand pairs; no other `az repos`/`az devops`/
+# `az account` subcommand is ever invoked by any capability or health check below. "repos pr
+# set-vote" is declared (per TRD-040's own text) but not wired to any capability here --
+# reserved for a future `host.change-request-review`-style capability that does not exist yet
+# in `host.yaml` (same "declared but unwired" convention `adapter-host-github` uses for its own
+# unused "api" entry and `adapter-tracker-azure-boards` uses for its own unused "account show"
+# entry, both TRD-directed).
+binaries:
+  - az
+
+allowlist:
+  - bin: az
+    sub:
+      - "repos pr create"
+      - "repos pr show"
+      - "repos pr list"
+      - "repos pr update"
+      - "repos pr set-vote"
+      - "repos pr work-item add"
+      - "account show"
+      - "devops configure"
+      - "--version"
+      - "extension show"
+
+# Name only (PRD REQ-022/REQ-023), never a literal value. `AZURE_DEVOPS_EXT_PAT` is the one
+# credential the `azure-devops` CLI extension itself documents reading from the environment for
+# non-interactive auth -- OPTIONAL, because `az login` (never invoked by this adapter itself)
+# also authenticates the ambient `az` session every capability and health check shares, exactly
+# matching `adapter-tracker-azure-boards`'s own `env:` entry and rationale.
+env:
+  - AZURE_DEVOPS_EXT_PAT
+
+health:
+  - id: az-installed
+    run: ["az", "--version"]
+    timeoutMs: 5000
+  - id: az-devops-extension-installed
+    run: ["az", "extension", "show", "--name", "azure-devops"]
+    timeoutMs: 5000
+  # Organization and project come from `az devops configure --defaults` (TRD-040), never an env
+  # var; the preflight caller inspects this check's own stdout for the presence of both
+  # defaults, matching `adapter-tracker-azure-boards`'s own `az-devops-defaults-configured`
+  # health check exactly (same backing tool, same defaults source).
+  - id: az-devops-defaults-configured
+    run: ["az", "devops", "configure", "--list"]
+    timeoutMs: 5000
+  # TRD-040's own directed argv, including the `--top 1` flag -- unlike `az boards query`'s
+  # undocumented `--top` (see `adapter-tracker-azure-boards` SKILL.md), `az repos pr list` does
+  # document a real `--top` option, so this one is a genuine (not merely literal-to-the-TRD)
+  # flag.
+  - id: az-repos-pr-reachable
+    run: ["az", "repos", "pr", "list", "--top", "1"]
+    timeoutMs: 10000
+
+# Azure DevOps Services (cloud) only -- the `azure-devops` CLI extension this adapter's every
+# capability depends on does not support Azure DevOps Server; `dev.azure.com` is the modern org
+# URL host, `visualstudio.com` the legacy one some orgs still use. Identical detect signal to
+# `adapter-tracker-azure-boards` (same backing tool family, same org/project source).
+detect:
+  - signal: remote_url_matches
+    pattern: "dev\\.azure\\.com|visualstudio\\.com"
+
+capabilities:
+  # az account show --query "id != null" --output json: there is no `az repos`/`az devops`
+  # subcommand that reports whether the ambient `az` session is authenticated at all (unlike
+  # `gh auth status`) -- `az account show` is the closest real, documented signal: it exits
+  # non-zero with an error ("Please run 'az login' ...") when no Azure session exists, and
+  # prints the signed-in account's JSON object (which always has a non-null `id`) when one
+  # does. `"id != null"` is a bare JMESPath comparison expression (no `{}`, so unaffected by
+  # `runner.js#buildArgv`'s placeholder regex), printing the bare boolean `true` on success --
+  # same bare-scalar convention `tracker.create` uses for `to_string(id)`. The `scope` input is
+  # unreferenced: `az account show` has no per-scope auth concept, matching
+  # `adapter-tracker-azure-boards`'s own disclosed unreferenced-input precedent. See SKILL.md
+  # "Known limits": an UNauthenticated session never actually produces `authenticated: false`
+  # here -- it fails `TOOL_FAILED` instead, since `az account show` errors rather than printing
+  # JSON when logged out.
+  host.auth-status:
+    run:
+      - az
+      - account
+      - show
+      - "--query"
+      - "id != null"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        authenticated: "$"
+
+  # az repos pr create --source-branch <headBranch> --target-branch <baseBranch> --title
+  # <title> --description <description> --query "[...]" --output json: real, documented `az
+  # repos pr create` flags, matching the category contract's four inputs one-for-one. `--query`
+  # pre-flattens five scalar fields (`pullRequestId`/`url`/`status`/`sourceRefName`/
+  # `targetRefName` -- all plain, non-dotted REST field names, unlike Azure Boards' dotted
+  # `System.Title`-style fields, so no quoted-identifier JMESPath is needed here) into a plain
+  # JSON array via a multi-select LIST (`[...]`, square brackets only, never `{}` -- the same
+  # `{}`-avoidance `adapter-tracker-azure-boards`/`adapter-host-github` document, since a bare
+  # `{key: expr}` JMESPath hash trips `buildArgv`'s placeholder regex). `to_string(pullRequestId)`
+  # turns Azure's numeric PR id into the string `change-request.json`'s `id` field requires.
+  # `statusMap` translates `state` (TRD-2026-8d825f54 TRD-040, this bead): `mapping.js#mapOutput`
+  # now falls back to translating a `state` property the same way it already translated `status`
+  # when `status` is absent (generalized from the empirically-confirmed gap this adapter
+  # originally disclosed: `statusMap` used to be hardcoded to `result.status` only, silently
+  # inert against `result.state`). `active`/`completed`/`abandoned` (Azure's real
+  # `PullRequestStatus` enum) map to this schema's `open`/`closed`/`closed` vocabulary, matching
+  # `change-request.json`'s own `state` field description. `trimPrefix` strips the `refs/heads/`
+  # prefix Azure's REST API always puts on `sourceRefName`/`targetRefName` off `headBranch`/
+  # `baseBranch` (another `mapping.js` generalization from this same bead -- `az --query`
+  # (JMESPath) has no substring/prefix-removal function and the base dotted-path grammar has no
+  # string-transform operator, so this could not be done in the `run[]` template or the old
+  # engine). Never executed live (side-effecting: would open a real pull request against a real
+  # Azure DevOps project, and no reachable project exists in this environment).
+  host.change-request-create:
+    run:
+      - az
+      - repos
+      - pr
+      - create
+      - "--source-branch"
+      - "${headBranch}"
+      - "--target-branch"
+      - "${baseBranch}"
+      - "--title"
+      - "${title}"
+      - "--description"
+      - "${description}"
+      - "--query"
+      - "[to_string(pullRequestId), url, status, sourceRefName, targetRefName]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        url: "$[1]"
+        state: "$[2]"
+        headBranch: "$[3]"
+        baseBranch: "$[4]"
+      trimPrefix:
+        headBranch: "refs/heads/"
+        baseBranch: "refs/heads/"
+      statusMap:
+        active: open
+        completed: closed
+        abandoned: closed
+
+  # az repos pr show --id <id> --query "[...]" --output json: same five-field `--query`
+  # flattening as `host.change-request-create` above, same `statusMap`/`trimPrefix`
+  # translation (see that capability's own comment for the `mapping.js` generalization this
+  # bead landed). `checks` is deliberately NOT mapped here: unlike GitHub's `gh pr view --json
+  # statusCheckRollup`, no field on `az repos pr show`'s own JSON object represents
+  # branch-policy evaluations at all -- see `host.change-request-checks` below and SKILL.md
+  # "Known limits" for the disclosed approximation that capability uses instead, and why it
+  # cannot be folded into this one.
+  host.change-request-view:
+    run:
+      - az
+      - repos
+      - pr
+      - show
+      - "--id"
+      - "${id}"
+      - "--query"
+      - "[to_string(pullRequestId), url, status, sourceRefName, targetRefName]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        url: "$[1]"
+        state: "$[2]"
+        headBranch: "$[3]"
+        baseBranch: "$[4]"
+      trimPrefix:
+        headBranch: "refs/heads/"
+        baseBranch: "refs/heads/"
+      statusMap:
+        active: open
+        completed: closed
+        abandoned: closed
+
+  # az repos pr list --query "[].[...]" --output json: the category contract's `filter` input
+  # has no declared default (same "no per-input type/default metadata at the contract level"
+  # gap `tracker.list`/`host.change-request-list` (github) document) and `buildCapabilityArgv`
+  # always passes an EMPTY `inputs` map, so this template has no `${filter}` placeholder at
+  # all -- it relies on `az repos pr list`'s own documented default (`--status` defaults to
+  # `active`) instead, matching `adapter-host-github#host.change-request-list`'s identical
+  # fixed-default convention. The outer `[].[...]` JMESPath projection applies the same
+  # 5-field flattening to every element, which `parse.arrayMap` then reshapes into
+  # `{id, url, state, headBranch, baseBranch}` objects. `state` IS normalized per item (TRD-
+  # 2026-8d825f54 PR 9 fix round, item 1): `mapping.js#applyArrayMapEntry`'s new object-form
+  # `item` entry (`{path, statusMap}`) reaches INSIDE an `arrayMap`-built array, unlike the
+  # top-level `statusMap` block below (which only ever examines `mapOutput`'s top-level
+  # `result.state`) -- the same three-way `active`/`completed`/`abandoned` ->
+  # `open`/`closed`/`closed` vocabulary `host.change-request-view`/`-merge` use below, so an
+  # unmapped raw Azure status value fails closed with `BAD_OUTPUT` here too, never silently
+  # passed through. `headBranch`/`baseBranch` still stay in Azure's raw, unprefixed
+  # `refs/heads/`-carrying vocabulary: `trimPrefix` (like the top-level `statusMap`) only ever
+  # examines `mapOutput`'s top-level `result`, never a value nested inside an `arrayMap`-built
+  # array, and this PR's `statusMap`-in-`arrayMap` extension is deliberately narrow (value
+  # translation only, no prefix-stripping form) -- see SKILL.md "Known limits".
+  host.change-request-list:
+    run:
+      - az
+      - repos
+      - pr
+      - list
+      - "--query"
+      - "[].[to_string(pullRequestId), url, status, sourceRefName, targetRefName]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        items: "$"
+      arrayMap:
+        items:
+          source: "$"
+          item:
+            id: "$[0]"
+            url: "$[1]"
+            state:
+              path: "$[2]"
+              statusMap:
+                active: open
+                completed: closed
+                abandoned: closed
+            headBranch: "$[3]"
+            baseBranch: "$[4]"
+
+  # az repos pr show --id <id> --query "[...]" --output json: no `az repos pr` subcommand in
+  # this adapter's allowlist exposes Azure DevOps branch-policy evaluations at all (that is a
+  # REST-only `/policy/evaluations` endpoint with no CLI surface here) -- `checks` is therefore
+  # a disclosed APPROXIMATION, reusing `az repos pr show`'s own `reviewers[]` field (each item
+  # roughly `{displayName, vote, isRequired, ...}`, Azure's reviewer-vote record, not a true
+  # named policy result) as the closest available per-change-request status signal, the same
+  # disclosed-approximation class `adapter-host-github#host.change-request-threads` uses for
+  # issue-level comments standing in for true review threads. `change-request.json`'s own
+  # `checks[]` item shape is intentionally unconstrained beyond `object` for exactly this kind
+  # of cross-tool shape variance. `id` IS populated here (unlike
+  # `adapter-host-github#host.change-request-checks`, which cannot echo its own `${id}` input
+  # back through `gh pr checks`'s fielded JSON) because `az repos pr show`'s own JSON carries
+  # `pullRequestId` directly. `checks` is built via `arrayMap` (TRD-2026-8d825f54 PR 9 fix
+  # round, item 1), never the bare, unreshaped `reviewers[]` array: each reviewer's raw
+  # `displayName` becomes `reviewer`, and each reviewer's raw, Azure-documented integer `vote`
+  # (10/5/0/-5/-10, confirmed against Azure DevOps' own `PullRequestVote` REST enum) is
+  # normalized through the new per-item `statusMap` form into a named `state` -- an unmapped
+  # vote integer (any value outside those five) fails closed with `BAD_OUTPUT` naming the
+  # value, never silently passed through as a bare, undocumented number.
+  host.change-request-checks:
+    run:
+      - az
+      - repos
+      - pr
+      - show
+      - "--id"
+      - "${id}"
+      - "--query"
+      - "[to_string(pullRequestId), reviewers]"
+      - "--output"
+      - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+      arrayMap:
+        checks:
+          source: "$[1]"
+          item:
+            reviewer: "$.displayName"
+            state:
+              path: "$.vote"
+              statusMap:
+                "10": approved
+                "5": approved-with-suggestions
+                "0": no-vote
+                "-5": waiting-for-author
+                "-10": rejected
+
+  # az repos pr update --id <id> --status completed --query "[...]" --output json: `method`
+  # (TRD-2026-8d825f54 PR 9 fix round, item 2; `host.yaml`'s own optional `method` input)
+  # selects a normalized merge strategy, but `az repos pr update`'s own real, documented
+  # argument surface (confirmed against `fixtures/az-repos-pr-help.txt`, this adapter's own
+  # synthetic-but-realistic reconstruction of `az repos pr --help`) has NO squash/merge/rebase
+  # flag at ALL -- Azure DevOps' actual merge strategy is governed by repository/branch-policy
+  # settings outside any `az repos pr` subcommand's control, unlike GitHub's `gh pr merge`
+  # (which has three real, mutually-exclusive strategy flags). `variants.method` therefore
+  # declares ONLY the `squash` key below (identical to the base `run[]`, so `method: squash`
+  # and an omitted `method` both resolve the exact same way, preserving this adapter's
+  # pre-existing behavior) -- `method: merge`/`method: rebase` against this adapter are NOT
+  # silently accepted or passed through as an unsupported flag: `runner.js#selectTemplate`
+  # throws `NOT_ALLOWED` naming `method` and the unsupported value, since neither key exists
+  # in this `variants.method` map, the same fail-closed outcome an unrecognized value gets
+  # against `adapter-host-github`'s own three-key map. `--status completed` is a fixed literal
+  # -- Azure DevOps' own documented terminal "merged" state name -- never a caller-supplied
+  # value substituted into `--status` (lesson from this PR series: an enum-shaped flag takes
+  # only a fixed, manifest-declared provider literal, never a caller string verbatim).
+  # `statusMap` translates `state` here too (same `mapping.js` generalization as `create`/
+  # `view` above), so a successful merge's `state` comes out as `closed` (Azure's own raw
+  # `completed` -> this schema's `closed`), never left as the raw Azure literal. A merge that
+  # fails to actually complete server-side (Azure DevOps rejects an incomplete-criteria/
+  # conflicting merge with a non-zero exit, not a silent `active` status) surfaces as
+  # `TOOL_FAILED`, not a mis-mapped success. Never executed live (side-effecting, no reachable
+  # Azure DevOps project in this environment).
+  host.change-request-merge:
+    run:
+      - az
+      - repos
+      - pr
+      - update
+      - "--id"
+      - "${id}"
+      - "--status"
+      - completed
+      - "--query"
+      - "[to_string(pullRequestId), status]"
+      - "--output"
+      - json
+    variants:
+      method:
+        squash:
+          - az
+          - repos
+          - pr
+          - update
+          - "--id"
+          - "${id}"
+          - "--status"
+          - completed
+          - "--query"
+          - "[to_string(pullRequestId), status]"
+          - "--output"
+          - json
+    parse:
+      format: json
+      map:
+        id: "$[0]"
+        state: "$[1]"
+      statusMap:
+        active: open
+        completed: closed
+        abandoned: closed
+
+  # az repos pr work-item add --id <id> --work-items <workItemId>: Azure DevOps' own native
+  # work-item-linking CLI surface (GitHub has none at all, per `host.yaml`'s own comment on
+  # this optional capability). No `--query`/`--output json` here: unlike `update`/`show`/
+  # `create`/`list`, there is no publicly documented JSON shape for this subcommand's success
+  # output (and no `az` binary is installed in this environment to confirm one empirically), so
+  # this capability declares NO `parse` block at all rather than fabricate an `{id, workItemId}`
+  # shape -- the runner returns the raw stdout as `data` (`mapAndValidateOutput`'s own
+  # documented `!cap.parse -> {data: stdout}` behavior), the same choice
+  # `adapter-host-github#host.change-request-merge` makes for its own structurally-uncertain
+  # mutating command. Neither `id` nor `workItemId` is echoed into a mapped output: a caller
+  # already holds both (they are this capability's own inputs) -- same "no echo mechanism in
+  # mapping.js" limitation `adapter-host-github#host.change-request-checks` documents for `id`.
+  host.change-request-link-work-item:
+    run:
+      - az
+      - repos
+      - pr
+      - work-item
+      - add
+      - "--id"
+      - "${id}"
+      - "--work-items"
+      - "${workItemId}"
+
+# `host.change-request-threads` is intentionally NOT declared: no `az repos pr` subcommand in
+# this adapter's allowlist exposes diff-level review-thread comments (Azure DevOps' REST
+# `/pullRequests/{id}/threads` endpoint has no CLI surface here), matching `host.yaml`'s own
+# comment naming this adapter as the one that has none; this optional capability carries no
+# `fallback` field, so omitting it resolves `UNAVAILABLE` with no documented fallback -- the
+# correct, honest outcome per `lookupCapability`'s own documented behavior.

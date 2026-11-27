@@ -1,0 +1,18 @@
+metadata:
+  name: ensemble:verify-requirements
+  description: Post-implementation REQ->AC->code traceability verifier - chains PRD requirements through TRD tasks to code and tests and writes a proof report
+  version: 2.0.0
+  lastUpdated: "2026-10-20"
+  category: planning
+  output_path: ensemble/verify-requirements.md
+  source: sunstone
+  model: medium
+  argument_hint: "--trd <trd-path> [--prd <prd-path>] [--mode auto|beads|checkbox|both] [--report-path <path>] [--no-write-report] [--run-tests]"
+  capabilities:
+    optional:
+      - tracker.list
+      - tracker.comments
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-verify-requirements/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-verify-requirements

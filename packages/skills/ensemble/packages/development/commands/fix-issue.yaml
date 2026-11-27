@@ -1,0 +1,22 @@
+metadata:
+  name: ensemble:fix-issue
+  description: Lightweight workflow for bug fixes and small issues
+  version: 1.5.0
+  lastUpdated: "2026-10-23"
+  category: implementation
+  model: medium
+  output_path: ensemble/fix-issue.md
+  source: sunstone
+  capabilities:
+    required:
+      - host.change-request-create
+      - host.change-request-view
+      - host.change-request-list
+      - workflow.branch-create
+      - workflow.merge-base
+      - workflow.commit
+      - workflow.push
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-fix-issue/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-fix-issue

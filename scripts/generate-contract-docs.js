@@ -25,7 +25,7 @@ const CATEGORIES_DIR = path.join('packages', 'development', 'toolchain', 'catego
 const OUTPUT_DIR = path.join('docs', 'toolchain', 'contracts');
 const BUILTIN_DIR = path.join('packages', 'development', 'toolchain', 'builtin');
 // Generated runtime mirrors of the source skills: their adapter.yaml copies are not separate backends.
-const MIRROR_PACKAGES = new Set(['pi', 'codex', 'opencode', 'full']);
+const MIRROR_PACKAGES = new Set(['pi', 'codex', 'opencode', 'full', 'skills']);
 const COVERAGE_HEADING = '## Shipped backends and coverage';
 
 const GENERATED_NOTICE =

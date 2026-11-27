@@ -168,6 +168,7 @@ export function normalizeSkillMd(content: string, skillDirName: string): string 
 const EXCLUDED_PACKAGES: Record<string, true> = {
   pi: true,
   full: true,
+  skills: true,
   ...SELF_CONTAINED_PI_PACKAGES,
 };
 

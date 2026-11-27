@@ -1,0 +1,6 @@
+{
+  "name": "@sunstone-partners/ensemble-skills",
+  "version": "10.0.0",
+  "private": true,
+  "description": "Generated runtime-neutral Ensemble skills and supporting tools"
+}

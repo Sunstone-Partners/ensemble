@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:release
+  description: |
+    Automated release workflow orchestration with quality gates, smoke test integration,
+    and deployment coordination. Supports standard, hotfix, and rollback release types.
+  version: 1.0.0
+  lastUpdated: "2025-11-05"
+  category: deployment
+  output_path: ensemble/release.md
+  source: sunstone
+
+# Skill-backed command: the prompt is packages/git/skills/ensemble-release/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-release

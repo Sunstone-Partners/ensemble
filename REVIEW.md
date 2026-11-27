@@ -107,6 +107,7 @@ logins).
     "packages/**/skills/pr-review-cycle",
     "packages/**/skills/pr-review-cycle/**",
     "packages/git/commands/pr-merge.yaml",
+    "packages/**/commands/pr-merge.yaml",
     "packages/**/commands/ensemble/pr-merge.md",
     "packages/**/ensemble-pr-merge.md",
     "packages/**/ensemble-pr-merge/SKILL.md",

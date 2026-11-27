@@ -1,0 +1,31 @@
+{
+  "id": 123,
+  "rev": 4,
+  "fields": {
+    "System.Title": "Implement login flow",
+    "System.Description": "<div>Add OAuth2 login flow for the web client.</div>",
+    "System.WorkItemType": "User Story",
+    "System.State": "Active",
+    "System.Tags": "auth; frontend",
+    "Microsoft.VSTS.Common.Priority": 2
+  },
+  "relations": [
+    {
+      "rel": "System.LinkTypes.Dependency-Reverse",
+      "url": "https://dev.azure.com/sunstone-partners/ensemble/_apis/wit/workItems/456",
+      "attributes": {
+        "isLocked": false,
+        "name": "Predecessor"
+      }
+    },
+    {
+      "rel": "System.LinkTypes.Hierarchy-Forward",
+      "url": "https://dev.azure.com/sunstone-partners/ensemble/_apis/wit/workItems/789",
+      "attributes": {
+        "isLocked": false,
+        "name": "Child"
+      }
+    }
+  ],
+  "url": "https://dev.azure.com/sunstone-partners/ensemble/_apis/wit/workItems/123"
+}

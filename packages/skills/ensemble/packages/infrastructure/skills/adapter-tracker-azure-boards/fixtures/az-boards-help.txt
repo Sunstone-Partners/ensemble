@@ -1,0 +1,159 @@
+# SYNTHETIC RECONSTRUCTION -- NOT a captured live `az boards --help`/`az boards work-item
+# --help`/`az boards query --help` run.
+#
+# No `az` binary is installed in this environment and no live `--help` output for it exists
+# anywhere in this repo (TRD-2026-8d825f54 TRD-033 Implementation AC 4). This file was built
+# from TRD-033's own verbatim allowlist/health text together with this adapter's author's own
+# independently-verifiable knowledge of the real, publicly documented Azure CLI (`az`)
+# `boards`/`devops`/`account`/`extension` command surface (Microsoft's own Azure CLI reference
+# docs). It is extended beyond the three `--help` invocations TRD-033 names (`az boards
+# --help`, `az boards work-item --help`, `az boards query --help`) to also cover the
+# `work-item relation` subgroup and the two health-check-only allowlist entries (`--version`,
+# `extension show`) plus the organization/project configuration commands (`devops configure`,
+# `account show`) this adapter's full `allowlist[]` also names -- every one of them needs a
+# recorded "subcommand exists" check (Implementation AC 4), not only the three TRD names
+# literally. The real CLI's exact wording is UNVERIFIED against a live install -- see this
+# adapter's SKILL.md "Known limits".
+
+$ az boards --help
+
+Group
+    az boards : Manage Azure Boards.
+
+Subgroups:
+    area        : Manage area paths.
+    iteration   : Manage iteration paths.
+    work-item   : Manage work items.
+
+Commands:
+    query       : Query Azure Boards using a work item query (WIQL).
+
+Examples:
+    Query work items using WIQL.
+        az boards query --wiql "SELECT [System.Id] FROM WorkItems"
+
+$ az boards work-item --help
+
+Group
+    az boards work-item : Manage work items.
+
+Subgroups:
+    relation    : Manage work item relations.
+
+Commands:
+    create      : Create a work item.
+    delete      : Delete a work item.
+    show        : Show details for a work item.
+    update      : Update a work item.
+
+Examples:
+    Create a work item.
+        az boards work-item create --title "Sample task" --type Task --description "A sample"
+
+    Show details for a work item.
+        az boards work-item show --id 1234 --expand relations
+
+    Update a work item.
+        az boards work-item update --id 1234 --state Active
+
+    Update a work item's discussion.
+        az boards work-item update --id 1234 --discussion "A new comment"
+
+    Close a work item.
+        az boards work-item update --id 1234 --state Closed
+
+$ az boards work-item relation --help
+
+Group
+    az boards work-item relation : Manage work item relations.
+
+Commands:
+    add         : Add a link to a different work item.
+    list-type   : List the types of links available.
+    remove      : Remove a link to a different work item.
+    show        : Show details for a list of work item relation types.
+
+Examples:
+    Add a link to a different work item.
+        az boards work-item relation add --id 1234 --relation-type Predecessor --target-id 1235
+
+$ az boards query --help
+
+Command
+    az boards query : Query Azure Boards using a work item query (WIQL).
+
+Arguments
+    --id                  : One or more IDs of a saved query.
+    --org --organization  : Azure DevOps organization URL.
+    --path                : Path of a saved query.
+    --project -p          : Name or ID of the project.
+    --team                : Name or ID of the team.
+    --wiql                : Work item query language (WIQL) query string.
+
+Examples:
+    Query work items using WIQL.
+        az boards query --wiql "SELECT [System.Id] FROM WorkItems"
+
+$ az devops configure --help
+
+Command
+    az devops configure : Manage the user settings for the Azure DevOps CLI, such as the
+    default organization and project.
+
+Arguments
+    --defaults            : Space-separated list of 'key=value' pairs to configure default
+                             values, for example 'organization=https://dev.azure.com/org
+                             project=myproject'.
+    --list                : List configuration values.
+    --use-git-aliases {false, true} : Enable or disable setting up 'git' aliases for
+                             'pull request'.
+
+Examples:
+    Set the default organization and project.
+        az devops configure --defaults organization=https://dev.azure.com/myorg project=myproject
+
+    List current configuration values.
+        az devops configure --list
+
+$ az account show --help
+
+Command
+    az account show : Get the details of a subscription.
+
+Arguments
+    --ids                 : One or more resource IDs.
+    --name -n             : Name or ID of subscription.
+    --subscription        : Name or ID of subscription.
+
+Examples:
+    Get the details of the current subscription.
+        az account show
+
+$ az extension show --help
+
+Command
+    az extension show : Show the details of an Azure CLI extension.
+
+Arguments
+    --name -n [Required]  : Name of the extension.
+
+Examples:
+    Show the details of the "azure-devops" extension.
+        az extension show --name azure-devops
+
+$ az --version
+
+azure-cli                         2.60.0
+
+core                               2.60.0
+telemetry                          1.1.0
+
+Extensions:
+azure-devops                       1.0.1
+
+Python location '/opt/az/lib/python3.11/site-packages'
+Extensions directory '/home/user/.azure/cliextensions'
+
+Python (Linux) 3.11.8
+
+Legal docs and information: aka.ms/AzureCliLegal

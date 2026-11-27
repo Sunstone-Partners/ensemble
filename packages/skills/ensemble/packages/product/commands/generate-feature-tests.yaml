@@ -1,0 +1,15 @@
+metadata:
+  name: ensemble:generate-feature-tests
+  description: Generate Gherkin .feature files and a traceability manifest from a PRD's acceptance criteria
+  version: 1.0.0
+  lastUpdated: "2026-06-29"
+  category: quality
+  output_path: ensemble/generate-feature-tests.md
+  source: sunstone
+  model: low
+  argument_hint: "[prd-path] [--out <dir>] [--dry-run]"
+  visibility: hidden
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-generate-feature-tests/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-generate-feature-tests

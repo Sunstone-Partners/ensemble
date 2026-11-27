@@ -1,0 +1,87 @@
+adapter: playwright
+version: "1.0.0"
+
+categories:
+  - e2e-quality
+
+contract:
+  e2e-quality: "1.0"
+
+# `npx playwright test` is the real, documented invocation for both end-to-end runs and
+# accessibility audits (packages/e2e-testing/skills/writing-playwright-tests/SKILL.md,
+# a11y-perf-checks/SKILL.md -- axe-core's `AxeBuilder` runs INSIDE a playwright test, there is
+# no standalone `axe` CLI this adapter could invoke). `npx @lhci/cli autorun` is the real,
+# documented Lighthouse CI invocation for the performance budget check
+# (a11y-perf-checks/SKILL.md).
+binaries:
+  - npx
+
+allowlist:
+  - bin: npx
+    sub:
+      - "playwright test"
+      - "playwright --version"
+      - "@lhci/cli autorun"
+      - "--version"
+
+env: []
+
+health:
+  - id: npx-installed
+    run: ["npx", "--version"]
+    timeoutMs: 5000
+  - id: playwright-installed
+    run: ["npx", "playwright", "--version"]
+    timeoutMs: 10000
+
+# "playwright" is the shipped default for `e2e-quality` (toolchain.default.yaml), not
+# remote-detected, per TRD interpretation I2 (same convention `adapter-workflow-plain-git`/
+# `adapter-tracker-beads` use).
+detect: []
+
+capabilities:
+  # npx playwright test <target>: real, documented usage
+  # (writing-playwright-tests/SKILL.md: `npx playwright test contacts.spec.ts`). No `parse`
+  # block: playwright's default console reporter has no single machine-parseable
+  # success/fail scalar this engine's dotted-path grammar could extract without a
+  # `--reporter=json` flag this adapter does not add (see SKILL.md "Known limits"); `status`/
+  # `report` (the category's two declared outputs) are left unmapped, raw stdout returned as
+  # `data`, the same disclosed convention `adapter-workflow-plain-git`'s `workflow.push` uses.
+  # Not executed live: `@playwright/test` is not installed in this repository (confirmed:
+  # `packages/e2e-testing/package.json` lists it only in `keywords`, not `devDependencies`).
+  e2e-quality.run-e2e:
+    run:
+      - npx
+      - playwright
+      - test
+      - "${target}"
+
+  # npx @lhci/cli autorun: real, documented Lighthouse CI invocation
+  # (a11y-perf-checks/SKILL.md). Lighthouse CI's own `autorun` reads its target URL(s) from
+  # `lighthouserc.*`, not a CLI positional argument (confirmed via `@lhci/cli autorun --help`'s
+  # own documented flags, none of which take a bare target) -- `target` (the category's
+  # declared input) is therefore NOT referenced here, the same disclosed "declared input, not
+  # referenced by this run template" convention `adapter-workflow-plain-git`'s
+  # `workflow.branch-create` uses for `baseBranch`. No `parse` block, same reason as
+  # `run-e2e` above. Not executed live: `@lhci/cli` is not installed in this repository and no
+  # `lighthouserc.*` exists to drive it.
+  e2e-quality.audit-performance:
+    run:
+      - npx
+      - "@lhci/cli"
+      - autorun
+
+  # npx playwright test <target>: a deliberate, disclosed alias of `run-e2e`'s own run
+  # template, not a separate mechanism -- axe-core has no standalone CLI; an accessibility
+  # audit IS a playwright test run (via `@axe-core/playwright`'s `AxeBuilder`, per
+  # a11y-perf-checks/SKILL.md), so the honest way to run one through this adapter is the same
+  # `npx playwright test <target>` invocation, with `target` pointing at an axe-equipped spec
+  # file rather than an ordinary journey spec. Same convention
+  # `adapter-workflow-plain-git`'s `workflow.propose` (an alias of `workflow.push`) uses. No
+  # `parse` block, same reason as `run-e2e` above. Not executed live, same reason as `run-e2e`.
+  e2e-quality.audit-accessibility:
+    run:
+      - npx
+      - playwright
+      - test
+      - "${target}"

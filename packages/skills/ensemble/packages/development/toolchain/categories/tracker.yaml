@@ -1,0 +1,154 @@
+category: tracker
+version: "1.1"
+
+capabilities:
+  tracker.show:
+    description: Read a single work item by id.
+    inputs: [id]
+    outputs: [id, title, description, type, status, priority, labels, owner]
+    required: true
+    sideEffect: false
+
+  tracker.list:
+    description: List work items, optionally filtered (for example by label or status).
+    inputs: [filter]
+    outputs: [items]
+    required: false
+    sideEffect: false
+
+  tracker.create:
+    description: Create a new work item.
+    inputs: [title, description, type]
+    outputs: [id]
+    required: true
+    sideEffect: true
+
+  tracker.update:
+    description: Update fields on an existing work item.
+    inputs: [id, fields]
+    outputs: [id]
+    required: true
+    sideEffect: true
+
+  tracker.close:
+    description: Close a work item.
+    inputs: [id]
+    outputs: [id, status]
+    required: true
+    sideEffect: true
+
+  tracker.comment:
+    description: Add a comment to a work item.
+    inputs: [id, text]
+    outputs: [id]
+    required: false
+    sideEffect: true
+
+  tracker.comments:
+    description: List the comments on a work item, in source-tool order.
+    inputs: [id]
+    outputs: [comments, comments_truncated]
+    required: false
+    sideEffect: false
+
+  tracker.dep-add:
+    description: Add a dependency link from one work item to another.
+    inputs: [id, dependsOnId, type]
+    outputs: [id]
+    required: false
+    sideEffect: true
+
+  tracker.dep-remove:
+    description: Remove a dependency link from one work item to another.
+    inputs: [id, dependsOnId]
+    outputs: [id]
+    required: false
+    sideEffect: true
+
+  tracker.label:
+    description: Add or replace labels on one or more work items.
+    inputs: [ids, labels]
+    # id/label are additive: the kata adapter emits the single-item {id,label} shape validated by
+    # toolchain/schemas/normalized/label-result.json, alongside the multi-item ids/labels.
+    outputs: [ids, labels, id, label]
+    required: false
+    sideEffect: true
+    fallback: title-prefix-scoping
+
+  # Single-item labelling, split out of tracker.label because no tracker can attach more than one
+  # label to one item in a single call: the runner substitutes each `${placeholder}` in an
+  # adapter's one fixed argv template exactly once (runner.js#resolveArg), so `labels` can never
+  # fan out to repeated arguments. A caller holding N labels issues N calls; the loop lives in the
+  # caller, not the runner. Declared `required: false`, which is what contracts.js#checkAdditiveOnly
+  # permits inside a major version (it refuses removals, `required` flips and required-additions but
+  # allows optional additions), so this lands as 1.1 rather than 2.0.
+  tracker.label-one:
+    description: Attach one label to exactly one work item. Adapters whose tool attaches labels one at a time MUST declare this rather than tracker.label.
+    inputs: [id, label]
+    outputs: [id, labels]
+    required: false
+    sideEffect: true
+    addedInMinor: 1
+
+  tracker.set-status:
+    description: Set a work item's lifecycle status to one of the normalized values (open, in_progress, closed).
+    inputs: [id, status]
+    outputs: [id, status, owner]
+    required: false
+    sideEffect: true
+
+  tracker.sync:
+    description: Flush pending local tracker state to durable storage.
+    inputs: [scope]
+    outputs: [status]
+    required: false
+    sideEffect: true
+
+  tracker.stage-export:
+    description: Return export text for the tracked file, or an unavailable status when the resolved adapter has none.
+    inputs: [scope]
+    outputs: [text, status]
+    required: false
+    sideEffect: false
+    fallback: full-export-unscoped
+
+  # Findings-as-beads capabilities (plan docs/plans/pr-review-speedup-plan.md section 3H item 1,
+  # kata yfbg). All four are OPTIONAL and carry a `fallback`: runner.js#lookupCapability only
+  # returns the structured `UNAVAILABLE` envelope (never a throw, never NOT_ALLOWED) for an
+  # adapter that omits an optional capability when the contract declares a `fallback` id, so a
+  # repository whose tracker lacks these degrades to "skip the beads, still show the findings
+  # list" instead of failing. They are separate capabilities, not extra inputs on
+  # tracker.create/update/close, because an adapter's `run[]` is one fixed argv template: every
+  # `${placeholder}` in it is mandatory per call (runner.js#resolveArg), so adding labels/
+  # priority/key to tracker.create would break every existing caller that omits them.
+  tracker.create-detailed:
+    description: Create a work item with labels, a priority and an external dedupe key in one call.
+    inputs: [title, description, type, labels, priority, externalKey]
+    outputs: [id]
+    required: false
+    sideEffect: true
+    fallback: skip-finding-beads
+
+  tracker.find-by-key:
+    description: List the work items of the whole tracker, closed ones included and NOT limited to one label (an external dedupe key is unique tracker-wide), so the caller can select the one whose external dedupe key equals `key` (exact match; zero, one or many) and read its labels.
+    inputs: [key]
+    outputs: [items]
+    required: false
+    sideEffect: false
+    fallback: skip-finding-beads
+
+  tracker.update-detailed:
+    description: Rewrite a work item's title, description and priority and append a note, without touching its labels or status.
+    inputs: [id, title, description, priority, notes]
+    outputs: [id]
+    required: false
+    sideEffect: true
+    fallback: skip-finding-beads
+
+  tracker.close-with-reason:
+    description: Close a work item recording why it was closed and the commit that resolved it.
+    inputs: [id, reason, commit]
+    outputs: [id, status]
+    required: false
+    sideEffect: true
+    fallback: skip-finding-beads

@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:refine-prd
+  description: Refine and enhance existing PRD with stakeholder feedback and additional detail, or from a meeting summary with --from-meeting
+  version: 2.9.0
+  lastUpdated: "2026-10-17"
+  category: planning
+  output_path: ensemble/refine-prd.md
+  source: sunstone
+  model: high
+  argument_hint: "<prd-path> [--from-meeting <meeting-summary-or-path> | --foreman | --collab [--tunnel=quick] [--reviewers N] [--no-open] | --long-lived [--ttl <duration>]]"
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-refine-prd/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-refine-prd

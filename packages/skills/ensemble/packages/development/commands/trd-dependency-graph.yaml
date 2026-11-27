@@ -1,0 +1,14 @@
+metadata:
+  name: ensemble:trd-dependency-graph
+  description: Build a dependency graph across TRDs and report likely-duplicate work (overlapping target files)
+  version: 1.0.0
+  lastUpdated: "2026-06-30"
+  category: analysis
+  output_path: ensemble/trd-dependency-graph.md
+  source: sunstone
+  model: low
+  argument_hint: "[trd-dir|paths...] [--format json|mermaid|dot] [--overlap]"
+
+# Skill-backed command: the prompt is packages/development/skills/ensemble-trd-dependency-graph/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-trd-dependency-graph

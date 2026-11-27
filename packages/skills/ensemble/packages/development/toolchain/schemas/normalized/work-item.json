@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sunstonepartners.com/schemas/normalized/work-item.json",
+  "title": "Ensemble Normalized Work Item Schema",
+  "description": "Schema for the toolchain's normalized 'work item' shape (TRD-2026-8d825f54 TRD-012, PRD REQ-002, REQ-022; System Architecture 'Interfaces and Formats'). A tracker-category adapter capability that returns a work item (for example 'tracker.show') maps its tool's raw stdout into this shape via packages/development/lib/toolchain/mapping.js#mapOutput; the runner validates the mapped value against this schema before handing it back to a caller, and rejects a mismatch as BAD_OUTPUT without passing the data on (PRD REQ-002 AC-002-2). Only 'id' is required: adapters legitimately omit fields their underlying tool does not expose (for example a tracker with no comment API never produces 'comments'). 'additionalProperties' is left true at the top level so an adapter may carry extra passthrough fields this normalized shape does not name; this schema enforces only the shape of the fields it documents, it is not a closed/exhaustive contract.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The work item's id in its source tool, for example a Jira key or a beads id."
+    },
+    "title": {
+      "type": "string",
+      "description": "Short human-readable summary/title of the work item."
+    },
+    "description": {
+      "type": "string",
+      "description": "Full body/description text of the work item."
+    },
+    "type": {
+      "type": "string",
+      "description": "The work item's type as reported by its source tool (for example 'bug', 'story', 'task'); not constrained to an enum because trackers define their own, incompatible type vocabularies."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "in_progress", "closed"],
+      "description": "Normalized lifecycle status; adapters translate their tool's own status strings into one of these three via a capability's parse.statusMap (TRD-012)."
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The identity currently claiming the work item, when the source tool records one (TRD-2026-6995dc96 TRD-034, PRD REQ-004). Absent for an unowned item. For a tool whose status field has no in-progress value (kata) an owned-but-open item is the in-progress representation, which an adapter surfaces through parse.inProgressWhen."
+    },
+    "priority": {
+      "type": "string",
+      "description": "The work item's priority as reported by its source tool, normalized to a string (this schema's own choice, not mandated by the TRD -- a union of 'string'|'number' was considered and rejected to keep the schema in Ajv strict mode without warnings). Trackers that expose a numeric priority rank are expected to stringify it (e.g. '1') before this field is populated; TRD-012 does not define a normalized priority vocabulary beyond that."
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Freeform labels/tags attached to the work item."
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The id of the work item this one depends on."
+          },
+          "type": {
+            "type": "string",
+            "description": "The dependency relationship's type as reported by the source tool (for example 'blocks', 'relates-to')."
+          }
+        },
+        "description": "One dependency edge; only 'id' is required, matching the top-level work item's own required-field policy."
+      },
+      "description": "Work items this one depends on."
+    },
+    "dependents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The id of the dependent work item."
+          },
+          "type": {
+            "type": "string",
+            "description": "The dependency relationship's type as reported by the source tool."
+          }
+        },
+        "description": "One dependent edge; same shape as a 'dependencies' entry (this schema's own choice -- the TRD documents 'dependents[]' without an explicit item shape)."
+      },
+      "description": "Work items that depend on this one."
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One comment on the work item. Its shape is intentionally unconstrained beyond 'object' (this schema's own choice) because TRD-012's Implementation AC and System Architecture section document only that 'comments[]' exists on the work item, not a normalized comment shape."
+      },
+      "description": "Comments on the work item, in source-tool order."
+    },
+    "externalRef": {
+      "type": "string",
+      "description": "A fully-qualified external reference to the work item in its source tool (for example a URL), when the tool exposes one."
+    }
+  }
+}

@@ -91,6 +91,12 @@ const TOOLCHAIN_CLI_RELATIVE_PATH = 'packages/development/lib/toolchain-cli.js';
  * @returns {string|null}
  */
 function resolveToolchainCliPath() {
+  // Tier 0: sibling package relative to this file. Holds in the monorepo and in any installed
+  // bundle that keeps `packages/<name>/lib` layout (e.g. the generic skills bundle), where the
+  // git root is the user's project and not the ensemble checkout.
+  const sibling = path.resolve(__dirname, '..', '..', 'development', 'lib', 'toolchain-cli.js');
+  if (fs.existsSync(sibling)) return sibling;
+
   // Tier 1: canonical monorepo root (dogfooding).
   try {
     const root = execFileSync('git', ['rev-parse', '--show-toplevel'], {

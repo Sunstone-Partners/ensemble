@@ -1,0 +1,15 @@
+metadata:
+  name: ensemble:reqnroll-tdd
+  description: Drive PRD acceptance criteria to green via an outside-in, red-gated Reqnroll + xUnit test-first loop
+  version: 1.0.0
+  lastUpdated: "2026-06-29"
+  category: testing
+  output_path: ensemble/reqnroll-tdd.md
+  source: sunstone
+  model: high
+  argument_hint: "[prd-path] [--sut <csproj>] [--out <dir>]"
+  visibility: hidden
+
+# Skill-backed command: the prompt is packages/product/skills/ensemble-reqnroll-tdd/SKILL.md,
+# the single source of truth. Edit the skill, not this manifest.
+skill: ensemble-reqnroll-tdd

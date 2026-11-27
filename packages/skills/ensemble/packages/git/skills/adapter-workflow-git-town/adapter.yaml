@@ -1,0 +1,174 @@
+adapter: git-town
+version: "1.0.0"
+
+categories:
+  - workflow
+
+contract:
+  workflow: "1.0"
+
+# TRD-036 directs this adapter's allowlist as git-town's own six subcommands (hack, append,
+# sync, propose, ship, status). The `workflow` category contract (`categories/workflow.yaml`)
+# additionally REQUIRES `workflow.commit` and `workflow.push` (required:true), and git-town
+# itself has no standalone subcommand for either (its own `--help` lists a `commit` subcommand,
+# but that is "Commit into another branch" -- a stacked-branch operation, not a plain "commit
+# staged changes" primitive the category contract's single-input `workflow.commit` needs; there
+# is no `push` subcommand at all -- pushing happens only as a side effect inside `hack`/
+# `append`/`sync`/`ship`). `git` is therefore declared as a SECOND binary here, used only for
+# the two generic primitives (`commit`, `push`) plus `status` (see `workflow.status`'s own
+# comment below for why `git status --porcelain`, not `git-town status`, backs that capability)
+# that `validateConformance` requires every `workflow`-category adapter to implement, which no
+# combination of git-town's own six directed subcommands can satisfy alone. This mirrors
+# `adapter-tracker-azure-boards`'s own precedent of adding allowlist entries beyond a TRD's
+# literal directed list when a mechanical validation requirement demands it.
+binaries:
+  - git-town
+  - git
+
+allowlist:
+  - bin: git-town
+    sub:
+      - hack
+      - append
+      - sync
+      - propose
+      - ship
+      - status
+      - "--version"
+  - bin: git
+    sub:
+      - commit
+      - push
+      - status
+
+env: []
+
+health:
+  - id: git-town-installed
+    run: ["git-town", "--version"]
+    timeoutMs: 5000
+  # Read-only (git-town's `status` subcommand only displays or resets a SUSPENDED command; this
+  # health check uses `--pending`, never `reset`/`continue`, so it never mutates repo state).
+  # Checked as a preflight signal, not wired to `workflow.status` itself -- see that
+  # capability's own comment for why.
+  - id: git-town-no-pending-command
+    run: ["git-town", "status", "--pending"]
+    timeoutMs: 5000
+
+detect:
+  - signal: git_config_set
+    key: git-town.main-branch
+
+capabilities:
+  # git-town hack <name> --non-interactive: `git town hack <branch>` is this adapter's own
+  # SKILL.md's documented "New branch off main" row, matching `workflow.branch-create`'s
+  # description ("create a new branch following the configured branching strategy"). TRD-036's
+  # own directed allowlist names `hack`; `append` (create-as-child-of-current) remains declared
+  # but unused by any capability here, reserved for a future stacked-branch-aware variant of
+  # this capability (same "declared but unused" convention as the github adapter's `api`
+  # entry). `--non-interactive` per this skill's own existing "Always pass --non-interactive
+  # where supported" convention (`packages/git/skills/git-town/SKILL.md`). `baseBranch` is
+  # unreferenced: `hack` always branches off the configured main branch, never a caller-
+  # supplied base. No `parse` block: git-town has no `--json`/structured-output mode on any
+  # subcommand (confirmed via every subcommand's own `--help`, none document one) -- the raw
+  # human-readable progress text is returned as `data` rather than fabricate a `{name}` shape.
+  workflow.branch-create:
+    run:
+      - git-town
+      - hack
+      - "${name}"
+      - "--non-interactive"
+
+  # git-town sync --non-interactive: updates the current branch with its ancestors/remote, per
+  # this skill's own existing SKILL.md row. `branch` is unreferenced -- `sync` always operates
+  # on the current checked-out branch (confirmed via `git-town sync --help`'s own `Usage:
+  # git-town sync [flags]`, no positional branch argument). No `parse` block (see
+  # `workflow.branch-create`'s comment).
+  workflow.sync:
+    run:
+      - git-town
+      - sync
+      - "--non-interactive"
+
+  # git-town propose --title <title> --non-interactive --no-browser: per this skill's own
+  # existing SKILL.md row ("Open PR against the parent branch"). `headBranch`/`baseBranch` are
+  # unreferenced -- `propose` always proposes the current branch against its git-town-recorded
+  # parent (confirmed via `git-town propose --help`, no positional branch arguments), not a
+  # caller-supplied pair. `--no-browser` suppresses opening a browser window (this skill's own
+  # existing documented flag). No `parse` block (see `workflow.branch-create`'s comment) --
+  # `git-town propose` opens the change request via whichever host CLI/API it is configured for
+  # and prints a human-readable confirmation, never JSON.
+  workflow.propose:
+    run:
+      - git-town
+      - propose
+      - "--title"
+      - "${title}"
+      - "--non-interactive"
+      - "--no-browser"
+
+  # git-town ship --non-interactive: per this skill's own existing SKILL.md row ("Ship into
+  # parent"). `branch` is unreferenced -- confirmed via `git-town ship --help`'s own `Usage:
+  # git-town ship [flags]`, no positional branch argument (ships the current branch). No
+  # `parse` block (see `workflow.branch-create`'s comment).
+  workflow.ship:
+    run:
+      - git-town
+      - ship
+      - "--non-interactive"
+
+  # git status --porcelain: TRD-036's own directed allowlist names git-town's `status`
+  # subcommand, but that reports whether git-town itself has a SUSPENDED command pending
+  # (confirmed live: `git-town status` on a repo with a stuck command prints "The last Git Town
+  # command (<name>) hit a problem ... You can run 'git town continue' to finish it", never a
+  # working-tree clean/dirty summary) -- a genuine semantic mismatch against
+  # `workflow.status`'s own declared contract ("report the working tree's clean/dirty state and
+  # changed files", outputs `[clean, files]`). Rather than fabricate a `clean`/`files` shape
+  # `git-town status`'s own output cannot honestly provide, this capability reuses the real,
+  # correct, well-known `git status --porcelain` mechanism instead (the same one
+  # `adapter-workflow-plain-git` uses) -- `git-town status --pending`'s own real, honest use is
+  # the `git-town-no-pending-command` HEALTH check above (a preflight signal, not this
+  # capability). `scope` is unreferenced. `parse.map.files: "$"` is the array of non-empty
+  # porcelain lines (one raw `XY path` line per changed file, empty array when clean); `clean`
+  # is left unmapped -- `mapping.js`'s dotted-path grammar has no boolean/length-check
+  # primitive to derive it from an array's emptiness (see SKILL.md "Known limits").
+  workflow.status:
+    run:
+      - git
+      - status
+      - "--porcelain"
+    parse:
+      format: lines
+      map:
+        files: "$"
+
+  # git commit -m <message>: the generic primitive `validateConformance` requires every
+  # `workflow`-category adapter to implement; git-town itself has no standalone "commit staged
+  # changes" subcommand (see this file's top-of-file `binaries:` comment). No `parse` block:
+  # `git commit`'s own stdout (a one-line `[branch <short-sha>] <message>` summary plus a
+  # change-stat line) has no primitive in `mapping.js` to extract a SHA via regex/split, so
+  # `sha` (the sole declared output) is left unmapped rather than fabricated -- see SKILL.md
+  # "Known limits".
+  workflow.commit:
+    run:
+      - git
+      - commit
+      - "-m"
+      - "${message}"
+
+  # git push -u origin HEAD: the generic primitive `validateConformance` requires every
+  # `workflow`-category adapter to implement; git-town has no standalone `push` subcommand
+  # (pushing happens only as a side effect inside `hack`/`append`/`sync`/`ship`). Same template
+  # as plain-git's `workflow.push` (see its comment): a bare `git push` fails on a branch with no
+  # upstream, `HEAD` keeps a caller `branch` value from ever reaching git (no `+refspec` force
+  # push), and `branch` is unreferenced. No `parse` block: `git push` on
+  # success prints almost nothing to stdout (its real output, including any host-provided
+  # "create a pull request" hint, goes to stderr, which `mapOutput` never sees) -- `branch` is
+  # left unmapped.
+  workflow.push:
+    run:
+      - git
+      - push
+      - "-u"
+      - origin
+      - HEAD

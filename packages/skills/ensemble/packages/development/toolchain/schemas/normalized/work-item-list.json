@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sunstonepartners.com/schemas/normalized/work-item-list.json",
+  "title": "Ensemble Normalized Work Item List Schema",
+  "description": "Schema for the toolchain's normalized 'work item list' shape (TRD-2026-8d825f54 TRD-012/TRD-033, PRD REQ-002, REQ-022). A tracker-category adapter capability that returns a COLLECTION of work items (`tracker.list`, as opposed to `tracker.show`'s single item) maps its tool's raw stdout into this shape via packages/development/lib/toolchain/mapping.js#mapOutput. This is deliberately a DIFFERENT schema from work-item.json (which requires a top-level 'id' -- a list result has no such field): packages/development/lib/toolchain/runner.js's CAPABILITY_NORMALIZED_SCHEMA selects this schema for 'tracker.list' specifically, falling back to CATEGORY_NORMALIZED_SCHEMA['tracker'] (work-item.json) for every other tracker.* capability. 'additionalProperties' is left true at the top level and on each item: a 'parse.arrayMap'-reshaped item legitimately carries only the fields the adapter's tool and query language could extract (for example a list item's 'status' may still be in the tracker's own raw vocabulary, never run through 'parse.statusMap', which only ever translates a single top-level 'status' field -- see mapping.js's own documented limit).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "description": "The listed work items, each shaped however the adapter's own parse.map/parse.arrayMap produced it -- not required to carry 'id', since an adapter with no parse block at all (the beads-adapter convention) never reaches this schema in the first place (CATEGORY_NORMALIZED_SCHEMA/CAPABILITY_NORMALIZED_SCHEMA validation only runs when a capability declares a 'parse' block)."
+    }
+  }
+}

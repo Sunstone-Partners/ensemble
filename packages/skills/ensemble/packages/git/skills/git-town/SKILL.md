@@ -1,0 +1,53 @@
+---
+name: git-town
+description: Use when creating feature branches, stacked branches, syncing, proposing PRs, or shipping with the git-town CLI. Covers the commands Ensemble workflows call and repo conventions.
+metadata:
+  version: "2.0.0"
+---
+
+# Git Town
+
+Verified against git-town 24.0.0. Ensemble requires >= 14.0.0.
+
+## Toolchain Capability
+
+git-town is also the **workflow** adapter named git-town in the capability toolchain (TRD-039): `packages/git/skills/adapter-workflow-git-town/` (skill `adapter-workflow-git-town`) maps `workflow.branch-create`/`workflow.sync`/`workflow.propose`/`workflow.ship` onto git-town's `hack`/`sync`/`propose`/`ship` subcommands documented below, plus the plain-git commit, push and porcelain-status operations for the generic `workflow.commit`/`workflow.push`/`workflow.status` primitives every `workflow`-category adapter must implement (git-town itself has no standalone subcommand for those three). Commands and agents call these capabilities through `toolchain-cli` (`node "$TOOLCHAIN_CLI" run workflow.<capability> --run-id "$RUN_ID" ...`) and never invoke the git-town or git binaries directly; the adapter skill holds the literal invocations, and the vocabulary below documents what each capability resolves to.
+
+## Preflight
+
+`scripts/validate-git-town.sh` checks install, version and that the cwd is a git repo. Exit codes: 0 ok, 1 not installed, 2 not configured (non-fatal: git-town falls back to the git main branch), 3 version < 14, 4 not a git repo. `implement-trd-tasks`, `beads-build` and `implement-bead` feed the code to `trd-cli resolve-sdlc`, which falls back to the plain-git `workflow` adapter when git-town is unavailable.
+
+## Capabilities used by Ensemble
+
+The adapter always passes `--non-interactive` where supported; never rely on prompts.
+
+| Need | Capability | git-town subcommand and options |
+|---|---|---|
+| New branch off main | `workflow.branch-create` | `hack <branch>` |
+| New branch stacked on current branch | (adapter-level; no capability yet) | `append <branch>` |
+| Sync current branch with ancestors and remote | `workflow.sync` | `sync` (`--dry-run` previews) |
+| Open PR against the parent branch | `workflow.propose` | `propose --title <t> --body <b>` (`--stack` proposes the whole stack, `--no-browser` suppresses the browser) |
+| Ship into parent | `workflow.ship` | `ship` (`--strategy` overrides the configured `ship-strategy`; direct children of main only unless `--to-parent`) |
+| Re-parent a branch | (adapter-level; no capability yet) | `set-parent` (`--none` makes it perennial) |
+| Show parent / config | (adapter-level; no capability yet) | the `config` subcommand (`config get-parent`) |
+
+`hack`/`append` also take `--prototype` (branch not synced with its parent), `--no-sync`, `--propose`, `-m` (commit stashed changes) and `--stash`/`--no-stash`.
+
+After a conflict during `sync`/`ship`, resolve the files, stage them with the plain-git staging operation, then run the git-town `continue` subcommand; the `undo` subcommand reverts the last git-town command. Both exist in 24.0.0 (see the git-town help output).
+
+## Stacked PRs
+
+Each `### PR N:` TRD section is one branch: `hack` for PR 1, `append` for each later PR so git-town records parentage. Merge PRs in order; once PR 1 merges, git-town retargets PR 2 to its new parent on the next `sync`/`propose`. Creating branches through the plain-git `workflow` adapter (`switch -c`) records no parent, so `sync`/`propose` cannot retarget. See `docs/guides/stacked-prs.md`.
+
+## Config conventions
+
+- Main branch is `main` (config key `git-town.main-branch`); `dev` is stacked on `main` here, and feature branches record `dev` as parent. Use the `set-parent` subcommand when a branch was created without git-town.
+- Config lives in the repository's git config (`git-town.*` keys); the git-town `init` subcommand is interactive, so agents must set those keys directly in git config instead.
+- `propose` on self-hosted forges needs the config key `git-town.forge-type` set to one of `github`, `gitlab`, `gitea`, `bitbucket`.
+- `ship` deletes the tracking branch unless `ship-delete-tracking-branch` is disabled; disable it if the remote auto-deletes shipped branches.
+
+## Gotchas
+
+- `propose` syncs first; commit (`workflow.commit`) or stash before running it.
+- `ship` into a non-main parent is refused without `--to-parent`; ship or delete ancestors first.
+- git-town is installed as its own executable and is also reachable as a git subcommand (`town`); either spelling works in 24.0.0.

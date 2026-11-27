@@ -1,0 +1,29 @@
+category: e2e-quality
+version: "1.0"
+
+# Capability ids use the single-dot, hyphenated convention established by host.yaml/
+# workflow.yaml (TRD-2026-8d825f54 TRD-035).
+
+capabilities:
+  e2e-quality.run-e2e:
+    description: Run end-to-end browser tests against a target.
+    inputs: [target]
+    outputs: [status, report]
+    required: true
+    sideEffect: false
+
+  # Optional: a performance budget check (for example Lighthouse CI) against a target.
+  e2e-quality.audit-performance:
+    description: Measure and report performance budget compliance for a target.
+    inputs: [target]
+    outputs: [status, report]
+    required: false
+    sideEffect: false
+
+  # Optional: an accessibility check (for example axe-core) against a target.
+  e2e-quality.audit-accessibility:
+    description: Scan a target for accessibility violations.
+    inputs: [target]
+    outputs: [status, report]
+    required: false
+    sideEffect: false
