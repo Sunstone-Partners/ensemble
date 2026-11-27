@@ -13,6 +13,7 @@
  */
 
 const { BOOLEAN_GLOBALS, VALUE_GLOBALS } = require('./argv');
+const { describeRoles } = require('./roles');
 
 /** The fields `--describe` publishes for each verb, in the order it emits them. */
 const DESCRIBE_FIELDS = Object.freeze(
@@ -39,7 +40,8 @@ function isEmptySchema(schema) {
 
 /**
  * @param {{verbs: Function}} registry
- * @returns {{verbs: object[]}} every registered verb, sorted by group then name
+ * @returns {{roles: object[], verbs: object[]}} every registered verb, sorted by group then name,
+ *   and every hand-off role with its brief and result schemas
  * @throws {Error} naming the verb when its input or output schema is missing or empty
  */
 function describe(registry) {
@@ -56,7 +58,9 @@ function describe(registry) {
     for (const field of DESCRIBE_FIELDS) entry[field] = spec[field];
     return entry;
   });
-  return { verbs };
+  // Hand-off roles are published beside the verbs: a planning model reads the brief and result
+  // schemas here instead of from prose (TRD-016).
+  return { roles: describeRoles(), verbs };
 }
 
 /** @returns {string[]} one usage line per global flag, from the parser's own tables */

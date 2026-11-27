@@ -10,6 +10,7 @@
  */
 
 const SPECS = [
+  require('../verbs/implement-accept').spec,
   require('../verbs/implement-args').spec,
   require('../verbs/implement-bead-health').spec,
   require('../verbs/implement-branch').spec,
