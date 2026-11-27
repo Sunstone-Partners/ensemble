@@ -67,6 +67,21 @@ function needsChoice(choice) {
 }
 
 /**
+ * The verb has done every mechanical step it can and the model must do the rest (TRD-016).
+ * The manifest is the answer, so it travels as `data` with the `next` command the model runs
+ * once it has written the agents' result files.
+ * @param {{agents: object[], baseHead: string, runId: string}} manifest
+ * @param {*} next what to run after the agents finish (`implement accept ...`)
+ * @returns {object}
+ */
+function needsAgent(manifest, next) {
+  const result = make('NEEDS_AGENT', null, null, null);
+  result.data = manifest;
+  result.next = next === undefined ? null : next;
+  return result;
+}
+
+/**
  * @param {string} verb the label the envelope carries
  * @param {object} res a tagged result
  * @returns {object} the envelope
@@ -80,7 +95,13 @@ function toEnvelope(verb, res) {
       verb,
     });
   }
-  return buildEnvelope({ data: res.data === undefined ? null : res.data, ok: true, status: res.status, verb });
+  return buildEnvelope({
+    data: res.data === undefined ? null : res.data,
+    next: res.next === undefined ? null : res.next,
+    ok: true,
+    status: res.status,
+    verb,
+  });
 }
 
 /**
@@ -104,6 +125,7 @@ module.exports = {
   RESULT,
   engineError,
   isResult,
+  needsAgent,
   needsChoice,
   refused,
   toEnvelope,

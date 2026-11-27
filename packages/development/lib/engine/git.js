@@ -42,6 +42,37 @@ function git(call, args) {
 }
 
 /**
+ * Run `git` where a non-zero exit is an ANSWER (`rev-parse --verify` of a missing commit exits 1,
+ * `merge-base` of unrelated histories exits 1), not a failure to ask.
+ *
+ * Only exits 0 and 1 are answers. A git that cannot be spawned, is killed, or dies with a fatal
+ * error (exit 128: not a repository, corrupt object store) stays UNAVAILABLE, so an outage can
+ * never be read as "that commit does not exist" (Constitution Rule 7).
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {string[]} args git's own arguments
+ * @returns {{exit: 0|1, stdout: string}|object} the answer, or a tagged engine result
+ */
+function gitProbe(call, args) {
+  try {
+    const stdout = execFileSync('git', args, {
+      cwd: call.projectRoot,
+      encoding: 'utf8',
+      env: call.env,
+      maxBuffer: MAX_OUTPUT_BYTES,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { exit: 0, stdout };
+  } catch (err) {
+    if (err && err.status === 1) return { exit: 1, stdout: String(err.stdout || '') };
+    return unavailable(
+      'GIT_UNAVAILABLE',
+      `git ${args.join(' ')} failed: ${err && err.message ? err.message : String(err)}`
+    );
+  }
+}
+
+/**
  * The files git tracks, after every exclude file it honours.
  * @param {object} call the dispatcher's call object
  * @returns {string[]|object} project-relative paths, or a tagged engine result
@@ -140,6 +171,7 @@ function switchTo(call, name) {
 module.exports = {
   currentBranch,
   git,
+  gitProbe,
   localBranches,
   lsFiles,
   remoteDefaultBranch,

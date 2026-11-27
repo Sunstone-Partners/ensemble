@@ -240,6 +240,7 @@ module.exports = {
   MAX_STDIN_BYTES,
   invalidInputError,
   isDanglingSymlink,
+  isInside,
   parseInput,
   readStdinCapped,
   realpathOfNearestAncestor,
