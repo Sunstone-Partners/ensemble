@@ -72,6 +72,45 @@ function liveHead(call) {
   return out.trim();
 }
 
+/**
+ * Make `dir` (under `.ensemble/state/engine/<runId>`) and prove it is really inside the project.
+ *
+ * The check runs BEFORE `mkdir` as well as after: `.ensemble/state/engine` may be a symlink
+ * that leads out of the tree, and `mkdir -p` would follow it and create the directory there.
+ * Real paths are compared, so a link anywhere along the way is caught.
+ *
+ * @returns {string} the real directory
+ * @throws {Error} `PATH_ESCAPE` when any part of the path resolves outside the project root
+ */
+function safeStateDir(call, dir) {
+  const root = fs.realpathSync(call.projectRoot);
+  const stateRoot = path.join(root, '.ensemble', 'state');
+  const escape = real =>
+    engineError('INVALID_INPUT', 'PATH_ESCAPE', `state directory '${dir}' resolves to '${real}', outside the project`);
+  const before = realpathOfNearestAncestor(dir);
+  if (!isInside(stateRoot, before)) throw escape(before);
+  ensureStateDir(call.projectRoot, dir);
+  const real = fs.realpathSync(dir);
+  if (!isInside(stateRoot, real)) throw escape(real);
+  return real;
+}
+
+/**
+ * Write `body` to `target` without ever following a link: a fresh randomly named file is
+ * created exclusively (`wx` refuses an existing path, link or not) and renamed over the target,
+ * which replaces a link at the target instead of writing through it.
+ */
+function writeFileSafely(target, body) {
+  const tmp = `${target}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tmp, body, { flag: 'wx' });
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
 /** `now` (seconds, injected by the dispatcher) plus the window, as an ISO string. */
 function deadlineIso(call, seconds) {
   return new Date((call.now + seconds) * 1000).toISOString();
@@ -102,8 +141,8 @@ function handOff(call, { role, agents }) {
   if (isResult(head)) return head;
 
   const dirs = runDirs(call.projectRoot, runId);
-  ensureStateDir(call.projectRoot, dirs.briefs);
-  ensureStateDir(call.projectRoot, dirs.results);
+  safeStateDir(call, dirs.briefs);
+  safeStateDir(call, dirs.results);
   const rel = file => path.relative(call.projectRoot, file).split(path.sep).join('/');
 
   const seen = new Set();
@@ -121,7 +160,7 @@ function handOff(call, { role, agents }) {
     }
     const briefFile = path.join(dirs.briefs, `${step}.json`);
     const outFile = path.join(dirs.results, `${step}.json`);
-    fs.writeFileSync(briefFile, `${JSON.stringify(brief, null, 2)}\n`);
+    writeFileSafely(briefFile, `${JSON.stringify(brief, null, 2)}\n`);
     return {
       briefPath: rel(briefFile),
       deadlineAtIso: deadlineIso(call, ROLES[role].deadlineSeconds),
@@ -158,6 +197,30 @@ function readCapped(file) {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * The brief the engine wrote for `step`. Missing or invalid means the engine never dispatched
+ * this step (or the file was tampered with): REFUSED, never guessed at.
+ */
+function readBrief(call, dirs, step, role) {
+  const file = path.join(dirs.briefs, `${step}.json`);
+  let brief;
+  try {
+    // The brief is read through its real path, which must stay inside the briefs directory.
+    const real = fs.realpathSync(file);
+    if (!isInside(fs.realpathSync(dirs.briefs), real)) throw new Error('brief resolves outside the briefs directory');
+    brief = JSON.parse(fs.readFileSync(real, 'utf8'));
+    validateInput(brief, ROLES[role].briefSchema);
+  } catch (err) {
+    return refused('NO_DISPATCH', `step '${step}' has no valid dispatch brief at ${path.relative(call.projectRoot, file)}`, {
+      reason: err.code || err.message,
+    });
+  }
+  if (brief.step !== step || brief.role !== role) {
+    return refused('NO_DISPATCH', `the brief at ${path.relative(call.projectRoot, file)} is for a different step`, null);
+  }
+  return brief;
 }
 
 /**
@@ -223,31 +286,50 @@ function acceptResult(call, { step, resultFile }) {
     throw engineError('INVALID_INPUT', 'STEP_MISMATCH', `result names step '${result.step}', not '${step}'`);
   }
 
-  const head = liveHead(call);
-  if (isResult(head)) return head;
-  if (!head.startsWith(result.head)) {
+  // The dispatch is the brief the engine wrote when it handed the step out. It is read back
+  // only to learn WHAT was dispatched (the head, the base, the beads); whether that is still
+  // true is decided below from git and the tracker as they are now. A result with no brief, or
+  // one that disagrees with it, answers a job the engine never gave.
+  const brief = readBrief(call, dirs, step, role);
+  if (isResult(brief)) return brief;
+  if (result.head !== brief.head) {
     return refused(
       'STALE_RESULT',
-      `result was produced against ${result.head}, but HEAD is now ${head}; rerun the step`,
-      { head, resultHead: result.head }
+      `result was produced against ${result.head}, but the step was dispatched at ${brief.head}; rerun the step`,
+      { dispatchedHead: brief.head, resultHead: result.head }
+    );
+  }
+  const head = liveHead(call);
+  if (isResult(head)) return head;
+  if (head !== brief.head) {
+    return refused(
+      'STALE_RESULT',
+      `step was dispatched at ${brief.head}, but HEAD is now ${head}; rerun the step`,
+      { dispatchedHead: brief.head, head }
     );
   }
 
-  const precondition = ROLES[role].precondition(call, result);
+  const precondition = ROLES[role].precondition(call, result, brief);
   if (precondition) return precondition;
 
   const record = { head, result, resultSha256: sha256(text), role, step };
   const target = path.join(dirs.accepted, `${step}.json`);
   const body = `${JSON.stringify(sortKeys(record), null, 2)}\n`;
-  if (fs.existsSync(target) && fs.readFileSync(target, 'utf8') !== body) {
+  // Nothing is created until the directory is proven to be inside the project.
+  safeStateDir(call, dirs.accepted);
+  let existing = null;
+  try {
+    const entry = fs.lstatSync(target);
+    existing = entry.isFile() ? fs.readFileSync(target, 'utf8') : '';
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (existing !== null && existing !== body) {
     return refused('ALREADY_ACCEPTED', `step '${step}' already has a different accepted result`, {
       recorded: path.relative(call.projectRoot, target),
     });
   }
-  ensureStateDir(call.projectRoot, dirs.accepted);
-  const tmp = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, body);
-  fs.renameSync(tmp, target);
+  writeFileSafely(target, body);
 
   return {
     ACCEPTED: true,

@@ -18,7 +18,7 @@
 
 const { isClosed, readIssues } = require('./tracker');
 const { isResult, refused } = require('./result');
-const { currentBranch, git, remoteDefaultBranch } = require('./git');
+const { currentBranch, git, gitProbe, remoteDefaultBranch } = require('./git');
 
 const SHA = { pattern: '^[0-9a-f]{7,64}$', type: 'string' };
 const TEXT = { maxLength: 20000, minLength: 1, type: 'string' };
@@ -41,15 +41,35 @@ function schema(role, properties, required) {
 }
 
 /**
- * Each builder-wave bead must be closed in the tracker right now. The manifest cannot vouch for
- * that; only the tracker can.
+ * What the engine dispatched is the `brief` it wrote, not what the result says. Every
+ * precondition below reads the dispatched facts from the brief and checks them against live
+ * state; a result field is only ever compared to the brief, never used as the thing checked.
+ *
+ * `bound` names the result fields that must equal the brief's, so a result cannot swap the
+ * base a reviewer saw or the branch a PR is for.
  */
-function builderWavePrecondition(call, result) {
+
+/**
+ * The dispatched beads, all of them, must be closed in the tracker right now when the agent
+ * says it finished. A `done` that names none, fewer or other beads than dispatched is a result
+ * for a different job.
+ */
+function builderWavePrecondition(call, result, brief) {
+  const dispatched = [...brief.beads].sort();
+  const reported = [...result.beads].sort();
+  const stray = reported.filter(id => !dispatched.includes(id));
+  if (stray.length > 0 || (result.status === 'done' && reported.join('\n') !== dispatched.join('\n'))) {
+    return refused(
+      'BINDING_MISMATCH',
+      `builder-wave result names beads [${reported.join(', ')}] but [${dispatched.join(', ')}] were dispatched`,
+      { dispatched, reported }
+    );
+  }
   if (result.status === 'blocked') return null;
   const listed = readIssues(call, { all: true });
   if (isResult(listed)) return listed;
   const byId = new Map(listed.issues.map(issue => [String(issue && issue.id), issue]));
-  const open = result.beads.filter(id => !byId.has(id) || !isClosed(byId.get(id)));
+  const open = dispatched.filter(id => !byId.has(id) || !isClosed(byId.get(id)));
   if (open.length === 0) return null;
   return refused(
     'PRECONDITION_NOT_MET',
@@ -59,41 +79,51 @@ function builderWavePrecondition(call, result) {
 }
 
 /**
- * The reviewed base must be a strict ancestor of the live HEAD: there is a diff to have reviewed.
- * Ancestry is read as `merge-base == base`, not from `merge-base --is-ancestor`'s exit status, so
- * a git that cannot run stays UNAVAILABLE instead of reading as "not an ancestor".
+ * The dispatched base (from the brief) must be a strict ancestor of the live HEAD: there is a
+ * diff to have reviewed. Ancestry is read as `merge-base == base`, not from `merge-base
+ * --is-ancestor`'s exit status, so a git that cannot run stays UNAVAILABLE.
  */
-function reviewerPrecondition(call, result) {
-  const live = git(call, ['rev-parse', 'HEAD']);
-  if (isResult(live)) return live;
-  const base = git(call, ['rev-parse', '--verify', '--quiet', `${result.base}^{commit}`]);
-  if (isResult(base)) {
-    return refused('PRECONDITION_NOT_MET', `reviewer base ${result.base} is not a commit in this repository`, {
-      base: result.base,
+function reviewerPrecondition(call, result, brief) {
+  if (result.base !== brief.base) {
+    return refused('BINDING_MISMATCH', `reviewer result is for base ${result.base}, but ${brief.base} was dispatched`, {
+      dispatched: brief.base,
+      reported: result.base,
     });
   }
-  const mergeBase = git(call, ['merge-base', base.trim(), live.trim()]);
-  if (isResult(mergeBase)) return mergeBase;
-  if (mergeBase.trim() !== base.trim() || base.trim() === live.trim()) {
+  const live = git(call, ['rev-parse', 'HEAD']);
+  if (isResult(live)) return live;
+  // Exit 1 from these two is the answer "no such commit" / "no common ancestor"; anything else
+  // that goes wrong is a git outage and is passed through untouched.
+  const resolved = gitProbe(call, ['rev-parse', '--verify', '--quiet', `${brief.base}^{commit}`]);
+  if (isResult(resolved)) return resolved;
+  if (resolved.exit === 1) {
+    return refused('PRECONDITION_NOT_MET', `reviewer base ${brief.base} is not a commit in this repository`, {
+      base: brief.base,
+    });
+  }
+  const base = resolved.stdout.trim();
+  const common = gitProbe(call, ['merge-base', base, live.trim()]);
+  if (isResult(common)) return common;
+  if (common.exit === 1 || common.stdout.trim() !== base || base === live.trim()) {
     return refused(
       'PRECONDITION_NOT_MET',
-      `reviewer base ${result.base} is not a strict ancestor of the live HEAD ${live.trim()}, so there is no diff to have reviewed`,
-      { base: base.trim(), head: live.trim() }
+      `reviewer base ${brief.base} is not a strict ancestor of the live HEAD ${live.trim()}, so there is no diff to have reviewed`,
+      { base, head: live.trim() }
     );
   }
   return null;
 }
 
-/** PR prose is for a branch that is not the base branch: a PR from the default branch is no PR. */
-function prProsePrecondition(call) {
+/** PR prose is for the dispatched feature branch, still checked out, and not the base branch. */
+function prProsePrecondition(call, result, brief) {
   const branch = currentBranch(call);
   if (isResult(branch)) return branch;
   const base = remoteDefaultBranch(call);
-  if (branch === '' || branch === base) {
+  if (branch === '' || branch === base || branch !== brief.branch) {
     return refused(
       'PRECONDITION_NOT_MET',
-      `pr-prose needs a feature branch checked out; HEAD is ${branch === '' ? 'detached' : `on '${base}'`}`,
-      { base, branch }
+      `pr-prose was dispatched for '${brief.branch}'; HEAD is ${branch === '' ? 'detached' : `on '${branch}'`}`,
+      { base, branch, dispatched: brief.branch }
     );
   }
   return null;

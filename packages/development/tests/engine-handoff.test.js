@@ -17,7 +17,8 @@ const { execFileSync } = require('child_process');
 const { buildRegistry } = require('../lib/ensemble-cli');
 const { MAX_RESULT_BYTES, handOff, resolveChoice } = require('../lib/engine/handoff');
 const { expectMatchesOutputSchema, makeCtx, runMain } = require('./helpers/engine-run');
-const { makeRepo } = require('./helpers/engine-repo');
+const { initRepo, makeRepo, writeToolchainYaml } = require('./helpers/engine-repo');
+const { createTrackerStub } = require('./fixtures/engine/tracker-stub');
 
 const NOW = Math.floor(Date.UTC(2026, 10, 27, 12, 0, 0) / 1000);
 const RUN = 'r1';
@@ -65,13 +66,25 @@ function registryFor(fx) {
     ...base,
     handler: call =>
       handOff(call, {
-        agents: [{ brief: { base: fx.base, prId: 'pr-1' }, name: 'r1' }],
+        agents: [{ brief: { base: fx.reviewBase || fx.base, prId: 'pr-1' }, name: 'r1' }],
         role: 'reviewer',
       }),
     inputSchema: empty,
     name: 'review',
     outputSchema: empty,
     summary: 'fixture: a verb that needs the reviewer agent',
+  });
+  registry.register({
+    ...base,
+    handler: call =>
+      handOff(call, {
+        agents: [{ brief: { beads: fx.dispatchBeads, instructions: 'build the wave' }, name: 'wave' }],
+        role: 'builder-wave',
+      }),
+    inputSchema: empty,
+    name: 'build',
+    outputSchema: empty,
+    summary: 'fixture: a verb that needs the builder-wave agent',
   });
   registry.register({
     ...base,
@@ -251,7 +264,8 @@ describe('implement accept records only a valid, current, still-applicable resul
     const out = accept(fx, agent.step, agent.outPath);
     expect(out.exitCode).toBe(1);
     expect(out.envelope).toMatchObject({ error: { code: 'STALE_RESULT' }, status: 'REFUSED' });
-    expect(out.envelope.error.details).toEqual({ head: moved, resultHead: old });
+    expect(out.envelope.error.details).toEqual({ dispatchedHead: old, head: moved });
+    expect(moved).not.toBe(old);
     expect(fs.existsSync(acceptedDir(fx))).toBe(false);
   });
 
@@ -298,20 +312,253 @@ describe('implement accept records only a valid, current, still-applicable resul
     expect(fs.existsSync(acceptedDir(fx))).toBe(false);
   });
 
-  test('the reviewer precondition needs a real diff: base equal to HEAD is REFUSED, a real ancestor is accepted', () => {
+  test('a result cannot claim the current HEAD for an older dispatch', () => {
     const fx = featureRepo();
-    commit(fx, 'one.txt');
-    const [agent] = manifest(fx, 'review').agents;
-    const head = git(fx, ['rev-parse', 'HEAD']);
-    const result = (base) => ({ base, findings: [], head, role: 'reviewer', step: agent.step, verdict: 'pass' });
+    const [agent] = manifest(fx).agents;
+    const moved = commit(fx, 'later.txt');
+    writeResult(fx, agent.outPath, proseResult(agent, moved));
 
-    writeResult(fx, agent.outPath, result(head));
-    expect(accept(fx, agent.step, agent.outPath).envelope).toMatchObject({
-      error: { code: 'PRECONDITION_NOT_MET' },
-      status: 'REFUSED',
+    const out = accept(fx, agent.step, agent.outPath);
+    expect(out.envelope).toMatchObject({ error: { code: 'STALE_RESULT' }, status: 'REFUSED' });
+    expect(fs.existsSync(acceptedDir(fx))).toBe(false);
+  });
+
+  test('a result for a step the engine never dispatched is REFUSED', () => {
+    const fx = featureRepo();
+    const head = git(fx, ['rev-parse', 'HEAD']);
+    const agent = { step: 'pr-prose--ghost' };
+    const outPath = `.ensemble/state/engine/${RUN}/results/pr-prose--ghost.json`;
+    writeResult(fx, outPath, proseResult(agent, head));
+
+    const out = accept(fx, agent.step, outPath);
+    expect(out.envelope).toMatchObject({ error: { code: 'NO_DISPATCH' }, status: 'REFUSED' });
+    expect(fs.existsSync(acceptedDir(fx))).toBe(false);
+  });
+
+  test('pr-prose is bound to the dispatched branch', () => {
+    const fx = featureRepo();
+    const [agent] = manifest(fx).agents;
+    const head = git(fx, ['rev-parse', 'HEAD']);
+    writeResult(fx, agent.outPath, proseResult(agent, head));
+    git(fx, ['switch', '-c', 'feat/other']);
+
+    expect(accept(fx, agent.step, agent.outPath).envelope.error.code).toBe('PRECONDITION_NOT_MET');
+  });
+
+  describe('state directories never lead outside the project', () => {
+    function outsideDir(fx, name) {
+      const dir = path.join(path.dirname(fx.root), `${path.basename(fx.root)}-${name}`);
+      fs.mkdirSync(dir, { recursive: true });
+      return dir;
+    }
+    const listing = dir => fs.readdirSync(dir).sort();
+
+    test('an accepted directory that is a symlink out of the tree is refused and the target stays untouched', () => {
+      const fx = featureRepo();
+      const [agent] = manifest(fx).agents;
+      const head = git(fx, ['rev-parse', 'HEAD']);
+      writeResult(fx, agent.outPath, proseResult(agent, head));
+      const outside = outsideDir(fx, 'accepted');
+      fs.symlinkSync(outside, acceptedDir(fx));
+
+      const out = accept(fx, agent.step, agent.outPath);
+      expect(out.envelope).toMatchObject({ error: { code: 'PATH_ESCAPE' }, status: 'INVALID_INPUT' });
+      expect(listing(outside)).toEqual([]);
     });
-    writeResult(fx, agent.outPath, result(fx.base));
-    expect(accept(fx, agent.step, agent.outPath).envelope.status).toBe('OK');
+
+    test('a symlinked engine state directory stops a hand-off before anything is created', () => {
+      const fx = featureRepo();
+      const outside = outsideDir(fx, 'engine');
+      fs.mkdirSync(path.join(fx.root, '.ensemble', 'state'), { recursive: true });
+      fs.symlinkSync(outside, path.join(fx.root, '.ensemble', 'state', 'engine'));
+
+      const out = run(fx, ['fixture', 'prose']);
+      expect(out.envelope).toMatchObject({ error: { code: 'PATH_ESCAPE' }, status: 'INVALID_INPUT' });
+      expect(listing(outside)).toEqual([]);
+    });
+
+    test('a symlink planted at the accepted file is never written through', () => {
+      const fx = featureRepo();
+      const [agent] = manifest(fx).agents;
+      const head = git(fx, ['rev-parse', 'HEAD']);
+      writeResult(fx, agent.outPath, proseResult(agent, head));
+      const outside = outsideDir(fx, 'victim');
+      const victim = path.join(outside, 'victim.json');
+      fs.writeFileSync(victim, 'untouched');
+      fs.mkdirSync(acceptedDir(fx), { recursive: true });
+      fs.symlinkSync(victim, path.join(acceptedDir(fx), `${agent.step}.json`));
+
+      const out = accept(fx, agent.step, agent.outPath);
+      expect(out.envelope.status).toBe('REFUSED');
+      expect(fs.readFileSync(victim, 'utf8')).toBe('untouched');
+      expect(listing(outside)).toEqual(['victim.json']);
+    });
+
+    test('a brief that is a symlink out of the briefs directory is not trusted', () => {
+      const fx = featureRepo();
+      const [agent] = manifest(fx).agents;
+      const head = git(fx, ['rev-parse', 'HEAD']);
+      writeResult(fx, agent.outPath, proseResult(agent, head));
+      const briefFile = path.join(fx.root, agent.briefPath);
+      const copy = path.join(outsideDir(fx, 'brief'), 'brief.json');
+      fs.copyFileSync(briefFile, copy);
+      fs.rmSync(briefFile);
+      fs.symlinkSync(copy, briefFile);
+
+      expect(accept(fx, agent.step, agent.outPath).envelope).toMatchObject({
+        error: { code: 'NO_DISPATCH' },
+        status: 'REFUSED',
+      });
+    });
+  });
+
+  describe('reviewer', () => {
+    const result = (agent, head, base) => ({ base, findings: [], head, role: 'reviewer', step: agent.step, verdict: 'pass' });
+
+    test('the dispatched base must be a strict ancestor of HEAD; a real ancestor is accepted', () => {
+      const fx = featureRepo();
+      commit(fx, 'one.txt');
+      const head = git(fx, ['rev-parse', 'HEAD']);
+
+      fx.reviewBase = head; // dispatched with nothing to review
+      let [agent] = manifest(fx, 'review').agents;
+      writeResult(fx, agent.outPath, result(agent, head, head));
+      expect(accept(fx, agent.step, agent.outPath).envelope).toMatchObject({
+        error: { code: 'PRECONDITION_NOT_MET' },
+        status: 'REFUSED',
+      });
+
+      fx.reviewBase = fx.base;
+      [agent] = manifest(fx, 'review').agents;
+      writeResult(fx, agent.outPath, result(agent, head, fx.base));
+      expect(accept(fx, agent.step, agent.outPath).envelope.status).toBe('OK');
+    });
+
+    test('a base that is not a commit is a definitive REFUSED, but a git outage stays UNAVAILABLE', () => {
+      const fx = featureRepo();
+      commit(fx, 'one.txt');
+      const head = git(fx, ['rev-parse', 'HEAD']);
+      fx.reviewBase = 'f'.repeat(40);
+      const [agent] = manifest(fx, 'review').agents;
+      writeResult(fx, agent.outPath, result(agent, head, 'f'.repeat(40)));
+      expect(accept(fx, agent.step, agent.outPath).envelope).toMatchObject({
+        error: { code: 'PRECONDITION_NOT_MET' },
+        status: 'REFUSED',
+      });
+
+      // Same result, but git dies with a fatal error while resolving the base: not "no such commit".
+      fx.reviewBase = fx.base;
+      const [real] = manifest(fx, 'review').agents;
+      writeResult(fx, real.outPath, result(real, head, fx.base));
+      const realGit = execFileSync('sh', ['-c', 'command -v git'], { env: fx.env, encoding: 'utf8' }).trim();
+      const shim = path.join(path.dirname(fx.root), `${path.basename(fx.root)}-gitshim`);
+      fs.mkdirSync(shim, { recursive: true });
+      fs.writeFileSync(
+        path.join(shim, 'git'),
+        `#!/bin/sh\ncase "$*" in *--verify*) echo 'fatal: object database unreadable' >&2; exit 128;; esac\nexec ${realGit} "$@"\n`,
+        { mode: 0o755 }
+      );
+      const out = run(fx, ['implement', 'accept', '--step', real.step, '--result-file', real.outPath], {
+        PATH: `${shim}:${fx.env.PATH}`,
+      });
+      expect(out.envelope.status).toBe('UNAVAILABLE');
+      expect(out.envelope.error.code).toBe('GIT_UNAVAILABLE');
+    });
+
+    test('a result cannot substitute a different base than was dispatched', () => {
+      const fx = featureRepo();
+      commit(fx, 'one.txt');
+      const head = git(fx, ['rev-parse', 'HEAD']);
+      const [agent] = manifest(fx, 'review').agents;
+      // `head` is a valid ancestor-or-equal commit, but it is not the base that was dispatched.
+      const middle = commit(fx, 'two.txt');
+      git(fx, ['reset', '--quiet', '--hard', head]);
+      writeResult(fx, agent.outPath, result(agent, head, middle));
+
+      expect(accept(fx, agent.step, agent.outPath).envelope).toMatchObject({
+        error: { code: 'BINDING_MISMATCH' },
+        status: 'REFUSED',
+      });
+      expect(fs.existsSync(acceptedDir(fx))).toBe(false);
+    });
+  });
+
+  describe('builder-wave', () => {
+    function builderRepo() {
+      const fx = makeRepo({ files: { 'README.md': 'widget\n' }, init: false });
+      fx.tracker = createTrackerStub(fx.root, {
+        issues: [
+          { id: 'bd-1', status: 'open', title: '[trd:w] TRD-001: one' },
+          { id: 'bd-2', status: 'open', title: '[trd:w] TRD-002: two' },
+          { id: 'bd-9', status: 'closed', title: '[trd:w] TRD-009: unrelated' },
+        ],
+      });
+      initRepo(fx, {});
+      git(fx, ['branch', '-M', 'main']);
+      const pre = runMain(
+        ['tool', 'preflight', '--require', 'tracker.list', '--run-id', RUN],
+        makeCtx({ cwd: fx.root, env: fx.env })
+      );
+      expect(pre.exitCode).toBe(0);
+      fx.dispatchBeads = ['bd-1', 'bd-2'];
+      return fx;
+    }
+    const result = (agent, head, beads, status = 'done') => ({
+      beads, head, role: 'builder-wave', status, step: agent.step, summary: 'built',
+    });
+    const dispatch = fx => {
+      const { agents, baseHead } = manifest(fx, 'build');
+      return { agent: agents[0], head: baseHead };
+    };
+
+    test('done with every dispatched bead closed in the tracker is recorded', () => {
+      const fx = builderRepo();
+      const { agent, head } = dispatch(fx);
+      fx.tracker.setStatus('bd-1', 'closed');
+      fx.tracker.setStatus('bd-2', 'closed');
+      writeResult(fx, agent.outPath, result(agent, head, ['bd-2', 'bd-1']));
+      expect(accept(fx, agent.step, agent.outPath).envelope.status).toBe('OK');
+    });
+
+    test('a dispatched bead still open in the tracker is REFUSED even though the result says done', () => {
+      const fx = builderRepo();
+      const { agent, head } = dispatch(fx);
+      fx.tracker.setStatus('bd-1', 'closed');
+      writeResult(fx, agent.outPath, result(agent, head, ['bd-1', 'bd-2']));
+
+      const out = accept(fx, agent.step, agent.outPath);
+      expect(out.envelope).toMatchObject({ error: { code: 'PRECONDITION_NOT_MET' }, status: 'REFUSED' });
+      expect(out.envelope.error.details).toEqual({ beads: ['bd-2'] });
+      expect(fs.existsSync(acceptedDir(fx))).toBe(false);
+    });
+
+    test.each([
+      ['an empty bead list', []],
+      ['an unrelated closed bead', ['bd-9']],
+      ['a subset of the dispatched beads', ['bd-1']],
+      ['the dispatched beads plus a stray one', ['bd-1', 'bd-2', 'bd-9']],
+    ])('done with %s is REFUSED as a different job from the one dispatched', (_label, beads) => {
+      const fx = builderRepo();
+      const { agent, head } = dispatch(fx);
+      for (const id of ['bd-1', 'bd-2']) fx.tracker.setStatus(id, 'closed');
+      writeResult(fx, agent.outPath, result(agent, head, beads));
+
+      const out = accept(fx, agent.step, agent.outPath);
+      expect(out.envelope).toMatchObject({ error: { code: 'BINDING_MISMATCH' }, status: 'REFUSED' });
+      expect(fs.existsSync(acceptedDir(fx))).toBe(false);
+    });
+
+    test('blocked may report a subset of the dispatched beads, never another bead', () => {
+      const fx = builderRepo();
+      const { agent, head } = dispatch(fx);
+      writeResult(fx, agent.outPath, result(agent, head, ['bd-1'], 'blocked'));
+      expect(accept(fx, agent.step, agent.outPath).envelope.status).toBe('OK');
+
+      const fy = builderRepo();
+      const second = dispatch(fy);
+      writeResult(fy, second.agent.outPath, result(second.agent, second.head, ['bd-9'], 'blocked'));
+      expect(accept(fy, second.agent.step, second.agent.outPath).envelope.error.code).toBe('BINDING_MISMATCH');
+    });
   });
 });
 
