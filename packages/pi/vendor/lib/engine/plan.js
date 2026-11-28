@@ -37,7 +37,7 @@ const path = require('path');
 
 const { gateAction, completionAction } = require('./pr-plan');
 const { remoteDefaultBranch } = require('./git');
-const { isResult, unavailable } = require('./result');
+const { isResult, refused, unavailable } = require('./result');
 const { callCapability, classify, isClosed, isTaskLevel, readComments, readIssues, scopeBeads } = require('./tracker');
 const { parseTitlePrefix } = require('../bead-refs');
 const { STRATEGIES } = require('./policy');
@@ -382,4 +382,49 @@ function decide(plan, state, context) {
   return { done, step: null, unmet: null };
 }
 
-module.exports = { FORWARDED, PLAN_INPUT, GATE_FAIL, GATE_PASS, buildPlan, decide, holds, isDone, readLiveState };
+/**
+ * The live preconditions of one pull-request step, enforced by `implement pr` itself so the verb
+ * refuses whatever a plan said: a phase PR needs an open epic and that phase's recorded gate; the
+ * completion PR needs the epic closed. Read from the tracker; nothing is taken from the caller.
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {{trdPath: string, slug: string, parsed: object, prPlan: object, phaseN?: number,
+ *   completion: boolean, informational: boolean}} input
+ * @returns {null|object} null when every precondition holds, else a tagged refusal naming the
+ *   first unmet one (or the tagged result of a failed read, unchanged)
+ */
+function unmetPrPrecondition(call, input) {
+  const phases = (Array.isArray(input.parsed.phases) ? input.parsed.phases : []).map(phase => ({
+    n: Number(phase.n),
+    taskIds: Array.isArray(phase.taskIds) ? phase.taskIds.map(String) : [],
+  }));
+  const state = readLiveState(call, {
+    flipCheckboxes: () => ({ changed: [] }),
+    phases,
+    prBackend: () => null,
+    prPlan: input.prPlan,
+    readReview: () => ({ STATE: 'missing' }),
+    slug: input.slug,
+    strategyInformational: () => input.informational,
+    trdPath: input.trdPath,
+  });
+  if (isResult(state)) return state;
+
+  const names = input.completion ? ['EPIC_CLOSED'] : ['EPIC_OPEN', `GATE_${input.phaseN}_RECORDED`];
+  const plan = { steps: [] };
+  for (const name of names) {
+    const ok = holds(name, state, plan);
+    if (isResult(ok)) return ok;
+    if (ok !== true) {
+      const label = input.completion ? 'the completion' : `phase ${input.phaseN}`;
+      return refused(
+        'PRECONDITION_UNMET',
+        `the pull request for ${label} is not due: precondition ${name} does not hold in the current tracker state`,
+        { precondition: name }
+      );
+    }
+  }
+  return null;
+}
+
+module.exports = { FORWARDED, PLAN_INPUT, GATE_FAIL, GATE_PASS, buildPlan, decide, holds, isDone, readLiveState, unmetPrPrecondition };

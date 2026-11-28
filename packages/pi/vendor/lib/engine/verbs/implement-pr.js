@@ -33,6 +33,7 @@ const MESSAGES = require('../messages');
 const { handOff, readAccepted } = require('../handoff');
 const { currentBranch, gitProbe, remoteDefaultBranch } = require('../git');
 const { loadPolicy } = require('../policy');
+const { unmetPrPrecondition } = require('../plan');
 const { gateAction, completionAction, savedPlan } = require('../pr-plan');
 const { isResult, refused, unavailable } = require('../result');
 const { MAX_OUTPUT_BYTES } = require('../cli-json');
@@ -337,6 +338,31 @@ function handler(call) {
   if (isResult(identity)) return identity;
   const directedBy = identity.login;
 
+  // TRD-020: the plan's own preconditions, from live tracker state, before any test run, push or
+  // hand-off (after the identity read, which is cheap and needs no tracker). A phase PR follows its recorded gate; the completion PR follows the closed epic.
+  const parsed = readParsedTrd(call, trdPath);
+  if (isResult(parsed)) return parsed;
+  const slug = String(parsed.slug || '');
+  const policy = loadPolicy({ projectRoot: call.projectRoot }).values;
+  const strategyWarnings = [];
+  const testStrategy = strategyFor(call, {
+    frontmatter: readFrontmatter(path.resolve(call.projectRoot, trdPath)).frontmatter,
+    parsed,
+    policy,
+    strategyArgument: undefined,
+    warnings: strategyWarnings,
+  });
+  const unmet = unmetPrPrecondition(call, {
+    completion,
+    informational: policy.strategy_gate[testStrategy.strategy] === 'informational',
+    parsed,
+    phaseN,
+    prPlan: plan,
+    slug,
+    trdPath,
+  });
+  if (unmet !== null) return unmet;
+
   // The full suite, before any prose is requested or anything is pushed.
   const tests = runPhaseTests(call, { file: '.', framework: input.framework });
   if (isResult(tests)) return tests;
@@ -353,10 +379,6 @@ function handler(call) {
   const baseSha = mergeBaseSha(call, base);
   if (isResult(baseSha)) return baseSha;
 
-  const parsed = readParsedTrd(call, trdPath);
-  if (isResult(parsed)) return parsed;
-  const slug = String(parsed.slug || '');
-  const policy = loadPolicy({ projectRoot: call.projectRoot }).values;
   const facts = readFacts(call, { completion, parsed, phaseN, policy, slug, trdPath, warnings });
   if (isResult(facts)) return facts;
 

@@ -598,6 +598,35 @@ describe('the audit ledger records, is ignored by git and is never consulted', (
     expect(git(fx, ['status', '--porcelain', '--untracked-files=all'])).not.toContain('.ensemble');
   });
 
+  test('every way a registered verb can end leaves a record: a refused flag, a refused input, a mounted legacy verb', () => {
+    const fx = repo();
+    const read = () =>
+      fs
+        .readdirSync(ledgerDir(fx))
+        .filter(name => name.endsWith('.json'))
+        .sort()
+        .map(name => JSON.parse(fs.readFileSync(path.join(ledgerDir(fx), name), 'utf8')));
+
+    // The parser refuses the flag before any input exists.
+    const flag = run(fx, 'plan', ['--no-such-flag']);
+    expect(flag.envelope.status).toBe('INVALID_INPUT');
+    // The schema refuses the value after the flags were read.
+    const value = run(fx, 'plan', ['--max-parallel', '0']);
+    expect(value.envelope.status).toBe('INVALID_INPUT');
+    // A mounted legacy verb prints its own bytes and reports only an exit code.
+    const legacy = runMain(['--run-id', 'r1', 'trd', 'parse', TRD_PATH], makeCtx({ cwd: fx.root, env: fx.env }));
+    expect(legacy.exitCode).toBe(0);
+
+    expect(read().map(record => [record.step, record.status])).toEqual([
+      ['implement plan', 'INVALID_INPUT'],
+      ['implement plan', 'INVALID_INPUT'],
+      ['trd parse', 'LEGACY_EXIT_0'],
+    ]);
+    // The refusal the caller saw is unchanged by having been recorded.
+    expect(flag.envelope.error.code).toBeDefined();
+    expect(new Set(read().map(record => record.input_sha256)).size).toBe(3);
+  });
+
   test('a refused call is recorded with its status; a call without --run-id records nothing', () => {
     const fx = repo();
     run(fx, 'gate');

@@ -102,10 +102,24 @@ function main(argv, ctx = {}) {
     parsed.group && parsed.verb ? registry.get(parsed.group, parsed.verb) : null;
   const passthrough = Boolean(parsedSpec && parsedSpec.passthrough);
 
+  // TRD-020: every registered verb run under --run-id leaves one audit record, whatever became of
+  // the call -- a refused flag, a refused input, a mounted legacy verb. Diagnostic only: never
+  // read to decide, and a failure to record changes nothing about the answer.
+  const audit = (envelope, input) => {
+    if (!parsedSpec || !parsed.globals.runId) return;
+    let projectRoot;
+    try {
+      projectRoot = resolveProjectRoot(ctx.cwd || process.cwd(), parsed.globals.projectRoot);
+    } catch {
+      return;
+    }
+    recordCall({ globals: parsed.globals, input, projectRoot, verb: label }, envelope);
+  };
+
   if (parsed.error && !passthrough) {
-    return envelopeResult(
-      invalidInput(label, parsed.error.code, parsed.error.message)
-    );
+    const refusal = envelopeResult(invalidInput(label, parsed.error.code, parsed.error.message));
+    audit(refusal.envelope, { argv: parsed.rest || [] });
+    return refusal;
   }
 
   if (parsed.describe) {
@@ -212,8 +226,11 @@ function main(argv, ctx = {}) {
   // TRD-020: a verb run under --run-id leaves an audit record. Diagnostic only, never read, and
   // never allowed to change what the verb answered.
   const outcome = dispatchVerb();
-  if (!spec.passthrough && call.input !== undefined && outcome.envelope) {
-    recordCall(call, outcome.envelope);
+  if (spec.passthrough) {
+    // A legacy verb writes its own bytes: what is recorded is its exit code, not its output.
+    audit({ status: `LEGACY_EXIT_${outcome.exitCode}`, verb: label }, { argv: parsed.rest || [] });
+  } else {
+    audit(outcome.envelope, call.input !== undefined ? call.input : { argv: parsed.rest || [] });
   }
   return outcome;
 }
