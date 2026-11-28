@@ -47,7 +47,17 @@ const GATE_PASS = 'Quality gate result: PASS';
 const GATE_FAIL = 'Quality gate result: FAIL';
 
 /** Flags that `next` forwards to a step's verb when that verb declares them. */
-const FORWARDED = ['strategy', 'pr-backend', 'framework', 'builder', 'max-parallel', 'test-command', 'test-file'];
+const FORWARDED = [
+  'branch',
+  'builder',
+  'framework',
+  'max-parallel',
+  'pr-backend',
+  'strategy',
+  'test-command',
+  'test-file',
+  'use-current-branch',
+];
 
 /** The flags `plan` and `next` share: what they need to see the same run. */
 const PLAN_INPUT = {
