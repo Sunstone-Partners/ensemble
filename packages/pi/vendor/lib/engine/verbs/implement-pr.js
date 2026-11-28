@@ -27,6 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const MESSAGES = require('../messages');
 const { handOff, readAccepted } = require('../handoff');
@@ -34,6 +35,7 @@ const { currentBranch, gitProbe, remoteDefaultBranch } = require('../git');
 const { loadPolicy } = require('../policy');
 const { gateAction, completionAction, savedPlan } = require('../pr-plan');
 const { isResult, refused, unavailable } = require('../result');
+const { MAX_OUTPUT_BYTES } = require('../cli-json');
 const { strategyFor } = require('../strategy');
 const { callCapability, classify, isClosed, readIssues, scopeBeads } = require('../tracker');
 const { readFrontmatter, readParsedTrd, requireTrd } = require('../trd-source');
@@ -47,6 +49,36 @@ const LOGIN_RE = /^[A-Za-z\d](?:[A-Za-z\d]|-(?=[A-Za-z\d])){0,38}$/;
 
 /** Where the body template is read from, a data path the vendor bundle carries beside this file. */
 const TEMPLATE_PATH = path.join(__dirname, '..', 'templates', 'pr-body.md');
+
+/**
+ * The login of the person the host is authenticated as: `gh api user --jq .login`, run with an
+ * argument array (nothing is interpolated into a shell). The engine never takes the accountable
+ * person from the caller: a login someone typed is a claim, the host's answer is the fact.
+ *
+ * @param {object} call the dispatcher's call object
+ * @returns {{login: string}|object} the login, or an UNAVAILABLE engine result naming why not
+ */
+function authenticatedLogin(call) {
+  let stdout;
+  try {
+    stdout = execFileSync('gh', ['api', 'user', '--jq', '.login'], {
+      cwd: call.projectRoot,
+      encoding: 'utf8',
+      env: call.env,
+      maxBuffer: MAX_OUTPUT_BYTES,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30000,
+    });
+  } catch (err) {
+    const stderr = err && err.stderr ? String(err.stderr).trim() : '';
+    return unavailable('DIRECTED_BY_UNAVAILABLE', MESSAGES.directedByUnavailable(stderr || (err && err.message) || 'gh could not be run'));
+  }
+  const login = String(stdout).trim();
+  if (!LOGIN_RE.test(login)) {
+    return unavailable('DIRECTED_BY_UNAVAILABLE', MESSAGES.directedByUnavailable('gh api user returned no GitHub login'));
+  }
+  return { login };
+}
 
 /** The Azure DevOps tool call the hand-off names (`SKILL.md:44`). */
 const ADO_CREATE_CALL = 'repo_create_pull_request';
@@ -272,12 +304,6 @@ function handler(call) {
     return refused('PR_TARGET_REQUIRED', MESSAGES.PR_TARGET_REQUIRED);
   }
 
-  const rawLogin = input['directed-by'];
-  if (typeof rawLogin !== 'string' || !LOGIN_RE.test(rawLogin.replace(/^@/, ''))) {
-    return refused('DIRECTED_BY_REQUIRED', MESSAGES.directedByRequired(typeof rawLogin === 'string' ? rawLogin : null));
-  }
-  const directedBy = rawLogin.replace(/^@/, '');
-
   const trd = requireTrd(call);
   if (isResult(trd)) return trd;
   const trdPath = trd.path;
@@ -303,6 +329,13 @@ function handler(call) {
   const backend = env.backend.backend;
   const strategy = env.branching.strategy;
   const warnings = [...env.warnings];
+
+  // The accountable person is whoever the GitHub CLI is authenticated as, whatever the backend:
+  // the engine has no other way to read an identity, so where `gh` cannot answer the verb stops
+  // and says so. The caller is never asked to type a login in.
+  const identity = authenticatedLogin(call);
+  if (isResult(identity)) return identity;
+  const directedBy = identity.login;
 
   // The full suite, before any prose is requested or anything is pushed.
   const tests = runPhaseTests(call, { file: '.', framework: input.framework });
@@ -422,7 +455,6 @@ const spec = {
     properties: {
       'ado-tool': { minLength: 1, type: 'string' },
       completion: { type: 'boolean' },
-      'directed-by': { type: 'string' },
       framework: { enum: ['jest', 'pytest', 'exunit', 'xunit', 'rspec'], type: 'string' },
       phase: { minimum: 1, type: 'integer' },
       'pr-backend': { enum: ['gh', 'ado', 'manual'], type: 'string' },

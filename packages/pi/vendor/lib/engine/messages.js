@@ -638,14 +638,13 @@ function prNotDue(label) {
 const PR_TARGET_REQUIRED = 'name exactly one pull request: --phase <N> for a phase PR, or --completion for the completion PR';
 
 /**
- * The accountable person is the human who asked, never the agent, and the engine cannot read it
- * from the host (`host.auth-status` reports only whether a session exists). Authored.
- * @param {string|null} given what the caller passed, when it was unusable
+ * The accountable person is read from the host's authenticated session (`gh api user`), never
+ * from the caller. Authored.
+ * @param {string} reason why the login could not be read
  * @returns {string}
  */
-function directedByRequired(given) {
-  const detail = given === null ? 'no login was given' : `'${given}' is not a GitHub login`;
-  return `the PR body names the person who asked for the work: ${detail}; pass --directed-by <login> (the authenticated login, e.g. from \`gh api user --jq .login\`)`;
+function directedByUnavailable(reason) {
+  return `the PR body names the authenticated GitHub user, and that login could not be read (${reason}); run \`gh auth login\` and retry (the engine reads the identity only through the GitHub CLI, whichever backend opens the pull request; it does not take a login from the caller). Nothing was tested, pushed or created`;
 }
 
 /** Authored: the checked-out branch is not the one the plan opens this PR from. */
@@ -836,7 +835,7 @@ module.exports = {
   gateActionMissing,
   gateNotScaffolded,
   gitTownUnusable,
-  directedByRequired,
+  directedByUnavailable,
   prBaseUnresolved,
   prBodyGradeFailed,
   prBranchMismatch,

@@ -69,6 +69,25 @@ function writeBackendAdapters(fx) {
     ].join('\n'),
     { mode: 0o755 }
   );
+  fx.ghLoginFile = `${fx.root}-gh-login`;
+  fs.writeFileSync(fx.ghLoginFile, `${LOGIN}\n`);
+  fs.writeFileSync(
+    path.join(fx.binDir, 'gh'),
+    [
+      '#!/usr/bin/env node',
+      "'use strict';",
+      "const fs = require('fs');",
+      'const argv = process.argv.slice(2);',
+      `const loginFile = ${JSON.stringify(fx.ghLoginFile)};`,
+      "if (argv.join(' ') !== 'api user --jq .login') {",
+      "  process.stderr.write('stub gh: unexpected ' + JSON.stringify(argv) + '\\n');",
+      '  process.exit(1);',
+      '}',
+      "if (!fs.existsSync(loginFile)) { process.stderr.write('You are not logged into any GitHub hosts. Run gh auth login to authenticate.\\n'); process.exit(4); }",
+      "process.stdout.write(fs.readFileSync(loginFile, 'utf8'));",
+    ].join('\n'),
+    { mode: 0o755 }
+  );
   const hostBin = path.join(fx.binDir, 'fixture-host');
   fs.writeFileSync(
     hostBin,
@@ -237,7 +256,7 @@ function runPr(fx, argv, extraEnv = {}) {
 }
 
 const STACKED = { ENSEMBLE_BRANCHING_STRATEGY: 'plain-git', ENSEMBLE_USE_STACKED_PRS: 'true' };
-const phase1 = ['--phase', '1', '--directed-by', LOGIN];
+const phase1 = ['--phase', '1'];
 
 /** Answer the `pr-prose` hand-off the way the model would, then record it with `implement accept`. */
 function supplyProse(fx, handOff, prose = PROSE) {
@@ -352,23 +371,55 @@ describe('the body is graded before anything is created', () => {
   });
 });
 
-describe('Directed by names the person who asked', () => {
-  test('the line carries the supplied login, not the agent', () => {
+describe('Directed by names the authenticated user', () => {
+  const gh = { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' };
+
+  test('the line carries the login the host is authenticated as, not the agent', () => {
     const fx = prRepo();
-    const { envelope } = runWithProse(fx, ['--phase', '1', '--directed-by', '@Some-Person'], { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
+    fs.writeFileSync(fx.ghLoginFile, 'Some-Person\n');
+    const { envelope } = runWithProse(fx, phase1, gh);
 
     expect(envelope.data.BODY).toMatch(/^Directed by: @Some-Person$/m);
     expect(envelope.data.BODY).not.toMatch(/claude|agent/i);
   });
 
-  test.each([[[]], [['--directed-by', 'not a login!']]])('a missing or malformed login %j is REFUSED before any test run', extra => {
+  test('no flag is needed, and one is not a way to name someone else', () => {
     const fx = prRepo();
-    const before = callLog(fx).length;
-    const { envelope } = runPr(fx, ['--phase', '1', ...extra], { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
+    const flagged = runPr(fx, [...phase1, '--directed-by', 'impostor'], gh);
 
-    expect(envelope.status).toBe('REFUSED');
-    expect(envelope.error.code).toBe('DIRECTED_BY_REQUIRED');
+    expect(flagged.exitCode).not.toBe(0);
+    expect(flagged.envelope.error.code).toBe('UNKNOWN_FLAG');
+    expect(JSON.stringify(flagged.envelope)).not.toContain('Directed by: @impostor');
+    expect(runPr(fx, phase1, gh).envelope.status).toBe('NEEDS_AGENT');
+  });
+
+  test.each([
+    ['not logged in', fx => fs.rmSync(fx.ghLoginFile)],
+    ['an answer that is not a login', fx => fs.writeFileSync(fx.ghLoginFile, 'not a login!\n')],
+    ['an empty answer', fx => fs.writeFileSync(fx.ghLoginFile, '\n')],
+  ])('%s is UNAVAILABLE before any test run, push or create', (_name, break_) => {
+    const fx = prRepo();
+    break_(fx);
+    const before = callLog(fx).length;
+    const { envelope, exitCode } = runPr(fx, phase1, gh);
+
+    expect(exitCode).not.toBe(0);
+    expect(envelope.status).toBe('UNAVAILABLE');
+    expect(envelope.error.code).toBe('DIRECTED_BY_UNAVAILABLE');
+    expect(envelope.error.message).toContain('gh auth login');
     expect(callLog(fx).length).toBe(before);
+    expect(externalCalls(fx)).toEqual([]);
+    expect(remoteBranches(fx)).toEqual(['main']);
+  });
+
+  test('a non-gh backend gets the same authenticated login, and the same stop without one', () => {
+    const fx = prRepo();
+    const manual = { ...STACKED, ENSEMBLE_PR_BACKEND: 'manual' };
+    expect(runWithProse(fx, phase1, manual).envelope.data.BODY).toMatch(/^Directed by: @octocat$/m);
+
+    fs.rmSync(fx.ghLoginFile);
+    const ado = runPr(fx, phase1, { ...STACKED, ENSEMBLE_PR_BACKEND: 'ado' });
+    expect(ado.envelope.error.code).toBe('DIRECTED_BY_UNAVAILABLE');
   });
 });
 
@@ -460,7 +511,7 @@ describe('the backend decides how the pull request is opened', () => {
     // The later gate where a PR is due gets its own commands, against the phase-1 branch as base.
     git(fx, ['switch', '--quiet', '-c', PHASE_2_BRANCH]);
     for (const taskId of ['TRD-003', 'TRD-003-TEST']) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
-    const second = runWithProse(fx, ['--phase', '2', '--directed-by', LOGIN], stacked);
+    const second = runWithProse(fx, ['--phase', '2'], stacked);
     expect(second.envelope.data.COMMANDS[1]).toContain(`--base '${PHASE_1_BRANCH}'`);
     expect(backendCalls(fx).filter(call => call[1] !== 'merge-base')).toEqual([]);
   });
@@ -509,7 +560,7 @@ describe('the completion PR', () => {
     const fx = prRepo({ branch: SINGLE_BRANCH });
     for (const taskId of ['TRD-003', 'TRD-003-TEST']) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
     const env = { ENSEMBLE_BRANCHING_STRATEGY: 'plain-git', ENSEMBLE_PR_BACKEND: 'gh' };
-    const { envelope } = runWithProse(fx, ['--completion', '--directed-by', LOGIN], env);
+    const { envelope } = runWithProse(fx, ['--completion'], env);
 
     expect(envelope.status).toBe('OK');
     expect(envelope.data.TARGET).toBe('completion');
@@ -529,7 +580,7 @@ describe('the completion PR', () => {
 
   test('stacked mode has no completion PR', () => {
     const fx = prRepo();
-    const { envelope } = runPr(fx, ['--completion', '--directed-by', LOGIN], { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
+    const { envelope } = runPr(fx, ['--completion'], { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
     expect(envelope.error.code).toBe('PR_NOT_DUE');
   });
 });
@@ -537,7 +588,7 @@ describe('the completion PR', () => {
 describe('the request itself', () => {
   test('naming neither or both of --phase and --completion is REFUSED', () => {
     const fx = prRepo();
-    for (const argv of [['--directed-by', LOGIN], ['--phase', '1', '--completion', '--directed-by', LOGIN]]) {
+    for (const argv of [[], ['--phase', '1', '--completion']]) {
       const { envelope } = runPr(fx, argv, { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
       expect(envelope.error.code).toBe('PR_TARGET_REQUIRED');
     }
