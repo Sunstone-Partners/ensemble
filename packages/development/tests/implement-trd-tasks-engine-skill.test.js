@@ -394,6 +394,10 @@ describe('every preserved behaviour has a home', () => {
     ['the beads-build-wave agent must be registered, or HALT', () => {
       expect(SKILL).toContain('ERROR: agent beads-build-wave is not registered in this session. Run /ensemble:reinstall-plugins and re-run.');
     }],
+    ['archiving the TRD is a human step after every PR has actually merged, never an engine action', () => {
+      expect(PHASES[4].text).toMatch(/Archive only after every PR has actually merged, by a person: `mv <trd_file> docs\/TRD\/completed\/`; never while a PR is open/);
+      expect(fs.readFileSync(path.join(PKG, 'lib', 'engine', 'verbs', 'implement-close.js'), 'utf8')).not.toMatch(/docs\/TRD\/completed/);
+    }],
     ['a pull request is never called merged or landed', () => {
       expect(SKILL).toMatch(/Never call a PR merged or landed/);
     }],

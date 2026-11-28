@@ -4,7 +4,7 @@ Step `scaffold` runs `implement scaffold`: epic, a story per phase, a bead per t
 
 #### Judgement in this phase
 
-- Work-graph findings (a cycle, a stale blocker) stop the run until fixed or refined with /ensemble:refine-beads. Unexpected blockers or a priority mismatch ask: continue, refine-beads or abort (not interactive: continue).
+- Work-graph findings (a cycle, a stale blocker) stop the run until fixed or refined with /ensemble:refine-beads. Unexpected blockers or priority mismatches ask: continue, refine-beads or abort (not interactive: continue).
 - Test task beads (`isTest`) carry their `Test AC:` scenarios in the description. If BDD_MODE.enabled the specialist follows "TRD commands" in `packages/reqnroll/skills/reqnroll/SKILL.md`; otherwise it writes them in the repo's own framework and runs them with `test-runner.run`. RED before the paired implementation bead goes GREEN.
 - Scaffolding goes only to @beads-scaffold-specialist, never backend-developer; no product code is written.
 - `--plan` ends here (EXIT).

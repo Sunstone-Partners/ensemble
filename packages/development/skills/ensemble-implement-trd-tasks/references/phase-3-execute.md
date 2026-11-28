@@ -1,6 +1,6 @@
 ### Phase 3: Execute
 
-Step `delegate` runs `implement delegate`: beads-build owns wave scheduling and the builder and review pipeline, always with `--defer-completion`. The verb returns `NEEDS_AGENT` for the builder wave: run it, write its summary where the brief says, and `accept` it. A blocked current phase refuses as `EXECUTION BLOCKED`; later-phase blockers never do.
+Step `delegate` runs `implement delegate`: beads-build owns wave scheduling and the builder and review pipeline, always with `--defer-completion`. The verb returns `NEEDS_AGENT` for the builder wave: run it, write its summary where the brief says, and `accept` it. A blocked current phase refuses as `EXECUTION BLOCKED`; later-phase blockers do not.
 
 #### Judgement in this phase
 
