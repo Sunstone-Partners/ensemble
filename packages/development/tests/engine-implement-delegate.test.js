@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { execFileSync } = require('child_process');
 const { buildRegistry } = require('../lib/ensemble-cli');
 const { makeCtx, runMain } = require('./helpers/engine-run');
 const { initRepo, makeRepo } = require('./helpers/engine-repo');
@@ -29,6 +30,17 @@ function delegate(flags = []) {
 
 function task(id) {
   return fx.tracker.issues().find(issue => issue.title.startsWith(TASK(id))).id;
+}
+
+function git(args) {
+  return execFileSync('git', args, { cwd: fx.root, env: fx.env, encoding: 'utf8' }).trim();
+}
+
+function buildCommit() {
+  fs.appendFileSync(path.join(fx.root, 'wave-work.txt'), 'built a task\n');
+  git(['add', '--', 'wave-work.txt']);
+  git(['commit', '--quiet', '-m', 'build wave']);
+  return git(['rev-parse', 'HEAD']);
 }
 
 /** A native work-graph adapter: readiness is an independent tool response, not inferred by the test. */
@@ -66,6 +78,7 @@ function accept({ agent, brief }, extra = {}) {
     bead_counts: { closed: 0, open: brief.beads.length, total: brief.beads.length },
     branch_state: 'feature branch, clean',
     exit_code: 0,
+    ending_head: git(['rev-parse', 'HEAD']),
     head: brief.head,
     last_task_closed: null,
     role: 'builder-wave',
@@ -209,8 +222,83 @@ test('zero exit records the summary after the tracker proves tasks closed', () =
   expect(record.result).toMatchObject({ bead_counts: counts, branch_state: 'feature branch, clean', last_task_closed: task('TRD-003') });
 });
 
+test('a committing builder wave binds its ending head and records closed tasks', () => {
+  const m = manifest();
+  const endingHead = buildCommit();
+  for (const id of m.brief.beads) fx.tracker.setStatus(id, 'closed');
+  const counts = { closed: m.brief.beads.length, open: 0, total: m.brief.beads.length };
+  const out = accept(m, { status: 'done', terminal_state: 'complete', bead_counts: counts, last_task_closed: task('TRD-003') });
+  expect(out.envelope.status).toBe('OK');
+  const record = JSON.parse(fs.readFileSync(path.join(fx.root, out.envelope.data.RECORD_PATH), 'utf8'));
+  expect(record).toMatchObject({ head: endingHead, result: {
+    head: m.brief.head, ending_head: endingHead, bead_counts: counts, last_task_closed: task('TRD-003'),
+  } });
+});
+
+test('a delegated summary requires an explicit ending head', () => {
+  const out = accept(manifest(), { ending_head: undefined });
+  expect(out.envelope.status).toBe('REFUSED');
+  expect(out.envelope.error.code).toBe('BUILDER_SUMMARY_MISSING');
+});
+
+test('a committing wave with an ending head different from live HEAD is stale', () => {
+  const m = manifest();
+  buildCommit();
+  const out = accept(m, { ending_head: m.brief.head });
+  expect(out.envelope.status).toBe('REFUSED');
+  expect(out.envelope.error.code).toBe('STALE_RESULT');
+});
+
+test('a committing wave cannot replace its immutable dispatch head', () => {
+  const m = manifest();
+  const endingHead = buildCommit();
+  const out = accept(m, { head: endingHead });
+  expect(out.envelope.status).toBe('REFUSED');
+  expect(out.envelope.error.code).toBe('STALE_RESULT');
+});
+
+test.each(['unrelated', 'rewritten'])('%s history cannot be accepted as builder completion', mode => {
+  buildCommit();
+  const m = manifest();
+  const branch = git(['branch', '--show-current']);
+  const parents = mode === 'rewritten' ? ['-p', git(['rev-parse', `${m.brief.head}^`])] : [];
+  const other = git(['commit-tree', `${m.brief.head}^{tree}`, ...parents, '-m', mode]);
+  try {
+    git(['switch', '--detach', other]);
+    const out = accept(m);
+    expect(out.envelope.status).toBe('REFUSED');
+    expect(out.envelope.error.code).toBe('STALE_RESULT');
+    expect(out.envelope.error.message).toContain('ancestor');
+  } finally {
+    git(['switch', branch]);
+  }
+});
+
+test('a non-zero committing wave still reaches the Debug Loop', () => {
+  const m = manifest();
+  buildCommit();
+  const out = accept(m, { exit_code: 2, output: 'failed after checkpoint' });
+  expect(out.envelope.status).toBe('REFUSED');
+  expect(out.envelope.error.code).toBe('BUILDER_FAILED');
+  expect(out.envelope.error.details.DEBUG_LOOP[0].output).toBe('failed after checkpoint');
+});
+
+test('a blocked committing wave can retry from its verified ending head', () => {
+  const m = manifest();
+  const endingHead = buildCommit();
+  graphWithout();
+  const out = accept(m);
+  expect(out.envelope.status).toBe('NEEDS_AGENT');
+  const agent = out.envelope.data.agents[0];
+  const brief = JSON.parse(fs.readFileSync(path.join(fx.root, agent.briefPath), 'utf8'));
+  expect(brief.head).toBe(endingHead);
+  expect(brief.delegation.retry).toBe(1);
+});
+
 test('done with open tasks cannot be accepted', () => {
-  const out = accept(manifest(), { status: 'done', terminal_state: 'complete' });
+  const m = manifest();
+  buildCommit();
+  const out = accept(m, { status: 'done', terminal_state: 'complete' });
   expect(out.envelope.status).toBe('REFUSED');
   expect(out.envelope.error.code).toBe('PRECONDITION_NOT_MET');
 });

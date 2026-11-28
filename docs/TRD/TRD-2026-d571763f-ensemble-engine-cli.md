@@ -114,6 +114,7 @@ The pattern already exists and works: `review-run-cli` `prepare` runs every mech
 
 - A verb that needs judgement returns `NEEDS_AGENT` with `agents[]` in the same field names, a recorded base `HEAD` sha, and a `next` that names `ensemble implement accept`.
 - `ensemble implement accept --step <id> --result-file <path>` validates the file against the role's schema, requires the path to sit under `.ensemble/state/engine/<runId>/results/`, caps its size, rejects a result whose recorded `HEAD` no longer matches, re-checks the step's precondition, and only then records it.
+- Operator-approved builder-completion exception: only a `builder-wave` dispatched by `implement delegate` may advance HEAD. Its result must retain the brief's immutable dispatch `head`, report an explicit `ending_head` equal to live HEAD, and prove through git that the dispatch HEAD is an ancestor of that ending HEAD. Reviewer, pr-prose and non-delegated builder stale-head rules are unchanged; all other bindings and live preconditions still apply.
 - A malformed, oversized, escaped or stale result is `INVALID_INPUT` or `REFUSED`; the engine never repairs it.
 - Roles in this TRD: `builder-wave` (run `/ensemble:beads-build`), `reviewer` (a review round), `pr-prose` (Risk and How-to-revert text).
 - `NEEDS_CHOICE` carries `options[]` and the flag that supplies the answer, so a non-interactive run (`--non-interactive`, `--foreman`) resolves from policy or returns `REFUSED` with the exact flag to pass, never a prompt.
@@ -509,6 +510,7 @@ The engine adds no durable store and no scheduler. Resumability is **derived**: 
     - [ ] Given a step that needs judgement, when the engine returns, then the status is `NEEDS_AGENT` with `agents[]` carrying name, role, briefPath, outPath, prompt and deadlineAtIso, the recorded base HEAD sha, and a `next` naming `implement accept`
     - [ ] Given a result file, when accepted, then its path must sit under `.ensemble/state/engine/<runId>/results/`, its size is capped, and it validates against the role's schema with `additionalProperties: false`
     - [ ] Given a result recorded against an earlier HEAD, when accepted, then it is `REFUSED` as stale
+    - [ ] For a delegated builder-wave completion only, the dispatch `head` remains immutable, explicit `ending_head` must equal live HEAD, and git must prove dispatch HEAD ancestry before summary processing or acceptance; missing ending HEAD, mismatched live HEAD, unrelated history or rewritten dispatch history is refused, while other roles retain the unchanged-HEAD rule
     - [ ] Given the step's precondition, when accepted, then it is re-derived from live state and not taken from the manifest
     - [ ] Given a malformed, oversized, escaped or stale result, when accepted, then the engine refuses it and never repairs or partially applies it
     - [ ] Given the roles `builder-wave`, `reviewer` and `pr-prose`, when registered, then each has an input brief schema and a result schema in the registry and `--describe`
@@ -577,6 +579,7 @@ The engine adds no durable store and no scheduler. Resumability is **derived**: 
     - [ ] Given the roster, when run, then TEAM_ROLES_JSON, MAX_PARALLEL, the label, the TRD path and `--defer-completion` are assembled into the exact `beads-build` invocation, in sorted flag order
     - [ ] Given the invocation, when returned, then the status is `NEEDS_AGENT` for role `builder-wave`, with the slash-dispatch form and the skill form for runtimes without slash dispatch
     - [ ] Given the model's summary, when accepted, then a non-zero exit becomes a Debug Loop entry and `REFUSED`, and a zero exit records bead counts, branch state and the last task closed
+    - [ ] Given a builder wave that commits task work, its result retains dispatch `head` and reports live `ending_head`; after verifying their git ancestry, zero-exit completion still requires live task closure, non-zero exit reaches the Debug Loop, and blocked completion reaches the existing live phase/readiness and one-retry checks
     - [ ] Given a builder-wave summary with `terminal_state=blocked`, when accepted, then current_phase is the lowest phase with an unclosed task, a task absent from the work-graph ready and plan data is `REFUSED` as `EXECUTION BLOCKED` naming the phase, a task present but unclosed is retried once, and blockers in later phases or static traceability dependencies never refuse
 
 - [ ] **TRD-019-TEST** Delegation payload [verifies TRD-019] [satisfies ARCH] [depends: TRD-019] (3h)

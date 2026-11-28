@@ -17,7 +17,7 @@ function dispatch(call, { beads, delegation, instructions }) {
     agents: [{
       brief: { beads, delegation, instructions },
       name: delegation.retry === 0 ? 'wave' : 'wave-retry',
-      prompt: `${instructions}\nWrite the builder-wave result to the manifest's outPath. Copy head, role and step from the brief. Report exit_code, terminal_state, bead_counts, branch_state and last_task_closed; put command output in output.`,
+      prompt: `${instructions}\nWrite the builder-wave result to the manifest's outPath. Copy head, role and step from the brief. Keep head as the immutable dispatch revision; report ending_head from git rev-parse HEAD after the wave. Report exit_code, terminal_state, bead_counts, branch_state and last_task_closed; put command output in output.`,
     }],
     role: 'builder-wave',
   });

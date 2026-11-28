@@ -171,6 +171,7 @@ const ROLES = Object.freeze({
           type: 'object',
         },
         branch_state: TEXT,
+        ending_head: SHA,
         exit_code: { minimum: 0, type: 'integer' },
         last_task_closed: { type: ['string', 'null'] },
         output: { maxLength: 20000, type: 'string' },
