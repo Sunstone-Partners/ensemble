@@ -47,7 +47,7 @@ const GATE_PASS = 'Quality gate result: PASS';
 const GATE_FAIL = 'Quality gate result: FAIL';
 
 /** Flags that `next` forwards to a step's verb when that verb declares them. */
-const FORWARDED = ['strategy', 'pr-backend', 'framework', 'builder', 'max-parallel'];
+const FORWARDED = ['strategy', 'pr-backend', 'framework', 'builder', 'max-parallel', 'test-command', 'test-file'];
 
 /** The flags `plan` and `next` share: what they need to see the same run. */
 const PLAN_INPUT = {
@@ -62,6 +62,8 @@ const PLAN_INPUT = {
     'plan-only': { type: 'boolean' },
     'pr-backend': { enum: ['gh', 'ado', 'manual'], type: 'string' },
     strategy: { enum: [...STRATEGIES], type: 'string' },
+    'test-command': { items: { type: 'string' }, type: 'array' },
+    'test-file': { items: { type: 'string' }, type: 'array' },
     trd: { type: 'string', 'x-operand': true },
     'use-current-branch': { type: 'boolean' },
   },
@@ -132,8 +134,11 @@ function buildPlan(model) {
     const reviewSkippable = prPlan.stacked === true && completion !== null && completion.createPr === false;
     if (!reviewSkippable) {
       steps.push(
-        step('review-completion', 'review run', 'agent', {}, ['ALL_GATES_RECORDED'], [
-          'whole-branch review recorded as LOCAL_REVIEW_COMPLETE for this HEAD',
+        // The review is LOCAL (`--review-id <slug>-completion`): it runs before any pull request
+        // exists and records the report `implement close` reads. `next` fills in base, head and
+        // base-ref from git when it returns the step.
+        step('review-completion', 'review run', 'agent', { 'review-id': `${slug}-completion` }, ['ALL_GATES_RECORDED'], [
+          `local whole-branch review ${slug}-completion recorded as LOCAL_REVIEW_COMPLETE for this HEAD`,
         ])
       );
     }

@@ -193,11 +193,17 @@ const RANGE_NAME = 'reviewer-range';
 const RANGE_COVERAGE_SLICE = 'whole-range';
 const SHA = /^[0-9a-f]{40}$/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** A local review's key: it names the state report (`pr-<reviewId>.json`), so it is file-name safe and never a path. */
+const REVIEW_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,126}$/;
+/** What a LOCAL review reports as the "state" of the pull request it does not have: a live review, never a fabricated OPEN. */
+const LOCAL_STATE = 'LOCAL';
+/** Whether a state lets a review go on: an open pull request, or a local review (which has no pull request to be closed). */
+const isLive = (state) => state === 'OPEN' || state === LOCAL_STATE;
 const ADJUDICATION_DISPOSITIONS = Object.freeze(['fix', 'deferred', 'not-applicable']);
 /** The named outcome of a result file that holds other bytes than the runner read (kata 271n). */
 const RESULT_CHANGED = 'result-changed-after-read';
 
-const PREPARE_KEYS = Object.freeze(['repo', 'pr', 'repoRoot', 'runId', 'traceRunId', 'baseSha', 'lastReviewedSha', 'remediationShas', 'dryRun', 'skipPrecheck', 'testFiles', 'testCommand', 'baselineTimeoutMs', 'nodeModules', 'stateRoot', 'agentAuthored']);
+const PREPARE_KEYS = Object.freeze(['repo', 'pr', 'reviewId', 'baseRef', 'repoRoot', 'runId', 'traceRunId', 'baseSha', 'lastReviewedSha', 'remediationShas', 'dryRun', 'skipPrecheck', 'testFiles', 'testCommand', 'baselineTimeoutMs', 'nodeModules', 'stateRoot', 'agentAuthored']);
 const COLLECT_KEYS = Object.freeze(['repoRoot', 'runId', 'now', 'adjudications', 'triage', 'agentStats']);
 
 const RULES = Object.freeze([
@@ -346,8 +352,16 @@ function terminate(run, phase, answer, call, startedAt, deps) {
 function validatePrepare(input) {
   if (!isObject(input)) return 'the payload must be a JSON object';
   for (const key of Object.keys(input)) if (!PREPARE_KEYS.includes(key)) return `unknown payload key ${JSON.stringify(key)}`;
-  if (!isText(input.repo) || !REPO.test(input.repo)) return 'repo must be "owner/name"';
-  if (!Number.isInteger(input.pr) || input.pr < 1) return 'pr must be a positive integer';
+  if (input.reviewId !== undefined) {
+    // A local review: the whole branch, before any pull request exists. No host is read, so no repo or pr is taken.
+    if (input.repo !== undefined || input.pr !== undefined) return 'reviewId is a local review: it takes neither repo nor pr';
+    if (typeof input.reviewId !== 'string' || !REVIEW_ID.test(input.reviewId)) return 'reviewId must be file-name safe (letters, digits, "_", "-"; no dots or separators)';
+    if (input.baseRef !== undefined && !(isText(input.baseRef) && !input.baseRef.startsWith('-') && !/[\s:~^?*\[\\]|\.\.|@\{/.test(input.baseRef))) return 'baseRef must be a plain branch name';
+  } else {
+    if (input.baseRef !== undefined) return 'baseRef belongs to a reviewId run';
+    if (!isText(input.repo) || !REPO.test(input.repo)) return 'repo must be "owner/name"';
+    if (!Number.isInteger(input.pr) || input.pr < 1) return 'pr must be a positive integer';
+  }
   if (!isText(input.repoRoot) || !path.isAbsolute(input.repoRoot)) return 'repoRoot must be an absolute path';
   for (const key of ['runId', 'traceRunId', 'nodeModules', 'stateRoot']) if (input[key] !== undefined && !isText(input[key])) return `${key} must be a non-empty string`;
   for (const key of ['baseSha', 'lastReviewedSha']) if (input[key] !== undefined && !SHA.test(String(input[key]))) return `${key} must be a full 40-hex object id`;
@@ -690,6 +704,9 @@ async function prepareStages(input, deps, ctx) {
   const startedAt = deps.now();
   const invalid = validatePrepare(input);
   if (invalid !== null) return failure('RUN_FAILED', { reason: 'invalid-input', error: invalid });
+  // The key a review is recorded under: the pull request's number, or a local review's own id. Both name `pr-<key>.json`.
+  const key = input.reviewId !== undefined ? input.reviewId : input.pr;
+  const local = input.reviewId !== undefined;
 
   const first = await readHead(deps);
   if (!first.ok) return failure('RUN_FAILED', { reason: 'pr-unreadable', error: first.error });
@@ -713,9 +730,9 @@ async function prepareStages(input, deps, ctx) {
 
   // Only an open PR is reviewed: a merged or closed one gets no agents and no answer that could read as mergeable (the
   // precheck refuses it too, but its refusal is advisory here).
-  if (first.pr.state !== 'OPEN') return notOpen(first.pr.state, undefined, headSha);
+  if (!isLive(first.pr.state)) return notOpen(first.pr.state, undefined, headSha);
 
-  const runId = input.runId !== undefined ? input.runId : `pr${input.pr}-${headSha.slice(0, 12)}-${Math.floor(startedAt / 1000)}`;
+  const runId = input.runId !== undefined ? input.runId : `${local ? '' : 'pr'}${key}-${headSha.slice(0, 12)}-${Math.floor(startedAt / 1000)}`;
   if (!isValidRunId(runId)) return failure('RUN_FAILED', { reason: 'invalid-runId', error: `runId ${JSON.stringify(runId)} is not file-name safe (letters, digits, "_", "-"; no dots)` });
   const traceRunId = input.traceRunId !== undefined ? input.traceRunId : runId;
   if (deps.fs.readText(path.join(runDirOf(input.repoRoot, runId), 'run.json')) !== null) {
@@ -724,11 +741,14 @@ async function prepareStages(input, deps, ctx) {
   const tracer = safeTracer(deps, traceRunId);
   const round = input.lastReviewedSha === undefined ? 1 : 2;
   ctx.tracer = tracer;
-  ctx.root = tracer.start(STAGES.root, STAGE_KINDS[STAGES.root], { pr: input.pr, round, headSha });
+  ctx.root = tracer.start(STAGES.root, STAGE_KINDS[STAGES.root], { pr: key, round, headSha });
 
   // 2. precheck (advisory: a failed precheck never stops the review)
   let precheck;
-  if (input.skipPrecheck === true) {
+  if (local) {
+    // The precheck posts a comment on the pull request and starts its gate: a local review has neither.
+    precheck = { skipped: true, reason: 'local-review' };
+  } else if (input.skipPrecheck === true) {
     precheck = { skipped: true, reason: 'requested' };
   } else {
     precheck = summarisePrecheck(await settle(() => deps.precheck({ dryRun: input.dryRun === true })));
@@ -755,9 +775,9 @@ async function prepareStages(input, deps, ctx) {
   // A re-review's previously reviewed head and base are what THIS runner recorded at `lastReviewedSha` (kata xb4j), never a
   // caller's word: the state report and the run record that wrote it say so, or prepare is not told and the round is a full read.
   let prior = input.lastReviewedSha === undefined ? null : D.priorRound({
-    read: (head) => (typeof deps.readState === 'function' ? deps.readState(statePath(input.pr, input.repoRoot), head) : null),
+    read: (head) => (typeof deps.readState === 'function' ? deps.readState(statePath(key, input.repoRoot), head) : null),
     readRun: (id) => loadRunRecord(deps, input.repoRoot, id),
-    pr: input.pr,
+    pr: key,
     lastReviewedSha: input.lastReviewedSha,
   });
   // kata 271n: the stored report says nothing of a result file rewritten after that run finished (no collect saw it). Look at the run's
@@ -800,7 +820,8 @@ async function prepareStages(input, deps, ctx) {
     traceRunId,
     round,
     repo: input.repo,
-    pr: input.pr,
+    pr: key,
+    ...(local ? { local: true } : {}),
     repoRoot: input.repoRoot,
     headSha,
     baseSha,
@@ -848,7 +869,7 @@ async function prepareStages(input, deps, ctx) {
   if (second.headSha !== headSha) {
     return terminate(run, 'invalidated', failure('RUN_INVALIDATED', { reason: 'head-moved', runId, expectedHead: headSha, currentHead: second.headSha, precheck }), 'prepare', startedAt, deps);
   }
-  if (second.pr.state !== 'OPEN') return notOpen(second.pr.state, runId, headSha);
+  if (!isLive(second.pr.state)) return notOpen(second.pr.state, runId, headSha);
 
   // 5-6. tier from the paths alone, then the mode
   const assignment = assignTier({ paths: facts.paths, kinds: S.deriveKinds(facts.changedPaths) });
@@ -1736,7 +1757,7 @@ async function gateStage(run, built, deps, tracer) {
     tracer.end(span, 'error', { reason: 'head-moved' });
     return { invalid: failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), moved: true };
   }
-  if (head.pr.state !== 'OPEN') {
+  if (!isLive(head.pr.state)) {
     tracer.end(span, 'error', { reason: 'pr-not-open' });
     return { invalid: notOpen(head.pr.state, run.runId), moved: false };
   }
@@ -2219,7 +2240,7 @@ async function collectStages(input, deps, ctx) {
     if (live.headSha !== run.headSha) {
       return failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: live.headSha, error: 'the head moved after this run finished: its stored answer is for the old head and is not returned' });
     }
-    if (live.pr.state !== 'OPEN') return notOpen(live.pr.state, run.runId);
+    if (!isLive(live.pr.state)) return notOpen(live.pr.state, run.runId);
     const stored = deps.fs.readText(path.join(runDirOf(run.repoRoot, run.runId), 'final.json'));
     let final = null;
     try {
@@ -2256,7 +2277,7 @@ async function collectStages(input, deps, ctx) {
   if (head.headSha !== run.headSha) {
     return terminate(run, 'invalidated', failure('RUN_INVALIDATED', { reason: 'head-moved', runId: run.runId, expectedHead: run.headSha, currentHead: head.headSha }), 'collect', startedAt, deps);
   }
-  if (head.pr.state !== 'OPEN') return notOpen(head.pr.state, run.runId);
+  if (!isLive(head.pr.state)) return notOpen(head.pr.state, run.runId);
 
   // ---- 1a. the result files the run already read, looked at again (kata 271n): a later version is re-read while its round's
   // results are not used, and flagged once they are

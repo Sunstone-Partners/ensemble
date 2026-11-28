@@ -19,8 +19,6 @@ const crypto = require('crypto');
 
 const { buildRegistry } = require('../lib/ensemble-cli');
 const { sortKeys } = require('../lib/engine/envelope');
-const { deriveStatus } = require('../lib/pr-review-status');
-const { statePath, writeState } = require('../lib/pr-review-state');
 const { expectMatchesOutputSchema, makeCtx, runMain } = require('./helpers/engine-run');
 const { initRepo, makeRepo } = require('./helpers/engine-repo');
 const { createTrackerStub, fixtureTrd } = require('./fixtures/engine/tracker-stub');
@@ -28,6 +26,7 @@ const { createTrackerStub, fixtureTrd } = require('./fixtures/engine/tracker-stu
 const TRD_PATH = 'docs/TRD/widget-engine.md';
 const SLUG = 'widget-engine';
 const BRANCH = 'feature/widget-engine';
+const REVIEW_POLICY = '# Review\n\n## Severity\n\n- **Important** \u2014 fixture-important: the change is wrong.\n- **Nit** \u2014 fixture-nit: a preference.\n- **Pre-existing** \u2014 fixture-pre: not this PR.\n\n```ensemble-review-policy\n{"sensitivePaths":["secure/**"],"highPaths":["wide/**"]}\n```\n';
 const AZURE_REMOTE = 'https://dev.azure.com/org/project/_git/repo';
 const STORY = n => `[trd:${SLUG}:phase:${n}]`;
 
@@ -138,21 +137,35 @@ function scaffoldCalls(fx) {
   return JSON.parse(out);
 }
 
-function repo({ scaffolded = false, remote = null } = {}) {
+function repo({ scaffolded = false, remote = null, bareOrigin = false } = {}) {
   const fx = makeRepo({
     files: {
       'README.md': 'widget engine\n',
       'package.json': '{"name":"widget-engine","version":"1.0.0"}\n',
       [TRD_PATH]: fixtureTrd({ targetFiles: true }),
       '.beads/issues.jsonl': '',
+      'REVIEW.md': REVIEW_POLICY,
     },
     init: false,
     remote,
   });
+  if (bareOrigin) {
+    // A real origin: the whole-branch review compares against `origin/main` and fetches nothing.
+    fx.origin = `${fx.root}-origin.git`;
+    fs.mkdirSync(fx.origin);
+    execFileSync('git', ['init', '--quiet', '--bare', fx.origin], { env: fx.env });
+    remote = fx.origin;
+  }
   registerAgents(fx.root);
   fx.tracker = createTrackerStub(fx.root, {});
   writeHostAdapter(fx);
   initRepo(fx, { remote });
+  if (bareOrigin) {
+    execFileSync('git', ['branch', '-M', 'main'], { cwd: fx.root, env: fx.env });
+    execFileSync('git', ['push', '--quiet', '-u', 'origin', 'main'], { cwd: fx.root, env: fx.env });
+    // The review state is gitignored in real repositories.
+    fs.appendFileSync(path.join(fx.root, '.git', 'info', 'exclude'), '.ensemble/\n');
+  }
   if (scaffolded) fx.ids = fx.tracker.seedFromPlan(scaffoldCalls(fx));
   return fx;
 }
@@ -173,6 +186,11 @@ function next(fx, argv = [], options = {}) {
   return result;
 }
 
+function write(fx, relative, text) {
+  fs.mkdirSync(path.dirname(path.join(fx.root, relative)), { recursive: true });
+  fs.writeFileSync(path.join(fx.root, relative), text);
+}
+
 function git(fx, args) {
   return execFileSync('git', args, { cwd: fx.root, encoding: 'utf8', env: fx.env }).trim();
 }
@@ -180,24 +198,41 @@ function git(fx, args) {
 const taskIds = fx => Object.entries(fx.ids).filter(([prefix]) => prefix.includes(':task:')).map(([, id]) => id);
 const epicId = fx => fx.ids[`[trd:${SLUG}]`];
 
-/** A whole-branch local review recorded exactly as `review run` does, for the current HEAD. */
-function recordReview(fx, prId = `${SLUG}-completion`) {
-  const sha = git(fx, ['rev-parse', 'HEAD']);
-  const tree = git(fx, ['rev-parse', 'HEAD^{tree}']);
-  const status = deriveStatus({
-    baseSha: sha,
-    coverage: { gaps: [], status: 'complete' },
-    findingCounts: { actionable: 0, awaitingDecision: 0, deferred: 0, total: 0 },
-    headSha: sha,
-    headTreeSha: tree,
-    remotePhase: 'REMOTE_REVIEW_COMPLETE',
-    reviewedHeadSha: sha,
-    reviewedTreeSha: tree,
-    roundsUsed: 0,
-    tests: { command: 'npm test', exitCode: 0, passed: true },
-  });
-  const written = writeState(statePath(prId, fx.root), { ...status, headSha: sha, prId }, { cwd: fx.root });
-  expect(written.ok).toBe(true);
+/** The argv of a returned action's flags: exactly what a caller would type from `ACTION.args`. */
+function flagsOf(args) {
+  const out = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (value === true) out.push(`--${key}`);
+    else if (Array.isArray(value)) for (const item of value) out.push(`--${key}`, String(item));
+    else out.push(`--${key}`, String(value));
+  }
+  return out;
+}
+
+/** Run a returned action through the real entry point, as the model would. */
+function runAction(fx, action, globals = NON_INTERACTIVE) {
+  const [group, verb] = action.verb.split(' ');
+  return runMain([...globals, group, verb, ...flagsOf(action.args)], makeCtx({ cwd: fx.root, env: fx.env }));
+}
+
+/** The reviewers answering a dispatch, as dispatched agents write `out-<name>.json`: every path read, no findings. */
+function answerReviewers(manifest, paths) {
+  for (const agent of manifest.agents) {
+    fs.mkdirSync(path.dirname(agent.outPath), { recursive: true });
+    fs.writeFileSync(agent.outPath, JSON.stringify({ findings: [], pathsReviewed: agent.paths || paths }));
+  }
+}
+
+const REVIEW_PATHS = ['src/widget.js', 'src/widget.test.js'];
+const WITH_NODE = ['--test-command', process.execPath, '--test-file', 'src/widget.test.js'];
+
+/** The branch's own work, committed, so the whole-branch review has a diff to read. */
+function commitBranchWork(fx) {
+  fs.mkdirSync(path.join(fx.root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(fx.root, 'src', 'widget.js'), 'module.exports = () => 1;\n');
+  fs.writeFileSync(path.join(fx.root, 'src', 'widget.test.js'), "if (require('./widget')() !== 1) process.exit(1);\n");
+  git(fx, ['add', '--', 'src']);
+  git(fx, ['commit', '--quiet', '-m', 'the widget and its test']);
 }
 
 /** The next action's id, asserting the call itself succeeded. */
@@ -268,14 +303,18 @@ describe('plan is a pure function of the TRD and the flags', () => {
 
 describe('next follows live state, one step at a time', () => {
   test('from a fresh TRD to COMPLETE, each answer follows what the tracker, git and the TRD file now say', () => {
-    const fx = repo();
-    expect(nextId(fx)).toBe('checkout');
+    const fx = repo({ bareOrigin: true });
+    // The origin is a plain path, so the PR backend is the caller's to name, on every call.
+    const A = ['--pr-backend', 'gh', ...WITH_NODE];
+    expect(nextId(fx, A)).toBe('checkout');
 
     git(fx, ['switch', '--quiet', '-c', BRANCH]);
-    expect(nextId(fx)).toBe('scaffold');
+    expect(nextId(fx, A)).toBe('scaffold');
 
     fx.ids = fx.tracker.seedFromPlan(scaffoldCalls(fx));
-    let answer = next(fx).envelope.data;
+    // The branch's own work lands after the scaffold (a fresh run would call newer sources stale).
+    commitBranchWork(fx);
+    let answer = next(fx, A).envelope.data;
     expect(answer.ACTION).toMatchObject({ id: 'delegate', kind: 'agent', verb: 'implement delegate' });
     expect(answer.ACTION.args['root-epic-id']).toBe(epicId(fx));
     expect(answer.ACTION.args['max-parallel']).toBe(3);
@@ -284,37 +323,72 @@ describe('next follows live state, one step at a time', () => {
     // One task left open: the build is not finished.
     const [last, ...rest] = taskIds(fx);
     for (const id of rest) fx.tracker.setStatus(id, 'closed');
-    expect(nextId(fx)).toBe('delegate');
+    expect(nextId(fx, A)).toBe('delegate');
 
     fx.tracker.setStatus(last, 'closed');
-    expect(nextId(fx)).toBe('gate-1');
+    expect(nextId(fx, A)).toBe('gate-1');
 
     fx.tracker.setStatus(fx.ids[STORY(1)], 'closed');
-    expect(nextId(fx)).toBe('gate-2');
+    expect(nextId(fx, A)).toBe('gate-2');
 
     fx.tracker.setStatus(fx.ids[STORY(2)], 'closed');
-    expect(nextId(fx)).toBe('review-completion');
+    answer = next(fx, A).envelope.data;
+    expect(answer.ACTION).toMatchObject({ id: 'review-completion', kind: 'agent', verb: 'review run' });
+    // The action carries every argument it needs: nothing is left for the caller to invent.
+    const head = git(fx, ['rev-parse', 'HEAD']);
+    expect(answer.ACTION.args).toMatchObject({
+      base: git(fx, ['merge-base', 'refs/remotes/origin/main', 'HEAD']),
+      'base-ref': 'main',
+      head,
+      'review-id': `${SLUG}-completion`,
+    });
 
-    recordReview(fx);
-    answer = next(fx).envelope.data;
+    // Run THAT action through the real entry point and the real runner; the reviewers answer.
+    const started = runAction(fx, answer.ACTION);
+    expect(started.envelope.status).toBe('NEEDS_AGENT');
+    expect(started.exitCode).toBe(3);
+    expect(started.envelope.data.agents.length).toBeGreaterThan(0);
+    answerReviewers(started.envelope.data, REVIEW_PATHS);
+    const finished = runMain(started.envelope.next.calls[0].args, makeCtx({ cwd: fx.root, env: fx.env }));
+    expect(finished.envelope.status).toBe('OK');
+    expect(finished.envelope.data).toMatchObject({
+      REPORT_PATH: `.ensemble/pr-review/pr-${SLUG}-completion.json`,
+      VERDICT: 'PASS',
+    });
+
+    // The report `implement close` reads is the one the runner wrote, and `next` advances on it.
+    const read = run(fx, 'pr-review');
+    expect(read.envelope.data).toMatchObject({ HEAD_SHA: head, LOCAL_PHASE: 'LOCAL_REVIEW_COMPLETE', STATE: 'complete' });
+    answer = next(fx, A).envelope.data;
     expect(answer.ACTION.id).toBe('close');
     expect(answer.COMPLETED).toEqual(['checkout', 'scaffold', 'delegate', 'gate-1', 'gate-2', 'review-completion']);
 
+    // The review belongs to the head it read: a later commit makes it due again, with the new head.
+    write(fx, 'src/extra.js', 'module.exports = 2;\n');
+    git(fx, ['add', '--', 'src/extra.js']);
+    git(fx, ['commit', '--quiet', '-m', 'a later commit']);
+    answer = next(fx, A).envelope.data;
+    expect(answer.ACTION.id).toBe('review-completion');
+    expect(answer.ACTION.args.head).toBe(git(fx, ['rev-parse', 'HEAD']));
+    expect(answer.ACTION.args.head).not.toBe(head);
+    git(fx, ['reset', '--quiet', '--hard', head]);
+    expect(nextId(fx, A)).toBe('close');
+
     fx.tracker.setStatus(epicId(fx), 'closed');
-    expect(nextId(fx)).toBe('sync-checkboxes');
+    expect(nextId(fx, A)).toBe('sync-checkboxes');
 
     const file = path.join(fx.root, TRD_PATH);
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/- \[ \] \*\*/g, '- [x] **'));
     git(fx, ['commit', '--quiet', '-am', 'sync']);
-    expect(nextId(fx)).toBe('pr-completion');
+    expect(nextId(fx, A)).toBe('pr-completion');
 
     // A pushed branch is not a pull request: origin carrying it changes nothing.
-    git(fx, ['update-ref', `refs/remotes/origin/${BRANCH}`, 'HEAD']);
-    expect(nextId(fx)).toBe('pr-completion');
+    git(fx, ['push', '--quiet', 'origin', `HEAD:refs/heads/${BRANCH}`]);
+    expect(nextId(fx, A)).toBe('pr-completion');
 
     // The host reporting an open pull request from the branch is what says the step happened.
     setPrs(fx, [BRANCH]);
-    answer = next(fx).envelope.data;
+    answer = next(fx, A).envelope.data;
     expect(answer.STATE).toBe('COMPLETE');
     expect(answer.ACTION).toBeNull();
   });

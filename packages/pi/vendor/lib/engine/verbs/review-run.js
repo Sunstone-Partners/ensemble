@@ -9,6 +9,7 @@
  * counts no vote and sets no status; each of those is read off the runner's answer and relayed.
  *
  *   review run --repo O/N --pr N --base SHA --head SHA     prepare  -> NEEDS_AGENT (agents[] verbatim)
+ *   review run --review-id ID --base SHA --head SHA       prepare a LOCAL review of the whole branch, no pull request
  *   review run --collect --review-run-id ID [...]          collect  -> NEEDS_AGENT again | pass | named block
  *   review run --mode remote [--pr N]                      informational read of a phase PR's review
  *
@@ -197,21 +198,37 @@ function runnerCall(call, cliPath, command, payload) {
 
 function prepare(call, cliPath) {
   const input = call.input;
-  for (const [name, value] of [['repo', input.repo], ['pr', input.pr], ['base', input.base], ['head', input.head]]) {
+  // A LOCAL review (`--review-id`): the whole branch, reviewed before any pull request exists
+  // (the completion review of `implement-trd-tasks` step 5.2). It is keyed by its own id, which
+  // names the report `implement close` reads, and it takes no repo and no pull request: the
+  // runner reads no host for it. A numbered pull request keeps every check it had.
+  const local = input['review-id'] !== undefined;
+  if (local && (input.pr !== undefined || input.repo !== undefined)) {
+    throw invalid('REVIEW_TARGET_EXCLUSIVE', '--review-id is a local review: it takes neither --repo nor --pr');
+  }
+  if (!local && input['base-ref'] !== undefined) {
+    throw invalid('BASE_REF_NEEDS_REVIEW_ID', '--base-ref belongs to a --review-id review');
+  }
+  const required = local
+    ? [['base', input.base], ['head', input.head]]
+    : [['repo', input.repo], ['pr', input.pr], ['base', input.base], ['head', input.head]];
+  for (const [name, value] of required) {
     if (value === undefined) throw missing(name);
   }
   const payload = {
     baseSha: input.base,
     ...(input['dry-run'] ? { dryRun: true } : {}),
     ...(input['last-reviewed-sha'] ? { lastReviewedSha: input['last-reviewed-sha'] } : {}),
-    pr: input.pr,
+    ...(local ? { baseRef: input['base-ref'], reviewId: input['review-id'] } : { pr: input.pr, repo: input.repo }),
     ...(input['remediation-sha'] && input['remediation-sha'].length > 0
       ? { remediationShas: input['remediation-sha'] }
       : {}),
-    repo: input.repo,
     repoRoot: call.projectRoot,
     ...(input['skip-precheck'] ? { skipPrecheck: true } : {}),
+    ...(input['test-command'] && input['test-command'].length > 0 ? { testCommand: input['test-command'] } : {}),
+    ...(input['test-file'] && input['test-file'].length > 0 ? { testFiles: input['test-file'] } : {}),
   };
+  if (payload.baseRef === undefined) delete payload.baseRef;
   return relay(call, runnerCall(call, cliPath, 'prepare', payload), { requestedHead: input.head });
 }
 
@@ -295,7 +312,12 @@ function createSpec({ cliPath = RUNNER_CLI } = {}) {
     group: 'review',
     handler(call) {
       const input = call.input;
-      if (input.mode === 'remote') return remote(call);
+      if (input.mode === 'remote') {
+        if (input['review-id'] !== undefined) {
+          throw invalid('REVIEW_TARGET_EXCLUSIVE', '--review-id is a local review; --mode remote reads a numbered phase PR');
+        }
+        return remote(call);
+      }
       return input.collect ? collect(call, cliPath) : prepare(call, cliPath);
     },
     inputSchema: {
@@ -303,6 +325,7 @@ function createSpec({ cliPath = RUNNER_CLI } = {}) {
       properties: {
         'adjudications-file': { 'x-path': true, type: 'string' },
         base: { type: 'string' },
+        'base-ref': { type: 'string' },
         collect: { type: 'boolean' },
         'dry-run': { type: 'boolean' },
         head: { type: 'string' },
@@ -311,8 +334,11 @@ function createSpec({ cliPath = RUNNER_CLI } = {}) {
         pr: { minimum: 1, type: 'integer' },
         'remediation-sha': { items: { type: 'string' }, type: 'array' },
         repo: { type: 'string' },
+        'review-id': { type: 'string' },
         'review-run-id': { type: 'string' },
         'skip-precheck': { type: 'boolean' },
+        'test-command': { items: { type: 'string' }, type: 'array' },
+        'test-file': { items: { type: 'string' }, type: 'array' },
         'triage-file': { 'x-path': true, type: 'string' },
       },
       type: 'object',

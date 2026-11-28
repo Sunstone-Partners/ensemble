@@ -28,6 +28,7 @@ const { isResult, refused } = require('../result');
 const { validateInput } = require('../validate');
 const { flipCheckboxes, readReview } = require('./implement-close');
 const { loadModel } = require('./implement-plan');
+const { gitProbe, remoteDefaultBranch } = require('../git');
 const { loadPolicy } = require('../policy');
 
 /** Drop keys whose value is undefined, so an absent flag stays absent. */
@@ -105,6 +106,24 @@ function actionArgs(call, step, state, context) {
       args[flag] = call.input[flag];
     }
   }
+  if (step.id === 'review-completion') {
+    // The whole branch against the default branch: the merge base and the HEAD, both read from git.
+    const baseRef = remoteDefaultBranch(call);
+    const head = gitProbe(call, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    if (isResult(head)) return head;
+    const base = gitProbe(call, ['merge-base', `refs/remotes/origin/${baseRef}`, 'HEAD']);
+    if (isResult(base)) return base;
+    if (head.exit !== 0 || base.exit !== 0) {
+      return refused(
+        'REVIEW_BASE_UNRESOLVED',
+        `the completion review needs the merge base of HEAD and origin/${baseRef}, and git could not resolve it`,
+        { baseRef }
+      );
+    }
+    args.base = base.stdout.trim();
+    args['base-ref'] = baseRef;
+    args.head = head.stdout.trim();
+  }
   if (step.id === 'delegate') {
     args['root-epic-id'] = state.epic.id;
     if (args['max-parallel'] === undefined && Number.isInteger(context.args.MAX_PARALLEL)) {
@@ -169,10 +188,12 @@ function handler(call) {
   }
 
   const step = decision.step;
+  const built = actionArgs(call, step, state, context);
+  if (isResult(built)) return built;
   return {
     ...base,
     ACTION: {
-      args: actionArgs(call, step, state, context),
+      args: built,
       id: step.id,
       kind: step.kind,
       preconditions: step.preconditions,
