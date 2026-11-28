@@ -191,13 +191,16 @@ function manualCommands({ base, body, branch, remoteUrl, title }) {
  *
  * Plain git branches off the current HEAD through the capability. git-town has no capability for a
  * stacked append, so the engine returns its native command rather than calling one that would cut
- * the new branch from the trunk. `manual` never creates anything.
+ * the new branch from the trunk. `manual` never creates anything, and neither does a run whose PR
+ * was not confirmed created: the instruction is returned for later.
  */
-function appendNext(call, { backend, next, strategy, warnings }) {
+function appendNext(call, { backend, created, next, strategy, warnings }) {
   if (typeof next !== 'string' || next.length === 0) return null;
   const command = strategy === 'git-town' ? `git town append ${shellQuote(next)}` : `git switch -c ${shellQuote(next)}`;
   const instruction = { branch: next, command, performed: false };
-  if (backend === 'manual' || strategy === 'git-town') return instruction;
+  // Only a confirmed creation moves HEAD: after a hand-off, a failed create or a manual run the
+  // pull request does not exist yet, and a switched branch would break the retry (BRANCH_MISMATCH).
+  if (!created || backend === 'manual' || strategy === 'git-town') return instruction;
   const made = classify(callCapability(call, 'workflow.branch-create', { name: next }), 'workflow.branch-create');
   if (made.kind === 'ok') return { ...instruction, performed: true };
   if (made.kind === 'gate') return made.result;
@@ -374,7 +377,7 @@ function handler(call) {
 
   const appended = completion
     ? null
-    : appendNext(call, { backend, next: action.appendNextBranch, strategy, warnings });
+    : appendNext(call, { backend, created: opened.created, next: action.appendNextBranch, strategy, warnings });
   if (isResult(appended)) return appended;
 
   return {
@@ -399,13 +402,14 @@ function handler(call) {
 
 /** What the caller does next. Says nothing about review outcome or landing: the PR is only open. */
 function nextText({ appended, opened }) {
-  if (opened.handoff) return `create the pull request with the ${opened.handoff.tool} ${opened.handoff.call} call named in ADO_HANDOFF`;
+  const later = appended ? `; once it exists, run: ${appended.command}` : '';
+  if (opened.handoff) return `create the pull request with the ${opened.handoff.tool} ${opened.handoff.call} call named in ADO_HANDOFF${later}`;
   if (opened.created) {
     return appended && appended.performed === false
       ? `the pull request is open for review; then run: ${appended.command}`
       : 'the pull request is open for review';
   }
-  if (opened.commands.length > 0) return 'run COMMANDS in order; nothing was pushed or created by the engine';
+  if (opened.commands.length > 0) return `run COMMANDS in order; nothing was created by the engine${later}`;
   return 'no pull request was opened';
 }
 

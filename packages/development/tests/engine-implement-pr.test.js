@@ -139,6 +139,18 @@ function callLog(fx) {
   return fx.tracker.calls().map(argv => argv.join(' '));
 }
 
+/** The next stacked branch is only an instruction: not created, HEAD still on the phase branch. */
+function expectAppendDeferred(fx, envelope) {
+  expect(envelope.data.APPEND).toEqual({
+    branch: PHASE_2_BRANCH,
+    command: `git switch -c '${PHASE_2_BRANCH}'`,
+    performed: false,
+  });
+  expect(backendCalls(fx).some(call => call[1] === 'branch-create')).toBe(false);
+  expect(git(fx, ['branch', '--show-current'])).toBe(PHASE_1_BRANCH);
+  expect(envelope.data.NEXT).toContain(`once it exists, run: git switch -c '${PHASE_2_BRANCH}'`);
+}
+
 /** Every call the backends received, in order, as `['workflow', 'push', ...]` argv. */
 function backendCalls(fx) {
   if (!fs.existsSync(fx.backendLog)) return [];
@@ -401,6 +413,7 @@ describe('the backend decides how the pull request is opened', () => {
     });
     expect(envelope.data.PR_CREATED).toBe(false);
     expect(envelope.data.PR_URL).toBeNull();
+    expectAppendDeferred(fx, envelope);
   });
 
   test('ado without the tool uses the change-request capability', () => {
@@ -422,6 +435,13 @@ describe('the backend decides how the pull request is opened', () => {
     expect(envelope.data.PR_CREATED).toBe(false);
     expect(envelope.data.NOTE).toContain('create this pull request manually');
     expect(envelope.data.COMMANDS[0]).toMatch(/^gh pr create /);
+    expectAppendDeferred(fx, envelope);
+
+    // The retry is not refused for having moved off the planned branch.
+    fs.rmSync(fx.hostFailFlag);
+    const retry = runPr(fx, phase1, { ...STACKED, ENSEMBLE_PR_BACKEND: 'ado' });
+    expect(retry.envelope.status).toBe('OK');
+    expect(retry.envelope.data.PR_CREATED).toBe(true);
   });
 
   test('manual returns the exact commands at every gate where a PR is due, and does nothing', () => {
@@ -432,6 +452,7 @@ describe('the backend decides how the pull request is opened', () => {
     expect(backendCalls(fx).filter(call => call[1] !== 'merge-base')).toEqual([]);
     expect(remoteBranches(fx)).toEqual(['main']);
     expect(envelope.data.PR_CREATED).toBe(false);
+    expectAppendDeferred(fx, envelope);
     expect(envelope.data.COMMANDS[0]).toBe(`git push -u origin '${PHASE_1_BRANCH}'`);
     expect(envelope.data.COMMANDS[1]).toContain(`gh pr create --base 'main' --head '${PHASE_1_BRANCH}'`);
     expect(envelope.data.COMMANDS[1]).toContain(`--title 'feat(widget-engine): Phase 1 — Core'`);
