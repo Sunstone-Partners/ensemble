@@ -343,6 +343,57 @@ function acceptResult(call, { step, resultFile }) {
 }
 
 /**
+ * The result the engine accepted for `step`, for a verb that was waiting on it.
+ *
+ * A verb that handed a step out comes back here once `implement accept` has recorded the answer.
+ * Nothing recorded is trusted on its say-so: the record is re-validated against its role's
+ * result schema, must name this step and role, and must have been accepted at the HEAD the
+ * repository is on now. A record at another HEAD is the answer to a different question, so it
+ * reads as "not supplied" and the verb hands the step out again (a step id that carries the
+ * short HEAD keeps that second hand-off from colliding with the first record).
+ *
+ * @param {object} call the dispatcher's call object
+ * @param {{step: string}} input the step the verb handed out
+ * @returns {{result: object, resultSha256: string}|null|object} the accepted result, `null` when
+ *   nothing usable was recorded for the live HEAD, or a tagged refusal for a record that exists
+ *   but cannot be read as one
+ * @throws {Error} an `INVALID_INPUT` engine error when the run id is absent
+ */
+function readAccepted(call, { step }) {
+  const runId = requireRunId(call);
+  const role = roleOfStep(step);
+  if (!role) throw new Error(`readAccepted: step '${step}' names no registered role`);
+  const head = liveHead(call);
+  if (isResult(head)) return head;
+
+  const target = path.join(runDirs(call.projectRoot, runId).accepted, `${step}.json`);
+  let entry;
+  try {
+    entry = fs.lstatSync(target);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+  const where = path.relative(call.projectRoot, target).split(path.sep).join('/');
+  // A link is never followed: the record is a file the engine wrote, not a pointer to one.
+  if (!entry.isFile() || entry.size > MAX_RESULT_BYTES * 2) {
+    return refused('ACCEPTED_RECORD_INVALID', `the accepted record at ${where} is not a regular file of a usable size`, null);
+  }
+  let record;
+  try {
+    record = JSON.parse(fs.readFileSync(target, 'utf8'));
+    validateInput(record.result, ROLES[role].resultSchema);
+  } catch (err) {
+    return refused('ACCEPTED_RECORD_INVALID', `the accepted record at ${where} no longer validates: ${err.message}`, null);
+  }
+  if (record.step !== step || record.role !== role || typeof record.resultSha256 !== 'string') {
+    return refused('ACCEPTED_RECORD_INVALID', `the accepted record at ${where} is for a different step`, null);
+  }
+  if (record.head !== head.trim() || record.result.head !== head.trim()) return null;
+  return { result: record.result, resultSha256: record.resultSha256 };
+}
+
+/**
  * Resolve a decision that would otherwise be a prompt.
  *
  * Interactive callers get `NEEDS_CHOICE` and ask their user. A non-interactive run
@@ -369,4 +420,4 @@ function resolveChoice(call, choice, { policyValue } = {}) {
   );
 }
 
-module.exports = { MAX_RESULT_BYTES, acceptResult, handOff, resolveChoice, runDirs };
+module.exports = { MAX_RESULT_BYTES, acceptResult, handOff, readAccepted, resolveChoice, runDirs };

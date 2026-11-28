@@ -621,6 +621,58 @@ function stackedNext(id, branch) {
   return `story ${id} stays open: run the pre-PR test run and local review on branch ${branch} next`;
 }
 
+/** phase-4-quality-gate.md:11 -- the pre-PR test gate's halt text, verbatim. */
+const PR_TESTS_FAILED = 'Local tests failed \u2014 PR creation blocked.';
+
+/**
+ * `implement pr` was asked for a phase or the completion, and the plan says no PR is due.
+ * Authored: the reference opens a PR only where `createPr` is true.
+ * @param {string} label `phase 2` or `the completion`
+ * @returns {string}
+ */
+function prNotDue(label) {
+  return `the PR plan has no pull request due for ${label} (createPr is not true); nothing was pushed or created`;
+}
+
+/** Authored: neither `--phase` nor `--completion`, or both. */
+const PR_TARGET_REQUIRED = 'name exactly one pull request: --phase <N> for a phase PR, or --completion for the completion PR';
+
+/**
+ * The accountable person is read from the host's authenticated session (`gh api user`), never
+ * from the caller. Authored.
+ * @param {string} reason why the login could not be read
+ * @returns {string}
+ */
+function directedByUnavailable(reason) {
+  return `the PR body names the authenticated GitHub user, and that login could not be read (${reason}); run \`gh auth login\` and retry (the engine reads the identity only through the GitHub CLI, whichever backend opens the pull request; it does not take a login from the caller). Nothing was tested, pushed or created`;
+}
+
+/** Authored: the checked-out branch is not the one the plan opens this PR from. */
+function prBranchMismatch(expected, actual) {
+  return `the PR plan opens this pull request from '${expected}', but HEAD is ${
+    actual === '' ? 'detached' : `on '${actual}'`
+  }; switch to '${expected}' first (the engine does not switch branches under you)`;
+}
+
+/** Authored: the base of the PR cannot be tied to a commit. */
+function prBaseUnresolved(base) {
+  return `base branch '${base}' does not resolve to a commit locally or as origin/${base}, so the PR's diff cannot be bounded`;
+}
+
+/**
+ * The rendered body failed the PR-description grader. Authored around the grader's own section ids.
+ * @param {string[]} missing
+ * @returns {string}
+ */
+function prBodyGradeFailed(missing) {
+  return `the pull request body failed the PR-description grader; missing: ${missing.join(', ')}. Nothing was pushed or created`;
+}
+
+/** The pull-request instructions for a person, when the engine may not or could not create one. */
+function prManualInstructions(reason) {
+  return `create this pull request manually (${reason}): run the push command, then the create command, or open the change request in your host's portal`;
+}
+
 /** No phase is waiting for a gate. Authored. */
 const NO_GATE_CANDIDATE = 'no complete phase is waiting for a quality gate';
 
@@ -745,6 +797,8 @@ module.exports = {
   PARSE_FAILED_CLI,
   PLAN_EXECUTE_EXCLUSIVE,
   PR_BACKEND_UNRESOLVED,
+  PR_TARGET_REQUIRED,
+  PR_TESTS_FAILED,
   RESET_TASK_AMBIGUOUS,
   RESET_TASK_NOT_FOUND,
   TASKS_BY_ID_EMPTY,
@@ -781,6 +835,12 @@ module.exports = {
   gateActionMissing,
   gateNotScaffolded,
   gitTownUnusable,
+  directedByUnavailable,
+  prBaseUnresolved,
+  prBodyGradeFailed,
+  prBranchMismatch,
+  prManualInstructions,
+  prNotDue,
   labelFailed,
   labelsWarning,
   lookupFailed,

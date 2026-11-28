@@ -174,24 +174,18 @@ function readRemoteUrl(call) {
 }
 
 /**
+ * The branching strategy and PR backend a run resolves to, from the tools that answer them.
+ *
+ * Neither is persisted (`skills/implement-trd-tasks-reference/SKILL.md:15`), so every verb that
+ * acts on one -- `implement env` to report it, `implement pr` to open a pull request through it --
+ * asks again here, and two verbs can never disagree about what the environment is.
+ *
  * @param {object} call the dispatcher's call object
- * @returns {object} the environment decisions, or a tagged engine result
+ * @param {string|undefined} flagBackend the `--pr-backend` flag, which wins over the environment
+ * @returns {{backend: object, branching: object, interactive: boolean, remoteUrl: string,
+ *   validation: object, warnings: string[]}|object} the resolution, or a tagged engine result
  */
-function handler(call) {
-  const input = call.input;
-  const planOnly = input.plan === true;
-  if (planOnly && input.execute === true) {
-    return refused('PLAN_EXECUTE_EXCLUSIVE', MESSAGES.PLAN_EXECUTE_EXCLUSIVE);
-  }
-
-  // Tools first, exactly as Step 1.2 runs before Step 1.3: a repository whose tracker is not even
-  // healthy must hear that, not a branching-strategy answer it cannot use.
-  let preflight = null;
-  if (input.preflight === true) {
-    preflight = runModePreflight(call, planOnly);
-    if (isResult(preflight)) return preflight;
-  }
-
+function resolveBackends(call, flagBackend) {
   const validation = runGitTownValidation(call);
   if (isResult(validation)) return validation;
   if (validation.exitCode === 3 || validation.exitCode === 4) {
@@ -209,7 +203,6 @@ function handler(call) {
 
   const { interactive } = resolveInteractivity({ env: call.env, globals: call.globals });
   const remoteUrl = readRemoteUrl(call);
-  const flagBackend = input['pr-backend'];
   const backend = resolvePrBackend(
     {
       ...call.env,
@@ -230,6 +223,32 @@ function handler(call) {
       question: 'Which backend should open the pull requests for this run?',
     });
   }
+  return { backend, branching, interactive, remoteUrl, validation, warnings };
+}
+
+/**
+ * @param {object} call the dispatcher's call object
+ * @returns {object} the environment decisions, or a tagged engine result
+ */
+function handler(call) {
+  const input = call.input;
+  const planOnly = input.plan === true;
+  if (planOnly && input.execute === true) {
+    return refused('PLAN_EXECUTE_EXCLUSIVE', MESSAGES.PLAN_EXECUTE_EXCLUSIVE);
+  }
+
+  // Tools first, exactly as Step 1.2 runs before Step 1.3: a repository whose tracker is not even
+  // healthy must hear that, not a branching-strategy answer it cannot use.
+  let preflight = null;
+  if (input.preflight === true) {
+    preflight = runModePreflight(call, planOnly);
+    if (isResult(preflight)) return preflight;
+  }
+
+  const resolved = resolveBackends(call, input['pr-backend']);
+  if (isResult(resolved)) return resolved;
+  const { backend, branching, interactive, remoteUrl, validation, warnings } = resolved;
+  const flagBackend = input['pr-backend'];
 
   const worktree = readWorktree(call);
   if (isResult(worktree)) return worktree;
@@ -324,4 +343,4 @@ const spec = {
   summary: 'report the branching strategy, PR backend and working-tree state a run would use',
 };
 
-module.exports = { spec };
+module.exports = { resolveBackends, spec };
