@@ -359,7 +359,7 @@ describe('--preflight requires the capabilities the mode actually uses', () => {
       [
         path.join('.ensemble', 'state', '.gitignore'),
         // TRD-020: every native verb run under --run-id leaves one audit record.
-        path.join('.ensemble', 'state', 'engine', 'r1', 'ledger', '0001-implement-env.json'),
+        path.join('.ensemble', 'state', 'engine', 'r1', 'ledger', '0001.json'),
         path.join('.ensemble', 'state', 'toolchain', 'preflight-r1.json'),
       ].sort()
     );

@@ -20,8 +20,10 @@
  *                       comment (stacked mode keeps the story open; an informational strategy
  *                       also accepts FAIL, which is the gate's own recorded verdict there)
  *   pr-<N>, pr-completion
- *                       the planned branch exists locally and is contained in `origin/<branch>`:
- *                       `implement pr` pushes it, and git is the only record of that
+ *                       `host.change-request-list` shows an open pull request whose head is the
+ *                       planned branch. A push is NOT evidence (an Azure hand-off, a failed
+ *                       create and a manual push all push and open nothing); with the `manual`
+ *                       backend, or a host that cannot answer, the answer is UNAVAILABLE.
  *   review-completion   the recorded whole-branch review for this HEAD is LOCAL_REVIEW_COMPLETE
  *                       (the same reading `implement close` makes, `.ensemble/pr-review/`)
  *   close               the epic is closed
@@ -32,9 +34,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { gateAction, completionAction } = require('./pr-plan');
-const { gitProbe } = require('./git');
 const { isResult, unavailable } = require('./result');
-const { isClosed, isTaskLevel, readComments, readIssues, scopeBeads } = require('./tracker');
+const { callCapability, classify, isClosed, isTaskLevel, readComments, readIssues, scopeBeads } = require('./tracker');
 const { parseTitlePrefix } = require('../bead-refs');
 const { STRATEGIES } = require('./policy');
 
@@ -169,7 +170,7 @@ function buildPlan(model) {
  * call only pays for the steps it actually reaches.
  *
  * @param {object} call the dispatcher's call object
- * @param {{trdPath: string, slug: string, phases: object[], prPlan: object, strategyInformational: Function,
+ * @param {{trdPath: string, slug: string, phases: object[], prPlan: object, prBackend: Function, strategyInformational: Function,
  *   readReview: Function, flipCheckboxes: Function}} model
  * @returns {object} the live state, or a tagged engine result
  */
@@ -235,24 +236,47 @@ function readLiveState(call, model) {
         return review.STATE === 'complete';
       });
     },
-    /** @returns {boolean|object} whether `branch` is pushed to origin, or a tagged result */
-    pushed(branch) {
-      return once(`pushed-${branch}`, () => {
+    /**
+     * Whether an open pull request from `branch` exists on the host: a positive answer from
+     * `host.change-request-list`, never inferred from a push (an Azure hand-off, a failed create
+     * and a manual push all leave a pushed branch and no pull request). A backend that leaves
+     * nothing to read, and a host that cannot answer, are UNAVAILABLE -- never "no PR yet".
+     * @returns {boolean|object} a boolean, or a tagged engine result
+     */
+    prOpen(branch) {
+      return once(`pr-${branch}`, () => {
         if (typeof branch !== 'string' || branch === '') return false;
-        const remote = gitProbe(call, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
-        if (isResult(remote)) return remote;
-        if (remote.exit !== 0) return false;
-        const local = gitProbe(call, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
-        if (isResult(local)) return local;
-        if (local.exit !== 0) return false;
-        const contained = gitProbe(call, [
-          'merge-base',
-          '--is-ancestor',
-          `refs/heads/${branch}`,
-          `refs/remotes/origin/${branch}`,
-        ]);
-        if (isResult(contained)) return contained;
-        return contained.exit === 0;
+        const backend = model.prBackend();
+        if (backend === 'manual') {
+          return unavailable(
+            'PR_EVIDENCE_UNSUPPORTED',
+            `the PR backend is 'manual': a pull request opened by hand leaves nothing the engine can read, so it cannot say whether '${branch}' has one`,
+            { backend, branch }
+          );
+        }
+        const answer = classify(callCapability(call, 'host.change-request-list'), 'host.change-request-list');
+        if (answer.kind === 'gate') return answer.result;
+        if (answer.kind !== 'ok') {
+          return unavailable(
+            'PR_EVIDENCE_UNAVAILABLE',
+            `host.change-request-list could not say whether '${branch}' has an open pull request: ${answer.message || answer.kind}`,
+            { backend, branch }
+          );
+        }
+        let payload = answer.data;
+        if (typeof payload === 'string') {
+          try {
+            payload = JSON.parse(payload);
+          } catch {
+            payload = null;
+          }
+        }
+        const items = Array.isArray(payload) ? payload : payload && Array.isArray(payload.items) ? payload.items : null;
+        if (items === null) {
+          return unavailable('PR_EVIDENCE_UNAVAILABLE', 'host.change-request-list output has no pull request list', { backend, branch });
+        }
+        const bare = ref => String(ref == null ? '' : ref).replace(/^refs\/heads\//, '');
+        return items.some(item => item && bare(item.headBranch) === branch);
       });
     },
     /** @returns {boolean} whether every closed task's checkbox is checked in the TRD file */
@@ -312,13 +336,13 @@ function isDone(s, state, plan, context) {
       return state.checkboxesSynced();
     case 'pr-completion': {
       const action = completionAction(context.prPlan);
-      return state.pushed(action && action.branch);
+      return state.prOpen(action && action.branch);
     }
     default: {
       if (s.id.startsWith('gate-')) return state.gateRecorded(Number(s.id.slice(5)));
       if (s.id.startsWith('pr-')) {
         const action = gateAction(context.prPlan, Number(s.id.slice(3)));
-        return state.pushed(action && action.branch);
+        return state.prOpen(action && action.branch);
       }
       throw new Error(`plan: unknown step '${s.id}'`);
     }

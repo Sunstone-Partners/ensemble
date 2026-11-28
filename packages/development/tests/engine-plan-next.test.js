@@ -12,7 +12,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
+const yaml = require('js-yaml');
 
 const crypto = require('crypto');
 
@@ -54,6 +55,80 @@ function registerAgents(root) {
   }
 }
 
+/**
+ * A `host` adapter whose `host.change-request-list` prints whatever the test last stored: the
+ * pull requests the host "has". `failHost` makes it exit non-zero, as an unreachable host would.
+ */
+function writeHostAdapter(fx) {
+  fx.hostFile = `${fx.root}-host.json`;
+  fs.writeFileSync(fx.hostFile, '[]\n');
+  const bin = path.join(fx.binDir, 'fixture-host');
+  fs.writeFileSync(
+    bin,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('fs');",
+      `const file = ${JSON.stringify(fx.hostFile)};`,
+      "const text = fs.readFileSync(file, 'utf8');",
+      "if (text.trim() === 'FAIL') { process.stderr.write('host unreachable\\n'); process.exit(1); }",
+      'process.stdout.write(text);',
+    ].join('\n') + '\n',
+    { mode: 0o755 }
+  );
+  const skillDir = path.join(fx.root, 'packages', 'fixture-pkg', 'skills', 'fixture-host');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, 'adapter.yaml'),
+    yaml.dump({
+      adapter: 'fixture-host',
+      version: '1.0.0',
+      categories: ['host'],
+      contract: { host: '1.0' },
+      binaries: ['fixture-host'],
+      allowlist: [{ bin: 'fixture-host', sub: ['list'] }],
+      env: [],
+      health: [],
+      detect: [],
+      capabilities: {
+        'host.change-request-list': {
+          run: ['fixture-host', 'list'],
+          parse: {
+            format: 'json',
+            map: { items: '$' },
+            arrayMap: {
+              items: {
+                source: '$',
+                item: {
+                  id: '$[0]',
+                  url: '$[1]',
+                  state: { path: '$[2]', statusMap: { OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' } },
+                  baseBranch: '$[3]',
+                  headBranch: '$[4]',
+                },
+              },
+            },
+          },
+        },
+      },
+    })
+  );
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# fixture-host\n');
+  const config = path.join(fx.root, '.ensemble', 'toolchain.yaml');
+  fs.writeFileSync(config, `${fs.readFileSync(config, 'utf8')}host: fixture-host\n`);
+}
+
+/** The pull requests the host reports as open, by head branch. */
+function setPrs(fx, heads) {
+  fs.writeFileSync(
+    fx.hostFile,
+    `${JSON.stringify(heads.map((head, index) => [String(index + 1), `https://host.invalid/pr/${index + 1}`, 'OPEN', 'main', head]))}\n`
+  );
+}
+
+function failHost(fx) {
+  fs.writeFileSync(fx.hostFile, 'FAIL\n');
+}
+
 function scaffoldCalls(fx) {
   const out = execFileSync(
     process.execPath,
@@ -76,6 +151,7 @@ function repo({ scaffolded = false, remote = null } = {}) {
   });
   registerAgents(fx.root);
   fx.tracker = createTrackerStub(fx.root, {});
+  writeHostAdapter(fx);
   initRepo(fx, { remote });
   if (scaffolded) fx.ids = fx.tracker.seedFromPlan(scaffoldCalls(fx));
   return fx;
@@ -232,8 +308,12 @@ describe('next follows live state, one step at a time', () => {
     git(fx, ['commit', '--quiet', '-am', 'sync']);
     expect(nextId(fx)).toBe('pr-completion');
 
-    // `implement pr` pushes the branch; origin carrying it is what says the step happened.
+    // A pushed branch is not a pull request: origin carrying it changes nothing.
     git(fx, ['update-ref', `refs/remotes/origin/${BRANCH}`, 'HEAD']);
+    expect(nextId(fx)).toBe('pr-completion');
+
+    // The host reporting an open pull request from the branch is what says the step happened.
+    setPrs(fx, [BRANCH]);
     answer = next(fx).envelope.data;
     expect(answer.STATE).toBe('COMPLETE');
     expect(answer.ACTION).toBeNull();
@@ -248,7 +328,7 @@ describe('next follows live state, one step at a time', () => {
     const file = path.join(fx.root, TRD_PATH);
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/- \[ \] \*\*/g, '- [x] **'));
     git(fx, ['commit', '--quiet', '-am', 'sync']);
-    git(fx, ['update-ref', `refs/remotes/origin/${BRANCH}`, 'HEAD']);
+    setPrs(fx, [BRANCH]);
 
     const { envelope, exitCode } = next(fx);
     expect(exitCode).toBe(0);
@@ -305,12 +385,51 @@ describe('stacked mode: the story stays open, so the gate leaves its own evidenc
     const answer = next(fx, [], options).envelope.data;
     expect(answer.ACTION).toMatchObject({ args: { phase: 1 }, id: 'pr-1', kind: 'agent', verb: 'implement pr' });
 
-    // The phase branch exists and origin holds it: the PR step is evident in git.
-    // Not pushed yet: the branch is only local, so the step is still outstanding.
+    // The branch exists locally and then on origin: still no pull request.
     git(fx, ['branch', '-f', phaseBranch, 'HEAD']);
     expect(nextId(fx, [], options)).toBe('pr-1');
     git(fx, ['update-ref', `refs/remotes/origin/${phaseBranch}`, phaseBranch]);
+    expect(nextId(fx, [], options)).toBe('pr-1');
+
+    // A pull request from some other branch is not this one's either.
+    setPrs(fx, ['somebody/else']);
+    expect(nextId(fx, [], options)).toBe('pr-1');
+
+    setPrs(fx, [phaseBranch]);
     expect(nextId(fx, [], options)).toBe('gate-2');
+  });
+});
+
+describe('pull request evidence is a pull request, and an outage is not "none yet"', () => {
+  /** A finished build whose only outstanding step is the completion pull request. */
+  function atCompletionPr() {
+    const fx = repo({ scaffolded: true });
+    git(fx, ['switch', '--quiet', '-c', BRANCH]);
+    fx.tracker.setStatus(epicId(fx), 'closed');
+    for (const id of taskIds(fx)) fx.tracker.setStatus(id, 'closed');
+    const file = path.join(fx.root, TRD_PATH);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/- \[ \] \*\*/g, '- [x] **'));
+    git(fx, ['commit', '--quiet', '-am', 'sync']);
+    return fx;
+  }
+
+  test('a host that cannot answer is UNAVAILABLE, not a reason to ask for the step again or to skip it', () => {
+    const fx = atCompletionPr();
+    expect(nextId(fx)).toBe('pr-completion');
+    failHost(fx);
+    const { envelope, exitCode } = next(fx);
+    expect(exitCode).toBe(5);
+    expect(envelope.status).toBe('UNAVAILABLE');
+    expect(envelope.error.code).toBe('PR_EVIDENCE_UNAVAILABLE');
+  });
+
+  test('the manual backend leaves nothing to read, and says so instead of guessing', () => {
+    const fx = atCompletionPr();
+    git(fx, ['update-ref', `refs/remotes/origin/${BRANCH}`, 'HEAD']);
+    const { envelope, exitCode } = next(fx, ['--pr-backend', 'manual']);
+    expect(exitCode).toBe(5);
+    expect(envelope.error.code).toBe('PR_EVIDENCE_UNSUPPORTED');
+    expect(envelope.error.message).toContain('manual');
   });
 });
 
@@ -388,6 +507,44 @@ describe('derivation steps are folded into next', () => {
     const { envelope, exitCode } = next(fx);
     expect(exitCode).toBe(1);
     expect(envelope.error.code).toBe('PR_BACKEND_UNRESOLVED');
+  });
+});
+
+describe('the audit ledger never loses a record to a concurrent writer', () => {
+  const ledgerDir = fx => path.join(fx.root, '.ensemble', 'state', 'engine', 'rc', 'ledger');
+
+  test('eight processes finishing the same verb under one run id leave eight records, and an existing record survives', async () => {
+    const fx = repo();
+    const dir = ledgerDir(fx);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '0001.json'), 'earlier record\n');
+
+    const script = [
+      "const { recordCall } = require(process.argv[1]);",
+      'const n = Number(process.argv[3]);',
+      "const call = { globals: { runId: 'rc' }, input: { trd: 'same', writer: n }, projectRoot: process.argv[2] };",
+      "const wrote = recordCall(call, { status: 'OK', verb: 'implement plan', writer: n });",
+      'process.exit(wrote ? 0 : 3);',
+    ].join('\n');
+    const ledger = path.join(__dirname, '..', 'lib', 'engine', 'ledger.js');
+    const exits = await Promise.all(
+      [1, 2, 3, 4, 5, 6, 7, 8].map(
+        n =>
+          new Promise(resolve => {
+            const child = spawn(process.execPath, ['-e', script, ledger, fx.root, String(n)], { stdio: 'ignore' });
+            child.on('close', resolve);
+          })
+      )
+    );
+    expect(exits).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+
+    const names = fs.readdirSync(dir).filter(name => name.endsWith('.json')).sort();
+    expect(names).toHaveLength(9);
+    expect(fs.readFileSync(path.join(dir, '0001.json'), 'utf8')).toBe('earlier record\n');
+    const records = names.slice(1).map(name => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
+    expect(new Set(records.map(record => record.seq)).size).toBe(8);
+    expect(new Set(records.map(record => record.output_sha256)).size).toBe(8);
+    expect(fs.readdirSync(dir).filter(name => name.endsWith('.tmp'))).toEqual([]);
   });
 });
 

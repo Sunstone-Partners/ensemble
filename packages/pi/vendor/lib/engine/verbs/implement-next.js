@@ -130,6 +130,7 @@ function handler(call) {
   const state = readLiveState(call, {
     flipCheckboxes,
     phases: model.phases,
+    prBackend: () => context.env && context.env.PR_BACKEND,
     prPlan: model.prPlan,
     readReview,
     slug: model.slug,
