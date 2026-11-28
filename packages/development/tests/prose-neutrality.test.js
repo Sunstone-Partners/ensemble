@@ -324,12 +324,13 @@ describe('TRD-024-TEST: a beads project keeps its work items and argv (AC-011-3)
 // ---- 3. AC-011-2 ---------------------------------------------------------------------------
 
 describe('TRD-024-TEST: the same prose resolves to a kata capability call on a kata project (AC-011-2)', () => {
-  const refsDir = path.join(PROSE_ROOT, 'skills', 'ensemble-implement-trd-tasks', 'references');
-  const proseText = walk(refsDir).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
-  const named = (cap) => new RegExp(`(?:run|invoke|call) ${cap.replace('.', '\\.')}(?![\\w-])`).test(proseText);
+  // The create, link and close instructions are engine verbs now (TRD-021): the capability ids the
+  // shared flow names are the ones `implement scaffold` and the closure helper call.
+  const engine = (rel) => fs.readFileSync(path.join(PROSE_ROOT, 'lib', 'engine', rel), 'utf8');
+  const proseText = [engine('verbs/implement-scaffold.js'), engine('closure.js')].join('\n');
+  const named = (cap) => new RegExp(`'${cap.replace('.', '\\.')}'`).test(proseText);
 
-  test('the shared prose states the create, link and close instructions as capability calls', () => {
-    expect(walk(refsDir).length).toBeGreaterThanOrEqual(5);
+  test('the shared flow states the create, link and close instructions as capability calls', () => {
     for (const cap of ['tracker.create', 'tracker.dep-add', 'tracker.close-with-reason']) {
       expect(named(cap)).toBe(true);
     }
@@ -352,25 +353,17 @@ describe('TRD-024-TEST: the same prose resolves to a kata capability call on a k
     expect(kata[0]).not.toBe(beads[0]);
   });
 
-  // br-jbxpe: the shared prose closes through tracker.close-with-reason. A bare tracker.close
-  // (which kata refuses by design) appears only as the stated fallback for an adapter that lacks
-  // close-with-reason (jira, azure-boards), never as the primary close.
-  test('prose names tracker.close-with-reason and no bare tracker.close; both close sites carry a commit and reason', () => {
+  // br-jbxpe: the shared flow closes through tracker.close-with-reason. A bare tracker.close (which
+  // kata refuses by design) appears only as the fallback for an adapter that lacks close-with-reason
+  // (jira, azure-boards), never as the primary close.
+  test('closure names tracker.close-with-reason first; a bare tracker.close is only the NOT_ALLOWED fallback, and the call carries a reason and commit', () => {
+    const closure = engine('closure.js');
     expect(named('tracker.close-with-reason')).toBe(true);
-    const fallback = 'use tracker.close --arg id=<ID>';
-    expect(proseText.split(fallback).join('').split('--require tracker.close').join('')).not.toMatch(/tracker\.close(?![\w-])/);
-    for (const f of ['phase-4-quality-gate.md', 'phase-5-completion.md']) {
-      const text = fs.readFileSync(path.join(refsDir, f), 'utf8');
-      expect(text).toContain('NOT_ALLOWED: ' + fallback);
-    }
-    expect(/\(no reason arg\)/.test(proseText)).toBe(false);
-    for (const f of ['phase-4-quality-gate.md', 'phase-5-completion.md']) {
-      const text = fs.readFileSync(path.join(refsDir, f), 'utf8');
-      const line = text.split('\n').find((l) => /run tracker\.close-with-reason/.test(l));
-      expect(line).toBeDefined();
-      expect(line).toMatch(/--arg reason=/);
-      expect(line).toMatch(/--arg commit=/);
-    }
+    const primary = closure.indexOf("'tracker.close-with-reason'");
+    const fallback = closure.indexOf("callCapability(call, 'tracker.close', { id })");
+    expect(primary).toBeGreaterThan(-1);
+    expect(fallback).toBeGreaterThan(primary);
+    expect(closure).toMatch(/callCapability\(call, 'tracker\.close-with-reason', \{ id, reason, commit \}\)/);
   });
 
   test('a bare tracker.close stays refused on kata (why the prose must not use it)', () => {

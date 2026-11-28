@@ -34,7 +34,9 @@ const {
   writeToolchainYaml,
 } = require('./helpers/engine-repo');
 
-const REFERENCE = path.join(__dirname, '..', 'skills', 'implement-trd-tasks-reference', 'SKILL.md');
+// The skill was thinned to the engine loop (TRD-021); these texts were copied from the prose below, kept verbatim
+// in tests/fixtures/engine/skill-before-thinning/, so the engine can still be held to what it replaced.
+const REFERENCE = path.join(__dirname, 'fixtures', 'engine', 'skill-before-thinning', 'reference-SKILL.md.txt');
 const KATA_ADAPTER = path.join(__dirname, '..', 'skills', 'adapter-tracker-kata', 'adapter.yaml');
 const AZURE_REMOTE = 'https://dev.azure.com/org/project/_git/repo';
 

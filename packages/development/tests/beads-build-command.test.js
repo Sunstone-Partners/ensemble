@@ -99,10 +99,10 @@ describe('beads-build Preflight resolve-sdlc rewiring (TRD-013)', () => {
     expect(stepBlock).toMatch(/INTERACTIVE=false, or INTERACTIVE detection is itself uncertain[\s\S]*HALT/);
   });
 
-  test('beads-build and the implement-trd-tasks reference skill consume the same resolve-sdlc contract', () => {
+  test('beads-build and the engine\'s implement env consume the same resolve-sdlc contract', () => {
     const beadsBuildText = skillText;
     const implText = fs.readFileSync(
-      path.join(__dirname, '../skills/implement-trd-tasks-reference/SKILL.md'),
+      path.join(__dirname, '../lib/engine/verbs/implement-env.js'),
       'utf8'
     );
     const beadsBuildStep = beadsBuildText
@@ -113,10 +113,10 @@ describe('beads-build Preflight resolve-sdlc rewiring (TRD-013)', () => {
       .replace(/''/g, "'");
 
     for (const [buildMarker, implMarker] of [
-      ['resolve-sdlc --git-town-exit-code', 'resolve-sdlc --git-town-exit-code'],
-      ["branchingStrategy.action == 'halt'", "branchingStrategy.action=='halt'"],
-      ['prBackend.needsResolution == false', 'prBackend.needsResolution==false'],
-      ['consolidatedMessage', 'consolidatedMessage'],
+      ['resolve-sdlc --git-town-exit-code', 'resolveBranchingStrategy'],
+      ["branchingStrategy.action == 'halt'", "resolvePrBackend"],
+      ['prBackend.needsResolution == false', 'resolvePrBackend'],
+      ['consolidatedMessage', 'buildConsolidatedResolutionMessage'],
     ]) {
       expect(beadsBuildStep).toContain(buildMarker);
       expect(implText).toContain(implMarker);

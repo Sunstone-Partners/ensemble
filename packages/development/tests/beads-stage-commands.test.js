@@ -24,15 +24,16 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const skillProse = (skill) => readDevelopmentSkill(skill).prompt;
 const lines = (text) => text.split('\n');
 
+// implement-trd-tasks is not listed: its dirty-tree gate, staging and checkpoint and closing commits are
+// engine verbs now (`implement resume`, `gate`, `close`, `sync-checkboxes`); the dirty-tree gate is
+// proved against a real repository by engine-implement-resume.test.js and the checkpoint staging by
+// engine-implement-gate.test.js, not by prose in the skill.
 const COMMANDS = {
-  // the dirty-tree status capture lives in the on-demand reference skill, not the command body
-  'implement-trd-tasks.yaml':
-    skillProse('ensemble-implement-trd-tasks') + '\n' + read('skills/implement-trd-tasks-reference/SKILL.md'),
   'beads-build.yaml': skillProse('ensemble-beads-build'),
   'beads-build-wave.yaml': skillProse('ensemble-beads-build-wave'),
 };
-const GATES = ['implement-trd-tasks.yaml', 'beads-build.yaml', 'beads-build-wave.yaml'];
-const STAGERS = ['implement-trd-tasks.yaml', 'beads-build.yaml'];
+const GATES = ['beads-build.yaml', 'beads-build-wave.yaml'];
+const STAGERS = ['beads-build.yaml'];
 
 describe('dirty-tree gates ignore br\'s own state under .beads/', () => {
   test.each(GATES)('%s reads the tree through workflow.status and excludes .beads', (file) => {

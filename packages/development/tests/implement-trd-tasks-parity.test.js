@@ -68,114 +68,32 @@ const currentPreflightText = currentPreflightActions.join('\n');
 const currentParameters = parseParameters(skill.body);
 
 describe('TRD-020-TEST: the renamed command preserves every captured phase (AC-010-1)', () => {
-  test('phase order, phase names and step titles are the captured ones', () => {
-    expect(workflow.map((p) => ({ order: p.order, name: p.name }))).toEqual(
-      golden.workflow.map((p) => ({ order: p.order, name: p.name }))
-    );
-    for (const capturedPhase of golden.workflow) {
-      const currentPhase = workflow.find((p) => p.order === capturedPhase.order);
-      expect(currentPhase.steps.map((s) => s.title)).toEqual(capturedPhase.steps.map((s) => s.title));
-    }
-  });
-
-  test('every captured step description and action survives, with only the command name changed', () => {
-    for (const capturedPhase of golden.workflow) {
-      const currentPhase = workflow.find((p) => p.order === capturedPhase.order);
-      for (let i = 0; i < capturedPhase.steps.length; i++) {
-        const capturedStep = capturedPhase.steps[i];
-        const currentStep = currentPhase.steps[i];
-        expect(undoRename(currentStep.description)).toBe(capturedStep.description);
-        expect(currentStep.actions.map(undoRename)).toEqual(capturedStep.actions);
-        expect(currentStep.description).not.toContain(RETIRED_NAME);
-        expect(currentStep.actions.join('\n')).not.toContain(RETIRED_NAME);
-      }
-    }
-  });
-
-  test('each named phase is still handled by the rule the capture recorded', () => {
+  // The capture recorded the five phases as prose. The skill is now a loop over the engine (TRD-021), so
+  // "the same handling" means the same behaviour has a home: the flag the capture's rule guarded is a flag
+  // of the engine verb that now decides it, and the skill names that verb.
+  test('each named phase is still handled: the capture recorded a rule, and an engine verb now owns it', () => {
+    const { buildRegistry } = require('../lib/ensemble-cli');
+    const registry = buildRegistry();
+    const flagsOf = (name) => Object.keys(registry.get('implement', name).inputSchema.properties || {});
     const NAMED_PHASES = [
-      {
-        name: 'plan-only execution',
-        evidence: [
-          { kind: 'rule', match: (guard) => guard.includes('`--plan` with `--execute`') },
-          { kind: 'action', phase: 'Scaffold', match: (action) => action.includes('PLAN_ONLY') },
-        ],
-      },
-      {
-        name: 'unattended execution',
-        evidence: [
-          { kind: 'parameter', name: 'foreman' },
-          { kind: 'action', phase: 'Scaffold', match: (action) => action.includes('`--foreman`') },
-        ],
-      },
-      {
-        name: 'branch selection',
-        evidence: [{ kind: 'rule', match: (guard) => guard.includes('`--branch=<name>`') }],
-      },
-      {
-        name: 'status reporting',
-        evidence: [{ kind: 'rule', match: (guard) => guard === '`--status`' }],
-      },
-      {
-        name: 'single-task reset',
-        evidence: [{ kind: 'rule', match: (guard) => guard.includes('`--reset-task TRD-XXX`') }],
-      },
-      {
-        name: 'backlog listing',
-        evidence: [{ kind: 'rule', match: (guard) => guard === '`--list`' }],
-      },
-      {
-        name: 'workstream generation',
-        evidence: [
-          {
-            kind: 'rule',
-            match: (guard) => guard.includes('`--workstream`') || guard.includes('`--generate-only`'),
-          },
-        ],
-      },
-      {
-        name: 'external-runner delegation',
-        evidence: [
-          { kind: 'action', phase: 'Execute', match: (action) => action.includes('/ensemble:beads-build') },
-          { kind: 'rule', match: (guard) => guard.includes('--max-parallel') },
-        ],
-      },
+      { name: 'plan-only execution', rule: (g) => g.includes('`--plan` with `--execute`'), verb: 'args', flags: ['plan', 'execute'], next: ['plan-only', 'execute'] },
+      { name: 'unattended execution', parameter: 'foreman', verb: 'args', flags: ['foreman'], next: ['foreman'] },
+      { name: 'branch selection', rule: (g) => g.includes('`--branch=<name>`'), verb: 'args', flags: ['branch', 'use-current-branch'], next: ['branch', 'use-current-branch'] },
+      { name: 'status reporting', rule: (g) => g === '`--status`', verb: 'args', flags: ['status'] },
+      { name: 'single-task reset', rule: (g) => g.includes('`--reset-task TRD-XXX`'), verb: 'args', flags: ['reset-task'] },
+      { name: 'backlog listing', rule: (g) => g === '`--list`', verb: 'args', flags: ['list'] },
+      { name: 'workstream generation', rule: (g) => g.includes('`--workstream`') || g.includes('`--generate-only`'), verb: 'args', flags: ['workstream', 'generate-only'] },
+      { name: 'external-runner delegation', rule: (g) => g.includes('--max-parallel'), verb: 'delegate', flags: ['max-parallel'] },
     ];
-
-    const report = {};
     for (const named of NAMED_PHASES) {
-      const entry = { captured: 0, preserved: true };
-      for (const item of named.evidence) {
-        if (item.kind === 'rule') {
-          const rules = goldenRules.filter((rule) => item.match(rule.guard));
-          entry.captured += rules.length;
-          for (const rule of rules) {
-            if (!currentPreflightText.includes(applyRename(rule.text))) entry.preserved = false;
-          }
-        } else if (item.kind === 'parameter') {
-          const capturedParameter = golden.parameters.find((p) => p.name === item.name);
-          const currentParameter = currentParameters.find((p) => p.name === item.name);
-          entry.captured += capturedParameter ? 1 : 0;
-          if (!capturedParameter || !currentParameter) entry.preserved = false;
-        } else {
-          const capturedAction = goldenActionsOf(item.phase).find((action) => item.match(action));
-          entry.captured += capturedAction ? 1 : 0;
-          if (!capturedAction || !currentActionsOf(item.phase).includes(applyRename(capturedAction))) {
-            entry.preserved = false;
-          }
-        }
-      }
-      report[named.name] = entry;
+      const captured = named.parameter
+        ? golden.parameters.filter((p) => p.name === named.parameter)
+        : goldenRules.filter((rule) => named.rule(rule.guard));
+      expect({ name: named.name, captured: captured.length > 0 }).toEqual({ name: named.name, captured: true });
+      for (const flag of named.flags) expect({ name: named.name, flag, owned: flagsOf(named.verb).includes(flag) }).toEqual({ flag, name: named.name, owned: true });
+      for (const flag of named.next || []) expect({ name: named.name, flag, owned: flagsOf('next').includes(flag) }).toEqual({ flag, name: named.name, owned: true });
+      expect(skill.prompt).toContain(`implement ${named.verb}`);
     }
-
-    const uncovered = Object.entries(report)
-      .filter(([, entry]) => entry.captured === 0)
-      .map(([name]) => name);
-    const unpreserved = Object.entries(report)
-      .filter(([, entry]) => !entry.preserved)
-      .map(([name]) => name);
-    expect(uncovered).toEqual([]);
-    expect(unpreserved).toEqual([]);
   });
 
   test('the command under test is the renamed command the capture recorded', () => {
@@ -190,8 +108,8 @@ describe('TRD-020-TEST: the renamed command preserves every captured phase (AC-0
     expect(currentParameters.map(shape)).toEqual(golden.parameters.map(shape));
   });
 
-  test('the argument rules never invoke the retired command', () => {
-    expect(currentPreflightText).not.toContain(RETIRED_NAME);
+  test('the prompt never invokes the retired command', () => {
+    expect(skill.prompt).not.toContain(RETIRED_NAME);
   });
 });
 
@@ -250,21 +168,16 @@ describe('TRD-020-TEST: the plan-only completion names the renamed execute step 
   const planOnlyActions = (actions) => actions.filter((action) => action.includes('PLAN_ONLY'));
 
   test('the plan-only completion names the renamed command and not the retired one', () => {
-    const messages = planOnlyActions(currentActionsOf('Scaffold'));
+    const messages = skill.prompt.split('\n').filter((line) => line.includes('Plan complete. Bead hierarchy created.'));
     expect(messages).toHaveLength(1);
     expect(messages[0]).toContain('/ensemble:implement-trd-tasks --execute');
     expect(messages[0]).not.toContain(RETIRED_NAME);
   });
 
   test('the plan-only completion is the captured message with the command renamed', () => {
-    const capturedMessages = planOnlyActions(goldenActionsOf('Scaffold'));
-    expect(capturedMessages).toHaveLength(1);
-    expect(currentActionsOf('Scaffold')).toContain(applyRename(capturedMessages[0]));
-  });
-
-  test('plan-only mode is the one the --plan argument selects', () => {
-    const planRule = currentPreflightActions.find((action) => action.includes('`--plan`'));
-    expect(planRule).toBeDefined();
-    expect(planRule).toMatch(/PLAN_ONLY/);
+    const [capturedMessage] = goldenActionsOf('Scaffold').filter((action) => action.includes('PLAN_ONLY'));
+    const text = applyRename(capturedMessage);
+    const sentence = text.match(/'(Plan complete\.[^']*)'/)[1];
+    expect(skill.prompt).toContain(sentence);
   });
 });

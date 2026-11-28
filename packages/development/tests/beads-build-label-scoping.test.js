@@ -42,21 +42,20 @@ const buildManifest = read('commands/beads-build.yaml');
 const wave = readDevelopmentSkill('ensemble-beads-build-wave').prompt;
 const waveAgent = read('agents/beads-build-wave.yaml');
 
+// The caller is the engine now: `implement delegate` passes the scoping label and `implement
+// bead-health --label` backfills it (proved against a real tracker by engine-implement-delegate and
+// engine-implement-bead-health). What stays pinned here is the contract between the two sides.
 describe('implement-trd-tasks labels the beads it scaffolds', () => {
-  test('tracker.create has no labels arg; every bead kind gets labeled via the beads-label backfill instead', () => {
-    expect(itb).toMatch(/run tracker\.create --arg title=\\?"<title>\\?" --arg type=<type> --arg description=\\?"<description>\\?"/);
-    expect(itb).toMatch(/no priority\/labels\/externalRef arg[^)]*labels backfilled later/);
-    expect(itb).toMatch(/plan\.epic`, `plan\.stories\[\]`, `plan\.tasks\[\]`, `plan\.synthesizedTests\[\]/);
+  const delegate = read('lib/engine/verbs/implement-delegate.js');
+  const health = read('lib/engine/verbs/implement-bead-health.js');
+
+  test('the delegation names the TRD slug as the label and defers completion', () => {
+    expect(delegate).toMatch(/const flags = \['--defer-completion', '--label', quote\(slug\)/);
   });
 
-  test('TRD_LABEL is defined (as the TRD slug), not just used', () => {
-    expect(itb).toMatch(/TRD_LABEL = TRD_SLUG/);
-  });
-
-  test('execution delegates with --label and backfills beads scaffolded before labels existed', () => {
-    expect(itb).toMatch(/beads-build <ROOT_EPIC_ID>.*--label <TRD_LABEL>/);
-    // inside a double-quoted YAML string the quotes are stored escaped (\")
-    expect(itb).toMatch(/beads-label --label \\?"<TRD_LABEL>\\?" --match \\?"\[trd:<TRD_SLUG>/);
+  test('beads scaffolded before labels existed are backfilled by a verb of their own', () => {
+    expect(health).toMatch(/--label` backfills the TRD's scoping label/);
+    expect(health).toMatch(/beads-label/);
   });
 });
 

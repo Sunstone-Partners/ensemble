@@ -26,14 +26,9 @@ const { createTrackerStub, fixturePrd, fixtureTrd } = require('./fixtures/engine
 /** The file the completion texts come from. */
 const CV = path.join(__dirname, '..', 'skills', 'completion-verification', 'SKILL.md');
 /** The file the two printed completion lines come from. */
-const CMP = path.join(
-  __dirname,
-  '..',
-  'skills',
-  'ensemble-implement-trd-tasks',
-  'references',
-  'phase-5-completion.md'
-);
+// The skill was thinned to the engine loop (TRD-021); these texts were copied from the prose below, kept verbatim
+// in tests/fixtures/engine/skill-before-thinning/, so the engine can still be held to what it replaced.
+const CMP = path.join(__dirname, 'fixtures', 'engine', 'skill-before-thinning', 'phase-5-completion.md.txt');
 
 const TRD_PATH = 'docs/TRD/widget-engine.md';
 const PRD_PATH = 'docs/PRD/PRD-fixture.md';

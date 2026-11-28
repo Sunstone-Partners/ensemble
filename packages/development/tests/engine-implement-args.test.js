@@ -20,15 +20,10 @@ const { buildRegistry } = require('../lib/ensemble-cli');
 const MESSAGES = require('../lib/engine/messages');
 const { expectMatchesOutputSchema, makeCtx, makeRoot, runMain, writeEngineYaml } = require('./helpers/engine-run');
 
-const PREFLIGHT = path.join(
-  __dirname,
-  '..',
-  'skills',
-  'ensemble-implement-trd-tasks',
-  'references',
-  'phase-1-preflight.md'
-);
-const REFERENCE = path.join(__dirname, '..', 'skills', 'implement-trd-tasks-reference', 'SKILL.md');
+// The skill was thinned to the engine loop (TRD-021); these texts were copied from the prose below, kept verbatim
+// in tests/fixtures/engine/skill-before-thinning/, so the engine can still be held to what it replaced.
+const PREFLIGHT = path.join(__dirname, 'fixtures', 'engine', 'skill-before-thinning', 'phase-1-preflight.md.txt');
+const REFERENCE = path.join(__dirname, 'fixtures', 'engine', 'skill-before-thinning', 'reference-SKILL.md.txt');
 
 function run(root, argv, overrides = {}) {
   return runMain(['implement', 'args', ...argv], makeCtx({ cwd: root, ...overrides }));

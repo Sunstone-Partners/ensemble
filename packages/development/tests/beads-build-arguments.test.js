@@ -3,7 +3,12 @@ const { readDevelopmentSkill, parseWorkflow } = require('./helpers/skill-workflo
 // beads-build and implement-trd-tasks are skill-backed commands: the prompt is the skill
 // (SKILL.md + references/), and the workflow is parsed back out of its phase references.
 const buildSkill = readDevelopmentSkill('ensemble-beads-build');
-const callerText = readDevelopmentSkill('ensemble-implement-trd-tasks').prompt;
+// The caller is the engine now: `implement delegate` builds the beads-build invocation it hands the
+// model (lib/engine/verbs/implement-delegate.js), so the flags it passes are read from that source.
+const callerText = require('fs').readFileSync(
+  require('path').join(__dirname, '..', 'lib', 'engine', 'verbs', 'implement-delegate.js'),
+  'utf8'
+);
 
 function stepActions(phases, phaseName, title) {
   const phase = phases.find((p) => p.name === phaseName);
@@ -30,7 +35,7 @@ describe('beads-build argument grammar matches its callers', () => {
   });
 
   test('every flag implement-trd-tasks passes to beads-build is parsed by beads-build', () => {
-    const calls = callerText.match(/\/ensemble:beads-build <ROOT_EPIC_ID>([^`]*--defer-completion)`/);
+    const calls = callerText.match(/const flags = \[([\s\S]*?)\];/);
     expect(calls).not.toBeNull();
     const passed = (calls[1].match(/--[a-z-]+/g) || []);
     expect(passed).toEqual(expect.arrayContaining(['--trd', '--max-parallel', '--team-roles', '--label']));
@@ -41,7 +46,7 @@ describe('beads-build argument grammar matches its callers', () => {
 
   test('delegation passes --defer-completion and beads-build skips epic closure and checkbox sync on it', () => {
     expect(parsing).toContain('--defer-completion');
-    expect(callerText).toContain('--label <TRD_LABEL> --defer-completion');
+    expect(callerText).toMatch(/const flags = \['--defer-completion', '--label'/);
     expect(stepActions(build, 'Completion', 'Epic Closure')).toContain('If DEFER_COMPLETION=true');
     expect(stepActions(build, 'Completion', 'TRD Checkbox Sync')).toContain('If DEFER_COMPLETION=true');
     // The deferral guard must precede the closing command in each step.

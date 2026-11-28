@@ -7,27 +7,49 @@ metadata:
   category: implementation
 ---
 
-Parse a TRD, scaffold a beads hierarchy (epic -> stories -> tasks), delegate
-execution to /ensemble:beads-build, then run quality gates, PR review, completion verification, epic closure. This command owns closure: beads-build always runs
-with --defer-completion.
+Implement a TRD through the deterministic engine. You do not plan, order, gate or scaffold anything yourself: you ask the engine what comes next, do exactly that, and ask again until it says it is finished. Every mechanical step is an engine verb and the engine refuses a step taken out of order. What stays with you is judgement: strategy, review, the PR's risk narrative, and asking the user.
 
-Rules:
-- Never hand-parse a TRD; parse/plan/status come only from `node "$TRD_CLI"` JSON.
-- Scheduling is delegated to beads-build (work-graph.ready (graph-aware parallel tracks) or plan order when that is unavailable). Never read tracker storage directly.
-- Every `node "$TOOLCHAIN_CLI"` `run`/`confirm-*` call carries `--run-id "$RUN_ID" $NON_INTERACTIVE_ARGS --json`.
-- Never stage broadly (no blanket, directory or auto-staging commit). Stage beads only via `node "$TRD_CLI" beads-stage --match "[trd:<TRD_SLUG>"`; every commit is `node "$TOOLCHAIN_CLI" run workflow.commit --arg message="<message>"`.
-- PR_REVIEW_SKILL = packages/development/skills/pr-review-cycle/SKILL.md (via tool-path-resolution); pr-review-cycle calls read it.
-- FULL_TEST_COMMAND = `node "$TOOLCHAIN_CLI" run package-runner.run-script --arg script=test --run-id "$RUN_ID" $NON_INTERACTIVE_ARGS --json`: the Pre-PR test gate (non-ok or non-zero fails) and the pr-review-cycle TEST_COMMAND.
-- In every `tracker.list` result the issue list is `data` parsed as JSON if an array, else its `.issues` array.
-- Scaffold goes only to @beads-scaffold-specialist (never backend-developer); no product code is written.
-- Kata (0.23.0+, `.kata.toml`): `implement-trd-tasks-reference/reference/kata-starting-point.md`.
-- Branch intent, PR creation, workstream mode, resume/recovery detail: `implement-trd-tasks-reference` skill; read the section a step names.
+Terminal states: HALT (error printed, nothing further runs), EXIT (early exit done), COMPLETE (epic closed, reported).
 
-Terminal states: HALT (error printed, nothing runs), EXIT (early exit done), COMPLETE (epic closed, reported).
+## Engine
+
+Resolve ENSEMBLE_CLI (`packages/development/lib/ensemble-cli.js`) per the tool-path-resolution skill. Unresolvable, or no Node.js runtime: print 'ERROR: could not locate the ensemble engine CLI (ENSEMBLE_CLI); implement-trd-tasks runs only through it.' and HALT. Never fall back to improvising the steps. `ensemble` below means `node "$ENSEMBLE_CLI"`.
+
+Every call prints one JSON envelope: `status`, `data`, `error`, `next`. Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, a non-empty FOREMAN_TASK_TITLE, or no AskUserQuestion); never prompt then.
+
+## Loop
+
+1. **Early exits.** Only for `--list`, `--status`, `--reset-task`, `--workstream`, `--generate-only` or `--legacy-multi`: `ensemble implement args <your flags>`. A refusal is printed and HALTs. `EARLY_EXIT` list: `ensemble trd list --type trd`, then ask which TRD (AskUserQuestion `trd_select`). `status`: `ensemble trd status <slug>`. `reset-task`: `ensemble implement bead-health <trd> --reset-task <id>`. Each ends in EXIT. `--workstream` and `--legacy-multi`: reference section 4.
+2. **Run id.** `ensemble implement env --preflight` (add `--plan` for `--plan`): RUN_ID is `data.PREFLIGHT.RUN_ID`. Pass `--run-id "$RUN_ID"` on every later call. Unless planning only, the `beads-build-wave` agent must be registered with the Task tool (a file on disk does not prove it); else print 'ERROR: agent beads-build-wave is not registered in this session. Run /ensemble:reinstall-plugins and re-run.' and HALT.
+3. **Ask.** `ensemble implement next <trd> --run-id "$RUN_ID"` with your flags (`--plan` is `--plan-only`; also `--execute`, `--strategy`, `--max-parallel`, `--branch`, `--use-current-branch`, `--foreman`, `--pr-backend`). It derives arguments, environment, resume state, team and branch itself and returns them as `data.CONTEXT`.
+4. **Act on the answer.**
+   - `data.STATE` `STEP`: run `data.ACTION.verb` with exactly `data.ACTION.args`, passed as JSON on stdin: `echo '<args>' | ensemble <verb> --stdin --run-id "$RUN_ID"`. Do not reorder, skip or substitute a step.
+   - `NEEDS_AGENT`: the verb did its mechanical part. For each `data.agents[]` read its brief (`briefPath`), do that work, write the result JSON to `outPath`, then run every call in `next.calls[]`, in order (each is `ensemble implement accept`, or the verb that collects the work). The chain may continue (`review run --collect`, another `accept`): follow it to its end BEFORE asking `next` again. A refused `accept` means fix the result file and accept again; never edit tracker or engine state by hand.
+   - `NEEDS_CHOICE`: ask the user `data.CHOICE.question` with its options (AskUserQuestion, id `data.CHOICE.id`), then pass the answer as `data.CHOICE.flag` on this and every later call: the engine keeps no memory of it. Not interactive: print the question, the options and the flag, and HALT.
+   - `EXIT`: print the engine's message; for `--plan` print 'Plan complete. Bead hierarchy created. Run /ensemble:implement-trd-tasks --execute to begin implementation.' EXIT.
+   - `COMPLETE`: `ensemble implement report <trd>`, print its totals, the requirements as SATISFIED or NOT VERIFIED, the PR urls the steps returned, and say to merge PR 1 first. Never call a PR merged or landed; only a human confirming the merge does. COMPLETE.
+   - `REFUSED`, `INVALID_INPUT`, `UNAVAILABLE`, `INTERNAL`: print `error.message` verbatim and HALT. Do not repair a refusal by running some other verb.
+5. Repeat from 3.
+
+With `--foreman` and FOREMAN_ARTIFACT_PATH set, write the report of step 4 to that exact path at every terminal state (HALT included, with the error); never alter the path. Kata (0.23.0+, `.kata.toml`): `implement-trd-tasks-reference/reference/kata-starting-point.md`.
+
+## Judgement
+
+The engine asks for these; they are never decided in code. Read them where a step needs them:
+
+| Need | Read |
+|---|---|
+| Phase map and the engine verb behind each | `references/phase-1-preflight.md`, `references/phase-2-scaffold.md`, `references/phase-3-execute.md`, `references/phase-4-quality-gate.md`, `references/phase-5-completion.md` |
+| Which strategy fits, and when to ask | `implement-trd-tasks-reference` section 2 |
+| Review criteria and PR risk narrative | `implement-trd-tasks-reference` section 3 |
+| Combined workstream and `--legacy-multi` | `implement-trd-tasks-reference` section 4 |
+| Recovery, Foreman, kata | `implement-trd-tasks-reference` sections 5 to 8 |
 
 ## Capabilities
 
 **Required:** tracker.list, tracker.create, tracker.comment, tracker.close, test-runner.run, package-runner.run-script, workflow.commit, workflow.merge-base
+`implement env --preflight` runs, on your behalf, exactly: node "$TOOLCHAIN_CLI" preflight --require tracker.list --require tracker.create --require tracker.comment --require tracker.close --require test-runner.run --require package-runner.run-script --require workflow.commit --require workflow.merge-base --non-interactive --json
+
 **Optional:** work-graph.plan, work-graph.ready, tracker.create-detailed, tracker.find-by-key, work-graph.graph-health, tracker.stage-export, tracker.comments, tracker.dep-add, tracker.sync, tracker.close-with-reason
 
 ## Arguments
@@ -35,18 +57,6 @@ Terminal states: HALT (error printed, nothing runs), EXIT (early exit done), COM
 - **`workstream`** (boolean, optional, default: `false`): With two or more TRD paths, generate one normalized executable workstream TRD (node "$TRD_CLI" create-workstream-trd) and implement that single TRD.
 - **`generate-only`** (boolean, optional, default: `false`): Only with --workstream and two or more TRD paths (replaces the removed /ensemble:create-workstream-trd). Generate the workstream TRD, report, and EXIT before any tracker/git/branch/scaffold/commit/PR side effect. Accepts --out <path> and --allow-invalid.
 - **`foreman`** (boolean, optional, default: `false`): Force non-interactive mode (INTERACTIVE=false) for Foreman orchestration: `--foreman` or non-empty env FOREMAN_TASK_TITLE (same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it); `--foreman` below means it. No HALT behavior changes: unresolved branch intent, unresolved PR backend and failed completion verification still HALT. When FOREMAN_ARTIFACT_PATH is set and non-empty, also write the phase report to that exact path; never alter it.
-
-## Workflow
-
-Work through the phases in numbered order. Each phase's full instructions are in its own file under `references/`, in this skill's directory: open the file with your file-reading tool (not a shell command) when you reach that phase and follow it exactly. Resolve paths relative to this SKILL.md.
-
-| Phase | Instructions | Steps |
-|---|---|---|
-| 1. Preflight | `references/phase-1-preflight.md` | Arguments and early exits; Tools; Git-town, PR backend and working tree; TRD selection and validation; Resume detection, staleness gate, strategy; Branch intent and feature branch; Team roster and agent aliases |
-| 2. Scaffold | `references/phase-2-scaffold.md` | Plan and create beads; Work-graph analysis and handoff |
-| 3. Execute | `references/phase-3-execute.md` | Delegate to beads-build |
-| 4. Quality Gate | `references/phase-4-quality-gate.md` | Per-phase gate |
-| 5. Completion | `references/phase-5-completion.md` | Completion verification; PR review completion check; Epic closure and TRD checkboxes; Completion report |
 
 ## Expected Output
 
