@@ -392,6 +392,14 @@ describe('--mode remote is informational', () => {
       const file = statePath(7, fx.root);
       fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), headSha: fx.base, reviewedTreeSha: undefined }));
     }],
+    ['a directory where the report should be', fx => {
+      fs.mkdirSync(statePath(7, fx.root), { recursive: true });
+    }],
+    ['a report that cannot be read', fx => {
+      // A dangling symlink: it exists as an entry but reading it fails, whoever runs the test.
+      fs.mkdirSync(path.dirname(statePath(7, fx.root)), { recursive: true });
+      fs.symlinkSync(path.join(fx.root, 'nowhere.json'), statePath(7, fx.root));
+    }],
     ['a report whose status the engine cannot derive', fx => {
       fs.mkdirSync(path.dirname(statePath(7, fx.root)), { recursive: true });
       fs.writeFileSync(statePath(7, fx.root), JSON.stringify({ headSha: fx.head, status: 'FINE' }));

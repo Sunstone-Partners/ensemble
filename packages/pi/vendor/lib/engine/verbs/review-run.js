@@ -248,8 +248,18 @@ function remote(call) {
   }
   const reportPath = statePath(input.pr, call.projectRoot);
   const relPath = path.relative(call.projectRoot, reportPath);
-  const read = readState(reportPath, head, { cwd: call.projectRoot });
   const withPath = answer => ({ ...answer, REPORT_PATH: relPath });
+  // `readState` only catches a malformed file; a directory at the report path, a permission
+  // error or a vanished file throws. The remote read is informational and must answer OK
+  // whatever it finds, so any read failure is a pending review with the reason named.
+  let read;
+  try {
+    read = readState(reportPath, head, { cwd: call.projectRoot });
+  } catch (err) {
+    return withPath(
+      pending([`the recorded review of PR ${input.pr} is unreadable: ${err.code || err.message}`])
+    );
+  }
   if (!read || read.ok !== true) {
     return withPath(pending([`the recorded review of PR ${input.pr} is unreadable: ${(read && read.reason) || 'no answer'}`]));
   }
