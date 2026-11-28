@@ -138,26 +138,47 @@ function ask(fx, runId, extra = []) {
 describe('the loop runs against the real engine', () => {
   jest.setTimeout(120000);
 
-  test('accept output is read by the same table: a malformed result file is INVALID_INPUT, the engine\'s verdict on the work is REFUSED, and the skill treats them differently', () => {
+  test('accept answers a malformed result file INVALID_INPUT and the engine\'s verdict on the work REFUSED, records nothing for either, and the skill routes them differently', () => {
     const fx = widgetRepo();
     const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
     const runId = env.envelope.data.PREFLIGHT.RUN_ID;
-    const accept = argv => runMain(['--run-id', runId, '--non-interactive', 'implement', 'accept', ...argv], makeCtx({ cwd: fx.root, env: fx.env }));
+    const runDir = path.join(fx.root, '.ensemble', 'state', 'engine', runId);
+    const rel = (...parts) => path.join('.ensemble', 'state', 'engine', runId, ...parts);
+    const accept = (step, file) =>
+      runMain(['--run-id', runId, '--non-interactive', 'implement', 'accept', '--step', step, '--result-file', rel('results', file)], makeCtx({ cwd: fx.root, env: fx.env }));
+    const recorded = step => fs.existsSync(path.join(runDir, 'accepted', `${step}.json`));
+    const prose = step => ({ head: '0'.repeat(40), howToRevert: 'Revert the merge commit.', risk: 'Low: nothing else calls it.', role: 'pr-prose', step });
+    const write = (file, text) => {
+      fs.mkdirSync(path.join(runDir, 'results'), { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'results', file), text);
+    };
 
-    // A result file that is not JSON is the file's fault: INVALID_INPUT, correctable.
-    const results = path.join(fx.root, '.ensemble', 'state', 'engine', runId, 'results');
-    fs.mkdirSync(results, { recursive: true });
-    fs.writeFileSync(path.join(results, 'bad.json'), 'not json');
-    const malformed = accept(['--step', 'delegate', '--result-file', path.join('.ensemble', 'state', 'engine', runId, 'results', 'bad.json')]);
-    expect(malformed.envelope.status).toBe('INVALID_INPUT');
+    // A real dispatch: the engine's own hand-off writes the brief and names the step.
+    const { handOff } = require('../lib/engine/handoff');
+    const call = { env: fx.env, globals: { runId }, now: Math.floor(Date.now() / 1000), projectRoot: fx.root };
+    const dispatched = handOff(call, { agents: [{ brief: { base: 'f'.repeat(40), branch: 'feature/widget' }, label: 'phase-1-abc', name: 'prose' }], role: 'pr-prose' });
+    const step = dispatched.data.agents[0].step;
 
-    // A step that was never dispatched has nothing to accept: REFUSED, not correctable by rewriting a file.
-    const undispatched = accept(['--step', 'delegate', '--result-file', path.join('.ensemble', 'state', 'engine', runId, 'results', 'bad.json')]);
-    expect(['INVALID_INPUT', 'REFUSED']).toContain(undispatched.envelope.status);
-    const refused = accept(['--step', 'pr-prose--phase-1-abcdef123456', '--result-file', path.join('.ensemble', 'state', 'engine', runId, 'results', 'missing.json')]);
-    expect(['INVALID_INPUT', 'REFUSED']).toContain(refused.envelope.status);
+    // 1. The FILE is wrong (registered role, existing file, not JSON): INVALID_INPUT / INVALID_JSON, correctable.
+    write('bad.json', 'not json');
+    const malformed = accept(step, 'bad.json');
+    expect({ code: malformed.envelope.error.code, status: malformed.envelope.status }).toEqual({ code: 'INVALID_JSON', status: 'INVALID_INPUT' });
+    expect(recorded(step)).toBe(false);
 
-    // The skill's routing: the REFUSED verdicts the accept path can return HALT, and only INVALID_INPUT is corrected.
+    // 2. A well-formed result for a step the engine never dispatched: REFUSED / NO_DISPATCH, not a file problem.
+    write('pr-prose--ghost.json', JSON.stringify(prose('pr-prose--ghost')));
+    const undispatched = accept('pr-prose--ghost', 'pr-prose--ghost.json');
+    expect({ code: undispatched.envelope.error.code, status: undispatched.envelope.status }).toEqual({ code: 'NO_DISPATCH', status: 'REFUSED' });
+    expect(recorded('pr-prose--ghost')).toBe(false);
+
+    // 3. A well-formed result for a real dispatch, produced against another head: REFUSED / STALE_RESULT.
+    write(`${step}.json`, JSON.stringify(prose(step)));
+    const stale = accept(step, `${step}.json`);
+    expect({ code: stale.envelope.error.code, status: stale.envelope.status }).toEqual({ code: 'STALE_RESULT', status: 'REFUSED' });
+    expect(recorded(step)).toBe(false);
+    expect(stale.exitCode).not.toBe(malformed.exitCode);
+
+    // The skill routes those two classes differently: only the file is corrected, the verdict HALTs.
     const bullet = SKILL.split('\n').find(line => line.includes('`NEEDS_AGENT`:'));
     expect(bullet).toMatch(/`INVALID_INPUT` means the result file itself is malformed/);
     expect(bullet).toMatch(/`REFUSED`[^.]*HALT/);
