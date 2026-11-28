@@ -257,6 +257,40 @@ describe('the loop runs against the real engine', () => {
     expect(second.envelope.data.ACTION.id).toBe('scaffold');
   });
 
+  test('a branch the user chose carries through next -> the returned action on stdin -> the checked-out branch (an existing named branch), and the current branch is kept', () => {
+    for (const mode of ['named', 'current']) {
+      const fx = widgetRepo();
+      execFileSync('git', ['switch', '-q', '-c', 'feature/my-own'], { cwd: fx.root });
+      if (mode === 'named') execFileSync('git', ['switch', '-q', '-'], { cwd: fx.root });
+      const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
+      const runId = env.envelope.data.PREFLIGHT.RUN_ID;
+      const flags = mode === 'named' ? ['--branch', 'feature/my-own'] : ['--use-current-branch'];
+
+      const first = ask(fx, runId, flags);
+      expect({ error: first.envelope.error, status: first.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+      const action = first.envelope.data.ACTION;
+      if (mode === 'current') {
+        // Already on the chosen branch: the checkout is done, so the first step is the scaffold, on that branch.
+        expect(action.id).toBe('scaffold');
+        expect(execFileSync('git', ['branch', '--show-current'], { cwd: fx.root, encoding: 'utf8' }).trim()).toBe('feature/my-own');
+        continue;
+      }
+      expect(action.id).toBe('checkout');
+      // The caller's choice is in the action the skill pipes back, not dropped on the way.
+      expect(action.args.branch).toBe('feature/my-own');
+
+      const applied = runMain(['--run-id', runId, '--non-interactive', 'implement', 'branch', '--stdin'], makeCtx({ cwd: fx.root, env: fx.env, stdin: JSON.stringify(action.args) }));
+      expect({ error: applied.envelope.error, status: applied.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+      expect(execFileSync('git', ['branch', '--show-current'], { cwd: fx.root, encoding: 'utf8' }).trim()).toBe('feature/my-own');
+
+      // The same flags on the next call: the loop moves on and keeps the branch the user chose.
+      const second = ask(fx, runId, flags);
+      expect({ error: second.envelope.error, status: second.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+      expect(second.envelope.data.ACTION.id).toBe('scaffold');
+      expect(execFileSync('git', ['branch', '--show-current'], { cwd: fx.root, encoding: 'utf8' }).trim()).toBe('feature/my-own');
+    }
+  });
+
   test('a step taken out of order is refused by the engine, whatever the skill said', () => {
     const fx = widgetRepo();
     const { envelope, exitCode } = runMain(
