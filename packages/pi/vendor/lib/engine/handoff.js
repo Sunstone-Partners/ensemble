@@ -437,4 +437,14 @@ function resolveChoice(call, choice, { policyValue } = {}) {
   );
 }
 
-module.exports = { MAX_RESULT_BYTES, acceptResult, handOff, readAccepted, resolveChoice, runDirs };
+module.exports = {
+  MAX_RESULT_BYTES,
+  acceptResult,
+  handOff,
+  readAccepted,
+  resolveChoice,
+  runDirs,
+  safeStateDir,
+  sha256,
+  writeFileSafely,
+};

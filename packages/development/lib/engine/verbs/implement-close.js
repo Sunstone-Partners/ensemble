@@ -592,4 +592,4 @@ const prReviewSpec = {
 
 const specs = [closeSpec, syncSpec, reportSpec, prReviewSpec];
 
-module.exports = { flipCheckboxes, specs, spec: closeSpec };
+module.exports = { flipCheckboxes, readReview, specs, spec: closeSpec };

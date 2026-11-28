@@ -155,7 +155,7 @@ test('lists every scoped bead lacking references and refuses before dispatch', (
   expect(out.envelope.error.details.missing).toEqual([
     `${task('TRD-001')}: missing ## References`, `${task('TRD-003')}: missing ## References`,
   ]);
-  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine', 'r1', 'briefs'))).toBe(false);
 });
 
 test('lists unresolved root reference entries', () => {
@@ -179,7 +179,7 @@ test('resolves present task reference blocks and lists every invalid entry befor
     `${later}: TRD file docs/TRD/missing.md cannot be read: ENOENT`,
   ]));
   for (const missing of out.envelope.error.details.missing) expect(out.envelope.error.message).toContain(missing);
-  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine', 'r1', 'briefs'))).toBe(false);
 });
 
 test('an unavailable tracker.show is not reported as missing references', () => {
@@ -189,7 +189,7 @@ test('an unavailable tracker.show is not reported as missing references', () => 
   const out = delegate();
   expect(out.envelope.status).toBe('UNAVAILABLE');
   expect(out.envelope.error.code).toBe('REFERENCES_UNREADABLE');
-  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine', 'r1', 'briefs'))).toBe(false);
 });
 
 test('the tracker.show allowlist refusal is returned unchanged', () => {
@@ -200,7 +200,7 @@ test('the tracker.show allowlist refusal is returned unchanged', () => {
   expect(out.envelope.status).toBe('REFUSED');
   expect(out.envelope.error.code).toBe('NOT_ALLOWED');
   expect(out.envelope.error.message).not.toContain('missing ## References');
-  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine', 'r1', 'briefs'))).toBe(false);
 });
 
 test('a non-zero exit is a Debug Loop refusal and records no accepted result', () => {

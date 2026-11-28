@@ -18,6 +18,8 @@ const SPECS = [
   require('../verbs/implement-delegate').spec,
   require('../verbs/implement-env').spec,
   require('../verbs/implement-gate').spec,
+  require('../verbs/implement-next').spec,
+  require('../verbs/implement-plan').spec,
   require('../verbs/implement-pr').spec,
   require('../verbs/implement-resume').spec,
   require('../verbs/implement-scaffold').spec,

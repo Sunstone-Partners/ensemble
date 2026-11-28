@@ -815,6 +815,15 @@ function createTrackerStub(root, options = {}) {
     },
     /** The export text `tracker.stage-export` answers, as `.beads/issues.jsonl` holds it. */
     exportText: () => exportJsonl(issueList(read())),
+    /** Store a comment as a tracker would, without going through a capability call. */
+    addComment: (id, text) => {
+      const state = read();
+      const issue = issueList(state).find(candidate => candidate.id === id);
+      if (!issue) throw new Error(`addComment: no issue '${id}'`);
+      issue.comments = Array.isArray(issue.comments) ? issue.comments : [];
+      issue.comments.push({ id: `c-${issue.comments.length + 1}`, text: String(text) });
+      writeState(statePath, state);
+    },
     /** Every comment stored on one issue, in the order they were added. */
     commentsOn: id => {
       const issue = issueList(read()).find(candidate => candidate.id === id);
