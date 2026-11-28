@@ -65,6 +65,10 @@ function builderWavePrecondition(call, result, brief) {
       { dispatched, reported }
     );
   }
+  if (brief.delegation) {
+    const outcome = require('./builder-wave').checkWave(call, result, brief);
+    if (outcome) return outcome;
+  }
   if (result.status === 'blocked') return null;
   const listed = readIssues(call, { all: true });
   if (isResult(listed)) return listed;
@@ -133,7 +137,20 @@ const ROLES = Object.freeze({
   'builder-wave': {
     briefSchema: schema(
       'builder-wave',
-      { beads: { items: { minLength: 1, type: 'string' }, minItems: 1, type: 'array' }, instructions: TEXT },
+      {
+        beads: { items: { minLength: 1, type: 'string' }, minItems: 1, type: 'array' },
+        delegation: {
+          additionalProperties: false,
+          properties: {
+            retry: { enum: [0, 1], type: 'integer' },
+            rootEpicId: { minLength: 1, type: 'string' },
+            trd: { minLength: 1, type: 'string' },
+          },
+          required: ['retry', 'rootEpicId', 'trd'],
+          type: 'object',
+        },
+        instructions: TEXT,
+      },
       ['beads', 'instructions']
     ),
     deadlineSeconds: 7200,
@@ -143,6 +160,22 @@ const ROLES = Object.freeze({
       'builder-wave',
       {
         beads: { items: { minLength: 1, type: 'string' }, type: 'array' },
+        bead_counts: {
+          additionalProperties: false,
+          properties: {
+            closed: { minimum: 0, type: 'integer' },
+            open: { minimum: 0, type: 'integer' },
+            total: { minimum: 0, type: 'integer' },
+          },
+          required: ['closed', 'open', 'total'],
+          type: 'object',
+        },
+        branch_state: TEXT,
+        ending_head: SHA,
+        exit_code: { minimum: 0, type: 'integer' },
+        last_task_closed: { type: ['string', 'null'] },
+        output: { maxLength: 20000, type: 'string' },
+        terminal_state: { enum: ['complete', 'blocked'], type: 'string' },
         status: { enum: ['done', 'blocked'], type: 'string' },
         summary: TEXT,
       },

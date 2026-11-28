@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { sortKeys } = require('./envelope');
-const { git } = require('./git');
+const { git, gitProbe } = require('./git');
 const { resolveInteractivity } = require('./interactivity');
 const { engineError, isResult, needsAgent, needsChoice, refused } = require('./result');
 const { ROLES, roleOfStep } = require('./roles');
@@ -301,7 +301,24 @@ function acceptResult(call, { step, resultFile }) {
   }
   const head = liveHead(call);
   if (isResult(head)) return head;
-  if (head !== brief.head) {
+  if (role === 'builder-wave' && brief.delegation) {
+    if (!result.ending_head) {
+      return refused('BUILDER_SUMMARY_MISSING', 'delegated builder-wave result must report ending_head');
+    }
+    if (result.ending_head !== head) {
+      return refused('STALE_RESULT', `builder ending_head ${result.ending_head} does not match live HEAD ${head}`, {
+        dispatchedHead: brief.head, endingHead: result.ending_head, head,
+      });
+    }
+    // A committing builder may advance the dispatched revision, but cannot replace its history.
+    const ancestry = gitProbe(call, ['merge-base', '--is-ancestor', brief.head, head]);
+    if (isResult(ancestry)) return ancestry;
+    if (ancestry.exit !== 0) {
+      return refused('STALE_RESULT', `dispatch HEAD ${brief.head} is not an ancestor of builder ending_head ${head}`, {
+        dispatchedHead: brief.head, endingHead: head,
+      });
+    }
+  } else if (head !== brief.head) {
     return refused(
       'STALE_RESULT',
       `step was dispatched at ${brief.head}, but HEAD is now ${head}; rerun the step`,

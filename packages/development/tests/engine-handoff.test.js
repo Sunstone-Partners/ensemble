@@ -254,6 +254,22 @@ describe('implement accept records only a valid, current, still-applicable resul
     expect(fs.existsSync(acceptedDir(fx))).toBe(false);
   });
 
+  test.each(['review', 'build'])('%s without delegated completion still rejects HEAD movement', verb => {
+    const fx = featureRepo();
+    fx.dispatchBeads = ['task-1'];
+    const [agent] = manifest(fx, verb).agents;
+    const head = git(fx, ['rev-parse', 'HEAD']);
+    const moved = commit(fx, 'later.txt');
+    const body = verb === 'review'
+      ? { role: 'reviewer', head, step: agent.step, base: fx.base, findings: [], verdict: 'pass' }
+      : { role: 'builder-wave', head, ending_head: moved, step: agent.step, beads: ['task-1'], status: 'done', summary: 'built' };
+    writeResult(fx, agent.outPath, body);
+    const out = accept(fx, agent.step, agent.outPath);
+    expect(out.envelope.status).toBe('REFUSED');
+    expect(out.envelope.error.code).toBe('STALE_RESULT');
+    expect(fs.existsSync(acceptedDir(fx))).toBe(false);
+  });
+
   test('a result produced before HEAD moved is REFUSED as stale', () => {
     const fx = featureRepo();
     const [agent] = manifest(fx).agents;
