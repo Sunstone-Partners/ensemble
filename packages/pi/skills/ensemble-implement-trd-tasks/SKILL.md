@@ -19,7 +19,7 @@ Terminal states: HALT (error printed, nothing further runs), EXIT (early exit do
 
 Resolve ENSEMBLE_CLI (`packages/development/lib/ensemble-cli.js`) per the tool-path-resolution skill. Unresolvable, or no Node.js runtime: print 'ERROR: could not locate the ensemble engine CLI (ENSEMBLE_CLI); implement-trd-tasks runs only through it.' and HALT. Never fall back to improvising the steps. `ensemble` below means `node "$ENSEMBLE_CLI"`.
 
-Every call prints one JSON envelope: `status`, `data`, `error`, `next`. Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, a non-empty FOREMAN_TASK_TITLE, or no ask); never prompt then.
+Every call prints one JSON envelope (`status`, `data`, `error`, `next`). Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, a non-empty FOREMAN_TASK_TITLE, or no ask); never prompt then.
 
 ## Loop
 
@@ -28,7 +28,7 @@ Every call prints one JSON envelope: `status`, `data`, `error`, `next`. Add `--n
 3. **Ask.** `ensemble implement next <trd> --run-id "$RUN_ID"` with your flags (`--plan` is `--plan-only`; also `--execute`, `--strategy`, `--max-parallel`, `--branch`, `--use-current-branch`, `--foreman`, `--pr-backend`). It derives arguments, environment, resume state, team and branch itself and returns them as `data.CONTEXT`.
 4. **Act on the answer.**
    - `data.STATE` `STEP`: run `data.ACTION.verb` with exactly `data.ACTION.args`, passed as JSON on stdin: `echo '<args>' | ensemble <verb> --stdin --run-id "$RUN_ID"`. Do not reorder, skip or substitute a step.
-   - `NEEDS_AGENT`: the verb did its mechanical part. For each `data.agents[]` read its brief (`briefPath`), do that work, write the result JSON to `outPath`, then run every call in `next.calls[]`, in order (each is `ensemble implement accept`, or the verb that collects the work). The chain may continue (`review run --collect`, another `accept`): follow it to its end BEFORE asking `next` again. A refused `accept` means fix the result file and accept again; never edit tracker or engine state by hand.
+   - `NEEDS_AGENT`: the verb did its mechanical part. For each `data.agents[]` read its brief (`briefPath`), do that work, write the result JSON to `outPath`, then run every call in `next.calls[]`, in order (each is `ensemble implement accept`, or the verb that collects the work). Read each answer by this same table: `NEEDS_AGENT` from `accept` is an explicit retry, so follow its `next` to its end BEFORE asking `next` again; `INVALID_INPUT` means the result file itself is malformed (not JSON, wrong shape, wrong step), so write what you actually found in the right shape and accept again, never changing a claimed status or exit code to pass; `REFUSED` (stale result, failed or blocked builder wave, used-up retry) is the engine's verdict on the work: print its details and HALT. Never edit tracker or engine state by hand.
    - `NEEDS_CHOICE`: ask the user `data.CHOICE.question` with its options (ask, id `data.CHOICE.id`), then pass the answer as `data.CHOICE.flag` on this and every later call: the engine keeps no memory of it. Not interactive: print the question, the options and the flag, and HALT.
    - `EXIT`: print the engine's message; for `--plan` print 'Plan complete. Bead hierarchy created. Run /ensemble-implement-trd-tasks --execute to begin implementation.' EXIT.
    - `COMPLETE`: `ensemble implement report <trd>`, print its totals, the requirements as SATISFIED or NOT VERIFIED, the PR urls the steps returned, and say to merge PR 1 first. Never call a PR merged or landed; only a human confirming the merge does. COMPLETE.
@@ -39,7 +39,7 @@ With `--foreman` and FOREMAN_ARTIFACT_PATH set, write the report of step 4 to th
 
 ## Judgement
 
-The engine asks for these; they are never decided in code. Read them where a step needs them:
+Never decided in code; read them where a step needs them:
 
 | Need | Read |
 |---|---|

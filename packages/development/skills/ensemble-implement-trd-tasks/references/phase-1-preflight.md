@@ -1,6 +1,6 @@
 ### Phase 1: Preflight
 
-The engine derives all of this and `implement next` returns it as `data.CONTEXT`; none of it is done by hand. A refusal is printed verbatim and HALTs.
+`implement next` derives all of this and returns it as `data.CONTEXT`. A refusal is printed verbatim and HALTs.
 
 | Concern | Engine verb |
 |---|---|
@@ -13,5 +13,5 @@ The engine derives all of this and `implement next` returns it as `data.CONTEXT`
 #### Judgement in this phase
 
 - **Design readiness** below 4.0 is a user decision, never a default. 3.0 to 3.99 warns and asks to continue (not interactive: continue); below 3.0 stops and suggests /ensemble:refine-trd.
-- **Choices** (PR backend, branching strategy, branch intent, tracker confirmation, TRD selection) come back as `NEEDS_CHOICE`. Ask them as the engine worded them, and pass the answer on every later call. Branch intent never defaults: not interactive without `--branch` or `--use-current-branch` HALTs.
+- **Choices** (PR backend, branching strategy, branch intent, tracker confirmation, TRD selection) come back as `NEEDS_CHOICE`. Ask them as the engine worded them, and pass the answer on every later call.
 - **Strategy**: `implement-trd-tasks-reference` section 2.

@@ -138,6 +138,43 @@ function ask(fx, runId, extra = []) {
 describe('the loop runs against the real engine', () => {
   jest.setTimeout(120000);
 
+  test('accept output is read by the same table: a malformed result file is INVALID_INPUT, the engine\'s verdict on the work is REFUSED, and the skill treats them differently', () => {
+    const fx = widgetRepo();
+    const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
+    const runId = env.envelope.data.PREFLIGHT.RUN_ID;
+    const accept = argv => runMain(['--run-id', runId, '--non-interactive', 'implement', 'accept', ...argv], makeCtx({ cwd: fx.root, env: fx.env }));
+
+    // A result file that is not JSON is the file's fault: INVALID_INPUT, correctable.
+    const results = path.join(fx.root, '.ensemble', 'state', 'engine', runId, 'results');
+    fs.mkdirSync(results, { recursive: true });
+    fs.writeFileSync(path.join(results, 'bad.json'), 'not json');
+    const malformed = accept(['--step', 'delegate', '--result-file', path.join('.ensemble', 'state', 'engine', runId, 'results', 'bad.json')]);
+    expect(malformed.envelope.status).toBe('INVALID_INPUT');
+
+    // A step that was never dispatched has nothing to accept: REFUSED, not correctable by rewriting a file.
+    const undispatched = accept(['--step', 'delegate', '--result-file', path.join('.ensemble', 'state', 'engine', runId, 'results', 'bad.json')]);
+    expect(['INVALID_INPUT', 'REFUSED']).toContain(undispatched.envelope.status);
+    const refused = accept(['--step', 'pr-prose--phase-1-abcdef123456', '--result-file', path.join('.ensemble', 'state', 'engine', runId, 'results', 'missing.json')]);
+    expect(['INVALID_INPUT', 'REFUSED']).toContain(refused.envelope.status);
+
+    // The skill's routing: the REFUSED verdicts the accept path can return HALT, and only INVALID_INPUT is corrected.
+    const bullet = SKILL.split('\n').find(line => line.includes('`NEEDS_AGENT`:'));
+    expect(bullet).toMatch(/`INVALID_INPUT` means the result file itself is malformed/);
+    expect(bullet).toMatch(/`REFUSED`[^.]*HALT/);
+    expect(bullet).toMatch(/never changing a claimed status or exit code/);
+    expect(bullet).not.toMatch(/(?:fix|correct|repair)[^.;]*result file[^.;]*(?:and|then) (?:accept|retry)/i);
+  });
+
+  test('every REFUSED code the accept path can return is one the skill HALTs on, and none of them is a file-shape code', () => {
+    const handoff = fs.readFileSync(path.join(PKG, 'lib', 'engine', 'handoff.js'), 'utf8') + fs.readFileSync(path.join(PKG, 'lib', 'engine', 'builder-wave.js'), 'utf8');
+    const refusedCodes = [...handoff.matchAll(/refused\(\s*'([A-Z_]+)'/g)].map(m => m[1]);
+    const invalidCodes = [...handoff.matchAll(/engineError\(\s*'INVALID_INPUT',\s*'([A-Z_]+)'/g)].map(m => m[1]);
+    for (const code of ['STALE_RESULT', 'BUILDER_FAILED', 'EXECUTION_BLOCKED', 'WAVE_RETRY_EXHAUSTED']) expect(refusedCodes).toContain(code);
+    for (const code of refusedCodes) expect(invalidCodes).not.toContain(code);
+    // The prose names the verdict classes, so a blanket "refused: fix and retry" cannot come back.
+    expect(SKILL).not.toMatch(/A refused `accept` means fix/);
+  });
+
   test('`next` answers STEP, and piping ACTION.args to ACTION.verb on stdin (the skill\'s instruction) does what the flags do', () => {
     const fx = widgetRepo();
     // Step 2 of the skill: the run id is `data.PREFLIGHT.RUN_ID` of `implement env --preflight`.

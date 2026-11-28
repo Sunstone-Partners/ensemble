@@ -6,4 +6,3 @@ Step `delegate` runs `implement delegate`: one execution engine, beads-build, ow
 #### Judgement in this phase
 
 - work-graph triage counts are global across every epic; never present them as this TRD's progress.
-- A task whose bead lacks its `## References` block is never implemented: the engine reports the missing entries and stops.
