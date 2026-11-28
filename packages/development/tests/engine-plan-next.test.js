@@ -222,6 +222,12 @@ function runAction(fx, action, globals = NON_INTERACTIVE) {
   return runMain([...globals, ...argvOf(action)], makeCtx({ cwd: fx.root, env: fx.env }));
 }
 
+/** The same action, run from exactly its own arguments as one JSON object on stdin (nothing else is added). */
+function runActionStdin(fx, action, globals = NON_INTERACTIVE) {
+  const [group, verb] = action.verb.split(' ');
+  return runMain([...globals, group, verb, '--stdin'], makeCtx({ cwd: fx.root, env: fx.env, stdin: JSON.stringify(action.args) }));
+}
+
 /** The reviewers answering a dispatch, as dispatched agents write `out-<name>.json`: every path read, no findings. */
 function answerReviewers(manifest, paths) {
   for (const agent of manifest.agents) {
@@ -453,6 +459,67 @@ describe('next follows live state, one step at a time', () => {
       expect(envelope.data.CONTEXT.branch.BRANCH_ACTION).toBe('stay');
       // The gate still saw the file: it reports it as the engine's, not by hiding the tree.
       expect(git(fx, ['status', '--porcelain'])).toBe(`M ${TRD_PATH}`);
+    });
+
+    test('with no branch intent the action carries none: the proposed branch is still the default', () => {
+      const fx = repo();
+      const { envelope } = next(fx);
+      expect(envelope.data.ACTION.args).toEqual({ apply: true, trd: TRD_PATH });
+    });
+
+    test('--branch names an existing branch: the returned action, run from exactly its own stdin, checks THAT branch out', () => {
+      const fx = repo();
+      git(fx, ['branch', 'feature/custom-name']);
+      const first = next(fx, ['--branch', 'feature/custom-name']);
+      expect(first.envelope.data.ACTION).toMatchObject({
+        args: { apply: true, branch: 'feature/custom-name', trd: TRD_PATH },
+        id: 'checkout',
+      });
+      expect(runMain(['implement', 'env', '--preflight', '--run-id', 'r1'], makeCtx({ cwd: fx.root, env: fx.env })).exitCode).toBe(0);
+
+      const applied = runActionStdin(fx, first.envelope.data.ACTION);
+      expect({ error: applied.envelope.error, exitCode: applied.exitCode }).toEqual({ error: undefined, exitCode: 0 });
+      expect(git(fx, ['branch', '--show-current'])).toBe('feature/custom-name');
+      // The branch the engine would have proposed was never created.
+      expect(git(fx, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])).not.toContain(BRANCH);
+
+      const after = next(fx, ['--branch', 'feature/custom-name']);
+      expect(after.exitCode).toBe(0);
+      expect(after.envelope.data.ACTION.id).toBe('scaffold');
+      expect(after.envelope.data.CONTEXT.branch.BRANCH_ACTION).toBe('stay');
+    });
+
+    test('--use-current-branch keeps the work where it is: there is nothing to check out, and no second branch appears', () => {
+      const fx = repo();
+      git(fx, ['switch', '--quiet', '-c', 'mine']);
+      const before = git(fx, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+
+      // Without the intent the engine would propose its own branch...
+      expect(next(fx).envelope.data.ACTION).toMatchObject({ id: 'checkout' });
+      // ...with it, the branch the caller is on IS the target: the step is already done.
+      const { envelope, exitCode } = next(fx, ['--use-current-branch']);
+      expect(exitCode).toBe(0);
+      expect(envelope.data.CONTEXT.branch.BRANCH_ACTION).toBe('stay');
+      expect(envelope.data.CONTEXT.branch.BRANCH_NAME).toBe('mine');
+      expect(envelope.data.COMPLETED).toEqual(['checkout']);
+      expect(envelope.data.ACTION.id).toBe('scaffold');
+      expect(git(fx, ['branch', '--show-current'])).toBe('mine');
+      expect(git(fx, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])).toBe(before);
+    });
+
+    test('--use-current-branch with a named branch is the caller\'s contradiction, refused by the branch verb, not resolved by the planner', () => {
+      const fx = repo();
+      const { envelope } = next(fx, ['--branch', 'x', '--use-current-branch']);
+      expect(envelope.status).toBe('REFUSED');
+      expect(envelope.error.code).toBe('BRANCH_FLAGS_EXCLUSIVE');
+    });
+
+    test('the intent is forwarded to the checkout step only: no other step is handed a flag it does not declare', () => {
+      const fx = repo({ scaffolded: true });
+      git(fx, ['switch', '--quiet', '-c', 'mine']);
+      const { envelope } = next(fx, ['--use-current-branch']);
+      expect(envelope.data.ACTION.id).toBe('delegate');
+      expect(Object.keys(envelope.data.ACTION.args).sort()).toEqual(['max-parallel', 'root-epic-id', 'trd']);
     });
 
     test('the owner\'s own changes are still dirt, whether or not the saved choices are there too', () => {
