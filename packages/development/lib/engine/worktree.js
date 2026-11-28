@@ -10,10 +10,11 @@
  *
  * Tracker-owned `.beads/` paths are not dirt: the tracker rewrites its export during an ordinary
  * run (`docs/guides/beads-tracked-export.md`), and counting that as a dirty tree would refuse
- * every build that followed a tracker sync. Neither is the engine's own saved-choices block in a
- * TRD's frontmatter (`implement branch --apply` writes it, and the next `implement next` call
- * would otherwise refuse the very change the previous step made): only a file that differs from
- * HEAD in that block and nothing else. Nothing else is filtered -- the gate exists to stop
+ * every build that followed a tracker sync. Neither is the engine's own saved-choices block in the
+ * frontmatter of the TRD being processed (`implement branch --apply` writes it, and the next
+ * `implement next` call would otherwise refuse the very change the previous step made): only that
+ * file, differing from HEAD in that strictly shaped block and nowhere else, with a branch name that
+ * is empty or the branch now checked out. Nothing else is filtered -- the gate exists to stop
  * a build on top of uncommitted work.
  *
  * An unreadable status is `UNAVAILABLE`, never "clean": a gate that passes when it cannot see the
@@ -24,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { runToolchain, toolchainFailure } = require('./cli-json');
-const { gitProbe } = require('./git');
+const { currentBranch, gitProbe } = require('./git');
 const { isResult, unavailable } = require('./result');
 
 /**
@@ -93,68 +94,104 @@ function isTrackerOwned(line) {
 }
 
 /**
- * The text of a TRD without its saved-choices block: the `ensemble_implement_trd_beads:` key and
- * the indented lines under it, inside the frontmatter. That block is the one thing
- * `implement branch --apply` writes into a TRD (`trd-cli choices-write`).
- * @param {string} text
- * @returns {string}
+ * The saved-choices block of a TRD, read strictly. `trd-cli choices-write` upserts exactly this and
+ * nothing else:
+ *
+ *     ensemble_implement_trd_beads:
+ *       branch_name: <name or empty>
+ *       use_proposed: <true|false>
+ *       stacked_prs: <true|false>
+ *
+ * as a TOP-LEVEL key of the file's LEADING frontmatter (line 1 is `---`, the next `---` closes it).
+ * Anything that is not exactly that -- a nested or indented key, a second block, an extra child
+ * line, a missing delimiter -- is ambiguous and answers null, so the caller treats the file as the
+ * owner's. Nothing outside the frontmatter is ever looked at.
+ *
+ * @param {string} text the file
+ * @returns {{lines: string[], start: number, branchName: string|null}|null} `start` is -1 and
+ *   `branchName` null when there is no block; null when the file cannot be read strictly
  */
-function withoutChoicesBlock(text) {
+function readChoicesBlock(text) {
   const lines = text.split('\n');
-  const open = lines.findIndex(line => line.trim() === '---');
-  const close = open === -1 ? -1 : lines.findIndex((line, index) => index > open && line.trim() === '---');
-  if (open === -1 || close === -1) return text;
-  const keyLine = new RegExp(`^\\s*${CHOICES_KEY}\\s*:`);
-  const kept = [];
-  let inBlock = false;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const inFrontmatter = index > open && index < close;
-    if (inFrontmatter && keyLine.test(line)) {
-      inBlock = true;
-      continue;
-    }
-    if (inBlock) {
-      const child = line.trim() === '' || line.startsWith(' ') || line.startsWith('\t');
-      if (inFrontmatter && child) continue;
-      inBlock = false;
-    }
-    kept.push(line);
+  if (lines[0] !== '---') return null;
+  const close = lines.findIndex((line, index) => index > 0 && line === '---');
+  if (close === -1) return null;
+
+  const key = `${CHOICES_KEY}:`;
+  let start = -1;
+  for (let index = 1; index < close; index += 1) {
+    if (!lines[index].includes(CHOICES_KEY)) continue;
+    if (lines[index] !== key || start !== -1) return null;
+    start = index;
   }
-  return kept.join('\n');
+  if (start === -1) return { branchName: null, lines, start };
+
+  const [name, proposed, stacked] = lines.slice(start + 1, start + 4);
+  const named = /^ {2}branch_name: ?([^\s'"]*)$/.exec(name === undefined ? '' : name);
+  if (
+    start + 4 > close ||
+    !named ||
+    !/^ {2}use_proposed: (true|false)$/.test(proposed === undefined ? '' : proposed) ||
+    !/^ {2}stacked_prs: (true|false)$/.test(stacked === undefined ? '' : stacked)
+  ) {
+    return null;
+  }
+  // A further indented line would be another child of the block: not what the engine writes.
+  if (start + 4 < close && /^[ \t]/.test(lines[start + 4])) return null;
+  return { branchName: named[1], lines, start };
+}
+
+/** The file's lines with the block's four lines removed, rejoined byte for byte. */
+function withoutBlock({ lines, start }) {
+  return (start === -1 ? lines : [...lines.slice(0, start), ...lines.slice(start + 4)]).join('\n');
 }
 
 /**
- * Whether a porcelain line is the engine's own write of the saved choices into a tracked TRD:
- * an unstaged modification of one Markdown file whose content differs from HEAD's ONLY in the
- * saved-choices block. Anything else about the file -- a body edit, another frontmatter key, a
- * staged change -- is still the owner's work, and still dirt.
+ * Whether a porcelain line is the engine's own write of the saved choices into the TRD being
+ * processed: an unstaged modification of THAT file, whose content differs from HEAD's in the
+ * saved-choices block and nowhere else, and whose block is the bounded shape above with a branch
+ * name that is empty or the branch now checked out (the write follows the checkout). Any other
+ * file, another TRD, a body edit, a sibling frontmatter key, a staged change or a block that
+ * cannot be read strictly is the owner's work, and still dirt.
+ *
  * @param {object} call the dispatcher's call object
  * @param {string} line a `git status --porcelain` line
+ * @param {string|undefined} trdPath the TRD being processed, project-relative
  * @returns {boolean}
  */
-function isEngineChoicesWrite(call, line) {
-  if (!/^ M /.test(line)) return false;
-  const [relative] = pathsOfLine(line);
-  if (!relative || !/\.md$/i.test(relative)) return false;
-  const committed = gitProbe(call, ['show', `HEAD:${relative}`]);
+function isEngineChoicesWrite(call, line, trdPath) {
+  if (typeof trdPath !== 'string' || trdPath === '' || !/^ M /.test(line)) return false;
+  const paths = pathsOfLine(line);
+  if (paths.length !== 1 || path.normalize(paths[0]) !== path.normalize(trdPath)) return false;
+
+  const committed = gitProbe(call, ['show', `HEAD:${paths[0]}`]);
   if (isResult(committed) || committed.exit !== 0) return false;
   let current;
   try {
-    current = fs.readFileSync(path.resolve(call.projectRoot, relative), 'utf8');
+    current = fs.readFileSync(path.resolve(call.projectRoot, paths[0]), 'utf8');
   } catch {
     return false;
   }
-  return current !== committed.stdout && withoutChoicesBlock(current) === withoutChoicesBlock(committed.stdout);
+  if (current === committed.stdout) return false;
+
+  const before = readChoicesBlock(committed.stdout);
+  const after = readChoicesBlock(current);
+  if (before === null || after === null || after.start === -1) return false;
+  if (withoutBlock(before) !== withoutBlock(after)) return false;
+
+  const branch = currentBranch(call);
+  return !isResult(branch) && (after.branchName === '' || after.branchName === branch);
 }
 
 /**
  * Read the working tree through the project's `workflow` adapter.
  * @param {object} call the dispatcher's call object
+ * @param {{trdPath?: string}} [options] `trdPath` is the TRD being processed: the one file whose
+ *   saved-choices write is the engine's own (project-relative). Without it nothing is exempt.
  * @returns {{dirty: boolean, files: string[]}|object} the status, or a tagged engine result when
  *   the status could not be read
  */
-function readWorktree(call) {
+function readWorktree(call, options = {}) {
   const result = runToolchain(call, ['run', 'workflow.status']);
   if (!result.json) {
     return unavailable(
@@ -174,7 +211,7 @@ function readWorktree(call) {
   }
   const kept = files
     .map(line => String(line))
-    .filter(line => !isTrackerOwned(line) && !isEngineChoicesWrite(call, line))
+    .filter(line => !isTrackerOwned(line) && !isEngineChoicesWrite(call, line, options.trdPath))
     .map(line => pathsOfLine(line).join(' -> '));
   return { dirty: kept.length > 0, files: kept };
 }

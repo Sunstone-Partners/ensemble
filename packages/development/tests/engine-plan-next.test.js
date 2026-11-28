@@ -456,20 +456,56 @@ describe('next follows live state, one step at a time', () => {
     });
 
     test('the owner\'s own changes are still dirt, whether or not the saved choices are there too', () => {
-      for (const damage of [
-        fx => fs.appendFileSync(path.join(fx.root, TRD_PATH), '\nA line the owner added.\n'),
-        fx => write(fx, 'notes.txt', 'untracked work\n'),
-        fx => {
-          const file = path.join(fx.root, TRD_PATH);
-          fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('status: In Progress', 'status: Draft'));
-        },
+      const trd = fx => path.join(fx.root, TRD_PATH);
+      const edit = (fx, change) => fs.writeFileSync(trd(fx), change(fs.readFileSync(trd(fx), 'utf8')));
+      const BLOCK_END = '  stacked_prs: false';
+      const fx = checkedOut();
+      const afterCheckout = fs.readFileSync(trd(fx), 'utf8');
+      for (const [label, damage] of [
+        ['a line in the body', fx => fs.appendFileSync(trd(fx), '\nA line the owner added.\n')],
+        ['an untracked file', fx => write(fx, 'notes.txt', 'untracked work\n')],
+        ['another frontmatter key', fx => edit(fx, text => text.replace('status: In Progress', 'status: Draft'))],
+        // The block's own indented lines are NOT a place to hide a sibling edit.
+        ['an extra child under the block', fx => edit(fx, text => text.replace(BLOCK_END, `${BLOCK_END}\n  owner_note: kept`))],
+        ['a nested copy of the key', fx => edit(fx, text => text.replace('---\n\n#', '  nested:\n    ensemble_implement_trd_beads:\n      owner: 1\n---\n\n#'))],
+        ['a second block', fx => edit(fx, text => text.replace(BLOCK_END, `${BLOCK_END}\nensemble_implement_trd_beads:\n  branch_name: x\n  use_proposed: false\n  stacked_prs: false`))],
+        // A `---` and the key in the BODY are not frontmatter, however they look.
+        ['a delimiter and the key in the body', fx => fs.appendFileSync(trd(fx), '\n---\nensemble_implement_trd_beads:\n  owner: edited\n')],
+        ['a branch name that is not the one checked out', fx => edit(fx, text => text.replace(/branch_name: .*/, 'branch_name: somebody/elses-branch'))],
+        ['the block pointing at a quoted value', fx => edit(fx, text => text.replace(/branch_name: .*/, "branch_name: 'x y'"))],
       ]) {
-        const fx = checkedOut();
         damage(fx);
         const { envelope, exitCode } = next(fx);
-        expect(exitCode).toBe(1);
-        expect(envelope.error.code).toBe('WORKTREE_DIRTY');
+        expect({ label, code: envelope.error && envelope.error.code, exitCode }).toEqual({ code: 'WORKTREE_DIRTY', exitCode: 1, label });
+        // Put the tree back as the checkout left it, for the next case.
+        fs.writeFileSync(trd(fx), afterCheckout);
+        fs.rmSync(path.join(fx.root, 'notes.txt'), { force: true });
+        expect(next(fx).exitCode).toBe(0);
       }
+    });
+
+    test('the exemption is the TRD being processed: another Markdown file, or another TRD, with the same block is dirt', () => {
+      const fx = repo();
+      // A second tracked TRD, committed with leading frontmatter.
+      write(fx, 'docs/TRD/other.md', '---\nstatus: Draft\n---\n\n# Other\n');
+      git(fx, ['add', '--', 'docs/TRD/other.md']);
+      git(fx, ['commit', '--quiet', '-m', 'another TRD']);
+      write(fx, 'docs/TRD/other.md', '---\nstatus: Draft\nensemble_implement_trd_beads:\n  branch_name: \n  use_proposed: false\n  stacked_prs: false\n---\n\n# Other\n');
+      const { envelope, exitCode } = next(fx);
+      expect(exitCode).toBe(1);
+      expect(envelope.error.code).toBe('WORKTREE_DIRTY');
+      expect(envelope.error.details.WORKTREE_STATUS).toEqual(['docs/TRD/other.md']);
+    });
+
+    test('a saved-choices block the owner wrote before any checkout is dirt: it follows no checkout', () => {
+      const fx = repo();
+      const file = path.join(fx.root, TRD_PATH);
+      fs.writeFileSync(
+        file,
+        fs.readFileSync(file, 'utf8').replace('---\n\n#', 'ensemble_implement_trd_beads:\n  branch_name: feature/widget-engine\n  use_proposed: true\n  stacked_prs: false\n---\n\n#')
+      );
+      const { envelope } = next(fx);
+      expect(envelope.error.code).toBe('WORKTREE_DIRTY');
     });
 
     test('a TRD edited by the owner and never touched by the engine is dirt, as before', () => {
