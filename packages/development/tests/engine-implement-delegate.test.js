@@ -14,6 +14,7 @@ let fx;
 let snapshot;
 let epic;
 let toolchain;
+let trackerAdapter;
 
 jest.setTimeout(120000);
 
@@ -93,10 +94,12 @@ beforeAll(() => {
   epic = fx.tracker.issues().find(issue => issue.title.startsWith('[trd:widget-engine]')).id;
   snapshot = fx.tracker.snapshot();
   toolchain = fs.readFileSync(path.join(fx.root, '.ensemble', 'toolchain.yaml'), 'utf8');
+  trackerAdapter = fs.readFileSync(path.join(fx.tracker.adapterDir, 'adapter.yaml'), 'utf8');
 });
 
 beforeEach(() => {
   fx.tracker.restore(snapshot);
+  fs.writeFileSync(path.join(fx.tracker.adapterDir, 'adapter.yaml'), trackerAdapter);
   fs.writeFileSync(path.join(fx.root, '.ensemble', 'toolchain.yaml'), toolchain);
   fs.rmSync(path.join(fx.root, '.ensemble', 'state', 'engine'), { recursive: true, force: true });
 });
@@ -148,6 +151,43 @@ test('lists unresolved root reference entries', () => {
   expect(out.envelope.status).toBe('REFUSED');
   expect(out.envelope.error.details.missing.length).toBeGreaterThan(0);
   for (const missing of out.envelope.error.details.missing) expect(out.envelope.error.message).toContain(missing);
+});
+
+test('resolves present task reference blocks and lists every invalid entry before dispatch', () => {
+  const first = task('TRD-001');
+  const later = task('TRD-003');
+  fx.tracker.setDescription(first, `## References\nTRD: ${TRD}\nTRD Task: ${TRD}#trd-999\nPRD: docs/PRD/missing.md\n`);
+  fx.tracker.setDescription(later, '## References\nTRD: docs/TRD/missing.md\n');
+  const out = delegate();
+  expect(out.envelope.status).toBe('REFUSED');
+  expect(out.envelope.error.details.missing).toEqual(expect.arrayContaining([
+    `${first}: TRD task trd-999 not found in ${TRD}`,
+    `${first}: PRD file docs/PRD/missing.md cannot be read: ENOENT`,
+    `${later}: TRD file docs/TRD/missing.md cannot be read: ENOENT`,
+  ]));
+  for (const missing of out.envelope.error.details.missing) expect(out.envelope.error.message).toContain(missing);
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
+});
+
+test('an unavailable tracker.show is not reported as missing references', () => {
+  const adapter = yaml.load(trackerAdapter);
+  delete adapter.capabilities['tracker.show'];
+  fs.writeFileSync(path.join(fx.tracker.adapterDir, 'adapter.yaml'), yaml.dump(adapter));
+  const out = delegate();
+  expect(out.envelope.status).toBe('UNAVAILABLE');
+  expect(out.envelope.error.code).toBe('REFERENCES_UNREADABLE');
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
+});
+
+test('the tracker.show allowlist refusal is returned unchanged', () => {
+  const adapter = yaml.load(trackerAdapter);
+  adapter.allowlist[0].sub = adapter.allowlist[0].sub.filter(sub => sub !== 'show');
+  fs.writeFileSync(path.join(fx.tracker.adapterDir, 'adapter.yaml'), yaml.dump(adapter));
+  const out = delegate();
+  expect(out.envelope.status).toBe('REFUSED');
+  expect(out.envelope.error.code).toBe('NOT_ALLOWED');
+  expect(out.envelope.error.message).not.toContain('missing ## References');
+  expect(fs.existsSync(path.join(fx.root, '.ensemble', 'state', 'engine'))).toBe(false);
 });
 
 test('a non-zero exit is a Debug Loop refusal and records no accepted result', () => {

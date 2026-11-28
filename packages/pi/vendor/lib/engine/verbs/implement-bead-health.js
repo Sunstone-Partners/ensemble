@@ -24,7 +24,7 @@
 
 const MESSAGES = require('../messages');
 const { isResult, refused, unavailable } = require('../result');
-const { runTrd } = require('../cli-json');
+const { runTrd, toolchainFailure } = require('../cli-json');
 const {
   callCapability,
   classify,
@@ -243,7 +243,7 @@ function runWorkGraph(call, warnings) {
 
 /**
  * How many open beads of this TRD carry no `## References` block, and whether the root epic's
- * block resolves.
+ * block resolves. Strict delegation also resolves each scoped open bead's references.
  *
  * @returns {{references: object}|object} a tagged engine result when `bead-context` refuses
  */
@@ -283,8 +283,16 @@ function checkReferences(call, { beads, rootEpicId, trdPath, warnings, requireAl
   if (countable && missingCount > 0) warnings.push(MESSAGES.referencesWarning(missingCount));
 
   const beadContext = { checked: false, missing: [], ok: null };
-  if (rootEpicId !== null) {
-    const context = runTrd(call, ['bead-context', '--bead', rootEpicId, '--trd', trdPath]);
+  const contextIds = rootEpicId === null ? [] : [rootEpicId];
+  if (requireAll) contextIds.push(...open.map(bead => bead.id));
+  for (const beadId of new Set(contextIds)) {
+    if (requireAll) {
+      // bead-context folds tracker errors into missing references; preserve the tool's gate first.
+      const shown = classify(callCapability(call, 'tracker.show', { id: beadId }), 'tracker.show');
+      if (shown.kind === 'gate') return shown.result;
+      if (shown.kind !== 'ok') return unavailable('REFERENCES_UNREADABLE', shown.message);
+    }
+    const context = runTrd(call, ['bead-context', '--bead', beadId, '--trd', trdPath]);
     if (!context.json) {
       return unavailable(
         'BEAD_CONTEXT_UNREADABLE',
@@ -293,14 +301,24 @@ function checkReferences(call, { beads, rootEpicId, trdPath, warnings, requireAl
         }`
       );
     }
+    if (requireAll && context.json.error) return toolchainFailure(context.json.error);
     if (context.exitCode !== 0 || context.json.ok !== true) {
-      const entries = [...(requireAll ? missing : []), ...(Array.isArray(context.json.missing) ? context.json.missing : [])];
-      return refused('BEAD_CONTEXT_FAILED', MESSAGES.beadContextFailed(rootEpicId, entries), {
-        missing: entries,
-      });
+      const entries = Array.isArray(context.json.missing) ? context.json.missing : [];
+      if (!requireAll) {
+        return refused('BEAD_CONTEXT_FAILED', MESSAGES.beadContextFailed(rootEpicId, entries), {
+          missing: entries,
+        });
+      }
+      if (entries.length === 0) {
+        return unavailable('BEAD_CONTEXT_UNREADABLE', `bead-context failed for ${beadId} without missing entries`);
+      }
+      missing.push(...entries.map(entry => `${beadId}: ${entry}`));
+      continue;
     }
-    beadContext.checked = true;
-    beadContext.ok = true;
+    if (beadId === rootEpicId) {
+      beadContext.checked = true;
+      beadContext.ok = true;
+    }
   }
 
   if (requireAll && !countable) return unavailable('REFERENCES_UNREADABLE', 'Some scoped bead descriptions could not be read');
