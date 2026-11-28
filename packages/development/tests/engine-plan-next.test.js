@@ -168,6 +168,12 @@ function repo({ scaffolded = false, remote = null, bareOrigin = false } = {}) {
     fs.appendFileSync(path.join(fx.root, '.git', 'info', 'exclude'), '.ensemble/\n');
   }
   if (scaffolded) fx.ids = fx.tracker.seedFromPlan(scaffoldCalls(fx));
+  // The staleness gate compares whole-second mtimes of the tracked files with the TRD's. This fixture writes the TRD
+  // first and its adapters, agents and tracker stub after it, so a fixture that takes longer than a second to build
+  // (a loaded CI runner) leaves files "newer than the TRD" and the first `next` answers TRD_STALE. The TRD is the
+  // last thing written: stamp it after everything else, a moment ahead so the tracked-file clock cannot overtake it.
+  const stamp = new Date(Date.now() + 10000);
+  fs.utimesSync(path.join(fx.root, TRD_PATH), stamp, stamp);
   return fx;
 }
 
@@ -716,6 +722,49 @@ describe('a verb called out of order refuses, whatever the plan said', () => {
     expect(delegate.envelope.error.code).toBe('ROOT_EPIC_NOT_SCOPED');
 
     expect(fx.tracker.mutations()).toEqual([]);
+  });
+});
+
+describe('the fixture does not make a TRD stale, and the staleness gate still can', () => {
+  /** Every file under the repository outside .git, with its whole-second mtime. */
+  const mtimes = root => {
+    const out = [];
+    const walk = dir => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '.git' || entry.name === 'node_modules') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else out.push({ file: path.relative(root, full), mtimeSec: Math.floor(fs.statSync(full).mtimeMs / 1000) });
+      }
+    };
+    walk(root);
+    return out;
+  };
+
+  test('the TRD is the last thing the fixture writes: no file is newer than it, whatever second the build crossed', () => {
+    const fx = repo();
+    const all = mtimes(fx.root);
+    const trd = all.find(entry => entry.file === TRD_PATH).mtimeSec;
+    expect(all.filter(entry => entry.mtimeSec > trd).map(entry => entry.file)).toEqual([]);
+    // A build that took seconds: every other file lands later than it was written, and the answer is unchanged.
+    for (const entry of all) {
+      if (entry.file !== TRD_PATH) fs.utimesSync(path.join(fx.root, entry.file), new Date(Date.now() + 3000), new Date(Date.now() + 3000));
+    }
+    git(fx, ['switch', '--quiet', '-c', BRANCH]);
+    const answer = next(fx, ['--plan-only']);
+    expect({ error: answer.envelope.error, status: answer.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+    expect(answer.envelope.data.ACTION.id).toBe('scaffold');
+  });
+
+  test('a tracked file changed after the TRD is still reported as drift, by the real gate', () => {
+    const fx = repo();
+    git(fx, ['switch', '--quiet', '-c', BRANCH]);
+    const later = new Date(Date.now() + 60000);
+    fs.utimesSync(path.join(fx.root, 'README.md'), later, later);
+    const { envelope, exitCode } = next(fx, ['--plan-only']);
+    expect(exitCode).not.toBe(0);
+    expect(envelope.error.code).toBe('TRD_STALE');
+    expect(envelope.error.details.STALE_DRIFT).toBe(true);
   });
 });
 

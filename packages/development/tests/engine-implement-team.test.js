@@ -20,14 +20,9 @@ const MESSAGES = require('../lib/engine/messages');
 const { resolveDefaultTeamRoles } = require('../lib/team-defaults');
 const { expectMatchesOutputSchema, makeCtx, makeRoot, runMain } = require('./helpers/engine-run');
 
-const PREFLIGHT = path.join(
-  __dirname,
-  '..',
-  'skills',
-  'ensemble-implement-trd-tasks',
-  'references',
-  'phase-1-preflight.md'
-);
+// The skill was thinned to the engine loop (TRD-021); these texts were copied from the prose below, kept verbatim
+// in tests/fixtures/engine/skill-before-thinning/, so the engine can still be held to what it replaced.
+const PREFLIGHT = path.join(__dirname, 'fixtures', 'engine', 'skill-before-thinning', 'phase-1-preflight.md.txt');
 
 /** The eight agents the default roster names, so the fixture can register all of them. */
 const DEFAULT_AGENTS = [

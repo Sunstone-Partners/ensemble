@@ -66,7 +66,7 @@ describe('beads engine sources', () => {
     const build = manifest('commands/beads-build.yaml');
     expect(build.metadata.capabilities.required).toContain('work-graph.ready');
     expect(build.metadata.capabilities.optional).toContain('work-graph.plan');
-    expect(prose('commands/implement-trd-tasks.yaml')).toMatch(/work-graph\.ready \(graph-aware parallel tracks[^)]*\) or plan order when that is unavailable/);
+    // implement-trd-tasks no longer describes scheduling at all: the engine's delegate verb hands the wave to beads-build.
   });
 });
 

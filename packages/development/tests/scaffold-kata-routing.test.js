@@ -36,7 +36,6 @@ const { buildScaffoldPlan, buildScaffoldCalls, buildDepArgs } = require('../lib/
 const { runCapability } = require('../lib/toolchain/runner');
 const { guardKata } = require('./helpers/kata-guard');
 const { kataScratch, parseJson } = require('./helpers/kata-scratch');
-const { readDevelopmentSkill, parseWorkflow } = require('./helpers/skill-workflow');
 
 const PKG = path.join(__dirname, '..');
 const TOOLCHAIN_CLI = path.join(PKG, 'lib', 'toolchain-cli.js');
@@ -251,95 +250,42 @@ describe('buildScaffoldCalls / buildDepArgs (pure)', () => {
   });
 });
 
-describe('skill prose and command manifest (AC1, AC2)', () => {
+// The scaffold is an engine verb now (`implement scaffold`, TRD-011), so what AC1 and AC2 pinned in
+// the skill's prose is pinned on the verb that does the work. Its behaviour against a stub tracker
+// is proved by engine-implement-scaffold.test.js; here the routing contract stays visible: tracker
+// work goes through toolchain capabilities and never names br or bv.
+describe('the scaffold verb and command manifest (AC1, AC2)', () => {
   const manifest = yaml.load(fs.readFileSync(path.join(PKG, 'commands', 'implement-trd-tasks.yaml'), 'utf8'));
-  const phases = parseWorkflow(readDevelopmentSkill(manifest.skill));
-  const stepText = (phaseName, titleRe) => {
-    const phase = phases.find((p) => p.name === phaseName);
-    const step = phase.steps.find((s) => titleRe.test(s.title));
-    return step.actions.join('\n');
-  };
+  const verb = (name) => fs.readFileSync(path.join(PKG, 'lib', 'engine', 'verbs', name), 'utf8');
+  const scaffold = verb('implement-scaffold.js');
+  const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-  // br-96whj: the kata routing is a gated preamble between the Phase 2 heading and Step 2.1; Steps 2.1
-  // and 2.2 stay exactly as the beads golden pins them.
-  const PHASE2 = fs.readFileSync(
-    path.join(PKG, 'skills', 'ensemble-implement-trd-tasks', 'references', 'phase-2-scaffold.md'), 'utf8'
-  );
-  const kataSection = PHASE2.slice(PHASE2.indexOf('### Phase 2: Scaffold'), PHASE2.indexOf('#### Step 2.1'));
-
-  test('preamble learns the adapter from the tracker.list cache envelope, names kata as plain text, and falls back to Steps 2.1/2.2', () => {
-    expect(kataSection).toMatch(/run the tracker\.list cache call first and read `adapter` from its envelope/i);
-    expect(kataSection).toMatch(/names the kata adapter/);
-    expect(kataSection).toMatch(/else Steps 2\.1\/2\.2 as written/);
-    expect(kataSection).toMatch(/REPLACE/);
-    // lint-provider-refs treats a backticked kata as a binary in a named source: plain text only.
-    expect(kataSection).not.toMatch(/`kata`/);
-    expect(kataSection).toMatch(/preflight does not report/i);
+  test('creates through tracker.create-detailed (find-by-key first) and wires edges through tracker.dep-add', () => {
+    for (const needle of ['tracker.create-detailed', 'tracker.find-by-key', 'tracker.dep-add', 'scaffold-calls', 'scaffold-dep-args']) {
+      expect(scaffold).toContain(needle);
+    }
+    expect(scaffold).toContain('externalKey');
   });
 
-  test('kata create bullet records the ids and keeps the References heading and stale-edge removal of Step 2.1', () => {
-    const t = kataSection;
-    for (const v of ['ROOT_EPIC_ID', 'TRD_TO_BEAD_MAP[task id]', 'PHASE_TASK_IDS[phaseN]', 'story ids by phase']) expect(t).toContain(v);
-    expect(t).toContain('## References');
-    expect(t).toMatch(/stale inter-phase edges/);
-    expect(t).toMatch(/reference section 5/);
-  });
-
-  test('kata section creates through tracker.create-detailed and wires edges through tracker.dep-add', () => {
-    const t = kataSection;
-    expect(t).toMatch(/tracker\.create-detailed/);
-    expect(t).toMatch(/tracker\.dep-add/);
-    expect(t).toMatch(/scaffold-calls/);
-    expect(t).toMatch(/externalKey/);
-    expect(t).toMatch(/scaffold-dep-args/);
-  });
-
-  test('kata section states exactly when find-by-key fires and the label gap', () => {
-    const t = kataSection;
-    expect(t).toMatch(/not cached/);
-    expect(t).toMatch(/open-only|open items only/);
-    expect(t).toMatch(/closed/);
-    expect(t).toMatch(/carries no labels or type/);
-    expect(t).toMatch(/tracker\.label/);
-  });
-
-  test('kata section runs work-graph.ready, plan and graph-health through the toolchain CLI', () => {
-    const t = kataSection;
-    expect(t).toMatch(/work-graph\.ready/);
-    expect(t).toMatch(/work-graph\.plan/);
-    expect(t).toMatch(/work-graph\.graph-health/);
-    expect(t).toMatch(/\$TOOLCHAIN_CLI/);
-  });
-
-  test('kata section names a bare tracker.create only inside the unavailable-fallback clause', () => {
-    const bare = [...kataSection.matchAll(/tracker\.create(?![-\w])/g)];
+  test('a bare tracker.create is only the fallback when create-detailed is unavailable', () => {
+    const bare = [...code(scaffold).matchAll(/tracker\.create(?![-\w])/g)];
     expect(bare.length).toBeGreaterThan(0);
     for (const m of bare) {
-      const before = kataSection.slice(Math.max(0, m.index - 80), m.index);
-      expect(before).toMatch(/unavailable/);
+      const near = code(scaffold).slice(Math.max(0, m.index - 400), m.index + 400);
+      expect(near).toMatch(/unavailable/);
     }
-    // Step 2.1/2.2 (beads path) carry no kata routing.
-    const beadsSteps = PHASE2.slice(PHASE2.indexOf('#### Step 2.1'));
-    expect(beadsSteps).not.toMatch(/create-detailed|find-by-key|scaffold-calls|scaffold-dep-args/);
-    expect(stepText('Scaffold', /Plan and create/)).toContain('Never re-query per bead');
   });
 
   test('the label backfill runs before the build invocation reads labels (kata has no labels from create-detailed)', () => {
-    const p3 = fs.readFileSync(
-      path.join(PKG, 'skills', 'ensemble-implement-trd-tasks', 'references', 'phase-3-execute.md'), 'utf8'
-    );
-    const backfill = p3.indexOf('beads-label');
-    const build = p3.indexOf('/ensemble:beads-build');
-    expect(backfill).toBeGreaterThan(-1);
-    expect(build).toBeGreaterThan(-1);
-    expect(backfill).toBeLessThan(build);
+    const delegate = verb('implement-delegate.js');
+    expect(delegate.indexOf('labelBeads(call')).toBeGreaterThan(-1);
+    expect(delegate.indexOf('labelBeads(call')).toBeLessThan(delegate.indexOf("const flags = ['--defer-completion'"));
     // Kata's ready/plan never read labels, so the backfill ordering is not load-bearing for them; pin that
     // against the adapter manifest argv and the plan module's list call rather than assume it.
     const kataAdapter = yaml.load(fs.readFileSync(path.join(PKG, 'skills', 'adapter-tracker-kata', 'adapter.yaml'), 'utf8'));
     expect(kataAdapter.capabilities['work-graph.ready'].run.join(' ')).not.toMatch(/label/i);
     const wg = fs.readFileSync(path.join(PKG, 'skills', 'adapter-tracker-kata', 'work-graph-module.js'), 'utf8');
     expect(wg).not.toMatch(/--label/);
-    expect(kataSection).not.toMatch(/--label/);
   });
 
   test('manifest declares the capabilities the scaffold now calls', () => {
@@ -349,9 +295,10 @@ describe('skill prose and command manifest (AC1, AC2)', () => {
     }
   });
 
-  test('scaffold prose never names br or bv', () => {
-    const t = kataSection + stepText('Scaffold', /Plan and create/) + stepText('Scaffold', /Work-graph analysis/);
-    expect(t).not.toMatch(/\bbr\b|\bbv\b|--robot-/);
+  test('the engine verbs that touch the tracker never name br or bv', () => {
+    for (const file of ['implement-scaffold.js', 'implement-bead-health.js', 'implement-delegate.js']) {
+      expect(code(verb(file))).not.toMatch(/\bbr\b|\bbv\b|--robot-/);
+    }
   });
 });
 

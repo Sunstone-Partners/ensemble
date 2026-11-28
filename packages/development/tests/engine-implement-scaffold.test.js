@@ -25,7 +25,9 @@ const { expectMatchesOutputSchema, makeCtx, runMain } = require('./helpers/engin
 const { initRepo, makeRepo, snapshotTree } = require('./helpers/engine-repo');
 const { createTrackerStub, fixtureTrd } = require('./fixtures/engine/tracker-stub');
 
-const REFERENCE = path.join(__dirname, '..', 'skills', 'implement-trd-tasks-reference', 'SKILL.md');
+// The skill was thinned to the engine loop (TRD-021); these texts were copied from the prose below, kept verbatim
+// in tests/fixtures/engine/skill-before-thinning/, so the engine can still be held to what it replaced.
+const REFERENCE = path.join(__dirname, 'fixtures', 'engine', 'skill-before-thinning', 'reference-SKILL.md.txt');
 const TRD_PATH = 'docs/TRD/widget-engine.md';
 const SLUG = 'widget-engine';
 const EPIC = `[trd:${SLUG}]`;

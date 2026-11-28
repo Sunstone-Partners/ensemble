@@ -24,7 +24,6 @@ const CONFIGURE_TEAM_MANIFEST = path.join(__dirname, '../commands/configure-team
 const CONFIGURE_TEAM_SKILL = path.join(__dirname, '../skills/ensemble-configure-team/SKILL.md');
 const readConfigureTeamProse = () => readSkillProse(CONFIGURE_TEAM_SKILL);
 // implement-trd-tasks is skill-backed too: its prompt is the skill's SKILL.md plus references/*.md.
-const IMPLEMENT_TRD_BEADS_SKILL = path.join(__dirname, '../skills/ensemble-implement-trd-tasks/SKILL.md');
 
 describe('configure-team command agent discovery', () => {
   test('Phase 3 Step 1 includes runtime plugin agent fallback (REQUIRED)', () => {
@@ -104,14 +103,12 @@ describe('configure-team command agent discovery', () => {
 
 
 describe('implement-trd-tasks command agent registry build', () => {
-  // beads-build resolves the wave-runner through AGENT_ALIAS_MAP, which this command builds.
+  // beads-build resolves the wave-runner through AGENT_ALIAS_MAP, which `implement team` builds now.
   test('builds AGENT_ALIAS_MAP from source packages and both runtime plugin agent globs', () => {
-    const text = readSkillProse(IMPLEMENT_TRD_BEADS_SKILL);
-    expect(text).toContain('AGENT_ALIAS_MAP');
-    expect(text).toContain('packages/*/agents/*.yaml');
-    expect(text).toContain('~/.omp/plugins/node_modules/@*/*/agents/*.md');
-    expect(text).toContain('~/.omp/plugins/node_modules/*/agents/*.md');
-    expect(text).toContain('`backend-developer` -> `ensemble-full:backend-developer`');
+    const text = fs.readFileSync(path.join(__dirname, '../lib/engine/agents.js'), 'utf8');
+    expect(text).toContain('.omp');
+    expect(text).toContain("'plugins', 'node_modules'");
+    expect(fs.readFileSync(path.join(__dirname, '../lib/engine/verbs/implement-team.js'), 'utf8')).toContain('AGENT_ALIAS_MAP');
   });
 });
 

@@ -704,52 +704,43 @@ describe('Guard 5: Foreman artifact written before the HALT (fix-issue skill)', 
 });
 
 // ---------------------------------------------------------------------------
-// Guard 7 -- the ensemble-implement-trd-tasks skill (the command is skill-backed; its prompt is
-// SKILL.md plus one references/phase-N-*.md per phase):
-//   7a) the stacked-story `br close` is deferred until after the PR Review
-//       Gate returns LOCAL_REVIEW_COMPLETE.
-//   7b) the single-PR whole-branch gate (PR Review Completion Check) sits
-//       BEFORE Epic Closure.
+// Guard 7 -- implement-trd-tasks runs through the engine, which owns the order:
+//   7a) in stacked mode the phase story stays open until its pull request exists (the gate verb
+//       closes it only in single-PR mode).
+//   7b) the whole-branch review step sits BEFORE the close step in the engine's plan.
 // ---------------------------------------------------------------------------
 
-// The manifest, the whole skill (SKILL.md + references/), the contract test and its helpers.
-const IMPLEMENT_TRD_BEADS_FILES = [
-  'commands/implement-trd-tasks.yaml',
-  'skills/ensemble-implement-trd-tasks',
-  'skills/implement-trd-tasks-reference',
-  'tests/implement-trd-tasks-command.test.js',
-  'tests/helpers/skill-workflow.js',
-  'lib',
-];
-const IMPLEMENT_TRD_BEADS_PHASE_4 = 'skills/ensemble-implement-trd-tasks/references/phase-4-quality-gate.md';
-const IMPLEMENT_TRD_BEADS_PHASE_5 = 'skills/ensemble-implement-trd-tasks/references/phase-5-completion.md';
+// The engine and the contract tests, with what they read (fixtures, helpers, the toolchain and the skill sources).
+const ENGINE_GUARD_FILES = ['lib', 'toolchain', 'tests/helpers', 'tests/fixtures'];
 
-describe('Guard 7: stacked-close deferral and single-PR gate ordering (implement-trd-tasks skill)', () => {
+describe('Guard 7: stacked-close deferral and single-PR gate ordering (the engine behind implement-trd-tasks)', () => {
   proveGuardMutationIsCaught({
     id: 'Guard 7a',
     label:
-      'Scenario 7a: swapping which branch runs the deferred story close -- "a stacked story is not closed until its PR review gate returns LOCAL_REVIEW_COMPLETE" fails against the mutant',
-    files: IMPLEMENT_TRD_BEADS_FILES,
-    targetRel: IMPLEMENT_TRD_BEADS_PHASE_4,
-    testFileRel: 'tests/implement-trd-tasks-command.test.js',
-    testTitle: 'a stacked story is not closed until its PR review gate returns LOCAL_REVIEW_COMPLETE',
-    // Swap just the two branch labels in place: the deferred `br close` prose now hangs off the BLOCKED branch and
-    // the stays-OPEN prose now hangs off the COMPLETE branch -- the story closes exactly when it must stay open.
-    mutate: (text, a) =>
-      a.swap(text, 'BLOCKED -> print the reasons', 'COMPLETE -> close the story'),
+      'Scenario 7a: closing a stacked story at the gate -- "the story stays open, nothing is committed, and the next step is stated" fails against the mutant',
+    files: [...ENGINE_GUARD_FILES, 'tests/engine-implement-gate.test.js'],
+    targetRel: 'lib/engine/verbs/implement-gate.js',
+    testFileRel: 'tests/engine-implement-gate.test.js',
+    testTitle: 'the story stays open, nothing is committed, and the next step is stated',
+    // Invert the stacked test: the deferral now runs in single-PR mode and a stacked story falls through to the close.
+    mutate: (text, a) => a.replace(text, 'if (action.createPr === true) {', 'if (action.createPr !== true) {'),
   });
 
   proveGuardMutationIsCaught({
     id: 'Guard 7b',
     label:
-      'Scenario 7b: swapping the Epic Closure and PR Review Completion Check step titles -- "completion-verification stays authoritative" fails against the mutant',
-    files: IMPLEMENT_TRD_BEADS_FILES,
-    targetRel: IMPLEMENT_TRD_BEADS_PHASE_5,
-    testFileRel: 'tests/implement-trd-tasks-command.test.js',
-    testTitle: 'completion-verification stays authoritative',
-    // Swap just the two step headings in place (the reference file's `#### Step N.M: <title>` lines): the Completion phase's step order now reads ['Completion Verification',
-    // 'Epic Closure', 'PR Review Completion Check', ...] -- the whole-branch local gate no longer precedes epic closure.
-    mutate: (text, a) => a.swap(text, 'Step 5.2: PR review completion check', 'Step 5.3: Epic closure and TRD checkboxes'),
+      'Scenario 7b: swapping the review and close steps of the engine plan -- "the plan runs each gate, then the whole-branch review, then closure, then the completion PR" fails against the mutant',
+    files: [
+      ...ENGINE_GUARD_FILES,
+      'skills/ensemble-implement-trd-tasks',
+      'skills/implement-trd-tasks-reference',
+      'tests/implement-trd-tasks-engine-skill.test.js',
+    ],
+    targetRel: 'lib/engine/plan.js',
+    testFileRel: 'tests/implement-trd-tasks-engine-skill.test.js',
+    testTitle: 'the plan runs each gate, then the whole-branch review, then closure, then the completion PR',
+    // Swap just the two step ids in place: the review is then planned after the close that is meant to need it.
+    mutate: (text, a) => a.swap(text, "step('review-completion'", "step('close'"),
   });
 });
 

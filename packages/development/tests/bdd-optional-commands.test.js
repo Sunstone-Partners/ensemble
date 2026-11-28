@@ -130,16 +130,20 @@ describe('implement-trd-tasks routes -TEST beads by BDD_MODE', () => {
   const doc = load('implement-trd-tasks.yaml');
 
   test('resolves BDD_MODE from the TRD in Preflight, before any bead or git side effect', () => {
-    const text = actions(doc, 'Preflight', 'TRD selection and validation');
-    expect(text).toContain('resolve-bdd --trd');
-    expect(text).toContain('BDD_MODE');
-    const preflightIdx = doc.workflow.phases.findIndex((p) => p.name === 'Preflight');
-    const scaffoldIdx = doc.workflow.phases.findIndex((p) => p.name === 'Scaffold');
-    expect(preflightIdx).toBeLessThan(scaffoldIdx);
+    // Preflight is the engine's `implement resume` now: it resolves BDD_MODE with the same resolver module (lib/bdd-mode.js), read-only,
+    // and `next` folds it into CONTEXT before it names the first step that changes anything.
+    const resume = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engine', 'verbs', 'implement-resume.js'), 'utf8');
+    expect(resume).toContain("require('../../bdd-mode').resolveBdd");
+    expect(resume).toContain('BDD_MODE');
+    const next = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engine', 'verbs', 'implement-next.js'), 'utf8');
+    expect(next.indexOf("['resume', 'resume'")).toBeGreaterThan(-1);
+    expect(next.indexOf("['resume', 'resume'")).toBeLessThan(next.indexOf('const decision = decide('));
+    const flow = fs.readFileSync(path.join(__dirname, '..', 'skills', 'ensemble-implement-trd-tasks', 'references', 'phase-1-preflight.md'), 'utf8');
+    expect(flow).toContain('`implement resume`');
   });
 
   test('has a Reqnroll branch and an explicit non-Reqnroll branch for isTest beads', () => {
-    const text = actions(doc, 'Scaffold', 'Plan and create beads');
+    const text = fs.readFileSync(path.join(__dirname, '..', 'skills', 'ensemble-implement-trd-tasks', 'references', 'phase-2-scaffold.md'), 'utf8');
     expect(text).toContain('If BDD_MODE.enabled the specialist follows "TRD commands" in `packages/reqnroll/skills/reqnroll/SKILL.md`');
     expect(text).toContain("otherwise it writes them in the repo's own framework");
     // The off branch still runs the tests, through the toolchain capability, and keeps test-first order.
