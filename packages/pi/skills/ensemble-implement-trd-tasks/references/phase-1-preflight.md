@@ -13,6 +13,6 @@
 
 #### Judgement in this phase
 
-- **Design readiness** below 4.0 is a user decision, never a default. 3.0 to 3.99 warns and asks to continue (not interactive: continue); below 3.0 stops and suggests /ensemble-refine-trd.
-- **Choices** (PR backend, branching strategy, branch intent, tracker confirmation, TRD selection) come back as `NEEDS_CHOICE`. Ask them as the engine worded them, and pass the answer on every later call.
+- **Design readiness**: 3.0 to 3.99 warns and asks to continue (not interactive: continue); below 3.0 stops and suggests /ensemble-refine-trd.
+- **Choices** (PR backend, branching strategy, tracker confirmation, TRD selection) come back as `NEEDS_CHOICE`. Ask them as the engine worded them, and pass the answer on every later call. Branch intent is asked only interactively: a non-interactive run takes the proposed branch.
 - **Strategy**: `implement-trd-tasks-reference` section 2.

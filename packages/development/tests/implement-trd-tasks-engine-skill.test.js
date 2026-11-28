@@ -138,6 +138,24 @@ function ask(fx, runId, extra = []) {
 describe('the loop runs against the real engine', () => {
   jest.setTimeout(120000);
 
+  test('non-interactive with no branch flag, the engine takes the proposed branch, and no prose says it HALTs', () => {
+    const fx = widgetRepo();
+    const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
+    const runId = env.envelope.data.PREFLIGHT.RUN_ID;
+    const answer = ask(fx, runId);
+    expect({ error: answer.envelope.error, status: answer.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+    expect(answer.envelope.data.CONTEXT.branch.BRANCH_RESOLVED_BY).toBe('non-interactive-proposed');
+    expect(answer.envelope.data.ACTION.id).toBe('checkout');
+
+    // The prose says what the engine does, wherever it speaks of branch intent.
+    for (const [name, text] of [['SKILL.md', SKILL], ['phase 1', PHASES[0].text], ['reference', REFERENCE]]) {
+      for (const line of text.split('\n').filter(entry => /branch intent/i.test(entry))) {
+        expect({ name, line, halts: /unresolved branch intent[^.]*\bHALT/i.test(line) && !/is not one/.test(line) }).toEqual({ halts: false, line, name });
+      }
+    }
+    expect(PHASES[0].text).toMatch(/non-interactive run takes the proposed branch/);
+  });
+
   test('accept answers a malformed result file INVALID_INPUT and the engine\'s verdict on the work REFUSED, records nothing for either, and the skill routes them differently', () => {
     const fx = widgetRepo();
     const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
@@ -222,21 +240,21 @@ describe('the loop runs against the real engine', () => {
 
   });
 
-  // KNOWN DEFECT in TRD-020, found by running the loop end to end (reported on the PR): the first step,
-  // `implement branch --apply`, writes the branch choices into the TRD's frontmatter, and the very next
-  // `implement next` re-derives `resume`, sees that uncommitted change on a run with no epic yet, and
-  // refuses 'working directory is dirty'. A model following the skill cannot get past `checkout`.
-  // `test.failing` records it without waiving it: this test turns red, and must be changed to a plain
-  // `test`, the day the engine stops dirtying its own gate.
-  test.failing('after the checkout step the engine does not refuse the next call for the dirt it just made', () => {
+  // Found by running the loop end to end, fixed by TRD-020 follow-up #516: the first step, `implement branch
+  // --apply`, writes the saved branch choices into the TRD's frontmatter, and the next `implement next` used to
+  // refuse 'working directory is dirty' for that very change. Kept as the proof the loop passes its first step.
+  test('after the checkout step the engine does not refuse the next call for the dirt it just made, and moves on to the scaffold', () => {
     const fx = widgetRepo();
     const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
     const runId = env.envelope.data.PREFLIGHT.RUN_ID;
     const first = ask(fx, runId).envelope.data.ACTION;
     expect(first.id).toBe('checkout');
-    runMain(['--run-id', runId, '--non-interactive', 'implement', 'branch', '--stdin'], makeCtx({ cwd: fx.root, env: fx.env, stdin: JSON.stringify(first.args) }));
+    const applied = runMain(['--run-id', runId, '--non-interactive', 'implement', 'branch', '--stdin'], makeCtx({ cwd: fx.root, env: fx.env, stdin: JSON.stringify(first.args) }));
+    expect({ error: applied.envelope.error, status: applied.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+    expect(execFileSync('git', ['status', '--porcelain', '--', TRD_PATH], { cwd: fx.root, encoding: 'utf8' })).not.toBe('');
     const second = ask(fx, runId);
     expect({ error: second.envelope.error, status: second.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+    expect(second.envelope.data.ACTION.id).toBe('scaffold');
   });
 
   test('a step taken out of order is refused by the engine, whatever the skill said', () => {

@@ -14,7 +14,7 @@ The engine does the mechanical work (`ensemble implement <verb>`); this file hol
 
 ## 1. Asking the user
 
-Ask only what the engine returns as `NEEDS_CHOICE`, in its words, one question at a time through AskUserQuestion (its `id`); a choice that offers no safe default is never answered for the user. Not interactive: print the options and the flag that answers them, then HALT. Examples: PR backend (`ado`, `manual`, `proceed with gh anyway (not recommended)`, abort), branch intent (use proposed, specify an existing branch, use current, abort), a red gate (fix, skip, abort), incomplete verification (override or stop).
+Ask only what the engine returns as `NEEDS_CHOICE`, in its words, one question at a time through AskUserQuestion (its `id`); a choice that offers no safe default is never answered for the user. Not interactive: print the options and the flag that answers them, then HALT. Examples: PR backend (`ado`, `manual`, `proceed with gh anyway (not recommended)`, abort), branch intent (interactive only: use proposed, specify an existing branch, use current, abort; non-interactive takes the proposed branch), a red gate (fix, skip, abort), incomplete verification (override or stop).
 
 ## 2. Strategy guidance
 

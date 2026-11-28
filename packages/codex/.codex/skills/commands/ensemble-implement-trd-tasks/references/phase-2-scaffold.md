@@ -1,6 +1,6 @@
 ### Phase 2: Scaffold
 
-Step `scaffold` runs `implement scaffold`: the epic, a story per phase, a bead per task, the dependency edges and the work-graph analysis, idempotent by title prefix, for both the beads and the kata tracker. It is skipped on resume and under `--execute`. `implement bead-health` reports and repairs labels, Foreman tags and a reopened task.
+Step `scaffold` runs `implement scaffold`: epic, a story per phase, a bead per task, the dependency edges and the work-graph analysis, idempotent, for beads and kata. Skipped on resume and under `--execute`. `implement bead-health` repairs labels, Foreman tags and a reopened task.
 
 #### Judgement in this phase
 

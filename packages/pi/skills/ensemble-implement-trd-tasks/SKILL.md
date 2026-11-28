@@ -60,7 +60,7 @@ Never decided in code; read them where a step needs them:
 
 - **`workstream`** (boolean, optional, default: `false`): With two or more TRD paths, generate one normalized executable workstream TRD (node "$TRD_CLI" create-workstream-trd) and implement that single TRD.
 - **`generate-only`** (boolean, optional, default: `false`): Only with --workstream and two or more TRD paths (replaces the removed /ensemble-create-workstream-trd). Generate the workstream TRD, report, and EXIT before any tracker/git/branch/scaffold/commit/PR side effect. Accepts --out <path> and --allow-invalid.
-- **`foreman`** (boolean, optional, default: `false`): Force non-interactive mode (INTERACTIVE=false) for Foreman orchestration: `--foreman` or non-empty env FOREMAN_TASK_TITLE (same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it); `--foreman` below means it. No HALT behavior changes: unresolved branch intent, unresolved PR backend and failed completion verification still HALT. When FOREMAN_ARTIFACT_PATH is set and non-empty, also write the phase report to that exact path; never alter it.
+- **`foreman`** (boolean, optional, default: `false`): Force non-interactive mode (INTERACTIVE=false) for Foreman orchestration: `--foreman` or non-empty env FOREMAN_TASK_TITLE (same grants as the flag; CI/ENSEMBLE_NON_INTERACTIVE never imply it); `--foreman` below means it. No HALT behavior changes: an unresolved PR backend and failed completion verification still HALT; unresolved branch intent is not one, the engine takes the proposed branch. When FOREMAN_ARTIFACT_PATH is set and non-empty, also write the phase report to that exact path; never alter it.
 
 ## Expected Output
 
