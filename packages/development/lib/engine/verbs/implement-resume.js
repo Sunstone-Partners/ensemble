@@ -366,7 +366,8 @@ function handler(call) {
     return refused('EXECUTE_NEEDS_SCAFFOLD', MESSAGES.EXECUTE_NEEDS_SCAFFOLD);
   }
 
-  const worktree = readWorktree(call);
+  // The saved branch choices `implement branch --apply` wrote into THIS TRD are the engine's own change.
+  const worktree = readWorktree(call, { trdPath });
   if (isResult(worktree)) return worktree;
   if (worktree.dirty && !isResume) {
     return refused('WORKTREE_DIRTY', MESSAGES.WORKTREE_DIRTY, {

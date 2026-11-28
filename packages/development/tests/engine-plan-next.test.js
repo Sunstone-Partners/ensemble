@@ -142,9 +142,10 @@ function repo({ scaffolded = false, remote = null, bareOrigin = false } = {}) {
     files: {
       'README.md': 'widget engine\n',
       'package.json': '{"name":"widget-engine","version":"1.0.0"}\n',
+      // Written before the TRD: a source file newer than the TRD is what the staleness gate calls drift.
+      'REVIEW.md': REVIEW_POLICY,
       [TRD_PATH]: fixtureTrd({ targetFiles: true }),
       '.beads/issues.jsonl': '',
-      'REVIEW.md': REVIEW_POLICY,
     },
     init: false,
     remote,
@@ -198,21 +199,27 @@ function git(fx, args) {
 const taskIds = fx => Object.entries(fx.ids).filter(([prefix]) => prefix.includes(':task:')).map(([, id]) => id);
 const epicId = fx => fx.ids[`[trd:${SLUG}]`];
 
-/** The argv of a returned action's flags: exactly what a caller would type from `ACTION.args`. */
-function flagsOf(args) {
-  const out = [];
-  for (const [key, value] of Object.entries(args)) {
-    if (value === true) out.push(`--${key}`);
-    else if (Array.isArray(value)) for (const item of value) out.push(`--${key}`, String(item));
-    else out.push(`--${key}`, String(value));
+/**
+ * The argv of a returned action, as a caller types it: the verb's operand positionally, every
+ * other argument as a flag (an array as a repeated flag, `true` as a bare flag).
+ */
+function argvOf(action) {
+  const [group, verb] = action.verb.split(' ');
+  const properties = buildRegistry().get(group, verb).inputSchema.properties;
+  const operands = [];
+  const flags = [];
+  for (const [key, value] of Object.entries(action.args)) {
+    if (properties[key] && properties[key]['x-operand']) operands.push(String(value));
+    else if (value === true) flags.push(`--${key}`);
+    else if (Array.isArray(value)) for (const item of value) flags.push(`--${key}`, String(item));
+    else flags.push(`--${key}`, String(value));
   }
-  return out;
+  return [group, verb, ...operands, ...flags];
 }
 
 /** Run a returned action through the real entry point, as the model would. */
 function runAction(fx, action, globals = NON_INTERACTIVE) {
-  const [group, verb] = action.verb.split(' ');
-  return runMain([...globals, group, verb, ...flagsOf(action.args)], makeCtx({ cwd: fx.root, env: fx.env }));
+  return runMain([...globals, ...argvOf(action)], makeCtx({ cwd: fx.root, env: fx.env }));
 }
 
 /** The reviewers answering a dispatch, as dispatched agents write `out-<name>.json`: every path read, no findings. */
@@ -416,6 +423,97 @@ describe('next follows live state, one step at a time', () => {
     fx.tracker.setStatus(epicId(fx), 'closed');
     for (const id of taskIds(fx)) fx.tracker.setStatus(id, 'closed');
     expect(nextId(fx)).toBe('sync-checkboxes');
+  });
+
+  describe('the checkout step runs as returned, and the next call is not refused for the change it made', () => {
+    /** A fresh repo whose `next` has returned checkout and whose action has been RUN. */
+    function checkedOut() {
+      const fx = repo();
+      const first = next(fx);
+      expect({ error: first.envelope.error, status: first.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+      expect(first.envelope.data.ACTION).toMatchObject({ id: 'checkout', verb: 'implement branch' });
+      const preflight = runMain(['implement', 'env', '--preflight', '--run-id', 'r1'], makeCtx({ cwd: fx.root, env: fx.env }));
+      expect(preflight.exitCode).toBe(0);
+      // Run THAT action through the real entry point, not a hand-made `git switch`.
+      const applied = runAction(fx, first.envelope.data.ACTION);
+      expect(applied.exitCode).toBe(0);
+      expect(applied.envelope.data.APPLIED).toBe(true);
+      return fx;
+    }
+
+    test('the branch choices the action wrote into the TRD are the engine\'s own change, not dirt', () => {
+      const fx = checkedOut();
+      // The producer really changed the TRD (it is the saved choices), and nothing else.
+      expect(git(fx, ['status', '--porcelain'])).toBe(`M ${TRD_PATH}`);
+      expect(git(fx, ['diff', '--', TRD_PATH])).toContain('ensemble_implement_trd_beads');
+
+      const { envelope, exitCode } = next(fx);
+      expect(exitCode).toBe(0);
+      expect(envelope.data.ACTION).toMatchObject({ id: 'scaffold' });
+      expect(envelope.data.CONTEXT.branch.BRANCH_ACTION).toBe('stay');
+      // The gate still saw the file: it reports it as the engine's, not by hiding the tree.
+      expect(git(fx, ['status', '--porcelain'])).toBe(`M ${TRD_PATH}`);
+    });
+
+    test('the owner\'s own changes are still dirt, whether or not the saved choices are there too', () => {
+      const trd = fx => path.join(fx.root, TRD_PATH);
+      const edit = (fx, change) => fs.writeFileSync(trd(fx), change(fs.readFileSync(trd(fx), 'utf8')));
+      const BLOCK_END = '  stacked_prs: false';
+      const fx = checkedOut();
+      const afterCheckout = fs.readFileSync(trd(fx), 'utf8');
+      for (const [label, damage] of [
+        ['a line in the body', fx => fs.appendFileSync(trd(fx), '\nA line the owner added.\n')],
+        ['an untracked file', fx => write(fx, 'notes.txt', 'untracked work\n')],
+        ['another frontmatter key', fx => edit(fx, text => text.replace('status: In Progress', 'status: Draft'))],
+        // The block's own indented lines are NOT a place to hide a sibling edit.
+        ['an extra child under the block', fx => edit(fx, text => text.replace(BLOCK_END, `${BLOCK_END}\n  owner_note: kept`))],
+        ['a nested copy of the key', fx => edit(fx, text => text.replace('---\n\n#', '  nested:\n    ensemble_implement_trd_beads:\n      owner: 1\n---\n\n#'))],
+        ['a second block', fx => edit(fx, text => text.replace(BLOCK_END, `${BLOCK_END}\nensemble_implement_trd_beads:\n  branch_name: x\n  use_proposed: false\n  stacked_prs: false`))],
+        // A `---` and the key in the BODY are not frontmatter, however they look.
+        ['a delimiter and the key in the body', fx => fs.appendFileSync(trd(fx), '\n---\nensemble_implement_trd_beads:\n  owner: edited\n')],
+        ['a branch name that is not the one checked out', fx => edit(fx, text => text.replace(/branch_name: .*/, 'branch_name: somebody/elses-branch'))],
+        ['the block pointing at a quoted value', fx => edit(fx, text => text.replace(/branch_name: .*/, "branch_name: 'x y'"))],
+      ]) {
+        damage(fx);
+        const { envelope, exitCode } = next(fx);
+        expect({ label, code: envelope.error && envelope.error.code, exitCode }).toEqual({ code: 'WORKTREE_DIRTY', exitCode: 1, label });
+        // Put the tree back as the checkout left it, for the next case.
+        fs.writeFileSync(trd(fx), afterCheckout);
+        fs.rmSync(path.join(fx.root, 'notes.txt'), { force: true });
+        expect(next(fx).exitCode).toBe(0);
+      }
+    });
+
+    test('the exemption is the TRD being processed: another Markdown file, or another TRD, with the same block is dirt', () => {
+      const fx = repo();
+      // A second tracked TRD, committed with leading frontmatter.
+      write(fx, 'docs/TRD/other.md', '---\nstatus: Draft\n---\n\n# Other\n');
+      git(fx, ['add', '--', 'docs/TRD/other.md']);
+      git(fx, ['commit', '--quiet', '-m', 'another TRD']);
+      write(fx, 'docs/TRD/other.md', '---\nstatus: Draft\nensemble_implement_trd_beads:\n  branch_name: \n  use_proposed: false\n  stacked_prs: false\n---\n\n# Other\n');
+      const { envelope, exitCode } = next(fx);
+      expect(exitCode).toBe(1);
+      expect(envelope.error.code).toBe('WORKTREE_DIRTY');
+      expect(envelope.error.details.WORKTREE_STATUS).toEqual(['docs/TRD/other.md']);
+    });
+
+    test('a saved-choices block the owner wrote before any checkout is dirt: it follows no checkout', () => {
+      const fx = repo();
+      const file = path.join(fx.root, TRD_PATH);
+      fs.writeFileSync(
+        file,
+        fs.readFileSync(file, 'utf8').replace('---\n\n#', 'ensemble_implement_trd_beads:\n  branch_name: feature/widget-engine\n  use_proposed: true\n  stacked_prs: false\n---\n\n#')
+      );
+      const { envelope } = next(fx);
+      expect(envelope.error.code).toBe('WORKTREE_DIRTY');
+    });
+
+    test('a TRD edited by the owner and never touched by the engine is dirt, as before', () => {
+      const fx = repo();
+      fs.appendFileSync(path.join(fx.root, TRD_PATH), '\nAn edit.\n');
+      const { envelope } = next(fx);
+      expect(envelope.error.code).toBe('WORKTREE_DIRTY');
+    });
   });
 
   test('--plan-only ends at EXIT once the scaffold exists', () => {
