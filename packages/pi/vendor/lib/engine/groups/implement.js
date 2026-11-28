@@ -17,6 +17,7 @@ const SPECS = [
   ...require('../verbs/implement-close').specs,
   require('../verbs/implement-env').spec,
   require('../verbs/implement-gate').spec,
+  require('../verbs/implement-pr').spec,
   require('../verbs/implement-resume').spec,
   require('../verbs/implement-scaffold').spec,
   require('../verbs/implement-team').spec,

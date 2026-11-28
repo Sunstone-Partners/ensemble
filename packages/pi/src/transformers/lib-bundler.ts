@@ -112,6 +112,11 @@ const SCRIPT_FILES: Array<{ src: string; dest: string }> = [
     src: 'packages/development/skills/ensemble-configure-team/references/team-configuration.yaml',
     dest: 'vendor/skills/ensemble-configure-team/references/team-configuration.yaml',
   },
+  // `implement pr` renders its pull-request body from this file, read beside `verbs/` at run time.
+  {
+    src: 'packages/development/lib/engine/templates/pr-body.md',
+    dest: 'vendor/lib/engine/templates/pr-body.md',
+  },
 ];
 
 /**

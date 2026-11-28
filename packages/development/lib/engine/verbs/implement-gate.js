@@ -695,4 +695,4 @@ const spec = {
   summary: "run the per-phase quality gate and record its result on the phase's story",
 };
 
-module.exports = { spec };
+module.exports = { runPhaseTests, spec };
