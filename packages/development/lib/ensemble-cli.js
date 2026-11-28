@@ -31,7 +31,11 @@ const { isResult, toEnvelope } = require('./engine/result');
 const { readStdinCapped } = require('./engine/validate');
 
 const MOUNTED_GROUPS = [require('./engine/groups/trd'), require('./engine/groups/tool')];
-const NATIVE_GROUPS = [require('./engine/groups/engine'), require('./engine/groups/implement')];
+const NATIVE_GROUPS = [
+  require('./engine/groups/engine'),
+  require('./engine/groups/implement'),
+  require('./engine/groups/review'),
+];
 
 /**
  * The engine's registry. Groups are registered here and nowhere else, so `--describe` and the

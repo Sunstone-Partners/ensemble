@@ -26,7 +26,7 @@ const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
  * Run a Node CLI of this package and read its JSON envelope.
  * @param {string} cliPath absolute path of the CLI entry point
  * @param {string[]} argv the CLI's own arguments
- * @param {{cwd: string, env: object}} options
+ * @param {{cwd: string, env: object, input?: string}} options
  * @returns {{exitCode: number, json: object|null, stderr: string}} `json` is `null` when the CLI
  *   wrote something that is not a JSON object, which callers must treat as a failure rather than
  *   as an empty answer (Constitution Rule 7).
@@ -37,6 +37,9 @@ function runJsonCli(cliPath, argv, options) {
     encoding: 'utf8',
     env: options.env,
     maxBuffer: MAX_OUTPUT_BYTES,
+    // A CLI that takes its payload on stdin (`review-run-cli`) gets it here; every other caller
+    // leaves `input` unset and the child sees an empty stdin as before.
+    ...(options.input === undefined ? {} : { input: options.input }),
   });
   const exitCode = result.status === null ? 1 : result.status;
   const stderr = `${result.stderr || ''}${result.error ? result.error.message : ''}`;
