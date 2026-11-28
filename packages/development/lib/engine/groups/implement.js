@@ -15,6 +15,7 @@ const SPECS = [
   require('../verbs/implement-bead-health').spec,
   require('../verbs/implement-branch').spec,
   ...require('../verbs/implement-close').specs,
+  require('../verbs/implement-delegate').spec,
   require('../verbs/implement-env').spec,
   require('../verbs/implement-gate').spec,
   require('../verbs/implement-pr').spec,

@@ -247,16 +247,18 @@ function runWorkGraph(call, warnings) {
  *
  * @returns {{references: object}|object} a tagged engine result when `bead-context` refuses
  */
-function checkReferences(call, { beads, rootEpicId, trdPath, warnings }) {
+function checkReferences(call, { beads, rootEpicId, trdPath, warnings, requireAll = false }) {
   const open = beads.filter(bead => !isClosed(bead));
   let missingCount = 0;
   let countable = true;
+  const missing = [];
 
   for (const bead of open) {
     let description = typeof bead.description === 'string' ? bead.description : null;
     if (description === null) {
       const shown = classify(callCapability(call, 'tracker.show', { id: bead.id }), 'tracker.show');
       if (shown.kind === 'gate') return shown.result;
+      if (requireAll && shown.kind !== 'ok') return unavailable('REFERENCES_UNREADABLE', shown.message);
       if (shown.kind === 'ok' && typeof (shown.data || {}).description === 'string') {
         description = shown.data.description;
       } else {
@@ -272,7 +274,10 @@ function checkReferences(call, { beads, rootEpicId, trdPath, warnings }) {
         continue;
       }
     }
-    if (parseReferencesBlock(description) === null) missingCount += 1;
+    if (parseReferencesBlock(description) === null) {
+      missingCount += 1;
+      missing.push(`${bead.id}: missing ## References`);
+    }
   }
 
   if (countable && missingCount > 0) warnings.push(MESSAGES.referencesWarning(missingCount));
@@ -288,14 +293,19 @@ function checkReferences(call, { beads, rootEpicId, trdPath, warnings }) {
         }`
       );
     }
-    if (context.json.ok !== true) {
-      const missing = Array.isArray(context.json.missing) ? context.json.missing : [];
-      return refused('BEAD_CONTEXT_FAILED', MESSAGES.beadContextFailed(rootEpicId, missing), {
-        missing,
+    if (context.exitCode !== 0 || context.json.ok !== true) {
+      const entries = [...(requireAll ? missing : []), ...(Array.isArray(context.json.missing) ? context.json.missing : [])];
+      return refused('BEAD_CONTEXT_FAILED', MESSAGES.beadContextFailed(rootEpicId, entries), {
+        missing: entries,
       });
     }
     beadContext.checked = true;
     beadContext.ok = true;
+  }
+
+  if (requireAll && !countable) return unavailable('REFERENCES_UNREADABLE', 'Some scoped bead descriptions could not be read');
+  if (requireAll && missing.length > 0) {
+    return refused('BEAD_CONTEXT_FAILED', MESSAGES.beadContextFailed(rootEpicId, missing), { missing });
   }
 
   return {
@@ -785,4 +795,4 @@ const spec = {
   summary: 'report how the beads of a TRD differ from its plan, and label, tag or reset them on request',
 };
 
-module.exports = { diffEdges, spec };
+module.exports = { checkReferences, diffEdges, labelBeads, spec };

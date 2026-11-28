@@ -14,7 +14,7 @@ function handler(call) {
 }
 
 const spec = {
-  exitCodes: [0, 1, 2, 5],
+  exitCodes: [0, 1, 2, 3, 5],
   group: 'implement',
   handler,
   inputSchema: {
