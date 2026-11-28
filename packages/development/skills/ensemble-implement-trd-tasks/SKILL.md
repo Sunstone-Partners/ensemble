@@ -15,7 +15,7 @@ Terminal states: HALT (error printed, nothing further runs), EXIT (early exit do
 
 Resolve ENSEMBLE_CLI (`packages/development/lib/ensemble-cli.js`) per the tool-path-resolution skill. Unresolvable or no Node.js: print 'ERROR: could not locate the ensemble engine CLI (ENSEMBLE_CLI); implement-trd-tasks runs only through it.' and HALT. Never fall back to improvising the steps. `ensemble` below means `node "$ENSEMBLE_CLI"`.
 
-Every call prints one JSON envelope (`status`, `data`, `error`, `next`). Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, FOREMAN_TASK_TITLE, or no AskUserQuestion); never prompt then.
+Every call prints one JSON envelope. Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, FOREMAN_TASK_TITLE, or no AskUserQuestion); never prompt then.
 
 ## Loop
 
@@ -35,7 +35,7 @@ With `--foreman` and FOREMAN_ARTIFACT_PATH set, write the report of step 4 to th
 
 ## Judgement
 
-Never decided in code; read them where a step needs them:
+Read where a step needs them:
 
 | Need | Read |
 |---|---|
