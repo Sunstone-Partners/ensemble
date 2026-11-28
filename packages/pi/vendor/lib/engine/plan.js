@@ -21,9 +21,11 @@
  *                       also accepts FAIL, which is the gate's own recorded verdict there)
  *   pr-<N>, pr-completion
  *                       `host.change-request-list` shows an open pull request whose head is the
- *                       planned branch. A push is NOT evidence (an Azure hand-off, a failed
- *                       create and a manual push all push and open nothing); with the `manual`
- *                       backend, or a host that cannot answer, the answer is UNAVAILABLE.
+ *                       planned branch AND whose base is the planned parent (else the remote's
+ *                       default). A push is NOT evidence (an Azure hand-off, a failed create and
+ *                       a manual push all push and open nothing). Reading is allowed on every
+ *                       backend, `manual` included: only a host that cannot answer is UNAVAILABLE,
+ *                       and a readable list without the pull request means the step is still due.
  *   review-completion   the recorded whole-branch review for this HEAD is LOCAL_REVIEW_COMPLETE
  *                       (the same reading `implement close` makes, `.ensemble/pr-review/`)
  *   close               the epic is closed
@@ -34,6 +36,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { gateAction, completionAction } = require('./pr-plan');
+const { remoteDefaultBranch } = require('./git');
 const { isResult, unavailable } = require('./result');
 const { callCapability, classify, isClosed, isTaskLevel, readComments, readIssues, scopeBeads } = require('./tracker');
 const { parseTitlePrefix } = require('../bead-refs');
@@ -195,6 +198,8 @@ function readLiveState(call, model) {
   };
 
   const state = {
+    /** The branch `implement pr` targets: the plan's parent, else the remote's default. */
+    baseOf: action => (action && action.parentBranch) || remoteDefaultBranch(call),
     epic,
     epicClosed: epic !== null && isClosed(epic),
     phaseTasksClosed(n) {
@@ -243,17 +248,10 @@ function readLiveState(call, model) {
      * nothing to read, and a host that cannot answer, are UNAVAILABLE -- never "no PR yet".
      * @returns {boolean|object} a boolean, or a tagged engine result
      */
-    prOpen(branch) {
-      return once(`pr-${branch}`, () => {
+    prOpen(branch, base) {
+      return once(`pr-${branch}-${base}`, () => {
         if (typeof branch !== 'string' || branch === '') return false;
         const backend = model.prBackend();
-        if (backend === 'manual') {
-          return unavailable(
-            'PR_EVIDENCE_UNSUPPORTED',
-            `the PR backend is 'manual': a pull request opened by hand leaves nothing the engine can read, so it cannot say whether '${branch}' has one`,
-            { backend, branch }
-          );
-        }
         const answer = classify(callCapability(call, 'host.change-request-list'), 'host.change-request-list');
         if (answer.kind === 'gate') return answer.result;
         if (answer.kind !== 'ok') {
@@ -276,7 +274,9 @@ function readLiveState(call, model) {
           return unavailable('PR_EVIDENCE_UNAVAILABLE', 'host.change-request-list output has no pull request list', { backend, branch });
         }
         const bare = ref => String(ref == null ? '' : ref).replace(/^refs\/heads\//, '');
-        return items.some(item => item && bare(item.headBranch) === branch);
+        return items.some(
+          item => item && bare(item.headBranch) === branch && bare(item.baseBranch) === base
+        );
       });
     },
     /** @returns {boolean} whether every closed task's checkbox is checked in the TRD file */
@@ -336,13 +336,13 @@ function isDone(s, state, plan, context) {
       return state.checkboxesSynced();
     case 'pr-completion': {
       const action = completionAction(context.prPlan);
-      return state.prOpen(action && action.branch);
+      return state.prOpen(action && action.branch, state.baseOf(action));
     }
     default: {
       if (s.id.startsWith('gate-')) return state.gateRecorded(Number(s.id.slice(5)));
       if (s.id.startsWith('pr-')) {
         const action = gateAction(context.prPlan, Number(s.id.slice(3)));
-        return state.prOpen(action && action.branch);
+        return state.prOpen(action && action.branch, state.baseOf(action));
       }
       throw new Error(`plan: unknown step '${s.id}'`);
     }

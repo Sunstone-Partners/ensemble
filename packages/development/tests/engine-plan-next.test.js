@@ -118,10 +118,10 @@ function writeHostAdapter(fx) {
 }
 
 /** The pull requests the host reports as open, by head branch. */
-function setPrs(fx, heads) {
+function setPrs(fx, heads, base = 'main') {
   fs.writeFileSync(
     fx.hostFile,
-    `${JSON.stringify(heads.map((head, index) => [String(index + 1), `https://host.invalid/pr/${index + 1}`, 'OPEN', 'main', head]))}\n`
+    `${JSON.stringify(heads.map((head, index) => [String(index + 1), `https://host.invalid/pr/${index + 1}`, 'OPEN', base, head]))}\n`
   );
 }
 
@@ -423,13 +423,36 @@ describe('pull request evidence is a pull request, and an outage is not "none ye
     expect(envelope.error.code).toBe('PR_EVIDENCE_UNAVAILABLE');
   });
 
-  test('the manual backend leaves nothing to read, and says so instead of guessing', () => {
+  test('the manual backend still observes the host: the step is due until a matching pull request exists, then it is done', () => {
     const fx = atCompletionPr();
     git(fx, ['update-ref', `refs/remotes/origin/${BRANCH}`, 'HEAD']);
-    const { envelope, exitCode } = next(fx, ['--pr-backend', 'manual']);
-    expect(exitCode).toBe(5);
-    expect(envelope.error.code).toBe('PR_EVIDENCE_UNSUPPORTED');
-    expect(envelope.error.message).toContain('manual');
+    const manual = ['--pr-backend', 'manual'];
+
+    const due = next(fx, manual);
+    expect(due.exitCode).toBe(0);
+    expect(due.envelope.data.ACTION).toMatchObject({
+      args: { completion: true, 'pr-backend': 'manual' },
+      id: 'pr-completion',
+      verb: 'implement pr',
+    });
+
+    // The person opens it by hand; the host now says so.
+    setPrs(fx, [BRANCH]);
+    expect(next(fx, manual).envelope.data.STATE).toBe('COMPLETE');
+
+    // A host that cannot be read is still an outage under the manual backend.
+    failHost(fx);
+    const outage = next(fx, manual);
+    expect(outage.envelope.status).toBe('UNAVAILABLE');
+    expect(outage.envelope.error.code).toBe('PR_EVIDENCE_UNAVAILABLE');
+  });
+
+  test('a pull request into the wrong base does not satisfy the step', () => {
+    const fx = atCompletionPr();
+    setPrs(fx, [BRANCH], 'release/9');
+    expect(nextId(fx)).toBe('pr-completion');
+    setPrs(fx, [BRANCH], 'main');
+    expect(nextId(fx)).toBe('COMPLETE');
   });
 });
 
