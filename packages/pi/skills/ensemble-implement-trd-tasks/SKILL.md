@@ -73,5 +73,3 @@ Never decided in code; read them where a step needs them:
 ## Expected Input
 
 - **format**: Technical Requirements Document (TRD) with a Master Task List
-
-Run node "$TOOLCHAIN_CLI" run tracker.list

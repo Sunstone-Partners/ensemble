@@ -6,5 +6,5 @@ Steps `review-completion`, `close`, `sync-checkboxes` and `pr-completion` run `r
 #### Judgement in this phase
 
 - **Incomplete verification** is the user's call. Interactive: ask 'Proceed anyway (override)' or 'Stop, fix gaps first'; only an explicit override passes `--override-incomplete`. Not interactive: HALT before closure.
-- **Review**: criteria in `implement-trd-tasks-reference` section 3. A blocked completion review HALTs with the epic open and no completion PR; a later run reviews fresh. Remote review status is informational and never blocks closure.
-- **Report**: say to merge PR 1 first (it targets the default branch); git-town retargets the rest, plain-git needs manual retargeting.
+- **Review**: criteria in reference section 3. A blocked completion review HALTs with the epic open and no completion PR; a later run reviews fresh. Remote review status is informational, never blocking.
+- **Report**: merge PR 1 first (it targets the default branch); git-town retargets the rest, plain-git needs manual retargeting.

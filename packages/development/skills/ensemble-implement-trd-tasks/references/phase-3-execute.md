@@ -1,7 +1,7 @@
 ### Phase 3: Execute
 
-Step `delegate` runs `implement delegate`: beads-build owns wave scheduling and the builder and review pipeline, always with `--defer-completion`. The verb returns `NEEDS_AGENT` for the builder wave; run the wave, write its summary where the brief says, and `accept` it. A blocked current phase refuses as `EXECUTION BLOCKED`; later-phase blockers never do.
+Step `delegate` runs `implement delegate`: beads-build owns wave scheduling and the builder and review pipeline, always with `--defer-completion`. The verb returns `NEEDS_AGENT` for the builder wave: run it, write its summary where the brief says, and `accept` it. A blocked current phase refuses as `EXECUTION BLOCKED`; later-phase blockers never do.
 
 #### Judgement in this phase
 
-- work-graph triage counts are global across every epic; never present them as this TRD's progress.
+- work-graph triage counts are global across epics; never present them as this TRD's progress.

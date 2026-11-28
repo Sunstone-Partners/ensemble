@@ -8,8 +8,8 @@
 | Arguments, early exits, `max parallel` | `implement args` |
 | Preflight, git-town, branching strategy, PR backend, working tree | `implement env --preflight` |
 | TRD validation, resume, staleness gate, strategy | `implement resume` |
-| Branch intent, feature branch, PR plan, saved choices | `implement branch` |
-| Team roster and agent aliases | `implement team` |
+| Branch intent, feature branch, PR plan | `implement branch` |
+| Team roster, agent aliases | `implement team` |
 
 #### Judgement in this phase
 
