@@ -535,6 +535,7 @@ The engine adds no durable store and no scheduler. Resumability is **derived**: 
     - [ ] Given the head moved or the PR is not open, when collected, then the runner's `RUN_INVALIDATED` is surfaced as `REFUSED`
     - [ ] Given the engine, when it runs, then it never composes a brief, tallies a vote or sets a status itself; those stay in the review runner
     - [ ] Given `--mode remote` for a stacked phase PR, when run, then the status is informational: it never refuses and never blocks closure, an unrecognised result is recorded as `REVIEW_PENDING`, and a phase whose PR was never created is reported as pending with no PR
+    - [ ] Given `--review-id <id>`, a base and a head sha and no repo or pull request, when run, then the whole branch is reviewed locally by the same runner before any pull request exists: no host is read and no open-pull-request check applies, the head check and the report's head validation are unchanged, an id that is not file-name safe is `INVALID_INPUT`, and the report is recorded at `.ensemble/pr-review/pr-<id>.json`, which is where `implement close` reads `<slug>-completion` (operator decision, PR 514)
 
 - [ ] **TRD-017-TEST** Review loop behaviour [verifies TRD-017] [satisfies ARCH] [depends: TRD-017] (4h)
   - Target Files: `packages/development/tests/engine-review-run.test.js`
@@ -545,6 +546,7 @@ The engine adds no durable store and no scheduler. Resumability is **derived**: 
     - [ ] Scenario: invalidated head -- Given the head moved, When collected, Then `REFUSED`
     - [ ] Scenario: engine adds no judgement -- Given a runner result, When wrapped, Then the verdict equals the runner's with no engine-side change
     - [ ] Scenario: remote is informational -- Given a remote review that is blocked, When run, Then the status is reported and the exit code is 0
+    - [ ] Scenario: local review -- Given a review id and no pull request, When run to completion, Then the report is keyed by the id, the host is never called, a moved head is `RUN_INVALIDATED` and an unsafe id is `INVALID_INPUT`
 
 - [ ] **TRD-018** `implement pr`: phase and completion pull requests [satisfies ARCH] [depends: TRD-003] [depends: TRD-010] [depends: TRD-013] [depends: TRD-016] (6h)
   - Target Files: `packages/development/lib/engine/verbs/implement-pr.js`, `packages/development/lib/engine/templates/pr-body.md`
@@ -609,6 +611,7 @@ The engine adds no durable store and no scheduler. Resumability is **derived**: 
     - [ ] Given two runs on identical state, when `plan` and `next` are compared, then their output is byte-equal
     - [ ] Given the derivation steps `args`, `env`, `team`, `branch` and `resume`, when `next` runs, then it evaluates them itself and returns their results as `context`, so a read-only step is never returned as outstanding work
     - [ ] Given a choice that no existing mechanism persists, when `next` runs without the flag or environment value, then it returns `NEEDS_CHOICE` again rather than assuming an earlier answer
+    - [ ] Given the step `review-completion`, when `next` returns it, then its action carries every argument the call needs (`review-id <slug>-completion`, the merge base, the HEAD and the base ref, read from git), so running it as returned records the report that `next` and `implement close` then read
 
 - [ ] **TRD-020-TEST** Planner and precondition enforcement [verifies TRD-020] [satisfies ARCH] [depends: TRD-020] (5h)
   - Target Files: `packages/development/tests/engine-plan-next.test.js`
@@ -621,6 +624,7 @@ The engine adds no durable store and no scheduler. Resumability is **derived**: 
     - [ ] Scenario: ledger ignored by git -- Given a run that wrote the ledger, When `git status` runs, Then the ledger is not listed
     - [ ] Scenario: derivation folded in -- Given a fresh TRD, When `next` runs, Then `context` carries args, env, team, branch and resume results and the action is the first mutating step
     - [ ] Scenario: unpersisted choice re-asked -- Given no `--pr-backend` and no environment value, When `next` runs twice, Then it returns `NEEDS_CHOICE` both times
+    - [ ] Scenario: completion review runs as returned -- Given a finished build, When the returned `review-completion` action is run through the real entry point and the runner, Then the report is recorded for that HEAD and `next` names `close`; a later commit makes the step due again
 
 - [ ] **TRD-021** Thin the implement-trd-tasks skill to the engine loop [satisfies ARCH] [depends: TRD-020] (6h)
   - Target Files: `packages/development/skills/ensemble-implement-trd-tasks/SKILL.md`, `packages/development/skills/ensemble-implement-trd-tasks/references/phase-1-preflight.md`, `packages/development/skills/ensemble-implement-trd-tasks/references/phase-2-scaffold.md`, `packages/development/skills/ensemble-implement-trd-tasks/references/phase-3-execute.md`, `packages/development/skills/ensemble-implement-trd-tasks/references/phase-4-quality-gate.md`, `packages/development/skills/ensemble-implement-trd-tasks/references/phase-5-completion.md`, `packages/development/skills/implement-trd-tasks-reference/SKILL.md`

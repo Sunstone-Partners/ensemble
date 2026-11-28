@@ -213,10 +213,42 @@ function realFs({ runArea } = {}) {
  * gate), `now` (epoch ms), `prepareReview`, `collectResults`, `writeState`, `readState`, `hashCitations`, `deriveCleared`,
  * `renderBrief` and `createTracer`.
  */
-function buildDeps({ repo, pr, repoRoot }, injected = {}) {
+/**
+ * The host reads of a LOCAL review (`reviewId`, no pull request): the whole branch, reviewed before a pull request exists.
+ * Each answer is the local fact, never a stand-in for a host one:
+ *   - the "pull request" is the work tree's own HEAD, in the state `LOCAL`, so a head that moves between calls is still
+ *     RUN_INVALIDATED; there is no open/closed pull request to check, and no fork (the head is this repository's);
+ *   - nothing is fetched: the base must already be a remote-tracking ref of this clone and the head an object of it;
+ *   - reviews and branch protection are UNAVAILABLE, which the gate reports as such and which can never read as approval.
+ * Everything else of the run is the one runner.
+ */
+function localHostReads({ repoRoot, baseRef }, run) {
+  const git = (args) => run('git', args, { cwd: repoRoot });
+  return {
+    readPr: async () => {
+      const head = await git(['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']);
+      if (head.status !== 0) return { ok: false, error: `git could not read HEAD: ${String(head.stderr || '').trim() || `exit ${head.status}`}` };
+      return { ok: true, headSha: String(head.stdout).trim().toLowerCase(), baseRefName: baseRef, state: 'LOCAL', body: '', author: undefined, isCrossRepository: false };
+    },
+    readReviews: async () => ({ ok: false, error: 'a local review has no pull request, so there are no reviews to read' }),
+    readProtection: async () => ({ ok: false, error: 'a local review has no pull request, so no branch protection applies' }),
+    fetchRefs: async ({ headSha, baseRefName }) => {
+      const base = await git(['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/remotes/origin/${baseRefName}^{commit}`]);
+      if (base.status !== 0) return { ok: false, error: `origin/${baseRefName} is not a ref of this clone (a local review fetches nothing)` };
+      const head = await git(['cat-file', '-e', `${headSha}^{commit}`]);
+      if (head.status !== 0) return { ok: false, error: `${headSha} is not a commit of this clone` };
+      return { ok: true };
+    },
+    precheck: async () => ({ ok: false, error: 'a local review has no pull request to check' }),
+  };
+}
+
+function buildDeps({ repo, pr, repoRoot, local }, injected = {}) {
   const run = injected.run || defaultRun;
   const now = injected.now || (() => Date.now());
-  const base = makeDeps({ repo, pr, repoRoot, run, ...(injected.spawnProcess ? { spawnProcess: injected.spawnProcess } : {}), ...(injected.now ? { now: () => new Date(injected.now()) } : {}) });
+  const base = local
+    ? localHostReads({ repoRoot, baseRef: local.baseRef }, run)
+    : makeDeps({ repo, pr, repoRoot, run, ...(injected.spawnProcess ? { spawnProcess: injected.spawnProcess } : {}), ...(injected.now ? { now: () => new Date(injected.now()) } : {}) });
   const notices = [];
   const runArea = path.join(repoRoot, RUN_SUBDIR);
   return {
@@ -228,8 +260,8 @@ function buildDeps({ repo, pr, repoRoot }, injected = {}) {
     readReviews: () => base.readReviews(),
     readProtection: (branch) => base.readProtection(branch),
     git: (args) => run('git', args, { cwd: repoRoot }),
-    fetchRefs: ({ headSha, baseRefName }) => base.prepareGate({ headSha, baseRefName }),
-    precheck: ({ dryRun }) => runPrecheck({ dryRun }, base),
+    fetchRefs: ({ headSha, baseRefName }) => (local ? base.fetchRefs({ headSha, baseRefName }) : base.prepareGate({ headSha, baseRefName })),
+    precheck: ({ dryRun }) => (local ? base.precheck() : runPrecheck({ dryRun }, base)),
     prepareReview: injected.prepareReview || ((options) => prepareReview(options)),
     collectResults: injected.collectResults || ((input) => {
       refuseLinks(runArea, input.dir);
@@ -279,10 +311,17 @@ function peekRun(payload) {
     const file = path.join(payload.repoRoot, RUN_SUBDIR, payload.runId, 'run.json');
     refuseLinks(path.join(payload.repoRoot, RUN_SUBDIR), file);
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return { repo: parsed.repo, pr: parsed.pr };
+    return { repo: parsed.repo, pr: parsed.pr, ...(parsed.local === true ? { local: { baseRef: parsed.baseRefName } } : {}) };
   } catch (_error) {
     return {};
   }
+}
+
+/** The default branch a local review compares with: the clone's `origin/HEAD`, else `main`. */
+async function defaultBaseRef(run, repoRoot) {
+  const out = await run('git', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { cwd: repoRoot });
+  const name = out.status === 0 ? String(out.stdout).trim().replace(/^origin\//, '') : '';
+  return name.length > 0 ? name : 'main';
 }
 
 /**
@@ -303,7 +342,17 @@ async function execute(command, injected = {}) {
       result = { ok: false, status: 'RUN_FAILED', reason: 'invalid-input', error: 'the payload must be a JSON object' };
     } else {
       const source = command === 'collect' ? peekRun(payload) : payload;
-      const target = { repo: source.repo || 'unknown/unknown', pr: Number.isInteger(source.pr) ? source.pr : 1, repoRoot: typeof payload.repoRoot === 'string' ? payload.repoRoot : process.cwd() };
+      const repoRoot = typeof payload.repoRoot === 'string' ? payload.repoRoot : process.cwd();
+      // A local review (`reviewId`, no pull request) reads no host: its base ref is stated, else the clone's own default.
+      const local = command === 'collect'
+        ? source.local
+        : typeof payload.reviewId === 'string'
+          ? { baseRef: typeof payload.baseRef === 'string' ? payload.baseRef : await defaultBaseRef(injected.run || defaultRun, repoRoot) }
+          : undefined;
+      if (command === 'prepare' && local !== undefined && typeof payload.reviewId === 'string' && typeof payload.baseRef !== 'string') payload.baseRef = local.baseRef;
+      const target = local !== undefined
+        ? { repoRoot, local }
+        : { repo: source.repo || 'unknown/unknown', pr: Number.isInteger(source.pr) ? source.pr : 1, repoRoot };
       const deps = injected.deps || buildDeps(target, injected);
       result = command === 'prepare' ? await prepareRun(payload, deps) : await collectRun(payload, deps);
       if (Array.isArray(deps.notices) && deps.notices.length > 0) result = { ...result, warnings: [...(result.warnings || []), ...deps.notices] };

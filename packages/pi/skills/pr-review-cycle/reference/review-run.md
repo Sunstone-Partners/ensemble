@@ -37,6 +37,14 @@ nobody reviewed is reported as not reviewed" are the same as in light mode.
    `stateRoot`, `agentAuthored`). Unknown keys are refused. `baseSha` is a check, not an override: the runner takes the
    merge base itself and refuses any other value (`base-not-merge-base`). It also refuses, before anything is
    fetched, run or posted, a head on a fork or whose repository GitHub did not state, and a PR that is not OPEN.
+   **Local whole-branch review (no pull request yet):** `prepare` with `{ reviewId, repoRoot }` instead of
+   `{ repo, pr, repoRoot }` (optional `baseRef`, default the clone's `origin/HEAD`, else `main`, plus the keys above except
+   that `repo` and `pr` are refused). `reviewId` is file-name safe (letters, digits, `_`, `-`) and names the report,
+   `.ensemble/pr-review/pr-<reviewId>.json`; `implement-trd-tasks` uses `<slug>-completion`. Nothing of a pull request
+   is read, posted or required: no precheck, no fork or open check, no reviews, no branch protection (the gate reports
+   those as unavailable, so a local review is never mergeable by itself), and nothing is fetched (`origin/<baseRef>`
+   must already be a ref of the clone). The head check is unchanged: the HEAD of `repoRoot` is re-read on every call,
+   and a head that moved is `RUN_INVALIDATED`. `collect` takes the same payload as for a numbered review.
 2. On `status: 'DISPATCH'` start exactly the agents in `agents[]`, no more and no fewer. Give each its `prompt`
    UNEDITED to a fresh-context, read-only subagent. Never run more at once than `maxConcurrentAgents`, and stop an
    agent that has not finished at its own `deadlineAtIso` (the deadlines are not all alike: see Slices and deadlines): the

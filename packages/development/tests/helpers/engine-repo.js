@@ -43,6 +43,7 @@ const HOST_TOOLS = [
   'npx',
   'sed',
   'sh',
+  'tar',
   'uname',
   'which',
 ];

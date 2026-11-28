@@ -24,6 +24,7 @@
 const { parseArgv } = require('./engine/argv');
 const { describe, nearestVerbs, renderGroupHelp, renderVerbHelp } = require('./engine/describe');
 const { STATUS_EXIT, buildEnvelope, exitCodeFor, internal, invalidInput } = require('./engine/envelope');
+const { recordCall } = require('./engine/ledger');
 const { flagTable, resolveInput, resolveProjectRoot } = require('./engine/input');
 const { mountLegacyGroup } = require('./engine/mount');
 const { createRegistry } = require('./engine/registry');
@@ -101,10 +102,24 @@ function main(argv, ctx = {}) {
     parsed.group && parsed.verb ? registry.get(parsed.group, parsed.verb) : null;
   const passthrough = Boolean(parsedSpec && parsedSpec.passthrough);
 
+  // TRD-020: every registered verb run under --run-id leaves one audit record, whatever became of
+  // the call -- a refused flag, a refused input, a mounted legacy verb. Diagnostic only: never
+  // read to decide, and a failure to record changes nothing about the answer.
+  const audit = (envelope, input) => {
+    if (!parsedSpec || !parsed.globals.runId) return;
+    let projectRoot;
+    try {
+      projectRoot = resolveProjectRoot(ctx.cwd || process.cwd(), parsed.globals.projectRoot);
+    } catch {
+      return;
+    }
+    recordCall({ globals: parsed.globals, input, projectRoot, verb: label }, envelope);
+  };
+
   if (parsed.error && !passthrough) {
-    return envelopeResult(
-      invalidInput(label, parsed.error.code, parsed.error.message)
-    );
+    const refusal = envelopeResult(invalidInput(label, parsed.error.code, parsed.error.message));
+    audit(refusal.envelope, { argv: parsed.rest || [] });
+    return refusal;
   }
 
   if (parsed.describe) {
@@ -167,44 +182,57 @@ function main(argv, ctx = {}) {
     verb: label,
   };
 
-  try {
-    if (!spec.passthrough) {
-      // Input resolution sits inside this `try` on purpose: its refusals are the verb's
-      // refusals, and they must become the same envelope the handler's would.
-      call.projectRoot = resolveProjectRoot(cwd, parsed.globals.projectRoot);
-      call.input = resolveInput(spec, parsed, {
-        projectRoot: call.projectRoot,
-        stdin: ctx.stdin,
-      });
-      call.now = ctx.now === undefined ? Math.floor(Date.now() / 1000) : ctx.now;
-      call.registry = registry;
-    }
+  const dispatchVerb = () => {
+    try {
+      if (!spec.passthrough) {
+        // Input resolution sits inside this `try` on purpose: its refusals are the verb's
+        // refusals, and they must become the same envelope the handler's would.
+        call.projectRoot = resolveProjectRoot(cwd, parsed.globals.projectRoot);
+        call.input = resolveInput(spec, parsed, {
+          projectRoot: call.projectRoot,
+          stdin: ctx.stdin,
+        });
+        call.now = ctx.now === undefined ? Math.floor(Date.now() / 1000) : ctx.now;
+        call.registry = registry;
+      }
 
-    const value = spec.handler(call);
-    // A mounted verb has already written the legacy CLI's own bytes to stdout; wrapping them in
-    // an envelope would break parity, so it reports only the legacy exit code.
-    if (spec.passthrough) return result(null, value);
-    if (isResult(value)) return envelopeResult(toEnvelope(label, value));
-    return envelopeResult(
-      buildEnvelope({ data: value, ok: true, status: 'OK', verb: label })
-    );
-  } catch (error) {
-    if (error && isEngineStatus(error.status)) {
+      const value = spec.handler(call);
+      // A mounted verb has already written the legacy CLI's own bytes to stdout; wrapping them in
+      // an envelope would break parity, so it reports only the legacy exit code.
+      if (spec.passthrough) return result(null, value);
+      if (isResult(value)) return envelopeResult(toEnvelope(label, value));
       return envelopeResult(
-        buildEnvelope({
-          error: {
-            code: error.code,
-            details: error.details === undefined ? null : error.details,
-            message: error.message,
-          },
-          ok: false,
-          status: error.status,
-          verb: label,
-        })
+        buildEnvelope({ data: value, ok: true, status: 'OK', verb: label })
       );
+    } catch (error) {
+      if (error && isEngineStatus(error.status)) {
+        return envelopeResult(
+          buildEnvelope({
+            error: {
+              code: error.code,
+              details: error.details === undefined ? null : error.details,
+              message: error.message,
+            },
+            ok: false,
+            status: error.status,
+            verb: label,
+          })
+        );
+      }
+      return envelopeResult(internal(label, error, streams));
     }
-    return envelopeResult(internal(label, error, streams));
+  };
+
+  // TRD-020: a verb run under --run-id leaves an audit record. Diagnostic only, never read, and
+  // never allowed to change what the verb answered.
+  const outcome = dispatchVerb();
+  if (spec.passthrough) {
+    // A legacy verb writes its own bytes: what is recorded is its exit code, not its output.
+    audit({ status: `LEGACY_EXIT_${outcome.exitCode}`, verb: label }, { argv: parsed.rest || [] });
+  } else {
+    audit(outcome.envelope, call.input !== undefined ? call.input : { argv: parsed.rest || [] });
   }
+  return outcome;
 }
 
 /**

@@ -181,6 +181,73 @@ describe('prepare hands the runner\'s own manifest to the model', () => {
   });
 });
 
+describe('a local review (--review-id) has no repository and no pull request', () => {
+  const LOCAL = fx => ['review', 'run', '--review-id', 'widget-completion', '--base', fx.base, '--head', fx.head];
+
+  test('the payload names the review id and the clone, and carries no repo, pr or host fact', () => {
+    const fx = reviewRepo();
+    const runner = stubRunner(fx, [dispatch(fx)]);
+    const out = run(fx, runner, [...LOCAL(fx), '--base-ref', 'main', '--test-command', 'node', '--test-file', 'a.test.js']);
+
+    expect(out.envelope.status).toBe('NEEDS_AGENT');
+    const { command, payload } = runner.calls()[0];
+    expect(command).toBe('prepare');
+    expect(payload).toEqual({
+      baseRef: 'main',
+      baseSha: fx.base,
+      repoRoot: fx.root,
+      reviewId: 'widget-completion',
+      testCommand: ['node'],
+      testFiles: ['a.test.js'],
+    });
+  });
+
+  test('a local review that finishes is read exactly as a numbered one: only LOCAL_REVIEW_COMPLETE passes', () => {
+    const fx = reviewRepo();
+    const runner = stubRunner(fx, [dispatch(fx), done(fx), done(fx, { findingCounts: { actionable: 1, awaitingDecision: 0, deferred: 0, total: 1 } })]);
+    run(fx, runner, LOCAL(fx));
+    expect(run(fx, runner, COLLECT()).envelope).toMatchObject({ data: { VERDICT: 'PASS' }, status: 'OK' });
+    const blocked = run(fx, runner, COLLECT());
+    expect(blocked.envelope).toMatchObject({ error: { code: 'REVIEW_BLOCKED' }, status: 'REFUSED' });
+  });
+
+  test.each([
+    ['a repo', ['--repo', 'acme/widget']],
+    ['a pull request', ['--pr', '7']],
+    ['remote mode', ['--mode', 'remote']],
+  ])('naming %s as well is INVALID_INPUT, and the runner is not called', (_label, extra) => {
+    const fx = reviewRepo();
+    const runner = stubRunner(fx, [dispatch(fx)]);
+    const out = run(fx, runner, [...LOCAL(fx), ...extra]);
+    expect(out.envelope).toMatchObject({ error: { code: 'REVIEW_TARGET_EXCLUSIVE' }, status: 'INVALID_INPUT' });
+    expect(runner.calls()).toEqual([]);
+  });
+
+  test('base and head are still required, and --base-ref belongs only to a local review', () => {
+    const fx = reviewRepo();
+    const runner = stubRunner(fx, [dispatch(fx)]);
+    expect(run(fx, runner, ['review', 'run', '--review-id', 'widget-completion', '--head', fx.head]).envelope).toMatchObject({
+      error: { code: 'MISSING_INPUT' },
+      status: 'INVALID_INPUT',
+    });
+    expect(run(fx, runner, [...PREPARE(fx), '--base-ref', 'main']).envelope).toMatchObject({
+      error: { code: 'BASE_REF_NEEDS_REVIEW_ID' },
+      status: 'INVALID_INPUT',
+    });
+    expect(runner.calls()).toEqual([]);
+  });
+
+  test('an id the runner refuses is INVALID_INPUT, not an outage and not a review', () => {
+    const fx = reviewRepo();
+    const runner = stubRunner(fx, [
+      { error: 'reviewId must be file-name safe', ok: false, reason: 'invalid-input', status: 'RUN_FAILED' },
+    ]);
+    const out = run(fx, runner, ['review', 'run', '--review-id', '../escape', '--base', fx.base, '--head', fx.head]);
+    expect(out.envelope.status).toBe('INVALID_INPUT');
+    expect(out.exitCode).toBe(2);
+  });
+});
+
 describe('collect relays the runner\'s next step', () => {
   test('PENDING is NEEDS_AGENT again, naming what it waits on', () => {
     const fx = reviewRepo();

@@ -241,7 +241,14 @@ function prRepo({ branch = PHASE_1_BRANCH, gitTown = false } = {}) {
   fx.ids = fx.tracker.seedFromPlan(plan);
   for (const taskId of PHASE_1_TASKS) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
   fx.tracker.setTestResult({ failed: 0, passed: 9, success: true, total: 9 });
+  // TRD-020: a phase PR follows the phase's recorded gate.
+  recordGate(fx, 1);
   return fx;
+}
+
+/** The gate's own recorded result on a phase story, as `implement gate` leaves it in stacked mode. */
+function recordGate(fx, n) {
+  fx.tracker.addComment(fx.ids[`[trd:${SLUG}:phase:${n}]`], 'Quality gate result: PASS | passed: 9/9 | strategy: tdd');
 }
 
 /** Run `implement pr`. `extraEnv` carries the backend, branching and stacking choices. */
@@ -510,7 +517,8 @@ describe('the backend decides how the pull request is opened', () => {
 
     // The later gate where a PR is due gets its own commands, against the phase-1 branch as base.
     git(fx, ['switch', '--quiet', '-c', PHASE_2_BRANCH]);
-    for (const taskId of ['TRD-003', 'TRD-003-TEST']) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
+    for (const taskId of ['TRD-003', 'TRD-003-TEST', 'TRD-004', 'TRD-004-TEST']) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
+    recordGate(fx, 2);
     const second = runWithProse(fx, ['--phase', '2'], stacked);
     expect(second.envelope.data.COMMANDS[1]).toContain(`--base '${PHASE_1_BRANCH}'`);
     expect(backendCalls(fx).filter(call => call[1] !== 'merge-base')).toEqual([]);
@@ -558,7 +566,10 @@ describe('a created PR is open, never landed', () => {
 describe('the completion PR', () => {
   test('single-PR mode opens it from the TRD branch against the default branch', () => {
     const fx = prRepo({ branch: SINGLE_BRANCH });
-    for (const taskId of ['TRD-003', 'TRD-003-TEST']) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
+    for (const taskId of ['TRD-003', 'TRD-003-TEST', 'TRD-004', 'TRD-004-TEST']) fx.tracker.setStatus(fx.ids[TASK(taskId)], 'closed');
+    recordGate(fx, 2);
+    // The completion PR follows the closure of the epic.
+    fx.tracker.setStatus(fx.ids[`[trd:${SLUG}]`], 'closed');
     const env = { ENSEMBLE_BRANCHING_STRATEGY: 'plain-git', ENSEMBLE_PR_BACKEND: 'gh' };
     const { envelope } = runWithProse(fx, ['--completion'], env);
 
@@ -582,6 +593,37 @@ describe('the completion PR', () => {
     const fx = prRepo();
     const { envelope } = runPr(fx, ['--completion'], { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
     expect(envelope.error.code).toBe('PR_NOT_DUE');
+  });
+});
+
+describe('the verb enforces the plan preconditions itself, before any test run, push or hand-off', () => {
+  test('a stacked phase PR without the recorded gate of that phase is REFUSED naming GATE_<N>_RECORDED', () => {
+    const fx = prRepo();
+    // Phase 2's tasks are open and its gate was never run: whatever a plan said, no PR is due.
+    git(fx, ['switch', '--quiet', '-c', PHASE_2_BRANCH]);
+    const { envelope, exitCode } = runPr(fx, ['--phase', '2'], { ...STACKED, ENSEMBLE_PR_BACKEND: 'gh' });
+
+    expect(exitCode).toBe(1);
+    expect(envelope.status).toBe('REFUSED');
+    expect(envelope.error.code).toBe('PRECONDITION_UNMET');
+    expect(envelope.error.details.precondition).toBe('GATE_2_RECORDED');
+    expect(externalCalls(fx)).toEqual([]);
+    expect(fx.tracker.calls().some(argv => argv.join(' ').includes('test-runner'))).toBe(false);
+    expect(remoteBranches(fx)).toEqual(['main']);
+  });
+
+  test('the completion PR with the epic still open is REFUSED naming EPIC_CLOSED, not left to fail at the base', () => {
+    const fx = prRepo({ branch: SINGLE_BRANCH });
+    const { envelope, exitCode } = runPr(fx, ['--completion'], {
+      ENSEMBLE_BRANCHING_STRATEGY: 'plain-git',
+      ENSEMBLE_PR_BACKEND: 'gh',
+    });
+
+    expect(exitCode).toBe(1);
+    expect(envelope.error.code).toBe('PRECONDITION_UNMET');
+    expect(envelope.error.details.precondition).toBe('EPIC_CLOSED');
+    expect(externalCalls(fx)).toEqual([]);
+    expect(remoteBranches(fx)).toEqual(['main']);
   });
 });
 
