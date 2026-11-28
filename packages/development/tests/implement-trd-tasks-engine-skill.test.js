@@ -124,6 +124,10 @@ function widgetRepo() {
   }
   fx.tracker = createTrackerStub(fx.root, {});
   initRepo(fx, {});
+  // The staleness gate compares whole-second mtimes of tracked files with the TRD's, and this fixture writes the TRD
+  // first: stamp it last, a moment ahead, so a slow build cannot leave files newer than the TRD (TRD_STALE on CI).
+  const stamp = new Date(Date.now() + 10000);
+  fs.utimesSync(path.join(fx.root, TRD_PATH), stamp, stamp);
   return fx;
 }
 
@@ -137,6 +141,22 @@ function ask(fx, runId, extra = []) {
 
 describe('the loop runs against the real engine', () => {
   jest.setTimeout(120000);
+
+  test('the loop fixture stamps the TRD last, so a slow build is never TRD_STALE, and a real later change still is', () => {
+    const fx = widgetRepo();
+    const env = runMain(['--non-interactive', 'implement', 'env', '--preflight'], makeCtx({ cwd: fx.root, env: fx.env }));
+    const runId = env.envelope.data.PREFLIGHT.RUN_ID;
+    const slow = new Date(Date.now() + 3000);
+    for (const file of ['README.md', 'package.json']) fs.utimesSync(path.join(fx.root, file), slow, slow);
+    const fresh = ask(fx, runId);
+    expect({ error: fresh.envelope.error, status: fresh.envelope.status }).toEqual({ error: undefined, status: 'OK' });
+
+    const later = new Date(Date.now() + 60000);
+    fs.utimesSync(path.join(fx.root, 'README.md'), later, later);
+    const stale = ask(fx, runId);
+    expect(stale.envelope.status).toBe('REFUSED');
+    expect(stale.envelope.error.code).toBe('TRD_STALE');
+  });
 
   test('non-interactive with no branch flag, the engine takes the proposed branch, and no prose says it HALTs', () => {
     const fx = widgetRepo();
