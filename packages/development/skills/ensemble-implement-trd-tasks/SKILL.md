@@ -13,9 +13,9 @@ Terminal states: HALT (error printed, nothing further runs), EXIT (early exit do
 
 ## Engine
 
-Resolve ENSEMBLE_CLI (`packages/development/lib/ensemble-cli.js`) per the tool-path-resolution skill. Unresolvable, or no Node.js runtime: print 'ERROR: could not locate the ensemble engine CLI (ENSEMBLE_CLI); implement-trd-tasks runs only through it.' and HALT. Never fall back to improvising the steps. `ensemble` below means `node "$ENSEMBLE_CLI"`.
+Resolve ENSEMBLE_CLI (`packages/development/lib/ensemble-cli.js`) per the tool-path-resolution skill. Unresolvable or no Node.js: print 'ERROR: could not locate the ensemble engine CLI (ENSEMBLE_CLI); implement-trd-tasks runs only through it.' and HALT. Never fall back to improvising the steps. `ensemble` below means `node "$ENSEMBLE_CLI"`.
 
-Every call prints one JSON envelope (`status`, `data`, `error`, `next`). Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, a non-empty FOREMAN_TASK_TITLE, or no AskUserQuestion); never prompt then.
+Every call prints one JSON envelope (`status`, `data`, `error`, `next`). Add `--non-interactive` to every call when INTERACTIVE is false (`--foreman`, FOREMAN_TASK_TITLE, or no AskUserQuestion); never prompt then.
 
 ## Loop
 
@@ -28,7 +28,7 @@ Every call prints one JSON envelope (`status`, `data`, `error`, `next`). Add `--
    - `NEEDS_CHOICE`: ask the user `data.CHOICE.question` with its options (AskUserQuestion, id `data.CHOICE.id`), then pass the answer as `data.CHOICE.flag` on this and every later call: the engine keeps no memory of it. Not interactive: print the question, the options and the flag, and HALT.
    - `EXIT`: print the engine's message; for `--plan` print 'Plan complete. Bead hierarchy created. Run /ensemble:implement-trd-tasks --execute to begin implementation.' EXIT.
    - `COMPLETE`: `ensemble implement report <trd>`, print its totals, the requirements as SATISFIED or NOT VERIFIED, the PR urls the steps returned, and say to merge PR 1 first. Never call a PR merged or landed; only a human confirming the merge does. COMPLETE.
-   - `REFUSED`, `INVALID_INPUT`, `UNAVAILABLE`, `INTERNAL`: print `error.message` verbatim and HALT. Do not repair a refusal by running some other verb.
+   - `REFUSED`, `INVALID_INPUT`, `UNAVAILABLE`, `INTERNAL`: print `error.message` verbatim and HALT. Never repair a refusal by running another verb.
 5. Repeat from 3.
 
 With `--foreman` and FOREMAN_ARTIFACT_PATH set, write the report of step 4 to that exact path at every terminal state (HALT included, with the error); never alter the path. Kata (0.23.0+, `.kata.toml`): `implement-trd-tasks-reference/reference/kata-starting-point.md`.

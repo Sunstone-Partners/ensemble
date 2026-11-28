@@ -81,9 +81,9 @@ describe('PR7 Track031: no literal br/bv tracker-binary invocation in implement-
     expect(findMatchLines(PROSE, TRACKER_BINARY_INVOCATION)).toEqual([]);
     expect(findMatchLines(PROSE, AC1_PATTERN)).toEqual([]);
 
-    const needle = 'node "$TOOLCHAIN_CLI" run tracker.sync. Print epic id and story/task/dep counts.';
+    const needle = '`ensemble trd status <slug>`';
     expect(PROSE).toContain(needle);
-    const mutated = PROSE.replace(needle, 'br sync --flush-only. Print epic id and story/task/dep counts.');
+    const mutated = PROSE.replace(needle, 'br sync --flush-only');
     expect(mutated).not.toBe(PROSE);
 
     const hitsBroad = findMatchLines(mutated, TRACKER_BINARY_INVOCATION);
@@ -110,24 +110,13 @@ describe('PR7 Track031: no literal br/bv tracker-binary invocation in implement-
     expect(contents).toMatch(/optional:\s*\n\s*- work-graph\.plan/);
   });
 
-  test('scaffold step creates plan.epic/plan.stories/plan.tasks via tracker.create and wires plan.deps via tracker.dep-add, preserving [trd:<slug>] title prefixes (AC-2)', () => {
-    const data = { workflow: { phases: PHASES } };
-    const scaffoldPhase = data.workflow.phases.find((p) => p.name === 'Scaffold');
-    expect(scaffoldPhase).toBeDefined();
-    const planStep = scaffoldPhase.steps.find((s) => s.title === 'Plan and create beads');
-    expect(planStep).toBeDefined();
-
-    const createAction = planStep.actions.find((a) => a.includes('$TOOLCHAIN_CLI" run tracker.create'));
-    expect(createAction).toBeDefined();
-    expect(createAction).toContain('plan.epic');
-    expect(createAction).toContain('plan.stories[]');
-    expect(createAction).toContain('plan.tasks[]');
-    expect(createAction).toContain('titlePrefix');
-
-    const depAddAction = planStep.actions.find((a) => a.includes('$TOOLCHAIN_CLI" run tracker.dep-add'));
-    expect(depAddAction).toBeDefined();
-    expect(depAddAction).toContain('[trd:<slug>]');
-    expect(depAddAction).toContain('plan.deps');
+  // The scaffold is an engine verb now (TRD-021): the same creation and wiring runs through the same
+  // capabilities, proved against a stub tracker by engine-implement-scaffold.test.js.
+  test('the scaffold verb creates plan.epic/plan.stories/plan.tasks via tracker.create and wires the scaffold dependency edges via tracker.dep-add, keeping [trd:<slug>] title prefixes (AC-2)', () => {
+    const scaffold = fs.readFileSync(path.join(REPO_ROOT, 'packages', 'development', 'lib', 'engine', 'verbs', 'implement-scaffold.js'), 'utf8');
+    for (const needle of ['plan.epic', 'plan.stories', 'plan.tasks', 'scaffold-dep-args', "'tracker.create'", "'tracker.dep-add'", 'titlePrefix']) {
+      expect(scaffold).toContain(needle);
+    }
   });
 
   test('implement-trd-tasks.yaml capabilities block passes real schema and capability-id validation (AC-3)', () => {
@@ -179,50 +168,23 @@ describe('PR7 Track031: no literal br/bv tracker-binary invocation in implement-
     }
   });
 
-  test('implement-trd-tasks.yaml opens with a preflight listing exactly its required capabilities, and confirm-status precedes the first tracker write anywhere in the command (AC-4)', () => {
-    const data = { metadata: MANIFEST.metadata, workflow: { phases: PHASES } };
-    const requiredCapabilities = data.metadata.capabilities.required;
+  test('the preflight the engine runs lists exactly the required capabilities, and the skill states that one line (AC-4)', () => {
+    const requiredCapabilities = MANIFEST.metadata.capabilities.required;
+    const preflightLine = PROSE.split('\n').find((l) => l.includes('$TOOLCHAIN_CLI" preflight --require'));
+    expect(preflightLine).toBeDefined();
+    const listed = [...preflightLine.matchAll(/--require ([a-z-]+\.[a-z-]+)/g)].map((m) => m[1]);
+    expect([...listed].sort()).toEqual([...requiredCapabilities].sort());
 
-    const preflightPhase = data.workflow.phases.find((p) => p.name === 'Preflight');
-    expect(preflightPhase).toBeDefined();
-    expect(preflightPhase.order).toBe(1);
+    // The engine's own list is the manifest's list.
+    const env = fs.readFileSync(path.join(REPO_ROOT, 'packages', 'development', 'lib', 'engine', 'verbs', 'implement-env.js'), 'utf8');
+    const block = env.slice(env.indexOf('const REQUIRED_CAPABILITIES'), env.indexOf(']);', env.indexOf('const REQUIRED_CAPABILITIES')));
+    const engineList = [...block.matchAll(/'([a-z-]+\.[a-z-]+)'/g)].map((m) => m[1]);
+    expect([...engineList].sort()).toEqual([...requiredCapabilities].sort());
 
-    const argsStep = preflightPhase.steps.find((s) => s.title === 'Arguments and early exits');
-    expect(argsStep).toBeDefined();
-    expect(argsStep.actions.some((a) => a.includes('"$TOOLCHAIN_CLI"'))).toBe(false);
-
-    const toolsStep = preflightPhase.steps.find((s) => s.title === 'Tools');
-    expect(toolsStep).toBeDefined();
-    expect(toolsStep.order).toBeGreaterThan(argsStep.order);
-
-    const preflightAction = toolsStep.actions.find((a) => a.includes('$TOOLCHAIN_CLI" preflight --require'));
-    expect(preflightAction).toBeDefined();
-    const listedCapabilities = [...preflightAction.matchAll(/--require ([a-z-]+\.[a-z-]+)/g)].map((m) => m[1]);
-    expect(listedCapabilities.length).toBe(requiredCapabilities.length);
-    expect([...listedCapabilities].sort()).toEqual([...requiredCapabilities].sort());
-
-    // Flatten every Preflight-phase action, in step order, to find the global ordering between
-    // the confirm-status call and the first actual tracker *write* capability invocation
-    // (tracker.create/dep-add/comment/close/sync -- never tracker.list, which is read-only).
-    const orderedSteps = [...preflightPhase.steps].sort((a, b) => a.order - b.order);
-    const flatActions = orderedSteps.flatMap((s) => s.actions);
-
-    const confirmIndex = flatActions.findIndex((a) => a.includes('confirm-status tracker.create'));
-    const writePattern = /\$TOOLCHAIN_CLI" run tracker\.(?:create|dep-add|comment|close|sync)\b/;
-    const firstWriteIndex = flatActions.findIndex((a) => writePattern.test(a));
-
-    expect(confirmIndex).toBeGreaterThanOrEqual(0);
-    expect(firstWriteIndex).toBeGreaterThan(confirmIndex);
-
-    // AskUserQuestion/confirm-record/--foreman non-interactive branch are all present in the
-    // same confirm-status action.
-    const confirmAction = flatActions[confirmIndex];
-    expect(confirmAction).toContain('AskUserQuestion');
-    expect(confirmAction).toContain('confirm-record');
-    expect(confirmAction).toContain('NON_INTERACTIVE_ARGS');
-
-    const interactiveDetectAction = toolsStep.actions.find((a) => a.includes('NON_INTERACTIVE_ARGS=--non-interactive'));
-    expect(interactiveDetectAction).toBeDefined();
-    expect(interactiveDetectAction).toContain('--foreman');
+    // The confirmation gate is the toolchain's: a side-effecting capability without it is refused, and the
+    // engine returns that refusal unchanged (lib/engine/tracker.js), so no write can precede the confirmation.
+    const tracker = fs.readFileSync(path.join(REPO_ROOT, 'packages', 'development', 'lib', 'engine', 'tracker.js'), 'utf8');
+    expect(tracker).toMatch(/confirmation missing/);
+    expect(PROSE).toMatch(/preflight or tracker confirmation not given\) comes back as a refusal: print it and HALT/);
   });
 });

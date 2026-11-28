@@ -1,6 +1,6 @@
 ### Phase 5: Completion
 
-Steps `review-completion`, `close`, `sync-checkboxes` and `pr-completion` run `review run`, `implement close`, `implement sync-checkboxes` and `implement pr --completion`. `close` verifies completion itself, refuses while any bead is open or the whole-branch review is not complete for this HEAD, then closes the epic. `implement report` prints the report.
+Steps `review-completion`, `close`, `sync-checkboxes` and `pr-completion` run `review run`, `implement close`, `implement sync-checkboxes` and `implement pr --completion`. `close` verifies completion itself, refuses while a bead is open or the whole-branch review is incomplete for this HEAD, then closes the epic. `implement report` prints the report.
 
 #### Judgement in this phase
 
